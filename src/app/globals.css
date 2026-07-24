@@ -117,3 +117,15 @@ input:focus, select:focus { border-color: #6a7fff; box-shadow: 0 0 0 3px rgba(56
   .diagnostic-grid { grid-template-columns: 1fr; }
   .error-notice { align-items: flex-start; flex-direction: column; }
 }
+
+.flow-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+.flow-grid > div { border:1px solid var(--border); border-radius:14px; padding:18px; display:grid; gap:6px; }
+.flow-grid b { width:28px; height:28px; border-radius:50%; background:var(--blue-soft); color:var(--blue); display:grid; place-items:center; }
+.flow-grid strong { font-size:14px; }
+.flow-grid span, .table-row span { color:var(--muted); font-size:12px; }
+.table-list { display:grid; gap:10px; }
+.table-row { border:1px solid var(--border); border-radius:12px; padding:14px 15px; display:flex; justify-content:space-between; align-items:center; }
+.table-row strong, .table-row span { display:block; }
+.table-row span { margin-top:5px; }
+.table-row em { font-style:normal; font-size:11px; font-weight:800; color:#14784c; background:#e9fbf2; padding:6px 9px; border-radius:999px; }
+@media (max-width:900px){ .flow-grid{grid-template-columns:repeat(2,1fr);} }
