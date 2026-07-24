@@ -1,36 +1,27 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MathPooh AI
 
-## Getting Started
+파일럿 5~7명을 위한 통합 MVP 화면입니다.
 
-First, run the development server:
+## 포함 기능
+- 관리자 대시보드
+- 학생 관리
+- 주간 모의고사 관리
+- 문제 PDF/이미지 업로드 화면
+- AI 문항 분석 결과 미리보기
+- 공략 문항 기반 진단 3문항 추천
+- 훈련 10문항 흐름
+- 학생 답안 입력 및 채점 결과 화면
+- Supabase 초기 스키마
 
+## 실행
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Supabase 연결
+1. `.env.example`을 복사해 `.env.local` 생성
+2. Supabase Project Settings > API의 URL과 anon key 입력
+3. Supabase SQL Editor에서 `supabase/schema.sql` 실행
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+현재 UI는 연결 전에도 localStorage 데모 모드로 작동합니다.
