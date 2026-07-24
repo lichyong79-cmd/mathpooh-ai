@@ -231,13 +231,169 @@ function StudentHome({setSosStage}:{setSosStage:(n:number)=>void}){return <>
 function StudentMock({showToast}:{showToast:(m:string)=>void}){return <><div className="student-mock-hero"><div><span>예정된 시험</span><h2>7월 실전 모의고사 B</h2><p>2026.07.27 · 제한시간 50분</p></div><strong>D-3</strong></div><div className="student-exam-list"><Panel title="응시 예정" subtitle="시험 시간이 되면 응시 버튼이 활성화됩니다."><div className="exam-ticket"><div><b>7월 실전 모의고사 B</b><span>수학 · 22문항 · 50분</span></div><button className="disabled">응시 전</button></div></Panel><Panel title="지난 시험" subtitle="결과와 분석을 다시 확인할 수 있습니다.">{exams.slice(0,2).map((e,i)=><div className="past-exam" key={e.title}><div><strong>{e.title}</strong><span>{e.date}</span></div><b>{[78,84][i]}점</b><button className="ghost small" onClick={()=>showToast("시험 결과 화면")}>결과 보기</button></div>)}</Panel></div></>}
 
 function StudentSos({stage,setStage,showToast}:{stage:number;setStage:(n:number)=>void;showToast:(m:string)=>void}){
-  const current=Math.min(stage,sosSteps.length-1);
+  type SosPhase = "target" | "diagnosis" | "training" | "complete";
+  const [phase, setPhase] = useState<SosPhase>(stage >= 5 ? "complete" : stage >= 3 ? "training" : stage >= 1 ? "diagnosis" : "target");
+  const [diagnosisIndex, setDiagnosisIndex] = useState(0);
+  const [trainingIndex, setTrainingIndex] = useState(0);
+  const [answer, setAnswer] = useState("");
+  const [diagnosisCorrect, setDiagnosisCorrect] = useState(0);
+  const [trainingCorrect, setTrainingCorrect] = useState(0);
+
+  const diagnosisProblems = [
+    { no: 1, title: "조건을 식으로 바꾸기", prompt: "수열 {aₙ}이 aₙ₊₁ = 2aₙ - 3을 만족하고 a₁=4일 때 a₂의 값을 구하세요.", concept: "조건의 대수식 변환" },
+    { no: 2, title: "두 조건 연결하기", prompt: "a₁+a₂=7, a₂+a₃=11일 때 a₃-a₁의 값을 구하세요.", concept: "연립 관계 파악" },
+    { no: 3, title: "규칙 추론하기", prompt: "1, 4, 9, 16, …의 일반항으로 알맞은 것을 입력하세요.", concept: "규칙의 일반화" },
+  ];
+
+  const trainingProblems = Array.from({ length: 10 }, (_, i) => ({
+    no: i + 1,
+    title: i < 3 ? "조건 해석 훈련" : i < 7 ? "관계식 연결 훈련" : "실전 적용 훈련",
+    prompt: `훈련 문제 ${i + 1}: 주어진 수열 조건을 식으로 정리한 뒤 요구하는 값을 구하세요.`,
+    level: i < 3 ? "기초" : i < 7 ? "표준" : "실전",
+  }));
+
+  const totalUnits = 14;
+  const completedUnits = phase === "target" ? 0 : phase === "diagnosis" ? 1 + diagnosisIndex : phase === "training" ? 4 + trainingIndex : totalUnits;
+  const progress = Math.round((completedUnits / totalUnits) * 100);
+  const currentProblem: any = phase === "diagnosis" ? diagnosisProblems[diagnosisIndex] : phase === "training" ? trainingProblems[trainingIndex] : null;
+
+  function submitCurrent(){
+    if(!answer.trim()){
+      showToast("답안을 입력해 주세요.");
+      return;
+    }
+    const correct = (phase === "diagnosis" ? diagnosisIndex : trainingIndex) % 4 !== 1;
+    if(phase === "diagnosis"){
+      setDiagnosisCorrect((v)=>v+(correct?1:0));
+      if(diagnosisIndex < diagnosisProblems.length-1){
+        setDiagnosisIndex((v)=>v+1);
+        setAnswer("");
+        showToast(correct ? "정답입니다. 다음 진단으로 이동합니다." : "풀이를 기록했습니다. 다음 진단으로 이동합니다.");
+      }else{
+        setPhase("training");
+        setStage(3);
+        setAnswer("");
+        showToast("진단 완료 · AI가 훈련 10문항을 확정했습니다.");
+      }
+      return;
+    }
+    if(phase === "training"){
+      setTrainingCorrect((v)=>v+(correct?1:0));
+      if(trainingIndex < trainingProblems.length-1){
+        setTrainingIndex((v)=>v+1);
+        setAnswer("");
+        showToast(correct ? "정답입니다." : "오답 원인을 기록했습니다.");
+      }else{
+        setPhase("complete");
+        setStage(5);
+        setAnswer("");
+        showToast("이번 주 SOS를 완료했습니다.");
+      }
+    }
+  }
+
   return <>
-    <div className="sos-header"><div><span className="pill">이번 주 SOS</span><h2>7월 실전 모의고사 A · 18번</h2><p>AI 분석: 수열의 조건을 식으로 정리하는 단계에서 막혔습니다.</p></div><div className="sos-percent"><strong>{Math.round((current/(sosSteps.length-1))*100)}%</strong><span>전체 진행률</span></div></div>
-    <div className="stepper">{sosSteps.map((s,i)=><div key={s} className={i<current?"done":i===current?"current":""}><i>{i<current?"✓":i+1}</i><span>{s}</span></div>)}</div>
-    <div className="sos-workspace">
-      <div className="problem-card"><div className="problem-top"><span>{current===0?"공략문항":current<=2?`진단 ${Math.max(1,current)}/3`:current<5?`훈련 ${Math.min(10,current*2)}/10`:"완료"}</span><b>{current===0?"실전 분석":current<5?"풀이 진행":"SOS COMPLETE"}</b></div>{current===0?<><h3>공략문항 18번</h3><div className="problem-preview"><strong>수열 {`{aₙ}`}에 대하여 조건 (가), (나)를 만족할 때...</strong><p>이 문항은 조건을 대수식으로 변환한 뒤 규칙을 추론하는 복합 유형입니다.</p></div><div className="insight"><b>AI가 찾은 핵심 약점</b><p>조건을 각각 해석했지만 두 조건을 연결하는 식을 만들지 못했습니다.</p></div></>:current<5?<><h3>{current<=2?"진단 문제":"훈련 문제"} {current<=2?current:current*2}</h3><div className="problem-preview large"><strong>문제 미리보기 영역</strong><p>실제 문제 이미지와 수식이 이 영역에 표시됩니다.</p></div><label className="answer-box">답안 입력<input placeholder="정답을 입력하세요"/></label></>:<div className="complete-box"><div>✓</div><h3>이번 주 SOS를 완료했습니다!</h3><p>진단 5/6 · 훈련 8/10</p><strong>다음 실전 모의고사에서 다시 확인합니다.</strong></div>}</div>
-      <aside className="sos-side"><h3>이번 SOS</h3><div className="sos-stat"><span>예상 시간</span><b>35분</b></div><div className="sos-stat"><span>공략 개념</span><b>수열 · 조건해석</b></div><div className="sos-stat"><span>현재 정답률</span><b>75%</b></div><button className="primary full" onClick={()=>{if(current<sosSteps.length-1)setStage(current+1);else showToast("이번 주 SOS를 완료했습니다.")}}>{current===0?"진단 시작":current<4?"다음 문제":current===4?"훈련 완료":"완료 확인"}</button>{current>0&&current<5&&<button className="ghost full" onClick={()=>setStage(current-1)}>이전 단계</button>}</aside>
+    <div className="sos-command">
+      <div>
+        <span className="pill">WEEKLY SOS · 김민준</span>
+        <h2>실전 A 18번을 이번 주에 끝냅니다.</h2>
+        <p>공략문항 확인부터 진단 3문항, 맞춤 훈련 10문항까지 이 화면에서 이어집니다.</p>
+      </div>
+      <div className="sos-scoreboard">
+        <span>전체 진행률</span>
+        <strong>{progress}%</strong>
+        <small>예상 남은 시간 {phase === "complete" ? "0분" : phase === "training" ? `${Math.max(3, 25-trainingIndex*2)}분` : "35분"}</small>
+      </div>
+    </div>
+
+    <div className="sos-flowbar">
+      {[
+        ["target","공략문항","실전 오답의 핵심"],
+        ["diagnosis","진단 3","약점 원인 확인"],
+        ["training","훈련 10","유사 구조 반복"],
+        ["complete","완료","다음 모고에서 재확인"],
+      ].map(([key,label,desc],i)=>{
+        const order={target:0,diagnosis:1,training:2,complete:3};
+        const active=order[phase as SosPhase];
+        return <div key={key} className={i<active?"done":i===active?"current":""}>
+          <i>{i<active?"✓":i+1}</i><span><b>{label}</b><small>{desc}</small></span>
+        </div>
+      })}
+    </div>
+
+    <div className="sos-focus-grid">
+      <section className="sos-main-card">
+        {phase === "target" && <>
+          <div className="focus-label"><span>공략문항</span><b>7월 실전 모의고사 A · 18번</b></div>
+          <div className="target-problem">
+            <div className="target-number">18</div>
+            <div><h3>수열의 조건 해석과 규칙 발견</h3><p>조건 (가), (나)를 각각 읽은 뒤 두 관계를 하나의 식으로 연결해야 하는 문항입니다.</p></div>
+          </div>
+          <div className="mock-problem-paper">
+            <span>실전 모의고사 원문</span>
+            <strong>수열 {`{aₙ}`}이 조건 (가), (나)를 만족할 때 a₁₀의 값을 구하여라.</strong>
+            <p>(가) aₙ₊₂-aₙ₊₁ = aₙ₊₁-aₙ &nbsp;&nbsp; (나) a₁+a₄=14</p>
+          </div>
+          <div className="ai-diagnosis-grid">
+            <article><span>AI가 찾은 막힘</span><strong>조건 연결 실패</strong><p>각 조건은 해석했지만 두 식을 동시에 사용하지 못했습니다.</p></article>
+            <article><span>공략 개념</span><strong>등차수열 · 관계식</strong><p>조건을 수식으로 바꾸고 일반항으로 연결하는 연습이 필요합니다.</p></article>
+            <article><span>이번 목표</span><strong>같은 구조 80% 이상</strong><p>진단과 훈련에서 동일 구조 문제를 안정적으로 해결합니다.</p></article>
+          </div>
+          <button className="primary sos-start" onClick={()=>{setPhase("diagnosis");setStage(1);}}>진단 3문항 시작</button>
+        </>}
+
+        {(phase === "diagnosis" || phase === "training") && currentProblem && <>
+          <div className="focus-label">
+            <span>{phase === "diagnosis" ? "DIAGNOSIS" : "TRAINING"}</span>
+            <b>{phase === "diagnosis" ? `${diagnosisIndex+1} / 3` : `${trainingIndex+1} / 10`}</b>
+          </div>
+          <div className="question-title-row">
+            <div><small>{phase === "diagnosis" ? currentProblem.concept : currentProblem.level}</small><h3>{currentProblem.title}</h3></div>
+            <span className="timer">09:42</span>
+          </div>
+          <div className="live-problem">
+            <span>문제</span>
+            <strong>{currentProblem.prompt}</strong>
+            <div className="formula-board">수식 · 도형 · 문제 이미지 표시 영역</div>
+          </div>
+          <div className="answer-panel">
+            <label>답안 입력<input value={answer} onChange={(e)=>setAnswer(e.target.value)} placeholder="정답을 입력하세요" onKeyDown={(e)=>{if(e.key==="Enter")submitCurrent();}}/></label>
+            <button className="primary" onClick={submitCurrent}>{phase === "diagnosis" && diagnosisIndex===2 ? "진단 제출" : phase === "training" && trainingIndex===9 ? "훈련 완료" : "제출하고 다음"}</button>
+          </div>
+          <div className="question-dots">
+            {(phase === "diagnosis" ? diagnosisProblems : trainingProblems).map((_,i)=><i key={i} className={i < (phase === "diagnosis" ? diagnosisIndex : trainingIndex) ? "done" : i === (phase === "diagnosis" ? diagnosisIndex : trainingIndex) ? "current" : ""}>{i+1}</i>)}
+          </div>
+        </>}
+
+        {phase === "complete" && <div className="sos-finish">
+          <div className="finish-mark">✓</div>
+          <span>WEEKLY SOS COMPLETE</span>
+          <h3>이번 주 공략 훈련을 완료했습니다.</h3>
+          <p>18번 유형은 다음 실전 모의고사에서 다시 확인합니다.</p>
+          <div className="finish-metrics">
+            <div><small>진단</small><strong>{Math.max(diagnosisCorrect,2)} / 3</strong></div>
+            <div><small>훈련</small><strong>{Math.max(trainingCorrect,8)} / 10</strong></div>
+            <div><small>학습 시간</small><strong>31분</strong></div>
+            <div><small>약점 개선</small><strong>+34%</strong></div>
+          </div>
+          <button className="primary" onClick={()=>showToast("완료 리포트를 열었습니다.")}>완료 리포트 보기</button>
+        </div>}
+      </section>
+
+      <aside className="sos-control-card">
+        <div className="control-head"><span>이번 SOS</span><b>자동 저장 중</b></div>
+        <div className="control-progress"><i style={{width:`${progress}%`}}/></div>
+        <div className="control-stat"><span>공략문항</span><strong>실전 A · 18번</strong></div>
+        <div className="control-stat"><span>핵심 약점</span><strong>조건 연결</strong></div>
+        <div className="control-stat"><span>진단 결과</span><strong>{phase === "target" ? "대기" : `${Math.min(diagnosisIndex + (phase!=="diagnosis"?1:0),3)}/3 진행`}</strong></div>
+        <div className="control-stat"><span>훈련 결과</span><strong>{phase === "training" || phase === "complete" ? `${phase==="complete"?10:trainingIndex}/10 진행` : "진단 후 결정"}</strong></div>
+        <div className="ai-decision">
+          <span>AI 결정</span>
+          <strong>{phase === "target" ? "진단 필요" : phase === "diagnosis" ? "진단 중" : phase === "training" ? "추가 진단 없이 훈련 진행" : "다음 모의고사에서 재평가"}</strong>
+          <p>{phase === "training" ? "핵심 개념 이해도가 기준을 넘어 훈련 10문항으로 이동했습니다." : "학생의 풀이 기록에 따라 다음 단계가 자동 조정됩니다."}</p>
+        </div>
+        {phase!=="target" && phase!=="complete" && <button className="ghost full" onClick={()=>showToast("현재 진행 상황이 저장되었습니다.")}>잠시 멈추기</button>}
+      </aside>
     </div>
   </>;
 }
