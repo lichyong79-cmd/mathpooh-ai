@@ -39,7 +39,7 @@ function getSupabase(): SupabaseRest | null {
   const key = (
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-  )?.trim();
+  )?.replace(/\s/g, "");
   if (!url || !key) return null;
   return { url: url.replace(/\/$/, ""), key };
 }
@@ -142,7 +142,7 @@ export default function Home() {
     const key = (
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-    )?.trim();
+    )?.replace(/\s/g, "");
 
     results.push({
       label: "환경변수 URL",
