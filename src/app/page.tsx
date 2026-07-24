@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type Mode = "admin" | "student";
 type AdminMenu = "dashboard" | "students" | "mock" | "bank" | "analysis" | "recommend" | "history";
@@ -44,7 +44,7 @@ export default function Home() {
   const [adminMenu, setAdminMenu] = useState<AdminMenu>("dashboard");
   const [studentMenu, setStudentMenu] = useState<StudentMenu>("home");
   const [selectedStudent, setSelectedStudent] = useState(students[0]);
-  const [sosStage, setSosStage] = useState(1);
+  const [sosStage, setSosStage] = useState(0);
   const [toast, setToast] = useState("");
 
   const title = useMemo(() => {
@@ -94,7 +94,7 @@ export default function Home() {
           <div className="top-actions"><span className="live"><i />Supabase 연결</span><button className="ghost" onClick={() => showToast("데모 데이터가 새로고침되었습니다.")}>새로고침</button></div>
         </header>
 
-        {mode === "admin" ? renderAdmin(adminMenu, selectedStudent, setSelectedStudent, showToast) : renderStudent(studentMenu, sosStage, setSosStage, showToast)}
+        {mode === "admin" ? renderAdmin(adminMenu, selectedStudent, setSelectedStudent, showToast) : renderStudent(studentMenu, setStudentMenu, sosStage, setSosStage, showToast)}
       </section>
       {toast && <div className="toast">✓ {toast}</div>}
     </main>
@@ -215,16 +215,16 @@ function RecommendationPage({showToast}:{showToast:(m:string)=>void}) {
 
 function HistoryPage(){return <><div className="metric-grid four"><Metric label="평균 점수 변화" value="+7.4" note="최근 4주"/><Metric label="SOS 완료" value="83" note="누적 세션"/><Metric label="평균 완료율" value="86%" note="진단+훈련"/><Metric label="재오답 감소" value="31%" note="공략문항 기준"/></div><Panel title="학생 성장 현황" subtitle="최근 실전 모의고사와 SOS 완료 결과를 함께 봅니다."><div className="chart"><div className="chart-y"><span>100</span><span>80</span><span>60</span><span>40</span></div><div className="bars">{[62,68,71,78,84].map((v,i)=><div key={i}><span style={{height:`${v}%`}}><b>{v}</b></span><small>{i+1}주</small></div>)}</div></div></Panel></>}
 
-function renderStudent(menu: StudentMenu, sosStage:number, setSosStage:(n:number)=>void, showToast:(m:string)=>void){
-  if(menu==="home") return <StudentHome setSosStage={setSosStage}/>;
+function renderStudent(menu: StudentMenu, setStudentMenu:(m:StudentMenu)=>void, sosStage:number, setSosStage:(n:number)=>void, showToast:(m:string)=>void){
+  if(menu==="home") return <StudentHome setStudentMenu={setStudentMenu} setSosStage={setSosStage} showToast={showToast}/>;
   if(menu==="mock") return <StudentMock showToast={showToast}/>;
   if(menu==="sos") return <StudentSos stage={sosStage} setStage={setSosStage} showToast={showToast}/>;
   return <StudentResult/>;
 }
 
-function StudentHome({setSosStage}:{setSosStage:(n:number)=>void}){return <>
+function StudentHome({setStudentMenu,setSosStage,showToast}:{setStudentMenu:(m:StudentMenu)=>void;setSosStage:(n:number)=>void;showToast:(m:string)=>void}){return <>
   <div className="student-welcome"><div><span className="pill">김민준 학생</span><h2>이번 주도 한 문제씩 정확하게.</h2><p>실전 모의고사 결과를 바탕으로 이번 주 SOS가 준비되었습니다.</p></div><div className="level"><strong>LEVEL 7</strong><span>연속 완료 5주</span></div></div>
-  <div className="student-grid"><article className="next-exam"><span>다음 실전 모의고사</span><strong>D-3</strong><h3>7월 실전 모의고사 B</h3><p>7월 27일 월요일 · 19:00</p><button className="ghost light">시험 안내 보기</button></article><article className="today-sos"><span>이번 주 SOS</span><h3>공략문항 18번</h3><p>수열의 조건 해석과 규칙 발견</p><div className="big-progress"><i style={{width:"42%"}}/></div><small>진단 진행 중 · 전체 42%</small><button className="primary" onClick={()=>setSosStage(1)}>SOS 이어하기</button></article></div>
+  <div className="student-grid"><article className="next-exam"><span>다음 실전 모의고사</span><strong>D-3</strong><h3>7월 실전 모의고사 B</h3><p>7월 27일 월요일 · 19:00</p><button className="ghost light" onClick={()=>showToast("시험 일정과 응시 안내를 열었습니다.")}>시험 안내 보기</button></article><article className="today-sos"><span>이번 주 SOS</span><h3>공략문항 18번</h3><p>수열의 조건 해석과 규칙 발견</p><div className="big-progress"><i style={{width:"42%"}}/></div><small>진단 진행 중 · 전체 42%</small><button className="primary" onClick={()=>{setSosStage(0);setStudentMenu("sos");}}>SOS 시작하기</button></article></div>
   <div className="two-col"><Panel title="오늘 할 일" subtitle="순서대로 진행하면 약 35분이 걸립니다."><Task title="진단 3문항" desc="공략문항의 핵심 약점을 확인합니다." badge="10분"/><Task title="훈련 10문항" desc="유사 구조 문제로 풀이를 안정시킵니다." badge="25분"/></Panel><Panel title="최근 성장" subtitle="실전 점수가 꾸준히 올라가고 있습니다."><div className="growth"><strong>71 → 78 → 84</strong><span>최근 3회 +13점</span><Progress value={84}/></div></Panel></div>
   </>}
 
@@ -238,6 +238,14 @@ function StudentSos({stage,setStage,showToast}:{stage:number;setStage:(n:number)
   const [answer, setAnswer] = useState("");
   const [diagnosisCorrect, setDiagnosisCorrect] = useState(0);
   const [trainingCorrect, setTrainingCorrect] = useState(0);
+  const [seconds, setSeconds] = useState(0);
+  const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
+
+  useEffect(() => {
+    if (phase === "target" || phase === "complete") return;
+    const timer = window.setInterval(() => setSeconds((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [phase]);
 
   const diagnosisProblems = [
     { no: 1, title: "조건을 식으로 바꾸기", prompt: "수열 {aₙ}이 aₙ₊₁ = 2aₙ - 3을 만족하고 a₁=4일 때 a₂의 값을 구하세요.", concept: "조건의 대수식 변환" },
@@ -257,39 +265,49 @@ function StudentSos({stage,setStage,showToast}:{stage:number;setStage:(n:number)
   const progress = Math.round((completedUnits / totalUnits) * 100);
   const currentProblem: any = phase === "diagnosis" ? diagnosisProblems[diagnosisIndex] : phase === "training" ? trainingProblems[trainingIndex] : null;
 
+  const formatTime = (value:number) => `${String(Math.floor(value/60)).padStart(2,"0")}:${String(value%60).padStart(2,"0")}`;
+
+  function resetSos(){
+    setPhase("target"); setStage(0); setDiagnosisIndex(0); setTrainingIndex(0);
+    setAnswer(""); setDiagnosisCorrect(0); setTrainingCorrect(0); setSeconds(0); setFeedback(null);
+    showToast("SOS 데모를 처음부터 다시 시작합니다.");
+  }
+
   function submitCurrent(){
     if(!answer.trim()){
       showToast("답안을 입력해 주세요.");
       return;
     }
     const correct = (phase === "diagnosis" ? diagnosisIndex : trainingIndex) % 4 !== 1;
-    if(phase === "diagnosis"){
-      setDiagnosisCorrect((v)=>v+(correct?1:0));
-      if(diagnosisIndex < diagnosisProblems.length-1){
-        setDiagnosisIndex((v)=>v+1);
-        setAnswer("");
-        showToast(correct ? "정답입니다. 다음 진단으로 이동합니다." : "풀이를 기록했습니다. 다음 진단으로 이동합니다.");
-      }else{
-        setPhase("training");
-        setStage(3);
-        setAnswer("");
-        showToast("진단 완료 · AI가 훈련 10문항을 확정했습니다.");
+    setFeedback(correct ? "correct" : "wrong");
+    window.setTimeout(() => {
+      setFeedback(null);
+      if(phase === "diagnosis"){
+        setDiagnosisCorrect((v)=>v+(correct?1:0));
+        if(diagnosisIndex < diagnosisProblems.length-1){
+          setDiagnosisIndex((v)=>v+1);
+          setAnswer("");
+        }else{
+          setPhase("training");
+          setStage(3);
+          setAnswer("");
+          showToast("진단 완료 · 훈련 10문항이 확정되었습니다.");
+        }
+        return;
       }
-      return;
-    }
-    if(phase === "training"){
-      setTrainingCorrect((v)=>v+(correct?1:0));
-      if(trainingIndex < trainingProblems.length-1){
-        setTrainingIndex((v)=>v+1);
-        setAnswer("");
-        showToast(correct ? "정답입니다." : "오답 원인을 기록했습니다.");
-      }else{
-        setPhase("complete");
-        setStage(5);
-        setAnswer("");
-        showToast("이번 주 SOS를 완료했습니다.");
+      if(phase === "training"){
+        setTrainingCorrect((v)=>v+(correct?1:0));
+        if(trainingIndex < trainingProblems.length-1){
+          setTrainingIndex((v)=>v+1);
+          setAnswer("");
+        }else{
+          setPhase("complete");
+          setStage(5);
+          setAnswer("");
+          showToast("이번 주 SOS를 완료했습니다.");
+        }
       }
-    }
+    }, 650);
   }
 
   return <>
@@ -349,13 +367,14 @@ function StudentSos({stage,setStage,showToast}:{stage:number;setStage:(n:number)
           </div>
           <div className="question-title-row">
             <div><small>{phase === "diagnosis" ? currentProblem.concept : currentProblem.level}</small><h3>{currentProblem.title}</h3></div>
-            <span className="timer">09:42</span>
+            <span className="timer">{formatTime(seconds)}</span>
           </div>
           <div className="live-problem">
             <span>문제</span>
             <strong>{currentProblem.prompt}</strong>
             <div className="formula-board">수식 · 도형 · 문제 이미지 표시 영역</div>
           </div>
+          {feedback && <div className={`answer-feedback ${feedback}`}><b>{feedback === "correct" ? "정답" : "오답"}</b><span>{feedback === "correct" ? "좋습니다. 다음 문제로 이동합니다." : "풀이 기록을 저장하고 다음 문제로 이동합니다."}</span></div>}
           <div className="answer-panel">
             <label>답안 입력<input value={answer} onChange={(e)=>setAnswer(e.target.value)} placeholder="정답을 입력하세요" onKeyDown={(e)=>{if(e.key==="Enter")submitCurrent();}}/></label>
             <button className="primary" onClick={submitCurrent}>{phase === "diagnosis" && diagnosisIndex===2 ? "진단 제출" : phase === "training" && trainingIndex===9 ? "훈련 완료" : "제출하고 다음"}</button>
@@ -393,6 +412,7 @@ function StudentSos({stage,setStage,showToast}:{stage:number;setStage:(n:number)
           <p>{phase === "training" ? "핵심 개념 이해도가 기준을 넘어 훈련 10문항으로 이동했습니다." : "학생의 풀이 기록에 따라 다음 단계가 자동 조정됩니다."}</p>
         </div>
         {phase!=="target" && phase!=="complete" && <button className="ghost full" onClick={()=>showToast("현재 진행 상황이 저장되었습니다.")}>잠시 멈추기</button>}
+        <button className="demo-reset" onClick={resetSos}>데모 처음부터 보기</button>
       </aside>
     </div>
   </>;
