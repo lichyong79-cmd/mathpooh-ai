@@ -1,13 +1,22 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+export type SupabaseConfig = {
+  url: string;
+  key: string;
+};
 
-const url = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim().replace(/\/$/, "");
-const key = (
+const rawUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const rawKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
-  ""
-).trim().replace(/\s/g, "");
+  "";
 
-export const supabase: SupabaseClient | null =
-  url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
+export const supabaseUrl = rawUrl.trim().replace(/\/$/, "");
+export const supabaseKey = rawKey.replace(/\s/g, "");
 
-export const supabaseEnv = { url, keyPresent: Boolean(key) };
+export const supabaseConfig: SupabaseConfig | null =
+  supabaseUrl && supabaseKey
+    ? { url: supabaseUrl, key: supabaseKey }
+    : null;
+
+export function getSupabaseConfig(): SupabaseConfig | null {
+  return supabaseConfig;
+}
