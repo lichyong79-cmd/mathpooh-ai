@@ -1,27 +1,25 @@
-# MathPooh AI
+# MathPooh AI v0.3
 
-파일럿 5~7명을 위한 통합 MVP 화면입니다.
+## 이번 버전
+- 문제 라이브러리 실제 Supabase 연결
+- 시험지 PDF/이미지 업로드
+- 정답표·해설지 선택 업로드
+- Supabase Storage `problem-files` 버킷 저장
+- 등록 자료 목록 표시
+- 학습 흐름 3 → 3 → 10 → 10 유지
 
-## 포함 기능
-- 관리자 대시보드
-- 학생 관리
-- 주간 모의고사 관리
-- 문제 PDF/이미지 업로드 화면
-- AI 문항 분석 결과 미리보기
-- 공략 문항 기반 진단 3문항 추천
-- 훈련 10문항 흐름
-- 학생 답안 입력 및 채점 결과 화면
-- Supabase 초기 스키마
+## 적용 순서
+1. 기존 프로젝트에 덮어쓰기
+2. Supabase SQL Editor에서 `supabase/v0.3-migration.sql` 전체 실행
+3. 기존 `.env.local`은 유지
+4. `npm install`
+5. `npm run dev`
 
-## 실행
-```bash
-npm install
-npm run dev
-```
+## 확인
+- 문제 라이브러리 메뉴에서 자료 이름 입력
+- 시험지 파일 선택
+- `문제 자료 저장` 클릭
+- 오른쪽 등록 자료 목록에 나타나면 정상
 
-## Supabase 연결
-1. `.env.example`을 복사해 `.env.local` 생성
-2. Supabase Project Settings > API의 URL과 anon key 입력
-3. Supabase SQL Editor에서 `supabase/schema.sql` 실행
-
-현재 UI는 연결 전에도 localStorage 데모 모드로 작동합니다.
+## 다음 버전
+저장된 시험지를 문항별로 분리하고 AI 분석 작업을 연결합니다.
