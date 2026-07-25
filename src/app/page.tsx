@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type AdminMenu = "dashboard" | "students" | "exams" | "problems" | "analysis" | "recommend" | "results" | "settings";
 type StudentStatus = "정상" | "휴원" | "퇴원";
@@ -86,6 +86,15 @@ const emptyStudent: Omit<Student, "id"> = {
 export default function Home() {
   const [active, setActive] = useState<AdminMenu>("students");
   const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("matspu-admin-menu") as AdminMenu | null;
+    if (saved && menus.some((menu) => menu.id === saved)) setActive(saved);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("matspu-admin-menu", active);
+  }, [active]);
   const [students, setStudents] = useState<Student[]>(initialStudents);
   const [practiceExams, setPracticeExams] = useState<PracticeExam[]>(initialPracticeExams);
 
@@ -151,6 +160,15 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
   const [isAdding, setIsAdding] = useState(false);
   const [tab, setTab] = useState<StudentTab>("students");
   const [selectedRoundId, setSelectedRoundId] = useState(examRounds[0].id);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("matspu-student-tab") as StudentTab | null;
+    if (saved === "students" || saved === "registration") setTab(saved);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("matspu-student-tab", tab);
+  }, [tab]);
   const [registrations, setRegistrations] = useState<Record<number, number[]>>({ 1: [1, 2, 4], 2: [1, 4], 3: [5], 4: [1, 2, 3, 4, 6] });
 
   const filtered = useMemo(() => students.filter((student) => {
@@ -336,6 +354,15 @@ function ResultsPage({ students }: { students: Student[] }) {
 function ExamsPage({ exams, setExams }: { exams: PracticeExam[]; setExams: React.Dispatch<React.SetStateAction<PracticeExam[]>> }) {
   const [tab, setTab] = useState<"list" | "input">("list");
   const [editingId, setEditingId] = useState<number | null>(null);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("matspu-exam-tab");
+    if (saved === "list" || saved === "input") setTab(saved);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("matspu-exam-tab", tab);
+  }, [tab]);
   const emptyExam: Omit<PracticeExam, "id"> = { round: exams.length + 1, title: "", examCode: "", examDate: new Date().toISOString().slice(0, 10), grade: "고1", subject: "공통수학1", range: "", questionCount: 30, timeLimit: 80, totalScore: 100, objectiveCount: 21, shortAnswerCount: 9, status: "작성중", testFile: "", solutionFile: "", memo: "" };
   const [form, setForm] = useState<Omit<PracticeExam, "id">>(emptyExam);
   const set = <K extends keyof Omit<PracticeExam, "id">>(key: K, value: Omit<PracticeExam, "id">[K]) => setForm((prev) => ({ ...prev, [key]: value }));
