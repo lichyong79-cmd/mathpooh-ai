@@ -108,7 +108,7 @@ export default function Home() {
           </div>
         </header>
         <div className="page-content">
-          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
+          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "results" ? <ResultsPage students={students} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
         </div>
       </section>
     </main>
@@ -119,7 +119,6 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
   const [search, setSearch] = useState("");
   const [grade, setGrade] = useState("전체");
   const [status, setStatus] = useState("전체");
-  const [sosStatus, setSosStatus] = useState("전체");
   const [selected, setSelected] = useState<Student | null>(null);
   const [editing, setEditing] = useState<Student | null>(null);
   const [isAdding, setIsAdding] = useState(false);
@@ -129,14 +128,14 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
 
   const filtered = useMemo(() => students.filter((student) => {
     const keyword = `${student.name} ${student.school} ${student.phone} ${student.parentPhone}`.toLowerCase();
-    return keyword.includes(search.toLowerCase()) && (grade === "전체" || student.grade === grade) && (status === "전체" || student.status === status) && (sosStatus === "전체" || student.sosStatus === sosStatus);
-  }), [students, search, grade, status, sosStatus]);
+    return keyword.includes(search.toLowerCase()) && (grade === "전체" || student.grade === grade) && (status === "전체" || student.status === status);
+  }), [students, search, grade, status]);
 
   const stats = {
     all: students.length,
     active: students.filter((s) => s.status === "정상").length,
-    waiting: students.filter((s) => s.sosStatus === "진단대기").length,
-    training: students.filter((s) => s.sosStatus === "훈련중").length,
+    paused: students.filter((s) => s.status === "휴원").length,
+    left: students.filter((s) => s.status === "퇴원").length,
   };
 
   const saveStudent = (form: Omit<Student, "id">) => {
@@ -169,7 +168,7 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
 
   return <>
     <section className="page-title-row">
-      <div><h2>학생 관리</h2><p>학생 기본정보와 SOS 진단·훈련 진행 상태를 한 곳에서 관리합니다.</p></div>
+      <div><h2>학생 관리</h2><p>학생 기본정보와 시험회차별 등록 여부를 관리합니다.</p></div>
       <button className="primary-button" onClick={() => { setEditing(null); setIsAdding(true); }}>＋ 학생 등록</button>
     </section>
 
@@ -182,8 +181,8 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
       <section className="student-stat-grid">
         <MiniStat label="전체 학생" value={`${stats.all}명`} note="등록 기준" />
         <MiniStat label="재원 학생" value={`${stats.active}명`} note="정상 상태" />
-        <MiniStat label="진단 대기" value={`${stats.waiting}명`} note="분석 필요" emphasis />
-        <MiniStat label="SOS 훈련중" value={`${stats.training}명`} note="현재 진행" />
+        <MiniStat label="휴원 학생" value={`${stats.paused}명`} note="일시 중단" emphasis />
+        <MiniStat label="퇴원 학생" value={`${stats.left}명`} note="퇴원 처리" />
       </section>
 
     <section className="panel student-panel">
@@ -191,18 +190,16 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
         <label className="global-search large"><span>⌕</span><input placeholder="학생 이름, 학교, 연락처 검색" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
         <select value={grade} onChange={(e) => setGrade(e.target.value)}><option>전체</option><option>중3</option><option>고1</option><option>고2</option><option>고3</option></select>
         <select value={status} onChange={(e) => setStatus(e.target.value)}><option>전체</option><option>정상</option><option>휴원</option><option>퇴원</option></select>
-        <select value={sosStatus} onChange={(e) => setSosStatus(e.target.value)}><option>전체</option><option>분석완료</option><option>훈련중</option><option>진단대기</option><option>미응시</option></select>
-        <button className="secondary-button" onClick={() => { setSearch(""); setGrade("전체"); setStatus("전체"); setSosStatus("전체"); }}>초기화</button>
+        <button className="secondary-button" onClick={() => { setSearch(""); setGrade("전체"); setStatus("전체"); }}>초기화</button>
       </div>
       <div className="list-summary"><strong>학생 {filtered.length}명</strong><span>행을 클릭하면 학생 상세정보가 열립니다.</span></div>
       <div className="data-table student-list">
-        <div className="table-head"><span>학생</span><span>학교 / 학년</span><span>학생 연락처</span><span>최근 점수</span><span>SOS 상태</span><span>재원 상태</span><span>최근 응시</span><span>관리</span></div>
+        <div className="table-head"><span>학생</span><span>학교 / 학년</span><span>학생 연락처</span><span>학부모 연락처</span><span>재원 상태</span><span>등록일</span><span>관리</span></div>
         {filtered.map((student) => (
           <div className="table-row clickable" key={student.id} onClick={() => setSelected(student)}>
             <div className="student-name"><i>{student.name.slice(0, 1)}</i><div><strong>{student.name}</strong><small>등록 {student.joinedAt}</small></div></div>
-            <span>{student.school} · {student.grade}</span><span>{student.phone}</span>
-            <b className="score-cell">{student.lastScore === null ? "-" : `${student.lastScore}점`}</b>
-            <Status text={student.sosStatus} /><Status text={student.status} /><span>{student.lastExam}</span>
+            <span>{student.school} · {student.grade}</span><span>{student.phone}</span><span>{student.parentPhone}</span>
+            <Status text={student.status} /><span>{student.joinedAt}</span>
             <button className="more-button" onClick={(e) => { e.stopPropagation(); setEditing(student); }}>수정</button>
           </div>
         ))}
@@ -230,12 +227,12 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
       </div>
       <div className="registration-progress"><i style={{ width: `${roundStudents.length ? (registeredIds.filter((id) => roundStudents.some((student) => student.id === id)).length / roundStudents.length) * 100 : 0}%` }} /></div>
       <div className="data-table registration-list">
-        <div className="table-head"><span>학생</span><span>학교 / 학년</span><span>연락처</span><span>SOS 상태</span><span>등록 여부</span><span>변경</span></div>
+        <div className="table-head"><span>학생</span><span>학교 / 학년</span><span>학생 연락처</span><span>학부모 연락처</span><span>등록 여부</span><span>변경</span></div>
         {roundStudents.map((student) => {
           const isRegistered = registeredIds.includes(student.id);
           return <div className="table-row" key={student.id}>
             <div className="student-name"><i>{student.name.slice(0, 1)}</i><div><strong>{student.name}</strong><small>{student.school}</small></div></div>
-            <span>{student.school} · {student.grade}</span><span>{student.phone}</span><Status text={student.sosStatus} />
+            <span>{student.school} · {student.grade}</span><span>{student.phone}</span><span>{student.parentPhone}</span>
             <span className={`registration-state ${isRegistered ? "registered" : "unregistered"}`}>{isRegistered ? "등록" : "미등록"}</span>
             <button className={`toggle-register ${isRegistered ? "on" : ""}`} onClick={() => toggleRegistration(student.id)}>{isRegistered ? "등록 취소" : "등록하기"}</button>
           </div>;
@@ -262,10 +259,7 @@ function StudentModal({ initial, title, onClose, onSave }: { initial: Student | 
       <Field label="재원 상태"><select value={form.status} onChange={(e) => set("status", e.target.value as StudentStatus)}><option>정상</option><option>휴원</option><option>퇴원</option></select></Field>
       <Field label="학생 연락처"><input value={form.phone} onChange={(e) => set("phone", e.target.value)} placeholder="010-0000-0000" /></Field>
       <Field label="학부모 연락처"><input value={form.parentPhone} onChange={(e) => set("parentPhone", e.target.value)} placeholder="010-0000-0000" /></Field>
-      <Field label="SOS 상태"><select value={form.sosStatus} onChange={(e) => set("sosStatus", e.target.value as SosStatus)}><option>진단대기</option><option>훈련중</option><option>분석완료</option><option>미응시</option></select></Field>
       <Field label="등록일"><input type="date" value={form.joinedAt} onChange={(e) => set("joinedAt", e.target.value)} /></Field>
-      <Field label="최근 점수"><input type="number" min="0" max="100" value={form.lastScore ?? ""} onChange={(e) => set("lastScore", e.target.value === "" ? null : Number(e.target.value))} placeholder="0~100" /></Field>
-      <Field label="최근 응시일"><input type="date" value={form.lastExam === "-" ? "" : form.lastExam} onChange={(e) => set("lastExam", e.target.value || "-")} /></Field>
       <label className="field full"><span>관리 메모</span><textarea value={form.memo} onChange={(e) => set("memo", e.target.value)} placeholder="학생 지도에 필요한 메모를 입력하세요." /></label>
     </div>
     <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>취소</button><button className="primary-button">저장</button></div>
@@ -276,11 +270,39 @@ function StudentDrawer({ student, onClose, onEdit, onDelete }: { student: Studen
   return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="student-drawer" onMouseDown={(e) => e.stopPropagation()}>
     <div className="drawer-head"><span>학생 상세정보</span><button onClick={onClose}>×</button></div>
     <div className="student-profile"><i>{student.name.slice(0, 1)}</i><div><h3>{student.name}</h3><p>{student.school} · {student.grade}</p></div><Status text={student.status} /></div>
-    <div className="detail-score"><span>최근 시험 점수</span><strong>{student.lastScore === null ? "-" : student.lastScore}<small>{student.lastScore === null ? "" : "점"}</small></strong><Status text={student.sosStatus} /></div>
-    <div className="detail-section"><h4>기본 정보</h4><Detail label="학생 연락처" value={student.phone || "-"} /><Detail label="학부모 연락처" value={student.parentPhone || "-"} /><Detail label="등록일" value={student.joinedAt} /><Detail label="최근 응시" value={student.lastExam} /></div>
+    <div className="detail-section"><h4>기본 정보</h4><Detail label="학생 연락처" value={student.phone || "-"} /><Detail label="학부모 연락처" value={student.parentPhone || "-"} /><Detail label="등록일" value={student.joinedAt} /><Detail label="재원 상태" value={student.status} /></div>
     <div className="detail-section"><h4>관리 메모</h4><p className="memo-box">{student.memo || "등록된 메모가 없습니다."}</p></div>
     <div className="drawer-actions"><button className="secondary-button danger" onClick={onDelete}>학생 삭제</button><button className="primary-button" onClick={onEdit}>정보 수정</button></div>
   </aside></div>;
+}
+
+function ResultsPage({ students }: { students: Student[] }) {
+  const [search, setSearch] = useState("");
+  const [grade, setGrade] = useState("전체");
+  const filtered = students.filter((student) => (`${student.name} ${student.school}`).toLowerCase().includes(search.toLowerCase()) && (grade === "전체" || student.grade === grade));
+  return <>
+    <section className="page-title-row"><div><h2>성적 관리</h2><p>학생별 점수, 최근 응시일과 SOS 진행 상태를 관리합니다.</p></div></section>
+    <section className="student-stat-grid">
+      <MiniStat label="성적 등록 학생" value={`${students.filter(s => s.lastScore !== null).length}명`} note="최근 점수 기준" />
+      <MiniStat label="분석 완료" value={`${students.filter(s => s.sosStatus === "분석완료").length}명`} note="분석 결과 확인" />
+      <MiniStat label="훈련중" value={`${students.filter(s => s.sosStatus === "훈련중").length}명`} note="SOS 진행중" emphasis />
+      <MiniStat label="진단 대기" value={`${students.filter(s => s.sosStatus === "진단대기").length}명`} note="확인 필요" />
+    </section>
+    <section className="panel student-panel">
+      <div className="student-toolbar">
+        <label className="global-search large"><span>⌕</span><input placeholder="학생 이름, 학교 검색" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+        <select value={grade} onChange={(e) => setGrade(e.target.value)}><option>전체</option><option>중3</option><option>고1</option><option>고2</option><option>고3</option></select>
+      </div>
+      <div className="list-summary"><strong>성적 {filtered.length}명</strong><span>점수와 SOS 상태는 성적관리에서 확인합니다.</span></div>
+      <div className="data-table results-list">
+        <div className="table-head"><span>학생</span><span>학교 / 학년</span><span>최근 점수</span><span>최근 응시</span><span>SOS 상태</span><span>관리 메모</span></div>
+        {filtered.map((student) => <div className="table-row" key={student.id}>
+          <div className="student-name"><i>{student.name.slice(0,1)}</i><div><strong>{student.name}</strong><small>{student.phone}</small></div></div>
+          <span>{student.school} · {student.grade}</span><b className="score-cell">{student.lastScore === null ? "-" : `${student.lastScore}점`}</b><span>{student.lastExam}</span><Status text={student.sosStatus} /><span>{student.memo || "-"}</span>
+        </div>)}
+      </div>
+    </section>
+  </>;
 }
 
 function Dashboard({ students, onMove }: { students: Student[]; onMove: (menu: AdminMenu) => void }) {
