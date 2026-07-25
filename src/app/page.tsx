@@ -1,8 +1,25 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { FormEvent, useMemo, useState } from "react";
 
 type AdminMenu = "dashboard" | "students" | "exams" | "problems" | "analysis" | "recommend" | "results" | "settings";
+type StudentStatus = "정상" | "휴원" | "퇴원";
+type SosStatus = "분석완료" | "훈련중" | "진단대기" | "미응시";
+
+type Student = {
+  id: number;
+  name: string;
+  school: string;
+  grade: string;
+  phone: string;
+  parentPhone: string;
+  status: StudentStatus;
+  sosStatus: SosStatus;
+  lastScore: number | null;
+  lastExam: string;
+  joinedAt: string;
+  memo: string;
+};
 
 type MenuItem = { id: AdminMenu; label: string; icon: string; badge?: number };
 
@@ -17,47 +34,39 @@ const menus: MenuItem[] = [
   { id: "settings", label: "환경 설정", icon: "⚙" },
 ];
 
-const students = [
-  { name: "김민준", school: "보성고", grade: "고2", status: "분석완료", last: "7월 24일", score: 82 },
-  { name: "문예진", school: "잠실여고", grade: "고1", status: "훈련중", last: "7월 24일", score: 76 },
-  { name: "김가연B", school: "영동일고", grade: "고1", status: "진단대기", last: "7월 23일", score: 68 },
-  { name: "송연우", school: "배명고", grade: "고2", status: "분석완료", last: "7월 22일", score: 91 },
+const initialStudents: Student[] = [
+  { id: 1, name: "김민준", school: "보성고", grade: "고2", phone: "010-2451-7812", parentPhone: "010-9345-1208", status: "정상", sosStatus: "분석완료", lastScore: 82, lastExam: "2026.07.24", joinedAt: "2026.03.02", memo: "미적분 준킬러 보완 필요" },
+  { id: 2, name: "문예진", school: "잠실여고", grade: "고1", phone: "010-5287-1194", parentPhone: "010-7741-2506", status: "정상", sosStatus: "훈련중", lastScore: 76, lastExam: "2026.07.24", joinedAt: "2026.02.26", memo: "공통수학2 계산 속도 훈련 중" },
+  { id: 3, name: "김가연B", school: "영동일고", grade: "고1", phone: "010-3198-4421", parentPhone: "010-8842-3190", status: "정상", sosStatus: "진단대기", lastScore: 68, lastExam: "2026.07.23", joinedAt: "2026.04.01", memo: "첫 진단 결과 확인 필요" },
+  { id: 4, name: "송연우", school: "배명고", grade: "고2", phone: "010-6683-2071", parentPhone: "010-9210-6675", status: "정상", sosStatus: "분석완료", lastScore: 91, lastExam: "2026.07.22", joinedAt: "2025.12.18", memo: "상위권 실전 훈련 유지" },
+  { id: 5, name: "이도윤", school: "정신여고", grade: "고3", phone: "010-4720-1386", parentPhone: "010-3165-8021", status: "휴원", sosStatus: "미응시", lastScore: null, lastExam: "-", joinedAt: "2026.01.08", memo: "8월 복귀 예정" },
+  { id: 6, name: "박서준", school: "잠신고", grade: "중3", phone: "010-9074-5312", parentPhone: "010-2764-9160", status: "정상", sosStatus: "훈련중", lastScore: 88, lastExam: "2026.07.20", joinedAt: "2026.06.10", memo: "고등 선행 진단 진행" },
 ];
 
-const exams = [
-  { title: "고2 미적분 실전 진단 01", grade: "고2", questions: 30, participants: 24, status: "진행중", date: "2026.07.25" },
-  { title: "고1 공통수학2 실전 03", grade: "고1", questions: 28, participants: 31, status: "배포완료", date: "2026.07.24" },
-  { title: "고3 수능형 미니모의 07", grade: "고3", questions: 15, participants: 18, status: "채점완료", date: "2026.07.23" },
-  { title: "중3 고등준비 진단 02", grade: "중3", questions: 20, participants: 26, status: "작성중", date: "2026.07.22" },
-];
-
-function Pill({ children, tone = "blue" }: { children: React.ReactNode; tone?: "blue" | "green" | "orange" | "gray" | "red" }) {
-  return <span className={`pill ${tone}`}>{children}</span>;
-}
+const emptyStudent: Omit<Student, "id"> = {
+  name: "", school: "", grade: "고1", phone: "", parentPhone: "", status: "정상", sosStatus: "진단대기", lastScore: null, lastExam: "-", joinedAt: new Date().toISOString().slice(0, 10), memo: "",
+};
 
 export default function Home() {
-  const [active, setActive] = useState<AdminMenu>("dashboard");
+  const [active, setActive] = useState<AdminMenu>("students");
   const [collapsed, setCollapsed] = useState(false);
-  const [search, setSearch] = useState("");
+  const [students, setStudents] = useState<Student[]>(initialStudents);
 
   const title = menus.find((menu) => menu.id === active)?.label ?? "대시보드";
-  const filteredStudents = useMemo(() => students.filter((s) => `${s.name}${s.school}${s.grade}`.toLowerCase().includes(search.toLowerCase())), [search]);
 
   return (
     <main className={`admin-app ${collapsed ? "collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="brand-row">
-          <div className="brand-symbol">S</div>
-          <div className="brand-copy"><strong>SOS</strong><span>Score Optimization System</span></div>
+          <div className="brand-symbol">M</div>
+          <div className="brand-copy"><strong>MATSPU SOS</strong><span>Score Optimization System</span></div>
           <button className="collapse-button" onClick={() => setCollapsed((v) => !v)} aria-label="사이드바 접기">‹</button>
         </div>
-
         <div className="workspace-card">
-          <div className="workspace-logo">새</div>
-          <div><strong>새움수 고등부</strong><span>관리자 워크스페이스</span></div>
+          <div className="workspace-logo">M</div>
+          <div><strong>매쓰푸</strong><span>관리자 워크스페이스</span></div>
           <b>⌄</b>
         </div>
-
         <nav className="side-nav">
           <p>운영 메뉴</p>
           {menus.slice(0, 7).map((menu) => (
@@ -72,7 +81,6 @@ export default function Home() {
             </button>
           ))}
         </nav>
-
         <div className="sidebar-bottom">
           <div className="admin-avatar">이</div>
           <div><strong>이철용 원장</strong><span>최고 관리자</span></div>
@@ -82,115 +90,140 @@ export default function Home() {
 
       <section className="main-area">
         <header className="topbar">
-          <div>
-            <p>SOS 관리자</p>
-            <h1>{title}</h1>
-          </div>
+          <div><p>매쓰푸 SOS 관리자</p><h1>{title}</h1></div>
           <div className="top-actions">
-            <label className="global-search"><span>⌕</span><input placeholder="학생, 시험, 문제 검색" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
             <button className="icon-button">?</button>
             <button className="icon-button notification">♢<b>3</b></button>
             <button className="primary-button" onClick={() => setActive("exams")}>＋ 새 시험 만들기</button>
           </div>
         </header>
-
         <div className="page-content">
-          {active === "dashboard" ? <Dashboard onMove={setActive} /> : active === "students" ? <StudentsPage data={filteredStudents} search={search} setSearch={setSearch} /> : <ComingSoon menu={active} title={title} onMove={setActive} />}
+          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
         </div>
       </section>
     </main>
   );
 }
 
-function Dashboard({ onMove }: { onMove: (menu: AdminMenu) => void }) {
+function StudentsPage({ students, setStudents }: { students: Student[]; setStudents: React.Dispatch<React.SetStateAction<Student[]>> }) {
+  const [search, setSearch] = useState("");
+  const [grade, setGrade] = useState("전체");
+  const [status, setStatus] = useState("전체");
+  const [sosStatus, setSosStatus] = useState("전체");
+  const [selected, setSelected] = useState<Student | null>(null);
+  const [editing, setEditing] = useState<Student | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
+
+  const filtered = useMemo(() => students.filter((student) => {
+    const keyword = `${student.name} ${student.school} ${student.phone} ${student.parentPhone}`.toLowerCase();
+    return keyword.includes(search.toLowerCase()) && (grade === "전체" || student.grade === grade) && (status === "전체" || student.status === status) && (sosStatus === "전체" || student.sosStatus === sosStatus);
+  }), [students, search, grade, status, sosStatus]);
+
+  const stats = {
+    all: students.length,
+    active: students.filter((s) => s.status === "정상").length,
+    waiting: students.filter((s) => s.sosStatus === "진단대기").length,
+    training: students.filter((s) => s.sosStatus === "훈련중").length,
+  };
+
+  const saveStudent = (form: Omit<Student, "id">) => {
+    if (editing) {
+      setStudents((prev) => prev.map((s) => s.id === editing.id ? { ...form, id: editing.id } : s));
+      setSelected((prev) => prev?.id === editing.id ? { ...form, id: editing.id } : prev);
+    } else {
+      setStudents((prev) => [{ ...form, id: Math.max(0, ...prev.map((s) => s.id)) + 1 }, ...prev]);
+    }
+    setEditing(null); setIsAdding(false);
+  };
+
+  const removeStudent = (id: number) => {
+    if (!window.confirm("이 학생을 목록에서 삭제할까요?")) return;
+    setStudents((prev) => prev.filter((s) => s.id !== id));
+    setSelected(null);
+  };
+
   return <>
-    <section className="welcome-card">
-      <div><Pill tone="blue">2026년 7월 25일 토요일</Pill><h2>오늘도 학생의 점수를 최적화해 볼까요?</h2><p>진행 중인 시험과 AI 분석 대기 항목을 확인하고 필요한 작업을 이어가세요.</p></div>
-      <div className="welcome-visual"><span>점수</span><strong>+12.4</strong><small>최근 4주 평균 향상</small><div className="mini-bars"><i/><i/><i/><i/><i/><i/></div></div>
+    <section className="page-title-row">
+      <div><h2>학생 관리</h2><p>학생 기본정보와 SOS 진단·훈련 진행 상태를 한 곳에서 관리합니다.</p></div>
+      <button className="primary-button" onClick={() => { setEditing(null); setIsAdding(true); }}>＋ 학생 등록</button>
     </section>
 
-    <section className="stat-grid">
-      <Stat icon="♙" label="등록 학생" value="128" change="이번 달 +8명" tone="blue" />
-      <Stat icon="▤" label="진행 중 시험" value="6" change="오늘 2개 마감" tone="purple" />
-      <Stat icon="✦" label="AI 분석 대기" value="12" change="우선 처리 필요" tone="orange" />
-      <Stat icon="◎" label="추천 승인 대기" value="7" change="어제보다 3건 감소" tone="green" />
+    <section className="student-stat-grid">
+      <MiniStat label="전체 학생" value={`${stats.all}명`} note="등록 기준" />
+      <MiniStat label="재원 학생" value={`${stats.active}명`} note="정상 상태" />
+      <MiniStat label="진단 대기" value={`${stats.waiting}명`} note="분석 필요" emphasis />
+      <MiniStat label="SOS 훈련중" value={`${stats.training}명`} note="현재 진행" />
     </section>
 
-    <section className="dashboard-grid">
-      <article className="panel wide">
-        <div className="panel-head"><div><h3>오늘의 운영 현황</h3><p>시험 응시부터 SOS 추천까지의 진행 상태입니다.</p></div><button onClick={() => onMove("results")}>전체 이력 보기 →</button></div>
-        <div className="flow-grid">
-          <Flow step="01" label="시험 응시" value="42명" note="응시 중 11명" />
-          <Flow step="02" label="자동 채점" value="31건" note="완료율 73.8%" />
-          <Flow step="03" label="AI 진단" value="19건" note="대기 12건" warn />
-          <Flow step="04" label="SOS 추천" value="14건" note="승인 대기 7건" />
-        </div>
-        <div className="progress-wrap"><div><span>오늘 처리율</span><b>74%</b></div><div className="progress"><i style={{ width: "74%" }} /></div></div>
-      </article>
-
-      <article className="panel quick-panel">
-        <div className="panel-head"><div><h3>빠른 작업</h3><p>자주 사용하는 메뉴</p></div></div>
-        <div className="quick-grid">
-          <button onClick={() => onMove("exams")}><i>＋</i><strong>시험 만들기</strong><span>PDF·정답 등록</span></button>
-          <button onClick={() => onMove("students")}><i>♙</i><strong>학생 등록</strong><span>학생 정보 추가</span></button>
-          <button onClick={() => onMove("problems")}><i>▦</i><strong>문제 등록</strong><span>훈련 문제 추가</span></button>
-          <button onClick={() => onMove("analysis")}><i>✦</i><strong>분석 검토</strong><span>AI 결과 확인</span></button>
-        </div>
-      </article>
-    </section>
-
-    <section className="dashboard-grid lower">
-      <article className="panel wide">
-        <div className="panel-head"><div><h3>최근 실전 모의고사</h3><p>최근 등록하거나 진행한 시험입니다.</p></div><button onClick={() => onMove("exams")}>시험 전체 보기 →</button></div>
-        <div className="data-table exam-list">
-          <div className="table-head"><span>시험명</span><span>대상</span><span>문항</span><span>응시</span><span>상태</span><span>날짜</span></div>
-          {exams.map((exam) => <div className="table-row" key={exam.title}><strong>{exam.title}</strong><span>{exam.grade}</span><span>{exam.questions}</span><span>{exam.participants}명</span><Status text={exam.status}/><span>{exam.date}</span></div>)}
-        </div>
-      </article>
-
-      <article className="panel activity-panel">
-        <div className="panel-head"><div><h3>최근 활동</h3><p>실시간 운영 기록</p></div></div>
-        <div className="activity-list">
-          <Activity icon="✓" title="김민준 분석 완료" text="고2 미적분 실전 진단 01" time="8분 전" />
-          <Activity icon="✦" title="AI 분석 5건 생성" text="검토 대기 목록에 추가됨" time="22분 전" />
-          <Activity icon="＋" title="문예진 시험 제출" text="76점 · 오답 7문항" time="41분 전" />
-          <Activity icon="◎" title="SOS 추천 승인" text="송연우 훈련 10문항" time="1시간 전" />
-        </div>
-      </article>
-    </section>
-  </>;
-}
-
-function StudentsPage({ data, search, setSearch }: { data: typeof students; search: string; setSearch: (v: string) => void }) {
-  return <>
-    <section className="page-title-row"><div><h2>학생 관리</h2><p>학생 정보와 최근 시험·SOS 진행 상태를 관리합니다.</p></div><button className="primary-button">＋ 학생 등록</button></section>
-    <section className="panel">
-      <div className="toolbar"><label className="global-search large"><span>⌕</span><input placeholder="학생 이름 또는 학교 검색" value={search} onChange={(e) => setSearch(e.target.value)} /></label><select><option>전체 학년</option><option>중3</option><option>고1</option><option>고2</option><option>고3</option></select><select><option>전체 상태</option><option>분석완료</option><option>훈련중</option><option>진단대기</option></select></div>
+    <section className="panel student-panel">
+      <div className="student-toolbar">
+        <label className="global-search large"><span>⌕</span><input placeholder="학생 이름, 학교, 연락처 검색" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+        <select value={grade} onChange={(e) => setGrade(e.target.value)}><option>전체</option><option>중3</option><option>고1</option><option>고2</option><option>고3</option></select>
+        <select value={status} onChange={(e) => setStatus(e.target.value)}><option>전체</option><option>정상</option><option>휴원</option><option>퇴원</option></select>
+        <select value={sosStatus} onChange={(e) => setSosStatus(e.target.value)}><option>전체</option><option>분석완료</option><option>훈련중</option><option>진단대기</option><option>미응시</option></select>
+        <button className="secondary-button" onClick={() => { setSearch(""); setGrade("전체"); setStatus("전체"); setSosStatus("전체"); }}>초기화</button>
+      </div>
+      <div className="list-summary"><strong>학생 {filtered.length}명</strong><span>행을 클릭하면 학생 상세정보가 열립니다.</span></div>
       <div className="data-table student-list">
-        <div className="table-head"><span>학생</span><span>학교 / 학년</span><span>최근 점수</span><span>SOS 상태</span><span>최근 응시</span><span>관리</span></div>
-        {data.map((student) => <div className="table-row" key={student.name}><div className="student-name"><i>{student.name.slice(0,1)}</i><strong>{student.name}</strong></div><span>{student.school} · {student.grade}</span><b>{student.score}점</b><Status text={student.status}/><span>{student.last}</span><button className="link-button">상세 보기</button></div>)}
+        <div className="table-head"><span>학생</span><span>학교 / 학년</span><span>학생 연락처</span><span>최근 점수</span><span>SOS 상태</span><span>재원 상태</span><span>최근 응시</span><span>관리</span></div>
+        {filtered.map((student) => (
+          <div className="table-row clickable" key={student.id} onClick={() => setSelected(student)}>
+            <div className="student-name"><i>{student.name.slice(0, 1)}</i><div><strong>{student.name}</strong><small>등록 {student.joinedAt}</small></div></div>
+            <span>{student.school} · {student.grade}</span><span>{student.phone}</span>
+            <b className="score-cell">{student.lastScore === null ? "-" : `${student.lastScore}점`}</b>
+            <Status text={student.sosStatus} /><Status text={student.status} /><span>{student.lastExam}</span>
+            <button className="more-button" onClick={(e) => { e.stopPropagation(); setEditing(student); }}>수정</button>
+          </div>
+        ))}
+        {filtered.length === 0 && <div className="empty-list">조건에 맞는 학생이 없습니다.</div>}
       </div>
     </section>
+
+    {(isAdding || editing) && <StudentModal initial={editing ?? emptyStudent} title={editing ? "학생 정보 수정" : "새 학생 등록"} onClose={() => { setIsAdding(false); setEditing(null); }} onSave={saveStudent} />}
+    {selected && <StudentDrawer student={selected} onClose={() => setSelected(null)} onEdit={() => setEditing(selected)} onDelete={() => removeStudent(selected.id)} />}
   </>;
 }
 
-function ComingSoon({ menu, title, onMove }: { menu: AdminMenu; title: string; onMove: (menu: AdminMenu) => void }) {
-  const descriptions: Record<AdminMenu, string> = {
-    dashboard: "", students: "", exams: "시험 생성, PDF 등록, 문항 좌표와 정답·배점을 관리하는 화면입니다.", problems: "훈련 문제를 단원·난이도·유형별로 등록하고 검색하는 화면입니다.", analysis: "AI가 생성한 문항 분석과 진단 결과를 검토하고 승인하는 화면입니다.", recommend: "학생별 공략문항·진단3·훈련10 추천을 검토하고 교체하는 화면입니다.", results: "시험 점수와 오답, SOS 훈련 결과 및 전체 이력을 조회하는 화면입니다.", settings: "학원 정보, 계정 권한, 기본 시험 설정을 관리하는 화면입니다."
-  };
-  return <section className="empty-page"><div className="empty-icon">{menus.find(m => m.id === menu)?.icon}</div><Pill>관리자 기능</Pill><h2>{title}</h2><p>{descriptions[menu]}</p><div><button className="primary-button">이 화면 개발 시작</button><button className="secondary-button" onClick={() => onMove("dashboard")}>대시보드로</button></div></section>;
+function StudentModal({ initial, title, onClose, onSave }: { initial: Student | Omit<Student, "id">; title: string; onClose: () => void; onSave: (student: Omit<Student, "id">) => void }) {
+  const [form, setForm] = useState<Omit<Student, "id">>({ name: initial.name, school: initial.school, grade: initial.grade, phone: initial.phone, parentPhone: initial.parentPhone, status: initial.status, sosStatus: initial.sosStatus, lastScore: initial.lastScore, lastExam: initial.lastExam, joinedAt: initial.joinedAt, memo: initial.memo });
+  const set = <K extends keyof Omit<Student, "id">>(key: K, value: Omit<Student, "id">[K]) => setForm((prev) => ({ ...prev, [key]: value }));
+  const submit = (e: FormEvent) => { e.preventDefault(); if (!form.name.trim() || !form.school.trim()) return alert("학생 이름과 학교를 입력해 주세요."); onSave(form); };
+  return <div className="modal-backdrop" onMouseDown={onClose}><form className="student-modal" onSubmit={submit} onMouseDown={(e) => e.stopPropagation()}>
+    <div className="modal-head"><div><h3>{title}</h3><p>매쓰푸 SOS에서 사용할 학생 기본정보입니다.</p></div><button type="button" onClick={onClose}>×</button></div>
+    <div className="form-grid">
+      <Field label="학생 이름 *"><input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="예: 김민준" /></Field>
+      <Field label="학교 *"><input value={form.school} onChange={(e) => set("school", e.target.value)} placeholder="예: 보성고" /></Field>
+      <Field label="학년"><select value={form.grade} onChange={(e) => set("grade", e.target.value)}><option>중3</option><option>고1</option><option>고2</option><option>고3</option></select></Field>
+      <Field label="재원 상태"><select value={form.status} onChange={(e) => set("status", e.target.value as StudentStatus)}><option>정상</option><option>휴원</option><option>퇴원</option></select></Field>
+      <Field label="학생 연락처"><input value={form.phone} onChange={(e) => set("phone", e.target.value)} placeholder="010-0000-0000" /></Field>
+      <Field label="학부모 연락처"><input value={form.parentPhone} onChange={(e) => set("parentPhone", e.target.value)} placeholder="010-0000-0000" /></Field>
+      <Field label="SOS 상태"><select value={form.sosStatus} onChange={(e) => set("sosStatus", e.target.value as SosStatus)}><option>진단대기</option><option>훈련중</option><option>분석완료</option><option>미응시</option></select></Field>
+      <Field label="등록일"><input type="date" value={form.joinedAt} onChange={(e) => set("joinedAt", e.target.value)} /></Field>
+      <Field label="최근 점수"><input type="number" min="0" max="100" value={form.lastScore ?? ""} onChange={(e) => set("lastScore", e.target.value === "" ? null : Number(e.target.value))} placeholder="0~100" /></Field>
+      <Field label="최근 응시일"><input type="date" value={form.lastExam === "-" ? "" : form.lastExam} onChange={(e) => set("lastExam", e.target.value || "-")} /></Field>
+      <label className="field full"><span>관리 메모</span><textarea value={form.memo} onChange={(e) => set("memo", e.target.value)} placeholder="학생 지도에 필요한 메모를 입력하세요." /></label>
+    </div>
+    <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>취소</button><button className="primary-button">저장</button></div>
+  </form></div>;
 }
 
-function Stat({ icon, label, value, change, tone }: { icon: string; label: string; value: string; change: string; tone: string }) {
-  return <article className="stat-card"><i className={tone}>{icon}</i><div><span>{label}</span><strong>{value}</strong><small>{change}</small></div></article>;
+function StudentDrawer({ student, onClose, onEdit, onDelete }: { student: Student; onClose: () => void; onEdit: () => void; onDelete: () => void }) {
+  return <div className="drawer-backdrop" onMouseDown={onClose}><aside className="student-drawer" onMouseDown={(e) => e.stopPropagation()}>
+    <div className="drawer-head"><span>학생 상세정보</span><button onClick={onClose}>×</button></div>
+    <div className="student-profile"><i>{student.name.slice(0, 1)}</i><div><h3>{student.name}</h3><p>{student.school} · {student.grade}</p></div><Status text={student.status} /></div>
+    <div className="detail-score"><span>최근 시험 점수</span><strong>{student.lastScore === null ? "-" : student.lastScore}<small>{student.lastScore === null ? "" : "점"}</small></strong><Status text={student.sosStatus} /></div>
+    <div className="detail-section"><h4>기본 정보</h4><Detail label="학생 연락처" value={student.phone || "-"} /><Detail label="학부모 연락처" value={student.parentPhone || "-"} /><Detail label="등록일" value={student.joinedAt} /><Detail label="최근 응시" value={student.lastExam} /></div>
+    <div className="detail-section"><h4>관리 메모</h4><p className="memo-box">{student.memo || "등록된 메모가 없습니다."}</p></div>
+    <div className="drawer-actions"><button className="secondary-button danger" onClick={onDelete}>학생 삭제</button><button className="primary-button" onClick={onEdit}>정보 수정</button></div>
+  </aside></div>;
 }
-function Flow({ step, label, value, note, warn }: { step: string; label: string; value: string; note: string; warn?: boolean }) {
-  return <div className="flow-card"><i>{step}</i><span>{label}</span><strong>{value}</strong><small className={warn ? "warn" : ""}>{note}</small></div>;
+
+function Dashboard({ students, onMove }: { students: Student[]; onMove: (menu: AdminMenu) => void }) {
+  return <><section className="welcome-card"><div><span className="pill">MATSPU SOS</span><h2>학생의 점수를 데이터로 최적화합니다.</h2><p>진단부터 훈련 추천까지 매쓰푸의 전체 흐름을 관리하세요.</p></div></section><section className="student-stat-grid"><MiniStat label="등록 학생" value={`${students.length}명`} note="전체 회원" /><MiniStat label="재원 학생" value={`${students.filter(s => s.status === "정상").length}명`} note="현재 학습중" /><MiniStat label="AI 분석 대기" value="12건" note="검토 필요" emphasis /><MiniStat label="추천 승인 대기" value="7건" note="SOS 추천" /></section><section className="empty-page"><div className="empty-icon">⌂</div><h2>대시보드 상세 구성 예정</h2><p>현재는 학생관리 기능을 우선 개발했습니다.</p><button className="primary-button" onClick={() => onMove("students")}>학생 관리 열기</button></section></>;
 }
-function Status({ text }: { text: string }) {
-  const tone = text.includes("완료") || text === "분석완료" ? "green" : text.includes("진행") || text.includes("훈련") ? "blue" : text.includes("대기") || text.includes("작성") ? "orange" : "gray";
-  return <Pill tone={tone}>{text}</Pill>;
-}
-function Activity({ icon, title, text, time }: { icon: string; title: string; text: string; time: string }) {
-  return <div className="activity"><i>{icon}</i><div><strong>{title}</strong><span>{text}</span></div><small>{time}</small></div>;
-}
+
+function ComingSoon({ title, onMove }: { title: string; onMove: (menu: AdminMenu) => void }) { return <section className="empty-page"><div className="empty-icon">✦</div><h2>{title}</h2><p>학생관리 다음 단계에서 실제 운영 기능을 연결합니다.</p><button className="primary-button" onClick={() => onMove("students")}>학생 관리로 돌아가기</button></section>; }
+function MiniStat({ label, value, note, emphasis = false }: { label: string; value: string; note: string; emphasis?: boolean }) { return <article className={`mini-stat ${emphasis ? "emphasis" : ""}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }
+function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
+function Detail({ label, value }: { label: string; value: string }) { return <div className="detail-row"><span>{label}</span><strong>{value}</strong></div>; }
+function Status({ text }: { text: string }) { const tone = ["정상", "분석완료"].includes(text) ? "green" : ["훈련중"].includes(text) ? "blue" : ["진단대기"].includes(text) ? "orange" : ["퇴원"].includes(text) ? "red" : "gray"; return <span className={`pill ${tone}`}>{text}</span>; }
