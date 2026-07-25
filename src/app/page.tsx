@@ -5,6 +5,8 @@ import { FormEvent, useMemo, useState } from "react";
 type AdminMenu = "dashboard" | "students" | "exams" | "problems" | "analysis" | "recommend" | "results" | "settings";
 type StudentStatus = "정상" | "휴원" | "퇴원";
 type SosStatus = "분석완료" | "훈련중" | "진단대기" | "미응시";
+type StudentTab = "students" | "registration";
+type ExamRound = { id: number; name: string; date: string; grade: string; status: "등록중" | "마감" };
 
 type Student = {
   id: number;
@@ -41,6 +43,14 @@ const initialStudents: Student[] = [
   { id: 4, name: "송연우", school: "배명고", grade: "고2", phone: "010-6683-2071", parentPhone: "010-9210-6675", status: "정상", sosStatus: "분석완료", lastScore: 91, lastExam: "2026.07.22", joinedAt: "2025.12.18", memo: "상위권 실전 훈련 유지" },
   { id: 5, name: "이도윤", school: "정신여고", grade: "고3", phone: "010-4720-1386", parentPhone: "010-3165-8021", status: "휴원", sosStatus: "미응시", lastScore: null, lastExam: "-", joinedAt: "2026.01.08", memo: "8월 복귀 예정" },
   { id: 6, name: "박서준", school: "잠신고", grade: "중3", phone: "010-9074-5312", parentPhone: "010-2764-9160", status: "정상", sosStatus: "훈련중", lastScore: 88, lastExam: "2026.07.20", joinedAt: "2026.06.10", memo: "고등 선행 진단 진행" },
+];
+
+
+const examRounds: ExamRound[] = [
+  { id: 1, name: "2026 SOS 1회", date: "2026.08.02", grade: "고1", status: "등록중" },
+  { id: 2, name: "2026 SOS 2회", date: "2026.08.09", grade: "고2", status: "등록중" },
+  { id: 3, name: "2026 SOS 3회", date: "2026.08.16", grade: "고3", status: "등록중" },
+  { id: 4, name: "2026 SOS 4회", date: "2026.07.19", grade: "전체", status: "마감" },
 ];
 
 const emptyStudent: Omit<Student, "id"> = {
@@ -113,6 +123,9 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
   const [selected, setSelected] = useState<Student | null>(null);
   const [editing, setEditing] = useState<Student | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [tab, setTab] = useState<StudentTab>("students");
+  const [selectedRoundId, setSelectedRoundId] = useState(examRounds[0].id);
+  const [registrations, setRegistrations] = useState<Record<number, number[]>>({ 1: [1, 2, 4], 2: [1, 4], 3: [5], 4: [1, 2, 3, 4, 6] });
 
   const filtered = useMemo(() => students.filter((student) => {
     const keyword = `${student.name} ${student.school} ${student.phone} ${student.parentPhone}`.toLowerCase();
@@ -142,18 +155,36 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
     setSelected(null);
   };
 
+  const selectedRound = examRounds.find((round) => round.id === selectedRoundId) ?? examRounds[0];
+  const roundStudents = students.filter((student) => student.status === "정상" && (selectedRound.grade === "전체" || student.grade === selectedRound.grade));
+  const registeredIds = registrations[selectedRoundId] ?? [];
+  const toggleRegistration = (studentId: number) => {
+    setRegistrations((prev) => {
+      const current = prev[selectedRoundId] ?? [];
+      return { ...prev, [selectedRoundId]: current.includes(studentId) ? current.filter((id) => id !== studentId) : [...current, studentId] };
+    });
+  };
+  const registerAll = () => setRegistrations((prev) => ({ ...prev, [selectedRoundId]: roundStudents.map((student) => student.id) }));
+  const clearAll = () => setRegistrations((prev) => ({ ...prev, [selectedRoundId]: [] }));
+
   return <>
     <section className="page-title-row">
       <div><h2>학생 관리</h2><p>학생 기본정보와 SOS 진단·훈련 진행 상태를 한 곳에서 관리합니다.</p></div>
       <button className="primary-button" onClick={() => { setEditing(null); setIsAdding(true); }}>＋ 학생 등록</button>
     </section>
 
-    <section className="student-stat-grid">
-      <MiniStat label="전체 학생" value={`${stats.all}명`} note="등록 기준" />
-      <MiniStat label="재원 학생" value={`${stats.active}명`} note="정상 상태" />
-      <MiniStat label="진단 대기" value={`${stats.waiting}명`} note="분석 필요" emphasis />
-      <MiniStat label="SOS 훈련중" value={`${stats.training}명`} note="현재 진행" />
-    </section>
+    <div className="student-tabs">
+      <button className={tab === "students" ? "active" : ""} onClick={() => setTab("students")}>학생 목록</button>
+      <button className={tab === "registration" ? "active" : ""} onClick={() => setTab("registration")}>시험회차별 등록여부</button>
+    </div>
+
+    {tab === "students" ? <>
+      <section className="student-stat-grid">
+        <MiniStat label="전체 학생" value={`${stats.all}명`} note="등록 기준" />
+        <MiniStat label="재원 학생" value={`${stats.active}명`} note="정상 상태" />
+        <MiniStat label="진단 대기" value={`${stats.waiting}명`} note="분석 필요" emphasis />
+        <MiniStat label="SOS 훈련중" value={`${stats.training}명`} note="현재 진행" />
+      </section>
 
     <section className="panel student-panel">
       <div className="student-toolbar">
@@ -178,6 +209,40 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
         {filtered.length === 0 && <div className="empty-list">조건에 맞는 학생이 없습니다.</div>}
       </div>
     </section>
+    </> : <section className="panel registration-panel">
+      <div className="registration-header">
+        <div>
+          <span className="section-kicker">시험회차 선택</span>
+          <select value={selectedRoundId} onChange={(e) => setSelectedRoundId(Number(e.target.value))}>
+            {examRounds.map((round) => <option key={round.id} value={round.id}>{round.name} · {round.date} · {round.grade}</option>)}
+          </select>
+        </div>
+        <div className="registration-actions">
+          <button className="secondary-button" onClick={clearAll}>전체 미등록</button>
+          <button className="primary-button" onClick={registerAll}>전체 등록</button>
+        </div>
+      </div>
+      <div className="round-summary">
+        <div><span>시험 회차</span><strong>{selectedRound.name}</strong></div>
+        <div><span>시험일</span><strong>{selectedRound.date}</strong></div>
+        <div><span>대상</span><strong>{selectedRound.grade}</strong></div>
+        <div><span>등록 현황</span><strong>{registeredIds.filter((id) => roundStudents.some((student) => student.id === id)).length} / {roundStudents.length}명</strong></div>
+      </div>
+      <div className="registration-progress"><i style={{ width: `${roundStudents.length ? (registeredIds.filter((id) => roundStudents.some((student) => student.id === id)).length / roundStudents.length) * 100 : 0}%` }} /></div>
+      <div className="data-table registration-list">
+        <div className="table-head"><span>학생</span><span>학교 / 학년</span><span>연락처</span><span>SOS 상태</span><span>등록 여부</span><span>변경</span></div>
+        {roundStudents.map((student) => {
+          const isRegistered = registeredIds.includes(student.id);
+          return <div className="table-row" key={student.id}>
+            <div className="student-name"><i>{student.name.slice(0, 1)}</i><div><strong>{student.name}</strong><small>{student.school}</small></div></div>
+            <span>{student.school} · {student.grade}</span><span>{student.phone}</span><Status text={student.sosStatus} />
+            <span className={`registration-state ${isRegistered ? "registered" : "unregistered"}`}>{isRegistered ? "등록" : "미등록"}</span>
+            <button className={`toggle-register ${isRegistered ? "on" : ""}`} onClick={() => toggleRegistration(student.id)}>{isRegistered ? "등록 취소" : "등록하기"}</button>
+          </div>;
+        })}
+        {roundStudents.length === 0 && <div className="empty-list">이 회차 대상 학생이 없습니다.</div>}
+      </div>
+    </section>}
 
     {(isAdding || editing) && <StudentModal initial={editing ?? emptyStudent} title={editing ? "학생 정보 수정" : "새 학생 등록"} onClose={() => { setIsAdding(false); setEditing(null); }} onSave={saveStudent} />}
     {selected && <StudentDrawer student={selected} onClose={() => setSelected(null)} onEdit={() => setEditing(selected)} onDelete={() => removeStudent(selected.id)} />}
