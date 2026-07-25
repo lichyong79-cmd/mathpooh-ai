@@ -376,6 +376,7 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draftFiles, setDraftFiles] = useState<PdfBundle>({});
   const [preview, setPreview] = useState<{ title: string; file: File } | null>(null);
+  const [regionDrafts, setRegionDrafts] = useState<Record<number, "자동인식" | "확인필요">>({});
 
   useEffect(() => {
     const saved = window.localStorage.getItem("matspu-exam-tab");
@@ -466,6 +467,20 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
     setPreview({ title: `${exam.title} · ${label}`, file });
   };
 
+  const printCover = () => {
+    const popup = window.open("", "_blank", "width=900,height=1000");
+    if (!popup) return alert("팝업이 차단되었습니다. 팝업을 허용한 뒤 다시 눌러 주세요.");
+    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${form.title || "SOS 시험 표지"}</title><style>body{font-family:Arial,'Noto Sans KR',sans-serif;margin:0;color:#1d2744}.page{width:210mm;min-height:297mm;padding:22mm;box-sizing:border-box}.brand{text-align:center;font-weight:900;font-size:34px;letter-spacing:3px}.sub{text-align:center;font-size:14px;margin-top:6px;color:#667085}.line{height:3px;background:#5268e8;margin:24px 0}.title{text-align:center;font-size:28px;font-weight:900;line-height:1.4;margin:24px 0 34px}.info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cfd5e6}.info div{padding:14px 16px;border-right:1px solid #cfd5e6;border-bottom:1px solid #cfd5e6}.info div:nth-child(2n){border-right:0}.label{font-size:12px;color:#7d8598}.value{font-size:18px;font-weight:800;margin-top:5px}.student{margin-top:34px;border:1px solid #cfd5e6;padding:22px;line-height:3;font-size:18px}.notice{margin-top:34px;background:#f5f7fb;padding:20px 24px;font-size:15px;line-height:1.9}.footer{margin-top:42px;text-align:center;color:#7d8598;font-size:12px}@media print{body{print-color-adjust:exact;-webkit-print-color-adjust:exact}}</style></head><body><section class="page"><div class="brand">SOS</div><div class="sub">Score Optimization System · MATSPU</div><div class="line"></div><div class="title">${form.title || "시험명을 입력해 주세요"}</div><div class="info"><div><div class="label">대상</div><div class="value">${form.grade}</div></div><div><div class="label">과목</div><div class="value">${form.subject || "-"}</div></div><div><div class="label">시험일</div><div class="value">${form.examDate || "-"}</div></div><div><div class="label">시험시간</div><div class="value">${form.timeLimit}분</div></div><div><div class="label">문항수</div><div class="value">${form.questionCount}문항</div></div><div><div class="label">총점</div><div class="value">${form.totalScore}점</div></div></div><div class="student">학생명 _______________________________<br>학교 _________________________________<br>반 ____________ 번호 ____________</div><div class="notice"><strong>응시 안내</strong><br>1. 감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br>2. 제한시간을 지키고 답안을 빠짐없이 작성하세요.<br>3. 시험 종료 후 시험지와 답안을 모두 제출하세요.</div><div class="footer">${form.examCode || "SOS"}</div></section><script>window.onload=()=>window.print();<\/script></body></html>`);
+    popup.document.close();
+  };
+
+  const createRegionDrafts = () => {
+    if (!form.testFile) return alert("먼저 시험지 PDF를 등록해 주세요.");
+    const drafts: Record<number, "자동인식" | "확인필요"> = {};
+    for (let no = 1; no <= form.questionCount; no += 1) drafts[no] = no % 11 === 0 ? "확인필요" : "자동인식";
+    setRegionDrafts(drafts);
+  };
+
   return <>
     <section className="page-title-row">
       <div><h2>실전 모의고사</h2><p>시험 회차와 기본정보, 문항 구성, 시험지·해설지를 등록합니다.</p></div>
@@ -536,6 +551,27 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
           </div>
         </div>
         <label className="field exam-memo"><span>관리 메모</span><textarea value={form.memo} onChange={(e) => set("memo", e.target.value)} placeholder="출제 의도, 검토 상태 등 관리자 메모를 입력하세요." /></label>
+      </section>
+      <section className="panel exam-form-panel">
+        <div className="form-section-title"><div><span>04</span><div><h3>SOS 시험 표지</h3><p>입력한 시험정보를 사용해 공용 표지를 자동 생성합니다.</p></div></div></div>
+        <div className="cover-builder">
+          <article className="exam-cover-preview">
+            <div className="cover-logo">SOS</div><small>Score Optimization System · MATSPU</small>
+            <div className="cover-rule" />
+            <h2>{form.title || "시험명을 입력해 주세요"}</h2>
+            <div className="cover-info-grid"><span>대상</span><b>{form.grade}</b><span>과목</span><b>{form.subject || "-"}</b><span>시험일</span><b>{form.examDate || "-"}</b><span>시험시간</span><b>{form.timeLimit}분</b><span>문항수</span><b>{form.questionCount}문항</b><span>총점</span><b>{form.totalScore}점</b></div>
+            <div className="cover-student-lines">학생명 ____________________<br />학교 ______________________<br />반 ________ 번호 ________</div>
+            <div className="cover-notice"><strong>응시 안내</strong><br />감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br />시험 종료 후 시험지와 답안을 모두 제출하세요.</div>
+          </article>
+          <div className="cover-actions"><strong>표지 출력</strong><p>시험 정보가 바뀌면 표지에도 즉시 반영됩니다. 원본 시험지 PDF는 변경하지 않습니다.</p><button type="button" className="primary-button" onClick={printCover}>표지 미리보기 · 인쇄</button><button type="button" className="secondary-button" disabled={!form.testFile} onClick={() => alert("표지와 시험지 PDF 결합은 Supabase Storage 연결 단계에서 적용합니다.")}>표지+시험지 통합 준비</button></div>
+        </div>
+      </section>
+      <section className="panel exam-form-panel">
+        <div className="form-section-title"><div><span>05</span><div><h3>문항영역 자동 초안</h3><p>자동 분석으로 초안을 만들고, 확인이 필요한 문항만 보정합니다.</p></div></div></div>
+        <div className="region-builder">
+          <div className="region-toolbar"><div><strong>{form.questionCount}문항 영역 설정</strong><p>현재 단계에서는 자동 초안과 검수 흐름을 제공합니다. 실제 PDF 좌표 분석은 다음 엔진 단계에서 연결합니다.</p></div><div><button type="button" className="primary-button" onClick={createRegionDrafts}>자동 분석 시작</button><button type="button" className="secondary-button" onClick={() => { window.location.href = `/pdf-mapper?exam=${editingId ?? "new"}&questions=${form.questionCount}`; }}>영역 편집기 열기</button></div></div>
+          {Object.keys(regionDrafts).length ? <><div className="region-progress"><i style={{ width: `${Math.round((Object.values(regionDrafts).filter(v => v === "자동인식").length / form.questionCount) * 100)}%` }} /></div><div className="region-chip-grid">{Array.from({ length: form.questionCount }, (_, index) => index + 1).map((no) => <button type="button" key={no} className={regionDrafts[no] === "확인필요" ? "needs-check" : "auto-ok"} onClick={() => setRegionDrafts(prev => ({ ...prev, [no]: prev[no] === "확인필요" ? "자동인식" : "확인필요" }))}><b>{no}</b><span>{regionDrafts[no] === "확인필요" ? "확인 필요" : "자동인식"}</span></button>)}</div></> : <div className="region-empty">시험지 PDF를 등록한 뒤 <b>자동 분석 시작</b>을 눌러 주세요.</div>}
+        </div>
       </section>
       <div className="exam-form-actions"><button type="button" className="secondary-button" onClick={() => setTab("list")}>취소</button><button className="primary-button">{editingId ? "수정 저장" : "시험 등록"}</button></div>
     </form>}
