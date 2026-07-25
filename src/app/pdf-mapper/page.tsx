@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { getSupabaseConfig } from "@/lib/supabase";
 
 type Rect = { x: number; y: number; w: number; h: number };
 type QuestionRegion = Rect & { number: number; page: number; answer: string; type: "choice" | "short" };
@@ -29,6 +30,8 @@ export default function PdfMapperPage() {
   const [autoNext, setAutoNext] = useState(true);
   const [draft, setDraft] = useState<Rect | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
+  const [loadingRegisteredPdf, setLoadingRegisteredPdf] = useState(true);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
@@ -36,6 +39,37 @@ export default function PdfMapperPage() {
 
   const activeRegion = regions[activeNumber - 1];
   const completed = regions.filter(r => r.w > 0 && r.h > 0).length;
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const examId = params.get("exam");
+    const questionCount = Math.max(1, Number(params.get("questions") || 30));
+    setRegions(Array.from({ length: questionCount }, (_, i) => ({ number: i + 1, page: 1, x: 0, y: 0, w: 0, h: 0, answer: "", type: i < 21 ? "choice" : "short" })));
+    if (!examId || examId === "new") { setLoadingRegisteredPdf(false); return; }
+    const config = getSupabaseConfig();
+    if (!config) { setLoadingRegisteredPdf(false); return; }
+    (async () => {
+      try {
+        const response = await fetch(`${config.url}/rest/v1/exams?id=eq.${encodeURIComponent(examId)}&select=exam_code,test_file_name,test_file_path`, { headers: { apikey: config.key, Authorization: `Bearer ${config.key}` }, cache: "no-store" });
+        if (!response.ok) throw new Error(await response.text());
+        const exam = (await response.json())[0];
+        if (!exam?.test_file_path) throw new Error("등록된 시험지 PDF가 없습니다.");
+        setExamCode(exam.exam_code || "SOS");
+        const url = `${config.url}/storage/v1/object/public/exam-files/${exam.test_file_path}`;
+        const pdfResponse = await fetch(url, { cache: "no-store" });
+        if (!pdfResponse.ok) throw new Error("등록 시험지를 불러오지 못했습니다.");
+        const blob = await pdfResponse.blob();
+        const file = new File([blob], exam.test_file_name || "시험지.pdf", { type: "application/pdf" });
+        const pdfjs = pdfjsRef.current ?? await import("pdfjs-dist");
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const doc = await pdfjs.getDocument({ data: bytes }).promise;
+        setExamPdf(file); setPdfDoc(doc); setPageCount(doc.numPages); setPage(1);
+      } catch (error) {
+        console.error(error); alert(error instanceof Error ? error.message : "등록 시험지를 불러오지 못했습니다.");
+      } finally { setLoadingRegisteredPdf(false); }
+    })();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -195,15 +229,15 @@ export default function PdfMapperPage() {
   return (
     <main className="mapper-shell">
       <header className="mapper-header">
-        <div><span>SOS PDF MAPPER</span><h1>30문항 모의고사 영역 지정</h1><p>시험지 PDF 하나를 올리고 각 문항을 드래그해 지정합니다.</p></div>
+        <div><span>SOS PDF MAPPER</span><h1>문항 영역 지정</h1><p>시험 등록 단계에서 올린 PDF를 자동으로 불러와 사용합니다.</p></div>
         <button className="primary" onClick={exportJson}>영역정보 저장</button>
       </header>
 
       <section className="meta-card">
         <label>시험코드<input value={examCode} onChange={e => setExamCode(e.target.value)} /></label>
         <label>시험시간<input value="100분 (고정)" disabled /></label>
-        <label className="file-box">시험지 PDF<input type="file" accept="application/pdf" onChange={uploadExam} /><span>{examPdf?.name ?? "파일 선택"}</span></label>
-        <label className="file-box">해설지 PDF<input type="file" accept="application/pdf" onChange={uploadSolution} /><span>{solutionPdf?.name ?? "파일 선택"}</span></label>
+        <label className="file-box">등록 시험지<span>{loadingRegisteredPdf ? "불러오는 중..." : examPdf?.name ?? "등록 시험지 없음"}</span></label>
+        <label className="file-box">시험지 변경(예외)<input type="file" accept="application/pdf" onChange={uploadExam} /><span>필요할 때만 직접 선택</span></label>
       </section>
 
       <div className="mapper-grid">
@@ -224,7 +258,7 @@ export default function PdfMapperPage() {
         <section className="viewer-card">
           <div className="viewer-toolbar"><button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>이전</button><b>{pageCount ? `${page} / ${pageCount} 페이지` : "PDF 미등록"}</b><button disabled={!pageCount || page >= pageCount} onClick={() => setPage(p => p + 1)}>다음</button><span>현재 {activeNumber}번 지정 중</span></div>
           <div className="canvas-wrap">
-            {!pdfDoc && <div className="empty">시험지 PDF를 등록하면 여기에 표시됩니다.</div>}
+            {!pdfDoc && <div className="empty">{loadingRegisteredPdf ? "등록된 시험지 PDF를 불러오는 중입니다." : "등록된 시험지 PDF가 없습니다."}</div>}
             <canvas ref={canvasRef} className={!pdfDoc ? "hidden" : ""} />
             {pdfDoc && <div ref={overlayRef} className="overlay" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}>
               {pageRegions.map(r => <button key={r.number} className={`region ${r.number === activeNumber ? "active" : ""}`} style={{ left: `${r.x}%`, top: `${r.y}%`, width: `${r.w}%`, height: `${r.h}%` }} onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setActiveNumber(r.number); }}>{r.number}</button>)}
