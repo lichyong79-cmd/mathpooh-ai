@@ -258,6 +258,9 @@ function ExamRunner({ exam, onSubmit }: { exam?: Exam; onSubmit: (s: Submission)
   const q = exam.questions[current];
   function submit(e: FormEvent) {
     e.preventDefault();
+
+    if (!exam) return;
+
     let score = 0; const wrongNumbers: number[] = [];
     exam.questions.forEach(question => { if ((answers[question.id] ?? "").trim() === question.answer.trim()) score += question.points; else wrongNumbers.push(question.number); });
     onSubmit({ id: uid("submission"), examId: exam.id, studentName: "김민준", answers, score, total: exam.questions.reduce((s, x) => s + x.points, 0), wrongNumbers, submittedAt: new Date().toISOString() });
