@@ -1,429 +1,291 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react";
 
 type Mode = "admin" | "student";
-type AdminMenu = "dashboard" | "students" | "mock" | "bank" | "analysis" | "recommend" | "history";
-type StudentMenu = "home" | "mock" | "sos" | "result";
+type AdminTab = "exams" | "create" | "results";
+type StudentTab = "list" | "take" | "sos";
+type AnswerType = "choice" | "short";
 
-const adminMenus: { key: AdminMenu; label: string; icon: string }[] = [
-  { key: "dashboard", label: "대시보드", icon: "⌂" },
-  { key: "students", label: "학생 관리", icon: "◉" },
-  { key: "mock", label: "실전 모의고사", icon: "▣" },
-  { key: "bank", label: "훈련 문제은행", icon: "▤" },
-  { key: "analysis", label: "AI 분석 관리", icon: "✦" },
-  { key: "recommend", label: "SOS 추천", icon: "◎" },
-  { key: "history", label: "결과 · 이력", icon: "↗" },
-];
+type Question = {
+  id: string;
+  number: number;
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  type: AnswerType;
+  answer: string;
+  points: number;
+  explanation?: string;
+};
 
-const studentMenus: { key: StudentMenu; label: string; icon: string }[] = [
-  { key: "home", label: "대시보드", icon: "⌂" },
-  { key: "mock", label: "실전 모의고사", icon: "▣" },
-  { key: "sos", label: "SOS", icon: "✦" },
-  { key: "result", label: "결과", icon: "↗" },
-];
+type Exam = {
+  id: string;
+  title: string;
+  minutes: number;
+  grade: string;
+  pdfName: string;
+  pdfUrl?: string;
+  status: "draft" | "published";
+  questions: Question[];
+  createdAt: string;
+};
 
-const students = [
-  { name: "김민준", school: "보성고", grade: "고2", target: "1등급", score: 78, stage: "훈련 6/10", status: "진행중" },
-  { name: "문예진", school: "잠실여고", grade: "고2", target: "2등급", score: 84, stage: "진단 완료", status: "승인대기" },
-  { name: "김가연B", school: "영동일고", grade: "고1", target: "1등급", score: 92, stage: "이번주 완료", status: "완료" },
-  { name: "송연우", school: "배명고", grade: "고1", target: "2등급", score: 71, stage: "공략문항 생성", status: "대기" },
-  { name: "이서준", school: "정신여고", grade: "고2", target: "1등급", score: 88, stage: "훈련 10/10", status: "완료" },
-];
+type Submission = {
+  id: string;
+  examId: string;
+  studentName: string;
+  answers: Record<string, string>;
+  score: number;
+  total: number;
+  wrongNumbers: number[];
+  submittedAt: string;
+};
 
-const exams = [
-  { title: "7월 실전 모의고사 A", date: "2026.07.27", students: 18, done: 12, questions: 28, status: "응시중" },
-  { title: "7월 실전 모의고사 B", date: "2026.08.03", students: 21, done: 0, questions: 22, status: "예정" },
-  { title: "6월 평가원 변형", date: "2026.07.20", students: 16, done: 16, questions: 30, status: "분석완료" },
-];
+const STORAGE_EXAMS = "sos-v1-exams";
+const STORAGE_SUBMISSIONS = "sos-v1-submissions";
 
-const sosSteps = ["공략문항", "진단 3", "추가진단", "훈련 10", "추가훈련", "완료"];
+const demoExam: Exam = {
+  id: "demo-exam",
+  title: "SOS 실전 진단 모의고사",
+  minutes: 30,
+  grade: "고2",
+  pdfName: "demo.pdf",
+  status: "published",
+  createdAt: new Date().toISOString(),
+  questions: Array.from({ length: 10 }, (_, i) => ({
+    id: `demo-q-${i + 1}`,
+    number: i + 1,
+    page: Math.floor(i / 5) + 1,
+    x: 8,
+    y: 7 + (i % 5) * 18,
+    w: 84,
+    h: 15,
+    type: i < 7 ? "choice" : "short",
+    answer: i < 7 ? String((i % 5) + 1) : String(12 + i),
+    points: i < 7 ? 3 : 4,
+  })),
+};
+
+function uid(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>("admin");
-  const [adminMenu, setAdminMenu] = useState<AdminMenu>("dashboard");
-  const [studentMenu, setStudentMenu] = useState<StudentMenu>("home");
-  const [selectedStudent, setSelectedStudent] = useState(students[0]);
-  const [sosStage, setSosStage] = useState(0);
+  const [adminTab, setAdminTab] = useState<AdminTab>("exams");
+  const [studentTab, setStudentTab] = useState<StudentTab>("list");
+  const [exams, setExams] = useState<Exam[]>([demoExam]);
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [activeExamId, setActiveExamId] = useState<string>(demoExam.id);
   const [toast, setToast] = useState("");
 
-  const title = useMemo(() => {
-    if (mode === "admin") return adminMenus.find((m) => m.key === adminMenu)?.label ?? "대시보드";
-    return studentMenus.find((m) => m.key === studentMenu)?.label ?? "대시보드";
-  }, [mode, adminMenu, studentMenu]);
+  useEffect(() => {
+    try {
+      const savedExams = localStorage.getItem(STORAGE_EXAMS);
+      const savedSubmissions = localStorage.getItem(STORAGE_SUBMISSIONS);
+      if (savedExams) setExams(JSON.parse(savedExams));
+      if (savedSubmissions) setSubmissions(JSON.parse(savedSubmissions));
+    } catch { /* demo fallback */ }
+  }, []);
 
-  function showToast(message: string) {
+  useEffect(() => {
+    localStorage.setItem(STORAGE_EXAMS, JSON.stringify(exams.map(e => ({ ...e, pdfUrl: undefined }))));
+  }, [exams]);
+  useEffect(() => localStorage.setItem(STORAGE_SUBMISSIONS, JSON.stringify(submissions)), [submissions]);
+
+  function notify(message: string) {
     setToast(message);
-    window.setTimeout(() => setToast(""), 2200);
+    window.setTimeout(() => setToast(""), 2400);
+  }
+
+  function openStudentExam(id: string) {
+    setActiveExamId(id);
+    setMode("student");
+    setStudentTab("take");
   }
 
   return (
-    <main className="app">
+    <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-logo">S</div>
-          <div><strong>SOS</strong><span>Score Optimization System</span></div>
-        </div>
-
-        <div className="mode-switch">
-          <button className={mode === "admin" ? "active" : ""} onClick={() => setMode("admin")}>관리자</button>
-          <button className={mode === "student" ? "active" : ""} onClick={() => setMode("student")}>학생</button>
-        </div>
-
-        <nav>
-          {(mode === "admin" ? adminMenus : studentMenus).map((item) => (
-            <button
-              key={item.key}
-              className={`nav-item ${(mode === "admin" ? adminMenu : studentMenu) === item.key ? "active" : ""}`}
-              onClick={() => mode === "admin" ? setAdminMenu(item.key as AdminMenu) : setStudentMenu(item.key as StudentMenu)}
-            >
-              <span>{item.icon}</span>{item.label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="sidebar-bottom">
-          <div className="profile-dot">이</div>
-          <div><strong>{mode === "admin" ? "이철용 원장" : "김민준 학생"}</strong><span>{mode === "admin" ? "관리자 데모" : "보성고 2학년"}</span></div>
-        </div>
+        <div className="brand"><div className="brand-mark">S</div><div><strong>SOS</strong><span>Score Optimization System</span></div></div>
+        <div className="mode-toggle"><button className={mode === "admin" ? "active" : ""} onClick={() => setMode("admin")}>관리자</button><button className={mode === "student" ? "active" : ""} onClick={() => setMode("student")}>학생</button></div>
+        {mode === "admin" ? (
+          <nav>
+            <Nav active={adminTab === "exams"} onClick={() => setAdminTab("exams")} icon="▣">실전 모의고사</Nav>
+            <Nav active={adminTab === "create"} onClick={() => setAdminTab("create")} icon="＋">시험 만들기</Nav>
+            <Nav active={adminTab === "results"} onClick={() => setAdminTab("results")} icon="◎">응시 결과</Nav>
+          </nav>
+        ) : (
+          <nav>
+            <Nav active={studentTab === "list"} onClick={() => setStudentTab("list")} icon="▣">시험 목록</Nav>
+            <Nav active={studentTab === "take"} onClick={() => setStudentTab("take")} icon="✎">시험 응시</Nav>
+            <Nav active={studentTab === "sos"} onClick={() => setStudentTab("sos")} icon="✦">SOS 분석</Nav>
+          </nav>
+        )}
+        <div className="sidebar-foot"><span className="online-dot" /> V1 로컬 데모 · 자동 저장</div>
       </aside>
 
-      <section className="main">
+      <section className="content">
         <header className="topbar">
-          <div><p className="eyebrow">SOS PILOT · DEMO</p><h1>{title}</h1><p>{mode === "admin" ? "실전 모의고사 결과를 분석해 학생별 공략 훈련을 설계합니다." : "이번 주 실전 결과를 바탕으로 나에게 필요한 훈련만 진행합니다."}</p></div>
-          <div className="top-actions"><span className="live"><i />Supabase 연결</span><button className="ghost" onClick={() => showToast("데모 데이터가 새로고침되었습니다.")}>새로고침</button></div>
+          <div><p className="eyebrow">SOS V1 · WORKING PROTOTYPE</p><h1>{mode === "admin" ? "실전모의고사 운영" : "학생 응시"}</h1><p>시험 생성 → 학생 응시 → 자동 채점 → SOS 분석까지 한 흐름으로 작동합니다.</p></div>
+          <div className="top-summary"><span>시험 <b>{exams.length}</b></span><span>응시 <b>{submissions.length}</b></span></div>
         </header>
 
-        {mode === "admin" ? renderAdmin(adminMenu, selectedStudent, setSelectedStudent, showToast) : renderStudent(studentMenu, setStudentMenu, sosStage, setSosStage, showToast)}
+        {mode === "admin" && adminTab === "exams" && <ExamList exams={exams} submissions={submissions} onCreate={() => { setActiveExamId(""); setAdminTab("create"); }} onOpenStudent={openStudentExam} onEdit={(id) => { setActiveExamId(id); setAdminTab("create"); }} onDelete={(id) => { setExams(v => v.filter(e => e.id !== id)); notify("시험을 삭제했습니다."); }} />}
+        {mode === "admin" && adminTab === "create" && <ExamBuilder initialExam={exams.find(e => e.id === activeExamId)} onSave={(exam) => { setExams(v => v.some(e => e.id === exam.id) ? v.map(e => e.id === exam.id ? exam : e) : [exam, ...v]); setActiveExamId(exam.id); notify("시험을 저장했습니다."); setAdminTab("exams"); }} onNotify={notify} />}
+        {mode === "admin" && adminTab === "results" && <ResultsPage exams={exams} submissions={submissions} />}
+
+        {mode === "student" && studentTab === "list" && <StudentExamList exams={exams.filter(e => e.status === "published")} onStart={(id) => { setActiveExamId(id); setStudentTab("take"); }} />}
+        {mode === "student" && studentTab === "take" && <ExamRunner exam={exams.find(e => e.id === activeExamId) ?? exams.find(e => e.status === "published")} onSubmit={(submission) => { setSubmissions(v => [submission, ...v]); notify("제출 및 자동 채점이 완료되었습니다."); setStudentTab("sos"); }} />}
+        {mode === "student" && studentTab === "sos" && <SosReport exam={exams.find(e => e.id === activeExamId)} submission={submissions.find(s => s.examId === activeExamId)} />}
       </section>
       {toast && <div className="toast">✓ {toast}</div>}
     </main>
   );
 }
 
-function renderAdmin(menu: AdminMenu, selectedStudent: typeof students[0], setSelectedStudent: (s: typeof students[0]) => void, showToast: (m: string) => void) {
-  if (menu === "dashboard") return <AdminDashboard showToast={showToast} />;
-  if (menu === "students") return <StudentsPage selectedStudent={selectedStudent} setSelectedStudent={setSelectedStudent} showToast={showToast} />;
-  if (menu === "mock") return <MockAdmin showToast={showToast} />;
-  if (menu === "bank") return <BankPage showToast={showToast} />;
-  if (menu === "analysis") return <AnalysisPage showToast={showToast} />;
-  if (menu === "recommend") return <RecommendationPage showToast={showToast} />;
-  return <HistoryPage />;
+function Nav({ active, onClick, icon, children }: { active: boolean; onClick: () => void; icon: string; children: React.ReactNode }) {
+  return <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick}><i>{icon}</i>{children}</button>;
 }
 
-function AdminDashboard({ showToast }: { showToast: (m: string) => void }) {
+function ExamList({ exams, submissions, onCreate, onOpenStudent, onEdit, onDelete }: { exams: Exam[]; submissions: Submission[]; onCreate: () => void; onOpenStudent: (id: string) => void; onEdit: (id: string) => void; onDelete: (id: string) => void }) {
   return <>
-    <div className="hero admin-hero">
-      <div><span className="pill">오늘의 운영 요약</span><h2>분석은 AI가, 결정은 선생님이.</h2><p>응시 결과와 훈련 문제은행을 연결해 학생별 SOS를 자동 설계합니다.</p></div>
-      <button className="primary" onClick={() => showToast("새 실전 모의고사 등록 화면을 열었습니다.")}>+ 실전 모의고사 등록</button>
-    </div>
-    <div className="metric-grid four">
-      <Metric label="운영 학생" value="24" note="이번 주 +3명" />
-      <Metric label="예정 모의고사" value="2" note="가장 가까운 시험 D-3" />
-      <Metric label="AI 분석 대기" value="186" note="문항 2개 오류 확인 필요" warn />
-      <Metric label="SOS 진행률" value="68%" note="16명 진행 중" />
-    </div>
-    <div className="two-col wide-left">
-      <Panel title="오늘 확인할 일" subtitle="AI가 선생님의 확인이 필요한 항목만 모았습니다.">
-        <Task title="추천 승인 대기" desc="문예진 외 4명 · 공략문항 및 진단세트" badge="5건" />
-        <Task title="OCR 확인 필요" desc="훈련 문제은행 2개 문항의 수식 인식 오류" badge="2건" danger />
-        <Task title="모의고사 미응시" desc="7월 실전 모의고사 A · 6명" badge="6명" />
-      </Panel>
-      <Panel title="이번 주 SOS 현황" subtitle="학생별 현재 단계를 한눈에 확인합니다.">
-        <div className="mini-students">{students.slice(0,4).map((s,i)=><div key={s.name}><span className="avatar">{s.name[0]}</span><div><strong>{s.name}</strong><small>{s.stage}</small></div><Progress value={[62,35,100,12][i]} /></div>)}</div>
-      </Panel>
-    </div>
-    <Panel title="실전 모의고사 운영" subtitle="시험 업로드부터 분석 완료까지의 상태입니다.">
-      <div className="exam-row header"><span>시험명</span><span>시험일</span><span>응시</span><span>문항</span><span>상태</span></div>
-      {exams.map(e=><div className="exam-row" key={e.title}><strong>{e.title}</strong><span>{e.date}</span><span>{e.done}/{e.students}</span><span>{e.questions}</span><b className={`status ${e.status}`}>{e.status}</b></div>)}
-    </Panel>
+    <section className="hero"><div><span>실전모의고사</span><h2>학생이 직접 볼 시험지를 만듭니다.</h2><p>PDF와 정답을 등록해 배포하면 학생 화면에서 바로 응시할 수 있습니다.</p></div><button className="primary" onClick={onCreate}>+ 새 시험 만들기</button></section>
+    <div className="metric-grid"><Metric label="전체 시험" value={String(exams.length)} /><Metric label="배포 시험" value={String(exams.filter(e => e.status === "published").length)} /><Metric label="누적 응시" value={String(submissions.length)} /><Metric label="분석 완료" value={String(submissions.length)} /></div>
+    <section className="panel"><div className="panel-head"><div><h3>등록된 시험</h3><p>배포된 시험은 학생 화면에서 응시할 수 있습니다.</p></div></div>
+      <div className="exam-table header"><span>시험명</span><span>대상/시간</span><span>문항</span><span>응시</span><span>상태</span><span>관리</span></div>
+      {exams.map(exam => <div className="exam-table" key={exam.id}><div><strong>{exam.title}</strong><small>{exam.pdfName}</small></div><span>{exam.grade} · {exam.minutes}분</span><span>{exam.questions.length}문항</span><span>{submissions.filter(s => s.examId === exam.id).length}명</span><b className={`status ${exam.status}`}>{exam.status === "published" ? "배포중" : "작성중"}</b><div className="row-actions"><button onClick={() => onOpenStudent(exam.id)}>응시보기</button><button onClick={() => onEdit(exam.id)}>수정</button>{exam.id !== "demo-exam" && <button className="danger" onClick={() => onDelete(exam.id)}>삭제</button>}</div></div>)}
+    </section>
   </>;
 }
 
-function StudentsPage({ selectedStudent, setSelectedStudent, showToast }: { selectedStudent: typeof students[0]; setSelectedStudent:(s:typeof students[0])=>void; showToast:(m:string)=>void }) {
-  return <div className="two-col student-layout">
-    <Panel title="학생 목록" subtitle="학생을 선택하면 상세 분석을 확인할 수 있습니다." action={<button className="small-primary" onClick={()=>showToast("학생 등록 창을 열었습니다.")}>+ 학생 등록</button>}>
-      <input className="search" placeholder="학생명, 학교 검색" />
-      <div className="student-list">{students.map(s=><button key={s.name} className={selectedStudent.name===s.name?"selected":""} onClick={()=>setSelectedStudent(s)}><span className="avatar">{s.name[0]}</span><div><strong>{s.name}</strong><small>{s.school} · {s.grade}</small></div><b>{s.status}</b></button>)}</div>
-    </Panel>
-    <div className="stack">
-      <Panel title={`${selectedStudent.name} 학생`} subtitle={`${selectedStudent.school} · ${selectedStudent.grade} · 목표 ${selectedStudent.target}`} action={<button className="ghost small" onClick={()=>showToast("학생 정보를 수정할 수 있습니다.")}>정보 수정</button>}>
-        <div className="student-summary"><div><span>최근 점수</span><strong>{selectedStudent.score}</strong></div><div><span>최근 등급</span><strong>2</strong></div><div><span>SOS 단계</span><strong className="text-sm">{selectedStudent.stage}</strong></div><div><span>완료율</span><strong>74%</strong></div></div>
-      </Panel>
-      <Panel title="최근 분석" subtitle="실전 모의고사에서 발견된 우선 공략 영역입니다.">
-        <div className="weak-grid"><Weak title="수열" score={38} desc="조건 해석"/><Weak title="미분" score={52} desc="그래프 추론"/><Weak title="확률" score={67} desc="경우 분류"/></div>
-      </Panel>
-      <Panel title="SOS 이력" subtitle="추천·진단·훈련 진행 기록입니다.">
-        <Timeline />
-      </Panel>
+function ExamBuilder({ initialExam, onSave, onNotify }: { initialExam?: Exam; onSave: (exam: Exam) => void; onNotify: (m: string) => void }) {
+  const [exam, setExam] = useState<Exam>(() => initialExam ? structuredClone(initialExam) : { id: uid("exam"), title: "", minutes: 100, grade: "고2", pdfName: "", status: "draft", questions: [], createdAt: new Date().toISOString() });
+  const [selectedId, setSelectedId] = useState<string | null>(exam.questions[0]?.id ?? null);
+  const [page, setPage] = useState(1);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
+  const [draftRect, setDraftRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+  useEffect(() => {
+    if (initialExam) { setExam(structuredClone(initialExam)); setSelectedId(initialExam.questions[0]?.id ?? null); }
+  }, [initialExam?.id]);
+
+  const selected = exam.questions.find(q => q.id === selectedId);
+  const pageQuestions = exam.questions.filter(q => q.page === page);
+  const totalPoints = exam.questions.reduce((sum, q) => sum + q.points, 0);
+  const complete = exam.questions.filter(q => q.answer.trim()).length;
+
+  function uploadPdf(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; if (!file) return;
+    if (file.type !== "application/pdf") { onNotify("PDF 파일만 등록할 수 있습니다."); return; }
+    const url = URL.createObjectURL(file);
+    setExam(v => ({ ...v, pdfName: file.name, pdfUrl: url }));
+  }
+
+  function pos(event: React.PointerEvent) {
+    const rect = boardRef.current!.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(100, (event.clientX - rect.left) / rect.width * 100)), y: Math.max(0, Math.min(100, (event.clientY - rect.top) / rect.height * 100)) };
+  }
+  function pointerDown(e: React.PointerEvent) { if (!exam.pdfName) return; dragStart.current = pos(e); setDraftRect({ ...dragStart.current, w: 0, h: 0 }); e.currentTarget.setPointerCapture(e.pointerId); }
+  function pointerMove(e: React.PointerEvent) { if (!dragStart.current) return; const p = pos(e); setDraftRect({ x: Math.min(p.x, dragStart.current.x), y: Math.min(p.y, dragStart.current.y), w: Math.abs(p.x - dragStart.current.x), h: Math.abs(p.y - dragStart.current.y) }); }
+  function pointerUp() {
+    if (!draftRect || draftRect.w < 4 || draftRect.h < 3) { dragStart.current = null; setDraftRect(null); return; }
+    const q: Question = { id: uid("q"), number: exam.questions.length + 1, page, ...draftRect, type: "choice", answer: "", points: 4 };
+    setExam(v => ({ ...v, questions: [...v.questions, q] })); setSelectedId(q.id); dragStart.current = null; setDraftRect(null);
+  }
+  function updateQuestion(patch: Partial<Question>) { setExam(v => ({ ...v, questions: v.questions.map(q => q.id === selectedId ? { ...q, ...patch } : q) })); }
+  function removeQuestion(id: string) { setExam(v => ({ ...v, questions: v.questions.filter(q => q.id !== id).map((q, i) => ({ ...q, number: i + 1 })) })); setSelectedId(null); }
+  function addQuickQuestion() {
+    const q: Question = { id: uid("q"), number: exam.questions.length + 1, page, x: 8, y: 8 + (pageQuestions.length % 5) * 18, w: 84, h: 15, type: "choice", answer: "", points: 4 };
+    setExam(v => ({ ...v, questions: [...v.questions, q] })); setSelectedId(q.id);
+  }
+  function save(status: Exam["status"]) {
+    if (!exam.title.trim()) return onNotify("시험명을 입력하세요.");
+    if (!exam.pdfName) return onNotify("시험지 PDF를 등록하세요.");
+    if (!exam.questions.length) return onNotify("문항을 하나 이상 생성하세요.");
+    if (status === "published" && complete !== exam.questions.length) return onNotify("정답이 없는 문항을 확인하세요.");
+    onSave({ ...exam, status });
+  }
+
+  return <div className="builder-page">
+    <section className="panel builder-meta"><div className="panel-head"><div><span className="step-label">STEP 1</span><h3>시험 기본정보</h3></div><div className="save-actions"><button onClick={() => save("draft")}>임시저장</button><button className="primary" onClick={() => save("published")}>학생에게 배포</button></div></div>
+      <div className="form-grid"><label>시험명<input value={exam.title} onChange={e => setExam(v => ({ ...v, title: e.target.value }))} placeholder="예: 2027학년도 6월 평가원" /></label><label>시험시간<input type="number" value={exam.minutes} onChange={e => setExam(v => ({ ...v, minutes: Number(e.target.value) }))} /></label><label>대상<select value={exam.grade} onChange={e => setExam(v => ({ ...v, grade: e.target.value }))}><option>고1</option><option>고2</option><option>고3</option></select></label><label className="file-label">시험지 PDF<input type="file" accept="application/pdf" onChange={uploadPdf} /><span>{exam.pdfName || "PDF 선택"}</span></label></div>
+    </section>
+
+    <div className="builder-layout">
+      <section className="panel page-panel"><div className="panel-head compact"><div><span className="step-label">STEP 2</span><h3>문항 영역 지정</h3><p>가운데 시험지 위에서 문항 영역을 드래그하세요.</p></div><button onClick={addQuickQuestion}>+ 빠른 문항 추가</button></div>
+        <div className="page-toolbar"><button onClick={() => setPage(Math.max(1, page - 1))}>‹</button><b>Page {page}</b><button onClick={() => setPage(page + 1)}>›</button><span>문항 {pageQuestions.length}개</span></div>
+        <div className="pdf-workspace">
+          {exam.pdfUrl ? <object className="pdf-object" data={`${exam.pdfUrl}#page=${page}&toolbar=0`} type="application/pdf" /> : <div className="fake-paper"><b>{exam.pdfName ? `PDF: ${exam.pdfName}` : "시험지 PDF를 먼저 등록하세요"}</b><p>브라우저 보안상 PDF 위에 직접 드래그가 제한될 수 있어, 오른쪽 좌표판에서 동일한 페이지의 문항 위치를 지정합니다.</p></div>}
+          <div ref={boardRef} className={`crop-board ${exam.pdfName ? "enabled" : ""}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}>
+            <span className="board-guide">문항 위치 좌표판 · 드래그하여 영역 추가</span>
+            {pageQuestions.map(q => <button key={q.id} className={`crop-box ${selectedId === q.id ? "selected" : ""}`} style={{ left: `${q.x}%`, top: `${q.y}%`, width: `${q.w}%`, height: `${q.h}%` }} onPointerDown={e => e.stopPropagation()} onClick={() => setSelectedId(q.id)}>{q.number}</button>)}
+            {draftRect && <div className="crop-box draft" style={{ left: `${draftRect.x}%`, top: `${draftRect.y}%`, width: `${draftRect.w}%`, height: `${draftRect.h}%` }} />}
+          </div>
+        </div>
+      </section>
+
+      <aside className="panel question-panel"><div className="panel-head compact"><div><span className="step-label">STEP 3</span><h3>정답 입력</h3></div><span className="completion">{complete}/{exam.questions.length}</span></div>
+        <div className="question-strip">{exam.questions.map(q => <button key={q.id} className={`${selectedId === q.id ? "active" : ""} ${q.answer ? "done" : "missing"}`} onClick={() => { setSelectedId(q.id); setPage(q.page); }}>{q.number}</button>)}</div>
+        {selected ? <div className="question-editor"><div className="editor-title"><strong>{selected.number}번 문항</strong><button className="text-danger" onClick={() => removeQuestion(selected.id)}>삭제</button></div>
+          <label>문항번호<input type="number" value={selected.number} onChange={e => updateQuestion({ number: Number(e.target.value) })} /></label>
+          <label>답안유형<select value={selected.type} onChange={e => updateQuestion({ type: e.target.value as AnswerType, answer: "" })}><option value="choice">객관식</option><option value="short">단답형</option></select></label>
+          {selected.type === "choice" ? <div className="choice-answer"><span>정답</span><div>{[1,2,3,4,5].map(n => <button key={n} className={selected.answer === String(n) ? "active" : ""} onClick={() => updateQuestion({ answer: String(n) })}>{n}</button>)}</div></div> : <label>정답<input value={selected.answer} onChange={e => updateQuestion({ answer: e.target.value })} placeholder="숫자 또는 식" /></label>}
+          <label>배점<input type="number" value={selected.points} onChange={e => updateQuestion({ points: Number(e.target.value) })} /></label>
+          <label>해설 메모<textarea value={selected.explanation ?? ""} onChange={e => updateQuestion({ explanation: e.target.value })} placeholder="선택 입력" /></label>
+        </div> : <div className="empty-editor">문항 영역을 만들거나 번호를 선택하세요.</div>}
+        <div className="builder-summary"><div><span>총 문항</span><b>{exam.questions.length}</b></div><div><span>총 배점</span><b>{totalPoints}</b></div><div><span>정답 누락</span><b className={complete < exam.questions.length ? "red" : ""}>{exam.questions.length - complete}</b></div></div>
+      </aside>
     </div>
   </div>;
 }
 
-function MockAdmin({ showToast }:{showToast:(m:string)=>void}) {
-  return <>
-    <div className="split-hero"><div><span className="pill">실전 모의고사</span><h2>시험지부터 결과 분석까지 한 흐름으로</h2><p>시험 PDF·정답·해설을 등록하고 응시 결과를 학생별 SOS로 연결합니다.</p></div><button className="primary" onClick={()=>showToast("모의고사 업로드를 시작합니다.")}>시험 파일 업로드</button></div>
-    <div className="upload-grid">
-      <UploadCard icon="01" title="시험지 PDF" desc="학생이 실제 응시할 모의고사 시험지" button="시험지 선택" onClick={()=>showToast("시험지 PDF 선택")}/>
-      <UploadCard icon="02" title="정답 파일" desc="객관식·단답형 정답 데이터" button="정답 선택" onClick={()=>showToast("정답 파일 선택")}/>
-      <UploadCard icon="03" title="해설 파일" desc="문항 이해와 AI 분석 정확도를 높입니다." button="해설 선택" onClick={()=>showToast("해설 파일 선택")}/>
-    </div>
-    <Panel title="등록된 실전 모의고사" subtitle="문항 수는 업로드 후 자동 인식됩니다.">
-      <div className="exam-cards">{exams.map((e,i)=><article key={e.title}><div className="paper-icon">{i+1}</div><div><strong>{e.title}</strong><p>{e.date} · {e.questions}문항 · 응시 {e.done}/{e.students}</p></div><span className={`status ${e.status}`}>{e.status}</span><button className="ghost small" onClick={()=>showToast(`${e.title} 상세 화면`) }>상세보기</button></article>)}</div>
-    </Panel>
-  </>;
+function StudentExamList({ exams, onStart }: { exams: Exam[]; onStart: (id: string) => void }) {
+  return <><section className="student-hero"><div><span>이번 주 실전</span><h2>시험을 선택하고 시작하세요.</h2><p>제출 즉시 자동 채점되고 SOS 분석으로 연결됩니다.</p></div></section><div className="student-exam-grid">{exams.map(e => <article key={e.id}><div className="paper-symbol">▤</div><div><span>{e.grade}</span><h3>{e.title}</h3><p>{e.questions.length}문항 · {e.minutes}분</p></div><button className="primary" onClick={() => onStart(e.id)}>시험 시작</button></article>)}</div></>;
 }
 
-function BankPage({showToast}:{showToast:(m:string)=>void}) {
-  return <>
-    <div className="split-hero purple"><div><span className="pill">훈련 문제은행</span><h2>진단 3 · 훈련 10을 뽑아낼 문제 저장소</h2><p>문제집이나 자체 자료를 업로드하면 AI가 문항을 분리하고 분석 대기열에 등록합니다.</p></div><button className="primary" onClick={()=>showToast("훈련 문제 업로드 시작")}>훈련 문제 업로드</button></div>
-    <div className="metric-grid four"><Metric label="등록 교재" value="12" note="이번 주 +2"/><Metric label="전체 문항" value="8,426" note="분석 완료 7,932"/><Metric label="추천 가능" value="7,811" note="중복 제외"/><Metric label="검수 필요" value="21" note="OCR·정답 확인" warn/></div>
-    <Panel title="문제은행 자료" subtitle="평가용 모의고사와 분리된 훈련 전용 자료입니다.">
-      <div className="bank-table"><div className="bank-head"><span>자료명</span><span>범위</span><span>문항</span><span>분석</span><span>상태</span></div>{[
-        ["공통수학2 유형훈련 A","도형의 방정식","642","98%","추천 가능"],
-        ["수학Ⅰ 준킬러 모음","수열·함수","380","100%","추천 가능"],
-        ["미적분 실전 변형","미분·적분","516","74%","분석 중"],
-        ["확률과 통계 자체교재","경우의 수·확률","284","31%","분석 중"],
-      ].map(r=><div className="bank-row" key={r[0]}>{r.map((v,i)=><span key={i}>{v}</span>)}<button className="ghost small" onClick={()=>showToast(`${r[0]} 상세`) }>보기</button></div>)}</div>
-    </Panel>
-  </>;
-}
-
-function AnalysisPage({showToast}:{showToast:(m:string)=>void}) {
-  return <>
-    <div className="metric-grid four"><Metric label="분석 완료" value="8,104" note="96.2%"/><Metric label="분석 중" value="301" note="자동 처리 중"/><Metric label="확인 필요" value="21" note="수식·이미지 오류" warn/><Metric label="중복 후보" value="34" note="자동 병합 대기"/></div>
-    <div className="two-col">
-      <Panel title="AI 처리 대기열" subtitle="문항별 실제 처리 상태를 확인합니다.">
-        {[["미적분 실전 변형","218/516",42],["확통 자체교재","88/284",31],["7월 실전 모의고사 B","0/22",4]].map(x=><div className="queue" key={String(x[0])}><div><strong>{x[0]}</strong><small>{x[1]} 문항 완료</small></div><Progress value={Number(x[2])}/></div>)}
-      </Panel>
-      <Panel title="품질 확인" subtitle="AI가 확신하지 못한 문항만 사람이 검토합니다.">
-        <Task title="수식 OCR 불확실" desc="5개 문항 · 신뢰도 80% 미만" badge="확인" danger/>
-        <Task title="정답 불일치" desc="정답 파일과 해설 추출 결과가 다른 문항" badge="2건"/>
-        <Task title="중복 의심" desc="유사도 99% 이상 문제 묶음" badge="34건"/>
-        <button className="primary full" onClick={()=>showToast("검수 화면을 열었습니다.")}>검수 시작</button>
-      </Panel>
-    </div>
-  </>;
-}
-
-function RecommendationPage({showToast}:{showToast:(m:string)=>void}) {
-  return <>
-    <div className="split-hero green"><div><span className="pill">SOS 추천</span><h2>공략문항 → 진단 3 → 훈련 10</h2><p>AI가 최근 실전 결과를 분석하고, 선생님은 추천 내용을 확인한 뒤 승인합니다.</p></div><button className="primary" onClick={()=>showToast("추천을 일괄 승인했습니다.")}>선택 추천 승인</button></div>
-    <div className="recommend-list">{students.slice(0,4).map((s,i)=><article key={s.name}><div className="recommend-head"><span className="avatar big">{s.name[0]}</span><div><strong>{s.name}</strong><p>{s.school} · 최근 {s.score}점</p></div><span className={`status ${i===1?"승인대기":"진행중"}`}>{i===1?"승인 대기":"추천 완료"}</span></div><div className="target-box"><span>공략문항</span><strong>7월 실전 A · { [18,21,13,27][i] }번</strong><p>{["수열의 조건 해석","함수 그래프 추론","확률의 경우 분류","도형의 좌표화"][i]}</p></div><div className="plan-strip"><b>진단 3</b><i>→</i><b>필요시 +3</b><i>→</i><b>훈련 10</b><i>→</i><b>필요시 +10</b></div><div className="card-actions"><button className="ghost" onClick={()=>showToast(`${s.name} 추천 상세`) }>상세 분석</button><button className="small-primary" onClick={()=>showToast(`${s.name} 추천 승인 완료`) }>승인</button></div></article>)}</div>
-  </>;
-}
-
-function HistoryPage(){return <><div className="metric-grid four"><Metric label="평균 점수 변화" value="+7.4" note="최근 4주"/><Metric label="SOS 완료" value="83" note="누적 세션"/><Metric label="평균 완료율" value="86%" note="진단+훈련"/><Metric label="재오답 감소" value="31%" note="공략문항 기준"/></div><Panel title="학생 성장 현황" subtitle="최근 실전 모의고사와 SOS 완료 결과를 함께 봅니다."><div className="chart"><div className="chart-y"><span>100</span><span>80</span><span>60</span><span>40</span></div><div className="bars">{[62,68,71,78,84].map((v,i)=><div key={i}><span style={{height:`${v}%`}}><b>{v}</b></span><small>{i+1}주</small></div>)}</div></div></Panel></>}
-
-function renderStudent(menu: StudentMenu, setStudentMenu:(m:StudentMenu)=>void, sosStage:number, setSosStage:(n:number)=>void, showToast:(m:string)=>void){
-  if(menu==="home") return <StudentHome setStudentMenu={setStudentMenu} setSosStage={setSosStage} showToast={showToast}/>;
-  if(menu==="mock") return <StudentMock showToast={showToast}/>;
-  if(menu==="sos") return <StudentSos stage={sosStage} setStage={setSosStage} showToast={showToast}/>;
-  return <StudentResult/>;
-}
-
-function StudentHome({setStudentMenu,setSosStage,showToast}:{setStudentMenu:(m:StudentMenu)=>void;setSosStage:(n:number)=>void;showToast:(m:string)=>void}){return <>
-  <div className="student-welcome"><div><span className="pill">김민준 학생</span><h2>이번 주도 한 문제씩 정확하게.</h2><p>실전 모의고사 결과를 바탕으로 이번 주 SOS가 준비되었습니다.</p></div><div className="level"><strong>LEVEL 7</strong><span>연속 완료 5주</span></div></div>
-  <div className="student-grid"><article className="next-exam"><span>다음 실전 모의고사</span><strong>D-3</strong><h3>7월 실전 모의고사 B</h3><p>7월 27일 월요일 · 19:00</p><button className="ghost light" onClick={()=>showToast("시험 일정과 응시 안내를 열었습니다.")}>시험 안내 보기</button></article><article className="today-sos"><span>이번 주 SOS</span><h3>공략문항 18번</h3><p>수열의 조건 해석과 규칙 발견</p><div className="big-progress"><i style={{width:"42%"}}/></div><small>진단 진행 중 · 전체 42%</small><button className="primary" onClick={()=>{setSosStage(0);setStudentMenu("sos");}}>SOS 시작하기</button></article></div>
-  <div className="two-col"><Panel title="오늘 할 일" subtitle="순서대로 진행하면 약 35분이 걸립니다."><Task title="진단 3문항" desc="공략문항의 핵심 약점을 확인합니다." badge="10분"/><Task title="훈련 10문항" desc="유사 구조 문제로 풀이를 안정시킵니다." badge="25분"/></Panel><Panel title="최근 성장" subtitle="실전 점수가 꾸준히 올라가고 있습니다."><div className="growth"><strong>71 → 78 → 84</strong><span>최근 3회 +13점</span><Progress value={84}/></div></Panel></div>
-  </>}
-
-function StudentMock({showToast}:{showToast:(m:string)=>void}){return <><div className="student-mock-hero"><div><span>예정된 시험</span><h2>7월 실전 모의고사 B</h2><p>2026.07.27 · 제한시간 50분</p></div><strong>D-3</strong></div><div className="student-exam-list"><Panel title="응시 예정" subtitle="시험 시간이 되면 응시 버튼이 활성화됩니다."><div className="exam-ticket"><div><b>7월 실전 모의고사 B</b><span>수학 · 22문항 · 50분</span></div><button className="disabled">응시 전</button></div></Panel><Panel title="지난 시험" subtitle="결과와 분석을 다시 확인할 수 있습니다.">{exams.slice(0,2).map((e,i)=><div className="past-exam" key={e.title}><div><strong>{e.title}</strong><span>{e.date}</span></div><b>{[78,84][i]}점</b><button className="ghost small" onClick={()=>showToast("시험 결과 화면")}>결과 보기</button></div>)}</Panel></div></>}
-
-function StudentSos({stage,setStage,showToast}:{stage:number;setStage:(n:number)=>void;showToast:(m:string)=>void}){
-  type SosPhase = "target" | "diagnosis" | "training" | "complete";
-  const [phase, setPhase] = useState<SosPhase>(stage >= 5 ? "complete" : stage >= 3 ? "training" : stage >= 1 ? "diagnosis" : "target");
-  const [diagnosisIndex, setDiagnosisIndex] = useState(0);
-  const [trainingIndex, setTrainingIndex] = useState(0);
-  const [answer, setAnswer] = useState("");
-  const [diagnosisCorrect, setDiagnosisCorrect] = useState(0);
-  const [trainingCorrect, setTrainingCorrect] = useState(0);
-  const [seconds, setSeconds] = useState(0);
-  const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
-
-  useEffect(() => {
-    if (phase === "target" || phase === "complete") return;
-    const timer = window.setInterval(() => setSeconds((value) => value + 1), 1000);
-    return () => window.clearInterval(timer);
-  }, [phase]);
-
-  const diagnosisProblems = [
-    { no: 1, title: "조건을 식으로 바꾸기", prompt: "수열 {aₙ}이 aₙ₊₁ = 2aₙ - 3을 만족하고 a₁=4일 때 a₂의 값을 구하세요.", concept: "조건의 대수식 변환" },
-    { no: 2, title: "두 조건 연결하기", prompt: "a₁+a₂=7, a₂+a₃=11일 때 a₃-a₁의 값을 구하세요.", concept: "연립 관계 파악" },
-    { no: 3, title: "규칙 추론하기", prompt: "1, 4, 9, 16, …의 일반항으로 알맞은 것을 입력하세요.", concept: "규칙의 일반화" },
-  ];
-
-  const trainingProblems = Array.from({ length: 10 }, (_, i) => ({
-    no: i + 1,
-    title: i < 3 ? "조건 해석 훈련" : i < 7 ? "관계식 연결 훈련" : "실전 적용 훈련",
-    prompt: `훈련 문제 ${i + 1}: 주어진 수열 조건을 식으로 정리한 뒤 요구하는 값을 구하세요.`,
-    level: i < 3 ? "기초" : i < 7 ? "표준" : "실전",
-  }));
-
-  const totalUnits = 14;
-  const completedUnits = phase === "target" ? 0 : phase === "diagnosis" ? 1 + diagnosisIndex : phase === "training" ? 4 + trainingIndex : totalUnits;
-  const progress = Math.round((completedUnits / totalUnits) * 100);
-  const currentProblem: any = phase === "diagnosis" ? diagnosisProblems[diagnosisIndex] : phase === "training" ? trainingProblems[trainingIndex] : null;
-
-  const formatTime = (value:number) => `${String(Math.floor(value/60)).padStart(2,"0")}:${String(value%60).padStart(2,"0")}`;
-
-  function resetSos(){
-    setPhase("target"); setStage(0); setDiagnosisIndex(0); setTrainingIndex(0);
-    setAnswer(""); setDiagnosisCorrect(0); setTrainingCorrect(0); setSeconds(0); setFeedback(null);
-    showToast("SOS 데모를 처음부터 다시 시작합니다.");
+function ExamRunner({ exam, onSubmit }: { exam?: Exam; onSubmit: (s: Submission) => void }) {
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [current, setCurrent] = useState(0);
+  const [remaining, setRemaining] = useState((exam?.minutes ?? 0) * 60);
+  useEffect(() => { setAnswers({}); setCurrent(0); setRemaining((exam?.minutes ?? 0) * 60); }, [exam?.id]);
+  useEffect(() => { if (!exam || remaining <= 0) return; const timer = window.setInterval(() => setRemaining(v => v - 1), 1000); return () => clearInterval(timer); }, [exam?.id, remaining <= 0]);
+  if (!exam) return <section className="panel empty">배포된 시험을 선택하세요.</section>;
+  const q = exam.questions[current];
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    let score = 0; const wrongNumbers: number[] = [];
+    exam.questions.forEach(question => { if ((answers[question.id] ?? "").trim() === question.answer.trim()) score += question.points; else wrongNumbers.push(question.number); });
+    onSubmit({ id: uid("submission"), examId: exam.id, studentName: "김민준", answers, score, total: exam.questions.reduce((s, x) => s + x.points, 0), wrongNumbers, submittedAt: new Date().toISOString() });
   }
-
-  function submitCurrent(){
-    if(!answer.trim()){
-      showToast("답안을 입력해 주세요.");
-      return;
-    }
-    const correct = (phase === "diagnosis" ? diagnosisIndex : trainingIndex) % 4 !== 1;
-    setFeedback(correct ? "correct" : "wrong");
-    window.setTimeout(() => {
-      setFeedback(null);
-      if(phase === "diagnosis"){
-        setDiagnosisCorrect((v)=>v+(correct?1:0));
-        if(diagnosisIndex < diagnosisProblems.length-1){
-          setDiagnosisIndex((v)=>v+1);
-          setAnswer("");
-        }else{
-          setPhase("training");
-          setStage(3);
-          setAnswer("");
-          showToast("진단 완료 · 훈련 10문항이 확정되었습니다.");
-        }
-        return;
-      }
-      if(phase === "training"){
-        setTrainingCorrect((v)=>v+(correct?1:0));
-        if(trainingIndex < trainingProblems.length-1){
-          setTrainingIndex((v)=>v+1);
-          setAnswer("");
-        }else{
-          setPhase("complete");
-          setStage(5);
-          setAnswer("");
-          showToast("이번 주 SOS를 완료했습니다.");
-        }
-      }
-    }, 650);
-  }
-
-  return <>
-    <div className="sos-command">
-      <div>
-        <span className="pill">WEEKLY SOS · 김민준</span>
-        <h2>실전 A 18번을 이번 주에 끝냅니다.</h2>
-        <p>공략문항 확인부터 진단 3문항, 맞춤 훈련 10문항까지 이 화면에서 이어집니다.</p>
-      </div>
-      <div className="sos-scoreboard">
-        <span>전체 진행률</span>
-        <strong>{progress}%</strong>
-        <small>예상 남은 시간 {phase === "complete" ? "0분" : phase === "training" ? `${Math.max(3, 25-trainingIndex*2)}분` : "35분"}</small>
-      </div>
+  return <form onSubmit={submit} className="runner"><section className="runner-head"><div><span>실전 모의고사</span><h2>{exam.title}</h2><p>{exam.grade} · {exam.questions.length}문항</p></div><div className="timer"><small>남은 시간</small><strong>{String(Math.floor(remaining/60)).padStart(2,"0")}:{String(remaining%60).padStart(2,"0")}</strong></div></section>
+    <div className="runner-layout"><section className="panel exam-paper"><div className="exam-paper-top"><b>{current + 1} / {exam.questions.length}</b><span>{q.points}점</span></div><div className="question-placeholder"><strong>{q.number}.</strong><h3>등록된 시험지 PDF의 {q.page}페이지 문항 영역</h3><p>실제 운영에서는 이곳에 지정한 문항 이미지가 표시됩니다.</p><div className="coordinate-note">영역 좌표: X {q.x.toFixed(1)}% · Y {q.y.toFixed(1)}% · W {q.w.toFixed(1)}% · H {q.h.toFixed(1)}%</div></div>
+      {q.type === "choice" ? <div className="student-choices">{[1,2,3,4,5].map(n => <button type="button" key={n} className={answers[q.id] === String(n) ? "active" : ""} onClick={() => setAnswers(v => ({ ...v, [q.id]: String(n) }))}>{n}</button>)}</div> : <label className="short-answer">정답 입력<input value={answers[q.id] ?? ""} onChange={e => setAnswers(v => ({ ...v, [q.id]: e.target.value }))} /></label>}
+      <div className="runner-nav"><button type="button" disabled={current === 0} onClick={() => setCurrent(v => v - 1)}>이전</button>{current < exam.questions.length - 1 ? <button type="button" className="primary" onClick={() => setCurrent(v => v + 1)}>다음</button> : <button className="primary" type="submit">제출 및 채점</button>}</div></section>
+      <aside className="panel answer-sheet"><h3>답안지</h3><p>번호를 눌러 이동할 수 있습니다.</p><div className="answer-grid">{exam.questions.map((question, i) => <button type="button" key={question.id} className={`${i === current ? "current" : ""} ${answers[question.id] ? "answered" : ""}`} onClick={() => setCurrent(i)}><span>{question.number}</span><b>{answers[question.id] || "-"}</b></button>)}</div><div className="answered-count">응답 <b>{Object.values(answers).filter(Boolean).length}</b> / {exam.questions.length}</div></aside>
     </div>
+  </form>;
+}
 
-    <div className="sos-flowbar">
-      {[
-        ["target","공략문항","실전 오답의 핵심"],
-        ["diagnosis","진단 3","약점 원인 확인"],
-        ["training","훈련 10","유사 구조 반복"],
-        ["complete","완료","다음 모고에서 재확인"],
-      ].map(([key,label,desc],i)=>{
-        const order={target:0,diagnosis:1,training:2,complete:3};
-        const active=order[phase as SosPhase];
-        return <div key={key} className={i<active?"done":i===active?"current":""}>
-          <i>{i<active?"✓":i+1}</i><span><b>{label}</b><small>{desc}</small></span>
-        </div>
-      })}
-    </div>
-
-    <div className="sos-focus-grid">
-      <section className="sos-main-card">
-        {phase === "target" && <>
-          <div className="focus-label"><span>공략문항</span><b>7월 실전 모의고사 A · 18번</b></div>
-          <div className="target-problem">
-            <div className="target-number">18</div>
-            <div><h3>수열의 조건 해석과 규칙 발견</h3><p>조건 (가), (나)를 각각 읽은 뒤 두 관계를 하나의 식으로 연결해야 하는 문항입니다.</p></div>
-          </div>
-          <div className="mock-problem-paper">
-            <span>실전 모의고사 원문</span>
-            <strong>수열 {`{aₙ}`}이 조건 (가), (나)를 만족할 때 a₁₀의 값을 구하여라.</strong>
-            <p>(가) aₙ₊₂-aₙ₊₁ = aₙ₊₁-aₙ &nbsp;&nbsp; (나) a₁+a₄=14</p>
-          </div>
-          <div className="ai-diagnosis-grid">
-            <article><span>AI가 찾은 막힘</span><strong>조건 연결 실패</strong><p>각 조건은 해석했지만 두 식을 동시에 사용하지 못했습니다.</p></article>
-            <article><span>공략 개념</span><strong>등차수열 · 관계식</strong><p>조건을 수식으로 바꾸고 일반항으로 연결하는 연습이 필요합니다.</p></article>
-            <article><span>이번 목표</span><strong>같은 구조 80% 이상</strong><p>진단과 훈련에서 동일 구조 문제를 안정적으로 해결합니다.</p></article>
-          </div>
-          <button className="primary sos-start" onClick={()=>{setPhase("diagnosis");setStage(1);}}>진단 3문항 시작</button>
-        </>}
-
-        {(phase === "diagnosis" || phase === "training") && currentProblem && <>
-          <div className="focus-label">
-            <span>{phase === "diagnosis" ? "DIAGNOSIS" : "TRAINING"}</span>
-            <b>{phase === "diagnosis" ? `${diagnosisIndex+1} / 3` : `${trainingIndex+1} / 10`}</b>
-          </div>
-          <div className="question-title-row">
-            <div><small>{phase === "diagnosis" ? currentProblem.concept : currentProblem.level}</small><h3>{currentProblem.title}</h3></div>
-            <span className="timer">{formatTime(seconds)}</span>
-          </div>
-          <div className="live-problem">
-            <span>문제</span>
-            <strong>{currentProblem.prompt}</strong>
-            <div className="formula-board">수식 · 도형 · 문제 이미지 표시 영역</div>
-          </div>
-          {feedback && <div className={`answer-feedback ${feedback}`}><b>{feedback === "correct" ? "정답" : "오답"}</b><span>{feedback === "correct" ? "좋습니다. 다음 문제로 이동합니다." : "풀이 기록을 저장하고 다음 문제로 이동합니다."}</span></div>}
-          <div className="answer-panel">
-            <label>답안 입력<input value={answer} onChange={(e)=>setAnswer(e.target.value)} placeholder="정답을 입력하세요" onKeyDown={(e)=>{if(e.key==="Enter")submitCurrent();}}/></label>
-            <button className="primary" onClick={submitCurrent}>{phase === "diagnosis" && diagnosisIndex===2 ? "진단 제출" : phase === "training" && trainingIndex===9 ? "훈련 완료" : "제출하고 다음"}</button>
-          </div>
-          <div className="question-dots">
-            {(phase === "diagnosis" ? diagnosisProblems : trainingProblems).map((_,i)=><i key={i} className={i < (phase === "diagnosis" ? diagnosisIndex : trainingIndex) ? "done" : i === (phase === "diagnosis" ? diagnosisIndex : trainingIndex) ? "current" : ""}>{i+1}</i>)}
-          </div>
-        </>}
-
-        {phase === "complete" && <div className="sos-finish">
-          <div className="finish-mark">✓</div>
-          <span>WEEKLY SOS COMPLETE</span>
-          <h3>이번 주 공략 훈련을 완료했습니다.</h3>
-          <p>18번 유형은 다음 실전 모의고사에서 다시 확인합니다.</p>
-          <div className="finish-metrics">
-            <div><small>진단</small><strong>{Math.max(diagnosisCorrect,2)} / 3</strong></div>
-            <div><small>훈련</small><strong>{Math.max(trainingCorrect,8)} / 10</strong></div>
-            <div><small>학습 시간</small><strong>31분</strong></div>
-            <div><small>약점 개선</small><strong>+34%</strong></div>
-          </div>
-          <button className="primary" onClick={()=>showToast("완료 리포트를 열었습니다.")}>완료 리포트 보기</button>
-        </div>}
-      </section>
-
-      <aside className="sos-control-card">
-        <div className="control-head"><span>이번 SOS</span><b>자동 저장 중</b></div>
-        <div className="control-progress"><i style={{width:`${progress}%`}}/></div>
-        <div className="control-stat"><span>공략문항</span><strong>실전 A · 18번</strong></div>
-        <div className="control-stat"><span>핵심 약점</span><strong>조건 연결</strong></div>
-        <div className="control-stat"><span>진단 결과</span><strong>{phase === "target" ? "대기" : `${Math.min(diagnosisIndex + (phase!=="diagnosis"?1:0),3)}/3 진행`}</strong></div>
-        <div className="control-stat"><span>훈련 결과</span><strong>{phase === "training" || phase === "complete" ? `${phase==="complete"?10:trainingIndex}/10 진행` : "진단 후 결정"}</strong></div>
-        <div className="ai-decision">
-          <span>AI 결정</span>
-          <strong>{phase === "target" ? "진단 필요" : phase === "diagnosis" ? "진단 중" : phase === "training" ? "추가 진단 없이 훈련 진행" : "다음 모의고사에서 재평가"}</strong>
-          <p>{phase === "training" ? "핵심 개념 이해도가 기준을 넘어 훈련 10문항으로 이동했습니다." : "학생의 풀이 기록에 따라 다음 단계가 자동 조정됩니다."}</p>
-        </div>
-        {phase!=="target" && phase!=="complete" && <button className="ghost full" onClick={()=>showToast("현재 진행 상황이 저장되었습니다.")}>잠시 멈추기</button>}
-        <button className="demo-reset" onClick={resetSos}>데모 처음부터 보기</button>
-      </aside>
-    </div>
+function SosReport({ exam, submission }: { exam?: Exam; submission?: Submission }) {
+  if (!exam || !submission) return <section className="panel empty"><h3>아직 분석할 결과가 없습니다.</h3><p>실전모의고사를 제출하면 SOS 분석이 생성됩니다.</p></section>;
+  const percent = submission.total ? Math.round(submission.score / submission.total * 100) : 0;
+  const target = submission.wrongNumbers.slice(0, 3);
+  const trainingCount = Math.max(10, target.length * 4);
+  return <><section className="report-hero"><div><span>SOS 분석 완료</span><h2>{submission.studentName} 학생의 다음 공부가 정해졌습니다.</h2><p>틀린 문항을 중심으로 공략문항과 진단·훈련 순서를 자동 구성했습니다.</p></div><div className="score-ring"><strong>{percent}</strong><span>점수율</span></div></section>
+    <div className="report-flow"><FlowStep no="1" title="공략문항" value={target.length ? `${target.join(", ")}번` : "없음"} active /><FlowStep no="2" title="진단 3" value="개념·해석·계산" /><FlowStep no="3" title="AI 판단" value={percent >= 80 ? "보완훈련" : "추가진단"} /><FlowStep no="4" title="훈련 10" value={`${trainingCount}문항 준비`} /></div>
+    <div className="two-col"><section className="panel"><div className="panel-head"><div><h3>실전 결과</h3><p>자동 채점 결과입니다.</p></div></div><div className="result-metrics"><div><span>점수</span><b>{submission.score}/{submission.total}</b></div><div><span>정답률</span><b>{percent}%</b></div><div><span>오답</span><b>{submission.wrongNumbers.length}문항</b></div></div><div className="wrong-list"><span>오답 문항</span><div>{submission.wrongNumbers.length ? submission.wrongNumbers.map(n => <b key={n}>{n}</b>) : <em>전 문항 정답</em>}</div></div></section>
+      <section className="panel"><div className="panel-head"><div><h3>AI 추천</h3><p>현재는 규칙 기반 V1 추천입니다.</p></div></div><div className="recommend-card"><span>우선 공략</span><h3>{target.length ? `${target.join(" · ")}번 문항` : "심화 유지 훈련"}</h3><p>{percent >= 80 ? "기본 이해는 안정적입니다. 오답 구조와 유사한 보완 문제 10문항을 추천합니다." : "오답 원인을 구분하기 위해 진단 3문항을 먼저 풀고, 결과에 따라 추가진단 또는 훈련 10문항으로 이동합니다."}</p><button className="primary">진단 3 시작</button></div></section></div>
   </>;
 }
 
-function StudentResult(){return <><div className="result-hero"><div><span>최근 실전 모의고사</span><h2>84점 · 2등급</h2><p>이전 시험보다 6점 상승했습니다.</p></div><div className="ring"><strong>84</strong><span>/100</span></div></div><div className="metric-grid three"><Metric label="상위 비율" value="18%" note="응시자 18명 기준"/><Metric label="정답 문항" value="23" note="전체 28문항"/><Metric label="풀이 시간" value="47분" note="제한시간 50분"/></div><div className="two-col"><Panel title="단원별 분석" subtitle="공략 우선순위가 높은 순서입니다."><Weak title="수열" score={38} desc="집중 훈련 필요"/><Weak title="미분" score={64} desc="조금 더 안정화"/><Weak title="확률" score={81} desc="양호"/></Panel><Panel title="성적 변화" subtitle="최근 실전 모의고사 점수입니다."><div className="chart small-chart"><div className="bars">{[68,71,78,84].map((v,i)=><div key={i}><span style={{height:`${v}%`}}><b>{v}</b></span><small>{i+1}회</small></div>)}</div></div></Panel></div></>}
+function ResultsPage({ exams, submissions }: { exams: Exam[]; submissions: Submission[] }) {
+  return <section className="panel"><div className="panel-head"><div><h3>응시 결과</h3><p>제출 즉시 자동 채점된 결과입니다.</p></div></div>{submissions.length === 0 ? <div className="empty">아직 제출된 시험이 없습니다.</div> : <div className="result-table header"><span>학생</span><span>시험</span><span>점수</span><span>오답</span><span>제출일</span></div>}{submissions.map(s => <div className="result-table" key={s.id}><strong>{s.studentName}</strong><span>{exams.find(e => e.id === s.examId)?.title ?? "삭제된 시험"}</span><b>{s.score}/{s.total}</b><span>{s.wrongNumbers.join(", ") || "없음"}</span><span>{new Date(s.submittedAt).toLocaleString("ko-KR")}</span></div>)}</section>;
+}
 
-function Metric({label,value,note,warn}:{label:string;value:string;note:string;warn?:boolean}){return <article className={`metric ${warn?"warn":""}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>}
-function Panel({title,subtitle,children,action}:{title:string;subtitle?:string;children:React.ReactNode;action?:React.ReactNode}){return <section className="panel"><div className="panel-head"><div><h3>{title}</h3>{subtitle&&<p>{subtitle}</p>}</div>{action}</div>{children}</section>}
-function Progress({value}:{value:number}){return <div className="progress"><i style={{width:`${value}%`}}/></div>}
-function Task({title,desc,badge,danger}:{title:string;desc:string;badge:string;danger?:boolean}){return <div className="task"><span className={danger?"task-icon danger":"task-icon"}>{danger?"!":"✓"}</span><div><strong>{title}</strong><p>{desc}</p></div><b className={danger?"danger":""}>{badge}</b></div>}
-function Weak({title,score,desc}:{title:string;score:number;desc:string}){return <div className="weak"><div><strong>{title}</strong><span>{desc}</span></div><b>{score}%</b><Progress value={score}/></div>}
-function Timeline(){return <div className="timeline">{[["오늘","훈련 6/10 진행","수열 조건 해석"],["7월 22일","진단 완료","정답 2/3"],["7월 21일","공략문항 생성","실전 A 18번"]].map(x=><div key={x[0]}><i/><span>{x[0]}</span><strong>{x[1]}</strong><small>{x[2]}</small></div>)}</div>}
-function UploadCard({icon,title,desc,button,onClick}:{icon:string;title:string;desc:string;button:string;onClick:()=>void}){return <article className="upload-card"><span>{icon}</span><h3>{title}</h3><p>{desc}</p><button className="ghost" onClick={onClick}>{button}</button></article>}
+function Metric({ label, value }: { label: string; value: string }) { return <article className="metric"><span>{label}</span><strong>{value}</strong></article>; }
+function FlowStep({ no, title, value, active }: { no: string; title: string; value: string; active?: boolean }) { return <div className={active ? "active" : ""}><i>{no}</i><span><b>{title}</b><small>{value}</small></span></div>; }
