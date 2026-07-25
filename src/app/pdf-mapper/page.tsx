@@ -73,7 +73,7 @@ export default function PdfMapperPage(){
     })();
   },[]);
 
-  function makeAutoDraft(base:Region[], pages:number){
+  function makeAutoDraft(base:Region[], pages:number):Region[]{
     const perPage=Math.ceil(base.length/pages);
     return base.map((r,i)=>{
       const pageIndex=Math.floor(i/perPage);
@@ -82,7 +82,7 @@ export default function PdfMapperPage(){
       const rows=Math.ceil(perPage/cols);
       const col=within%cols;
       const row=Math.floor(within/cols);
-      return {...r,page:Math.min(pages,pageIndex+1),x:col===0?4:51,y:5+row*(90/rows),w:45,h:(90/rows)-1.5,source:"auto"};
+      return {...r,page:Math.min(pages,pageIndex+1),x:col===0?4:51,y:5+row*(90/rows),w:45,h:(90/rows)-1.5,source:"auto" as const};
     });
   }
 
@@ -112,6 +112,15 @@ export default function PdfMapperPage(){
   function crop(r?:Region){const c=canvasRef.current;if(!c||!r||r.w<=0||r.page!==page){setPreview("");return;}const sx=c.width*r.x/100,sy=c.height*r.y/100,sw=c.width*r.w/100,sh=c.height*r.h/100;const out=document.createElement("canvas");out.width=Math.max(1,sw);out.height=Math.max(1,sh);out.getContext("2d")?.drawImage(c,sx,sy,sw,sh,0,0,sw,sh);setPreview(out.toDataURL());}
   function patch(p:Partial<Region>){setRegions(prev=>prev.map(r=>r.number===active?{...r,...p}:r));}
 
+  function goNextNeedsCheck(){
+    if(!regions.length)return;
+    const ordered=[...regions.slice(active),...regions.slice(0,active)];
+    const target=ordered.find(r=>!r.verified);
+    if(!target){alert("모든 문항 검수가 완료되었습니다.");return;}
+    setActive(target.number);
+    if(target.page)setPage(target.page);
+  }
+
   async function save(){
     const config=getSupabaseConfig(); if(!config||!examId)return alert("Supabase 연결을 확인해 주세요.");
     setSaving(true);
@@ -126,7 +135,7 @@ export default function PdfMapperPage(){
   }
 
   return <main className="mapper-shell">
-    <header className="mapper-header"><div><span>SOS PDF MAPPER</span><h1>문항 영역 검수</h1><p>자동 초안을 확인하고 틀린 문항만 다시 드래그하세요.</p></div><div className="header-actions"><button onClick={()=>history.back()}>돌아가기</button><button className="primary" onClick={save} disabled={saving}>{saving?"저장 중...":"DB에 저장"}</button></div></header>
+    <header className="mapper-header"><div><span>SOS PDF MAPPER</span><h1>문항 영역 검수</h1><p>자동 초안을 확인하고 틀린 문항만 다시 드래그하세요.</p></div><div className="header-actions"><button onClick={goNextNeedsCheck}>다음 확인 필요</button><button onClick={()=>history.back()}>돌아가기</button><button className="primary" onClick={save} disabled={saving}>{saving?"저장 중...":"DB에 저장"}</button></div></header>
     <section className="meta-card"><b>{examCode}</b><span>{examPdfName||"시험지 불러오는 중"}</span><span>영역 {completed}/{regions.length}</span><span>검수 {verified}/{regions.length}</span></section>
     <div className="mapper-grid">
       <aside className="side-card"><div className="side-title"><h2>문항 번호</h2><b>{completed}/{regions.length}</b></div><div className="number-grid">{regions.map(r=><button key={r.number} className={`${active===r.number?"active":""} ${r.w>0?"done":""} ${r.verified?"verified":""}`} onClick={()=>setActive(r.number)}>{r.number}</button>)}</div>{current&&<div className="answer-editor"><h3>{active}번</h3><p>{current.source==="auto"?"자동 초안":"수동 보정"} · {current.verified?"검수 완료":"확인 필요"}</p><button className="verify" onClick={()=>patch({verified:!current.verified})}>{current.verified?"검수 취소":"이 영역 맞음"}</button><button className="clear" onClick={()=>patch({x:0,y:0,w:0,h:0,verified:false,source:"manual"})}>영역 다시 지정</button></div>}</aside>

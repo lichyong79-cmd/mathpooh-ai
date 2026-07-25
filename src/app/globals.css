@@ -88,3 +88,43 @@ body{font-size:16px;line-height:1.5}
   .file-buttons,.row-actions{justify-content:flex-start}
   .cover-builder,.region-builder{padding:12px}
 }
+
+/* SOS v0.7.1 responsive exam cards + mapper usability */
+@media (max-width: 1280px){
+  .exam-list .table-row{box-shadow:0 6px 18px rgba(29,39,68,.04)}
+  .exam-list .table-row>[data-label]{display:grid;grid-template-columns:112px minmax(0,1fr);align-items:center;gap:10px}
+  .exam-list .table-row>[data-label]::before{content:attr(data-label);font-size:12px;font-weight:800;color:var(--muted)}
+  .exam-list .table-row>b:before,
+  .exam-list .table-row>.nowrap-cell:nth-of-type(1):before,
+  .exam-list .table-row>.nowrap-cell:nth-of-type(2):before,
+  .exam-list .table-row>.nowrap-cell:nth-of-type(3):before{content:none}
+  .file-buttons[data-label]{display:grid;grid-template-columns:112px minmax(0,1fr)}
+  .file-buttons[data-label]::before{grid-column:1}
+  .file-buttons[data-label] button:first-of-type{grid-column:2}
+  .file-buttons[data-label] button{justify-self:start}
+}
+@media (max-width: 720px){
+  .exam-list .table-row>[data-label],.file-buttons[data-label]{grid-template-columns:96px minmax(0,1fr)}
+  .exam-list .table-row{padding:15px}
+  .row-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}
+  .row-actions button{width:100%}
+}
+.mapper-header .header-actions{flex-wrap:wrap}
+.number-grid button:not(.verified).done{box-shadow:inset 0 0 0 2px #f0a44d}
+.number-grid button.verified{box-shadow:inset 0 0 0 2px #2e9a72}
+.region.active{outline:3px solid #ef4444!important;outline-offset:2px;z-index:4;background:rgba(239,68,68,.12)!important}
+@media(max-width:980px){
+  .mapper-grid{grid-template-columns:1fr!important}
+  .side-card{order:1}.viewer-card{order:2}.preview-card{order:3}
+  .number-grid{grid-template-columns:repeat(10,minmax(38px,1fr))}
+  .preview-card{position:static!important}
+}
+@media(max-width:640px){
+  .mapper-shell{padding:10px!important}
+  .mapper-header{align-items:stretch!important;flex-direction:column;gap:14px}
+  .mapper-header .header-actions{display:grid;grid-template-columns:1fr 1fr}
+  .mapper-header .header-actions .primary{grid-column:1/-1}
+  .meta-card{grid-template-columns:1fr 1fr!important}
+  .number-grid{grid-template-columns:repeat(6,minmax(38px,1fr))}
+  .viewer-toolbar{flex-wrap:wrap}
+}
