@@ -28,6 +28,8 @@ type PracticeExam = {
   memo: string;
 };
 
+type PdfBundle = { test?: File; solution?: File };
+
 type Student = {
   id: number;
   name: string;
@@ -97,6 +99,24 @@ export default function Home() {
   }, [active]);
   const [students, setStudents] = useState<Student[]>(initialStudents);
   const [practiceExams, setPracticeExams] = useState<PracticeExam[]>(initialPracticeExams);
+  const [examFiles, setExamFiles] = useState<Record<number, PdfBundle>>({});
+  const [examStorageReady, setExamStorageReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("matspu-practice-exams");
+      if (saved) setPracticeExams(JSON.parse(saved) as PracticeExam[]);
+    } catch (error) {
+      console.error("시험 목록 불러오기 실패", error);
+    } finally {
+      setExamStorageReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!examStorageReady) return;
+    window.localStorage.setItem("matspu-practice-exams", JSON.stringify(practiceExams));
+  }, [practiceExams, examStorageReady]);
 
   const title = menus.find((menu) => menu.id === active)?.label ?? "대시보드";
 
@@ -144,7 +164,7 @@ export default function Home() {
           </div>
         </header>
         <div className="page-content">
-          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} /> : active === "results" ? <ResultsPage students={students} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
+          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
         </div>
       </section>
     </main>
@@ -351,9 +371,11 @@ function ResultsPage({ students }: { students: Student[] }) {
 }
 
 
-function ExamsPage({ exams, setExams }: { exams: PracticeExam[]; setExams: React.Dispatch<React.SetStateAction<PracticeExam[]>> }) {
+function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: PracticeExam[]; setExams: React.Dispatch<React.SetStateAction<PracticeExam[]>>; examFiles: Record<number, PdfBundle>; setExamFiles: React.Dispatch<React.SetStateAction<Record<number, PdfBundle>>> }) {
   const [tab, setTab] = useState<"list" | "input">("list");
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [draftFiles, setDraftFiles] = useState<PdfBundle>({});
+  const [preview, setPreview] = useState<{ title: string; file: File } | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("matspu-exam-tab");
@@ -363,20 +385,87 @@ function ExamsPage({ exams, setExams }: { exams: PracticeExam[]; setExams: React
   useEffect(() => {
     window.localStorage.setItem("matspu-exam-tab", tab);
   }, [tab]);
-  const emptyExam: Omit<PracticeExam, "id"> = { round: exams.length + 1, title: "", examCode: "", examDate: new Date().toISOString().slice(0, 10), grade: "고1", subject: "공통수학1", range: "", questionCount: 30, timeLimit: 80, totalScore: 100, objectiveCount: 21, shortAnswerCount: 9, status: "작성중", testFile: "", solutionFile: "", memo: "" };
-  const [form, setForm] = useState<Omit<PracticeExam, "id">>(emptyExam);
+
+  const makeEmptyExam = (): Omit<PracticeExam, "id"> => ({
+    round: Math.max(0, ...exams.map((exam) => exam.round)) + 1,
+    title: "",
+    examCode: "",
+    examDate: new Date().toISOString().slice(0, 10),
+    grade: "고1",
+    subject: "공통수학1",
+    range: "",
+    questionCount: 30,
+    timeLimit: 100,
+    totalScore: 100,
+    objectiveCount: 21,
+    shortAnswerCount: 9,
+    status: "작성중",
+    testFile: "",
+    solutionFile: "",
+    memo: "",
+  });
+
+  const [form, setForm] = useState<Omit<PracticeExam, "id">>(() => makeEmptyExam());
   const set = <K extends keyof Omit<PracticeExam, "id">>(key: K, value: Omit<PracticeExam, "id">[K]) => setForm((prev) => ({ ...prev, [key]: value }));
-  const startNew = () => { setEditingId(null); setForm({ ...emptyExam, round: Math.max(0, ...exams.map((exam) => exam.round)) + 1 }); setTab("input"); };
-  const editExam = (exam: PracticeExam) => { const { id, ...rest } = exam; setEditingId(id); setForm(rest); setTab("input"); };
+
+  const startNew = () => {
+    setEditingId(null);
+    setDraftFiles({});
+    setForm(makeEmptyExam());
+    setTab("input");
+  };
+
+  const editExam = (exam: PracticeExam) => {
+    const { id, ...rest } = exam;
+    setEditingId(id);
+    setDraftFiles(examFiles[id] ?? {});
+    setForm(rest);
+    setTab("input");
+  };
+
   const save = (e: FormEvent) => {
     e.preventDefault();
     if (!form.title.trim() || !form.examCode.trim() || !form.examDate) return alert("시험명, 시험코드, 시험일을 입력해 주세요.");
     if (form.objectiveCount + form.shortAnswerCount !== form.questionCount) return alert("객관식과 단답형 문항 수의 합이 전체 문항 수와 같아야 합니다.");
-    if (editingId) setExams((prev) => prev.map((exam) => exam.id === editingId ? { ...form, id: editingId } : exam));
-    else setExams((prev) => [{ ...form, id: Math.max(0, ...prev.map((exam) => exam.id)) + 1 }, ...prev]);
-    setTab("list"); setEditingId(null);
+
+    const savedId = editingId ?? Math.max(0, ...exams.map((exam) => exam.id)) + 1;
+    if (editingId) {
+      setExams((prev) => prev.map((exam) => exam.id === editingId ? { ...form, id: editingId } : exam));
+    } else {
+      setExams((prev) => [{ ...form, id: savedId }, ...prev]);
+    }
+    if (draftFiles.test || draftFiles.solution) {
+      setExamFiles((prev) => ({ ...prev, [savedId]: { ...prev[savedId], ...draftFiles } }));
+    }
+    setTab("list");
+    setEditingId(null);
+    setDraftFiles({});
   };
-  const remove = (id: number) => { if (window.confirm("이 실전모의고사를 삭제할까요?")) setExams((prev) => prev.filter((exam) => exam.id !== id)); };
+
+  const remove = (id: number) => {
+    if (!window.confirm("이 실전모의고사를 삭제할까요?")) return;
+    setExams((prev) => prev.filter((exam) => exam.id !== id));
+    setExamFiles((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const selectPdf = (kind: "test" | "solution", file?: File) => {
+    if (!file) return;
+    if (file.type !== "application/pdf") return alert("PDF 파일만 등록할 수 있습니다.");
+    setDraftFiles((prev) => ({ ...prev, [kind]: file }));
+    set(kind === "test" ? "testFile" : "solutionFile", file.name);
+  };
+
+  const openSavedPdf = (exam: PracticeExam, kind: "test" | "solution") => {
+    const file = examFiles[exam.id]?.[kind];
+    const label = kind === "test" ? "시험지" : "해설지";
+    if (!file) return alert(`${label} 파일명은 저장되어 있지만 실제 PDF 데이터는 현재 브라우저에 없습니다. 수정 화면에서 PDF를 다시 선택해 주세요.`);
+    setPreview({ title: `${exam.title} · ${label}`, file });
+  };
+
   return <>
     <section className="page-title-row">
       <div><h2>실전 모의고사</h2><p>시험 회차와 기본정보, 문항 구성, 시험지·해설지를 등록합니다.</p></div>
@@ -394,13 +483,17 @@ function ExamsPage({ exams, setExams }: { exams: PracticeExam[]; setExams: React
         <MiniStat label="마감" value={`${exams.filter(e => e.status === "마감").length}회`} note="종료된 시험" />
       </section>
       <section className="panel exam-list-panel">
-        <div className="list-summary"><strong>실전모의고사 {exams.length}회</strong><span>시험을 선택해 수정하거나 등록 상태를 확인합니다.</span></div>
+        <div className="list-summary"><strong>실전모의고사 {exams.length}회</strong><span>시험지와 해설지를 바로 확인하고 수정할 수 있습니다.</span></div>
         <div className="data-table exam-list">
-          <div className="table-head"><span>회차 / 시험명</span><span>시험코드</span><span>대상 / 과목</span><span>시험일</span><span>문항 / 시간</span><span>파일</span><span>상태</span><span>관리</span></div>
+          <div className="table-head"><span>회차 / 시험명</span><span>시험코드</span><span>대상 / 과목</span><span>시험일</span><span>문항 / 시간</span><span>등록 파일</span><span>상태</span><span>관리</span></div>
           {exams.map((exam) => <div className="table-row" key={exam.id}>
             <div className="exam-name-cell"><i>{exam.round}</i><div><strong>{exam.title}</strong><small>{exam.range || "범위 미입력"}</small></div></div>
             <b>{exam.examCode}</b><span>{exam.grade} · {exam.subject}</span><span>{exam.examDate}</span><span>{exam.questionCount}문항 · {exam.timeLimit}분</span>
-            <span className="file-count">{[exam.testFile, exam.solutionFile].filter(Boolean).length}/2 등록</span><Status text={exam.status} />
+            <div className="file-buttons">
+              <button className={exam.testFile ? "ready" : ""} onClick={() => openSavedPdf(exam, "test")} disabled={!exam.testFile}>시험지 {exam.testFile ? "✓" : "-"}</button>
+              <button className={exam.solutionFile ? "ready" : ""} onClick={() => openSavedPdf(exam, "solution")} disabled={!exam.solutionFile}>해설지 {exam.solutionFile ? "✓" : "-"}</button>
+            </div>
+            <Status text={exam.status} />
             <div className="row-actions"><button onClick={() => editExam(exam)}>수정</button><button className="delete" onClick={() => remove(exam.id)}>삭제</button></div>
           </div>)}
         </div>
@@ -431,16 +524,38 @@ function ExamsPage({ exams, setExams }: { exams: PracticeExam[]; setExams: React
         </div>
       </section>
       <section className="panel exam-form-panel">
-        <div className="form-section-title"><div><span>03</span><div><h3>시험 자료 등록</h3><p>현재는 파일명을 저장하며, Supabase 연결 시 실제 업로드로 전환합니다.</p></div></div></div>
+        <div className="form-section-title"><div><span>03</span><div><h3>시험 자료 등록 및 확인</h3><p>PDF를 선택한 뒤 바로 미리보기로 실제 파일을 확인합니다.</p></div></div></div>
         <div className="upload-grid">
-          <label className="upload-card"><span>시험지 PDF</span><strong>{form.testFile || "등록된 파일 없음"}</strong><input type="file" accept=".pdf" onChange={(e) => set("testFile", e.target.files?.[0]?.name ?? "")} /><em>{form.testFile ? "파일 변경" : "PDF 선택"}</em></label>
-          <label className="upload-card"><span>해설지 PDF</span><strong>{form.solutionFile || "등록된 파일 없음"}</strong><input type="file" accept=".pdf" onChange={(e) => set("solutionFile", e.target.files?.[0]?.name ?? "")} /><em>{form.solutionFile ? "파일 변경" : "PDF 선택"}</em></label>
+          <div className="upload-card-wrap">
+            <label className="upload-card"><span>시험지 PDF</span><strong>{form.testFile || "등록된 파일 없음"}</strong><input type="file" accept="application/pdf,.pdf" onChange={(e) => selectPdf("test", e.target.files?.[0])} /><em>{form.testFile ? "파일 변경" : "PDF 선택"}</em></label>
+            <button type="button" className="pdf-preview-button" disabled={!draftFiles.test} onClick={() => draftFiles.test && setPreview({ title: `${form.title || "현재 시험"} · 시험지`, file: draftFiles.test })}>시험지 미리보기</button>
+          </div>
+          <div className="upload-card-wrap">
+            <label className="upload-card"><span>해설지 PDF</span><strong>{form.solutionFile || "등록된 파일 없음"}</strong><input type="file" accept="application/pdf,.pdf" onChange={(e) => selectPdf("solution", e.target.files?.[0])} /><em>{form.solutionFile ? "파일 변경" : "PDF 선택"}</em></label>
+            <button type="button" className="pdf-preview-button" disabled={!draftFiles.solution} onClick={() => draftFiles.solution && setPreview({ title: `${form.title || "현재 시험"} · 해설지`, file: draftFiles.solution })}>해설지 미리보기</button>
+          </div>
         </div>
         <label className="field exam-memo"><span>관리 메모</span><textarea value={form.memo} onChange={(e) => set("memo", e.target.value)} placeholder="출제 의도, 검토 상태 등 관리자 메모를 입력하세요." /></label>
       </section>
       <div className="exam-form-actions"><button type="button" className="secondary-button" onClick={() => setTab("list")}>취소</button><button className="primary-button">{editingId ? "수정 저장" : "시험 등록"}</button></div>
     </form>}
+    {preview ? <PdfPreviewModal title={preview.title} file={preview.file} onClose={() => setPreview(null)} /> : null}
   </>;
+}
+
+function PdfPreviewModal({ title, file, onClose }: { title: string; file: File; onClose: () => void }) {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+  return <div className="pdf-modal-backdrop" onMouseDown={onClose}>
+    <section className="pdf-modal" onMouseDown={(e) => e.stopPropagation()}>
+      <header><div><strong>{title}</strong><span>{file.name}</span></div><button type="button" onClick={onClose}>×</button></header>
+      {url ? <iframe title={title} src={url} /> : <div className="pdf-loading">PDF를 여는 중입니다.</div>}
+    </section>
+  </div>;
 }
 
 function Dashboard({ students, onMove }: { students: Student[]; onMove: (menu: AdminMenu) => void }) {
