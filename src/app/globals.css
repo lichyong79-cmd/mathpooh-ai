@@ -62,3 +62,29 @@ body{font-size:16px;line-height:1.5}
 .exam-list { min-width: 1380px; }
 .nowrap-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .region-toolbar button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* SOS v0.7 반응형 목록: 넓은 화면은 표, 좁은 화면은 카드 */
+@media (max-width: 1280px){
+  .exam-list-panel{overflow:visible}
+  .exam-list{min-width:0}
+  .exam-list .table-head{display:none}
+  .exam-list .table-row{min-width:0;display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:18px;border:1px solid var(--line);border-radius:14px;margin-bottom:12px;background:#fff}
+  .exam-list .table-row>*{min-width:0}
+  .exam-name-cell{grid-column:1/-1}
+  .exam-list .table-row>b:before{content:"시험코드  ";color:var(--muted);font-weight:500}
+  .exam-list .table-row>.nowrap-cell:nth-of-type(1):before{content:"대상/과목  ";color:var(--muted)}
+  .exam-list .table-row>.nowrap-cell:nth-of-type(2):before{content:"시험일  ";color:var(--muted)}
+  .exam-list .table-row>.nowrap-cell:nth-of-type(3):before{content:"문항/시간  ";color:var(--muted)}
+  .nowrap-cell{white-space:normal;overflow:visible}
+  .file-buttons,.row-actions{justify-content:flex-end}
+}
+@media (max-width: 720px){
+  .content-shell{padding-left:12px;padding-right:12px}
+  .page-title-row{align-items:stretch;flex-direction:column}
+  .page-title-row .primary-button{width:100%}
+  .student-stat-grid{grid-template-columns:1fr 1fr}
+  .exam-list .table-row{grid-template-columns:1fr}
+  .exam-name-cell,.file-buttons,.row-actions{grid-column:1}
+  .file-buttons,.row-actions{justify-content:flex-start}
+  .cover-builder,.region-builder{padding:12px}
+}
