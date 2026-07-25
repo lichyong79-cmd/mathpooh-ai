@@ -7,6 +7,26 @@ type StudentStatus = "정상" | "휴원" | "퇴원";
 type SosStatus = "분석완료" | "훈련중" | "진단대기" | "미응시";
 type StudentTab = "students" | "registration";
 type ExamRound = { id: number; name: string; date: string; grade: string; status: "등록중" | "마감" };
+type ExamStatus = "작성중" | "등록완료" | "마감";
+type PracticeExam = {
+  id: number;
+  round: number;
+  title: string;
+  examCode: string;
+  examDate: string;
+  grade: string;
+  subject: string;
+  range: string;
+  questionCount: number;
+  timeLimit: number;
+  totalScore: number;
+  objectiveCount: number;
+  shortAnswerCount: number;
+  status: ExamStatus;
+  testFile: string;
+  solutionFile: string;
+  memo: string;
+};
 
 type Student = {
   id: number;
@@ -53,6 +73,12 @@ const examRounds: ExamRound[] = [
   { id: 4, name: "2026 SOS 4회", date: "2026.07.19", grade: "전체", status: "마감" },
 ];
 
+
+const initialPracticeExams: PracticeExam[] = [
+  { id: 1, round: 1, title: "2026 SOS 고1 실전모의고사 1회", examCode: "SOS-H1-2026-01", examDate: "2026-08-02", grade: "고1", subject: "공통수학2", range: "도형의 방정식 ~ 집합과 명제", questionCount: 30, timeLimit: 80, totalScore: 100, objectiveCount: 21, shortAnswerCount: 9, status: "등록완료", testFile: "SOS_H1_01_시험지.pdf", solutionFile: "SOS_H1_01_해설지.pdf", memo: "고1 여름방학 진단용" },
+  { id: 2, round: 2, title: "2026 SOS 고2 실전모의고사 2회", examCode: "SOS-H2-2026-02", examDate: "2026-08-09", grade: "고2", subject: "수학Ⅱ", range: "함수의 극한 ~ 미분", questionCount: 30, timeLimit: 80, totalScore: 100, objectiveCount: 21, shortAnswerCount: 9, status: "작성중", testFile: "", solutionFile: "", memo: "문항 검토 중" },
+];
+
 const emptyStudent: Omit<Student, "id"> = {
   name: "", school: "", grade: "고1", phone: "", parentPhone: "", status: "정상", sosStatus: "진단대기", lastScore: null, lastExam: "-", joinedAt: new Date().toISOString().slice(0, 10), memo: "",
 };
@@ -61,6 +87,7 @@ export default function Home() {
   const [active, setActive] = useState<AdminMenu>("students");
   const [collapsed, setCollapsed] = useState(false);
   const [students, setStudents] = useState<Student[]>(initialStudents);
+  const [practiceExams, setPracticeExams] = useState<PracticeExam[]>(initialPracticeExams);
 
   const title = menus.find((menu) => menu.id === active)?.label ?? "대시보드";
 
@@ -108,7 +135,7 @@ export default function Home() {
           </div>
         </header>
         <div className="page-content">
-          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "results" ? <ResultsPage students={students} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
+          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} /> : active === "results" ? <ResultsPage students={students} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
         </div>
       </section>
     </main>
@@ -305,6 +332,90 @@ function ResultsPage({ students }: { students: Student[] }) {
   </>;
 }
 
+
+function ExamsPage({ exams, setExams }: { exams: PracticeExam[]; setExams: React.Dispatch<React.SetStateAction<PracticeExam[]>> }) {
+  const [tab, setTab] = useState<"list" | "input">("list");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const emptyExam: Omit<PracticeExam, "id"> = { round: exams.length + 1, title: "", examCode: "", examDate: new Date().toISOString().slice(0, 10), grade: "고1", subject: "공통수학1", range: "", questionCount: 30, timeLimit: 80, totalScore: 100, objectiveCount: 21, shortAnswerCount: 9, status: "작성중", testFile: "", solutionFile: "", memo: "" };
+  const [form, setForm] = useState<Omit<PracticeExam, "id">>(emptyExam);
+  const set = <K extends keyof Omit<PracticeExam, "id">>(key: K, value: Omit<PracticeExam, "id">[K]) => setForm((prev) => ({ ...prev, [key]: value }));
+  const startNew = () => { setEditingId(null); setForm({ ...emptyExam, round: Math.max(0, ...exams.map((exam) => exam.round)) + 1 }); setTab("input"); };
+  const editExam = (exam: PracticeExam) => { const { id, ...rest } = exam; setEditingId(id); setForm(rest); setTab("input"); };
+  const save = (e: FormEvent) => {
+    e.preventDefault();
+    if (!form.title.trim() || !form.examCode.trim() || !form.examDate) return alert("시험명, 시험코드, 시험일을 입력해 주세요.");
+    if (form.objectiveCount + form.shortAnswerCount !== form.questionCount) return alert("객관식과 단답형 문항 수의 합이 전체 문항 수와 같아야 합니다.");
+    if (editingId) setExams((prev) => prev.map((exam) => exam.id === editingId ? { ...form, id: editingId } : exam));
+    else setExams((prev) => [{ ...form, id: Math.max(0, ...prev.map((exam) => exam.id)) + 1 }, ...prev]);
+    setTab("list"); setEditingId(null);
+  };
+  const remove = (id: number) => { if (window.confirm("이 실전모의고사를 삭제할까요?")) setExams((prev) => prev.filter((exam) => exam.id !== id)); };
+  return <>
+    <section className="page-title-row">
+      <div><h2>실전 모의고사</h2><p>시험 회차와 기본정보, 문항 구성, 시험지·해설지를 등록합니다.</p></div>
+      <button className="primary-button" onClick={startNew}>＋ 실전모의고사 입력</button>
+    </section>
+    <div className="student-tabs">
+      <button className={tab === "list" ? "active" : ""} onClick={() => setTab("list")}>시험 목록</button>
+      <button className={tab === "input" ? "active" : ""} onClick={() => { if (tab !== "input") startNew(); }}>{editingId ? "시험 수정" : "실전모의고사 입력"}</button>
+    </div>
+    {tab === "list" ? <>
+      <section className="student-stat-grid">
+        <MiniStat label="전체 시험" value={`${exams.length}회`} note="등록된 실전모의고사" />
+        <MiniStat label="등록 완료" value={`${exams.filter(e => e.status === "등록완료").length}회`} note="응시 등록 가능" />
+        <MiniStat label="작성중" value={`${exams.filter(e => e.status === "작성중").length}회`} note="추가 입력 필요" emphasis />
+        <MiniStat label="마감" value={`${exams.filter(e => e.status === "마감").length}회`} note="종료된 시험" />
+      </section>
+      <section className="panel exam-list-panel">
+        <div className="list-summary"><strong>실전모의고사 {exams.length}회</strong><span>시험을 선택해 수정하거나 등록 상태를 확인합니다.</span></div>
+        <div className="data-table exam-list">
+          <div className="table-head"><span>회차 / 시험명</span><span>시험코드</span><span>대상 / 과목</span><span>시험일</span><span>문항 / 시간</span><span>파일</span><span>상태</span><span>관리</span></div>
+          {exams.map((exam) => <div className="table-row" key={exam.id}>
+            <div className="exam-name-cell"><i>{exam.round}</i><div><strong>{exam.title}</strong><small>{exam.range || "범위 미입력"}</small></div></div>
+            <b>{exam.examCode}</b><span>{exam.grade} · {exam.subject}</span><span>{exam.examDate}</span><span>{exam.questionCount}문항 · {exam.timeLimit}분</span>
+            <span className="file-count">{[exam.testFile, exam.solutionFile].filter(Boolean).length}/2 등록</span><Status text={exam.status} />
+            <div className="row-actions"><button onClick={() => editExam(exam)}>수정</button><button className="delete" onClick={() => remove(exam.id)}>삭제</button></div>
+          </div>)}
+        </div>
+      </section>
+    </> : <form className="exam-input-layout" onSubmit={save}>
+      <section className="panel exam-form-panel">
+        <div className="form-section-title"><div><span>01</span><div><h3>시험 기본정보</h3><p>회차를 구분할 수 있는 필수 정보를 입력합니다.</p></div></div></div>
+        <div className="form-grid exam-form-grid">
+          <Field label="시험 회차 *"><input type="number" min="1" value={form.round} onChange={(e) => set("round", Number(e.target.value))} /></Field>
+          <Field label="시험일 *"><input type="date" value={form.examDate} onChange={(e) => set("examDate", e.target.value)} /></Field>
+          <label className="field full"><span>시험명 *</span><input value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="예: 2026 SOS 고1 실전모의고사 1회" /></label>
+          <Field label="시험코드 *"><input value={form.examCode} onChange={(e) => set("examCode", e.target.value)} placeholder="예: SOS-H1-2026-01" /></Field>
+          <Field label="등록 상태"><select value={form.status} onChange={(e) => set("status", e.target.value as ExamStatus)}><option>작성중</option><option>등록완료</option><option>마감</option></select></Field>
+          <Field label="대상 학년"><select value={form.grade} onChange={(e) => set("grade", e.target.value)}><option>중3</option><option>고1</option><option>고2</option><option>고3</option><option>전체</option></select></Field>
+          <Field label="과목"><input value={form.subject} onChange={(e) => set("subject", e.target.value)} placeholder="예: 공통수학2" /></Field>
+          <label className="field full"><span>시험 범위</span><input value={form.range} onChange={(e) => set("range", e.target.value)} placeholder="예: 도형의 방정식 ~ 집합과 명제" /></label>
+        </div>
+      </section>
+      <section className="panel exam-form-panel">
+        <div className="form-section-title"><div><span>02</span><div><h3>문항 구성</h3><p>전체 문항 수와 시험 운영 시간을 설정합니다.</p></div></div></div>
+        <div className="form-grid exam-form-grid numbers">
+          <Field label="전체 문항 수"><input type="number" min="1" value={form.questionCount} onChange={(e) => set("questionCount", Number(e.target.value))} /></Field>
+          <Field label="총점"><input type="number" min="1" value={form.totalScore} onChange={(e) => set("totalScore", Number(e.target.value))} /></Field>
+          <Field label="객관식 문항"><input type="number" min="0" value={form.objectiveCount} onChange={(e) => set("objectiveCount", Number(e.target.value))} /></Field>
+          <Field label="단답형 문항"><input type="number" min="0" value={form.shortAnswerCount} onChange={(e) => set("shortAnswerCount", Number(e.target.value))} /></Field>
+          <Field label="시험 시간(분)"><input type="number" min="1" value={form.timeLimit} onChange={(e) => set("timeLimit", Number(e.target.value))} /></Field>
+          <div className={`question-check ${form.objectiveCount + form.shortAnswerCount === form.questionCount ? "ok" : "warning"}`}><span>문항 합계</span><strong>{form.objectiveCount + form.shortAnswerCount} / {form.questionCount}</strong><small>{form.objectiveCount + form.shortAnswerCount === form.questionCount ? "문항 수가 일치합니다." : "전체 문항 수와 맞춰주세요."}</small></div>
+        </div>
+      </section>
+      <section className="panel exam-form-panel">
+        <div className="form-section-title"><div><span>03</span><div><h3>시험 자료 등록</h3><p>현재는 파일명을 저장하며, Supabase 연결 시 실제 업로드로 전환합니다.</p></div></div></div>
+        <div className="upload-grid">
+          <label className="upload-card"><span>시험지 PDF</span><strong>{form.testFile || "등록된 파일 없음"}</strong><input type="file" accept=".pdf" onChange={(e) => set("testFile", e.target.files?.[0]?.name ?? "")} /><em>{form.testFile ? "파일 변경" : "PDF 선택"}</em></label>
+          <label className="upload-card"><span>해설지 PDF</span><strong>{form.solutionFile || "등록된 파일 없음"}</strong><input type="file" accept=".pdf" onChange={(e) => set("solutionFile", e.target.files?.[0]?.name ?? "")} /><em>{form.solutionFile ? "파일 변경" : "PDF 선택"}</em></label>
+        </div>
+        <label className="field exam-memo"><span>관리 메모</span><textarea value={form.memo} onChange={(e) => set("memo", e.target.value)} placeholder="출제 의도, 검토 상태 등 관리자 메모를 입력하세요." /></label>
+      </section>
+      <div className="exam-form-actions"><button type="button" className="secondary-button" onClick={() => setTab("list")}>취소</button><button className="primary-button">{editingId ? "수정 저장" : "시험 등록"}</button></div>
+    </form>}
+  </>;
+}
+
 function Dashboard({ students, onMove }: { students: Student[]; onMove: (menu: AdminMenu) => void }) {
   return <><section className="welcome-card"><div><span className="pill">MATSPU SOS</span><h2>학생의 점수를 데이터로 최적화합니다.</h2><p>진단부터 훈련 추천까지 매쓰푸의 전체 흐름을 관리하세요.</p></div></section><section className="student-stat-grid"><MiniStat label="등록 학생" value={`${students.length}명`} note="전체 회원" /><MiniStat label="재원 학생" value={`${students.filter(s => s.status === "정상").length}명`} note="현재 학습중" /><MiniStat label="AI 분석 대기" value="12건" note="검토 필요" emphasis /><MiniStat label="추천 승인 대기" value="7건" note="SOS 추천" /></section><section className="empty-page"><div className="empty-icon">⌂</div><h2>대시보드 상세 구성 예정</h2><p>현재는 학생관리 기능을 우선 개발했습니다.</p><button className="primary-button" onClick={() => onMove("students")}>학생 관리 열기</button></section></>;
 }
@@ -313,4 +424,4 @@ function ComingSoon({ title, onMove }: { title: string; onMove: (menu: AdminMenu
 function MiniStat({ label, value, note, emphasis = false }: { label: string; value: string; note: string; emphasis?: boolean }) { return <article className={`mini-stat ${emphasis ? "emphasis" : ""}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
 function Detail({ label, value }: { label: string; value: string }) { return <div className="detail-row"><span>{label}</span><strong>{value}</strong></div>; }
-function Status({ text }: { text: string }) { const tone = ["정상", "분석완료"].includes(text) ? "green" : ["훈련중"].includes(text) ? "blue" : ["진단대기"].includes(text) ? "orange" : ["퇴원"].includes(text) ? "red" : "gray"; return <span className={`pill ${tone}`}>{text}</span>; }
+function Status({ text }: { text: string }) { const tone = ["정상", "분석완료", "등록완료"].includes(text) ? "green" : ["훈련중"].includes(text) ? "blue" : ["진단대기", "작성중"].includes(text) ? "orange" : ["퇴원"].includes(text) ? "red" : "gray"; return <span className={`pill ${tone}`}>{text}</span>; }
