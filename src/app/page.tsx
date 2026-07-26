@@ -1210,6 +1210,22 @@ type AnalysisJob = {
   created_at: string;
 };
 
+type AnalysisQuestion = {
+  id: string;
+  question_no: number;
+  answer: string | null;
+  status: string;
+  confidence: number | null;
+  ai_result: {
+    question_type?: string;
+    subject?: string | null;
+    unit?: string | null;
+    topic?: string | null;
+    difficulty?: string | null;
+    summary?: string | null;
+  };
+};
+
 const analysisStatusLabel: Record<string, string> = {
   WAITING: "분석 대기",
   RUNNING: "분석 중",
@@ -1223,6 +1239,7 @@ function AnalysisPage() {
   const [selectedId, setSelectedId] = useState("");
   const [analysis, setAnalysis] = useState<AnalysisRecord | null>(null);
   const [jobs, setJobs] = useState<AnalysisJob[]>([]);
+  const [questions, setQuestions] = useState<AnalysisQuestion[]>([]);
   const [examUrl, setExamUrl] = useState<string | null>(null);
   const [solutionUrl, setSolutionUrl] = useState<string | null>(null);
   const [viewer, setViewer] = useState<"exam" | "solution">("exam");
@@ -1231,6 +1248,8 @@ function AnalysisPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [checkingAi, setCheckingAi] = useState(false);
+  const [aiConnection, setAiConnection] = useState<{ ok: boolean; message: string } | null>(null);
 
   const selectedSource = sources.find((item) => item.id === selectedId) ?? null;
 
@@ -1249,10 +1268,11 @@ function AnalysisPage() {
       setAnalysis(current);
       if (current) {
         const detailResponse = await fetch(`/api/analysis/${current.id}`, { cache: "no-store" });
-        const detail = await detailResponse.json() as { success: boolean; jobs?: AnalysisJob[]; message?: string };
+        const detail = await detailResponse.json() as { success: boolean; jobs?: AnalysisJob[]; questions?: AnalysisQuestion[]; message?: string };
         if (!detailResponse.ok || !detail.success) throw new Error(detail.message || "분석 정보를 불러오지 못했습니다.");
         setJobs(detail.jobs ?? []);
-      } else setJobs([]);
+        setQuestions(detail.questions ?? []);
+      } else { setJobs([]); setQuestions([]); }
 
       const urlResponse = await fetch(`/api/source-files/${sourceId}/signed-urls`, { cache: "no-store" });
       const urls = await urlResponse.json() as { success: boolean; examUrl?: string | null; solutionUrl?: string | null; message?: string };
@@ -1285,8 +1305,28 @@ function AnalysisPage() {
   const changeSource = async (value: string) => {
     setSelectedId(value);
     window.localStorage.setItem("matspu-analysis-source-id", value);
-    setAnalysis(null); setJobs([]); setExamUrl(null); setSolutionUrl(null);
+    setAnalysis(null); setJobs([]); setQuestions([]); setExamUrl(null); setSolutionUrl(null);
     await loadWorkspace(value);
+  };
+
+
+  const checkAiConnection = async () => {
+    setCheckingAi(true);
+    setAiConnection(null);
+    setErrorMessage("");
+    try {
+      const response = await fetch("/api/analysis/health", { cache: "no-store" });
+      const result = await response.json() as { success: boolean; message?: string; model?: string };
+      const text = result.message || (result.success ? "OpenAI 연결 정상" : "OpenAI 연결 실패");
+      setAiConnection({ ok: response.ok && result.success, message: text });
+      if (!response.ok || !result.success) setErrorMessage(text);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "OpenAI 연결 확인에 실패했습니다.";
+      setAiConnection({ ok: false, message: text });
+      setErrorMessage(text);
+    } finally {
+      setCheckingAi(false);
+    }
   };
 
   const startAnalysis = async () => {
@@ -1294,10 +1334,11 @@ function AnalysisPage() {
     setStarting(true); setMessage(""); setErrorMessage("");
     try {
       const response = await fetch("/api/analysis/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceFileId: selectedId }) });
-      const result = await response.json() as { success: boolean; analysis?: AnalysisRecord; message?: string };
+      const result = await response.json() as { success: boolean; analysis?: AnalysisRecord; questionCount?: number; message?: string };
       if (!response.ok || !result.success || !result.analysis) throw new Error(result.message || "AI 분석 시작에 실패했습니다.");
       setAnalysis(result.analysis);
-      setMessage("AI 분석 작업이 생성되었습니다. 다음 버전에서 PDF 문항 분리 엔진이 이 작업을 이어서 처리합니다.");
+      setMessage(`AI 분석이 완료되었습니다. ${result.questionCount ?? result.analysis.total_questions}개 문항을 확인해 주세요.`);
+      setAiConnection({ ok: true, message: "OpenAI 실제 분석 호출 완료" });
       await loadWorkspace(selectedId);
     } catch (error) { setErrorMessage(error instanceof Error ? error.message : "AI 분석 시작에 실패했습니다."); }
     finally { setStarting(false); }
@@ -1343,10 +1384,30 @@ function AnalysisPage() {
         <div className="analysis-progress-title"><strong>{progress}%</strong><span>{analysis?.current_step ?? "분석을 시작해 주세요."}</span></div>
         <div className="analysis-main-progress"><i style={{ width: `${progress}%` }}/></div>
         <div className="analysis-count-grid"><div><span>전체 문항</span><strong>{analysis?.total_questions ?? 0}</strong></div><div><span>객관식</span><strong>{analysis?.objective_count ?? 0}</strong></div><div><span>단답형</span><strong>{analysis?.subjective_count ?? 0}</strong></div></div>
-        <button className="primary-button analysis-start-button" onClick={() => void startAnalysis()} disabled={starting || loading}>{starting ? "작업 생성 중..." : analysis ? "AI 분석 다시 시작" : "AI 분석 시작"}</button>
+        <div className="analysis-ai-check">
+          <button className="secondary-button" type="button" onClick={() => void checkAiConnection()} disabled={checkingAi || starting}>
+            {checkingAi ? "연결 확인 중..." : "AI 연결 확인"}
+          </button>
+          {aiConnection ? <span className={aiConnection.ok ? "ok" : "fail"}>{aiConnection.ok ? "✓" : "!"} {aiConnection.message}</span> : <small>먼저 API 키·결제·모델 연결을 확인합니다.</small>}
+        </div>
+        <button className="primary-button analysis-start-button" onClick={() => void startAnalysis()} disabled={starting || loading}>{starting ? "GPT가 PDF 분석 중... (잠시 기다려 주세요)" : analysis ? "AI 분석 다시 시작" : "AI 분석 시작"}</button>
         {analysis ? <div className="analysis-manual-controls"><label className="field"><span>진행 단계 메모</span><input value={analysis.current_step} onChange={(e) => setAnalysis({ ...analysis, current_step: e.target.value })}/></label><label className="field"><span>진행률</span><input type="number" min="0" max="100" value={analysis.progress} onChange={(e) => setAnalysis({ ...analysis, progress: Math.max(0, Math.min(100, Number(e.target.value))) })}/></label><button className="secondary-button" onClick={() => void saveWorkspace({ current_step: analysis.current_step, progress: analysis.progress })} disabled={saving}>{saving ? "저장 중..." : "상태 저장"}</button></div> : null}
         <div className="analysis-job-log"><h3>작업 기록</h3>{jobs.length === 0 ? <p>아직 생성된 작업이 없습니다.</p> : jobs.slice(0, 4).map((job) => <article key={job.id}><div><strong>{job.status}</strong><span>{new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(job.created_at))}</span></div><p>{job.logs?.[job.logs.length - 1]?.message || "작업 생성"}</p></article>)}</div>
       </aside>
+      {questions.length > 0 ? <section className="panel analysis-question-results">
+        <div className="source-file-title"><div><strong>AI 문항 분석 결과</strong><span>총 {questions.length}문항 · 검수 필요</span></div></div>
+        <div className="analysis-question-table">
+          <div className="analysis-question-head"><span>번호</span><span>구분</span><span>단원·유형</span><span>난이도</span><span>정답</span><span>신뢰도</span></div>
+          {questions.map((q) => <div className="analysis-question-row" key={q.id}>
+            <strong>{q.question_no}</strong>
+            <span>{q.ai_result?.question_type === "objective" ? "객관식" : q.ai_result?.question_type === "subjective" ? "단답형" : "미분류"}</span>
+            <div><b>{[q.ai_result?.unit, q.ai_result?.topic].filter(Boolean).join(" · ") || "분류 필요"}</b><small>{q.ai_result?.summary || ""}</small></div>
+            <span>{q.ai_result?.difficulty || "-"}</span>
+            <strong>{q.answer || "-"}</strong>
+            <span>{q.confidence == null ? "-" : `${Math.round(Number(q.confidence) * 100)}%`}</span>
+          </div>)}
+        </div>
+      </section> : null}
     </div>}
   </>;
 }
