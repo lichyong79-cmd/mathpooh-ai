@@ -904,7 +904,15 @@ type SourceFile = {
   created_at: string;
   title: string;
   source: string | null;
+  grade: string | null;
+  subject: string | null;
   storage_path: string;
+  hwp_path: string | null;
+  exam_pdf_path: string | null;
+  solution_pdf_path: string | null;
+  original_hwp_name: string | null;
+  exam_pdf_name: string | null;
+  solution_pdf_name: string | null;
   page_count: number;
   status: string;
   error_message: string | null;
@@ -919,10 +927,16 @@ const sourceStatusLabel: Record<string, string> = {
   failed: "실패",
 };
 
+type UploadFileKind = "hwp" | "exam" | "solution";
+
 function ProblemsPage() {
   const [title, setTitle] = useState("");
   const [source, setSource] = useState("매쓰푸 자체 제작");
-  const [file, setFile] = useState<File | null>(null);
+  const [grade, setGrade] = useState("고1");
+  const [subject, setSubject] = useState("공통수학1");
+  const [hwpFile, setHwpFile] = useState<File | null>(null);
+  const [examPdf, setExamPdf] = useState<File | null>(null);
+  const [solutionPdf, setSolutionPdf] = useState<File | null>(null);
   const [items, setItems] = useState<SourceFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -937,13 +951,22 @@ function ProblemsPage() {
       setLoading(false);
       return;
     }
+
     try {
-      const response = await fetch(`${config.url}/rest/v1/source_files?select=id,created_at,title,source,storage_path,page_count,status,error_message&order=created_at.desc`, {
-        headers: { apikey: config.key, Authorization: `Bearer ${config.key}` },
-        cache: "no-store",
-      });
+      const fields = [
+        "id", "created_at", "title", "source", "grade", "subject", "storage_path",
+        "hwp_path", "exam_pdf_path", "solution_pdf_path", "original_hwp_name",
+        "exam_pdf_name", "solution_pdf_name", "page_count", "status", "error_message",
+      ].join(",");
+      const response = await fetch(
+        `${config.url}/rest/v1/source_files?select=${fields}&order=created_at.desc`,
+        {
+          headers: { apikey: config.key, Authorization: `Bearer ${config.key}` },
+          cache: "no-store",
+        }
+      );
       if (!response.ok) throw new Error(await response.text());
-      setItems(await response.json() as SourceFile[]);
+      setItems((await response.json()) as SourceFile[]);
     } catch (error) {
       setErrorMessage(`목록 조회 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
     } finally {
@@ -953,92 +976,145 @@ function ProblemsPage() {
 
   useEffect(() => { void loadFiles(); }, [loadFiles]);
 
-  const selectPdf = (event: ChangeEvent<HTMLInputElement>) => {
+  const selectFile = (kind: UploadFileKind, event: ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null;
     setMessage("");
     setErrorMessage("");
-    if (!selected) return setFile(null);
-    if (!(selected.type === "application/pdf" || selected.name.toLowerCase().endsWith(".pdf"))) {
-      event.target.value = "";
-      setFile(null);
-      return setErrorMessage("PDF 파일만 등록할 수 있습니다.");
+
+    if (!selected) {
+      if (kind === "hwp") setHwpFile(null);
+      if (kind === "exam") setExamPdf(null);
+      if (kind === "solution") setSolutionPdf(null);
+      return;
     }
+
+    const lowerName = selected.name.toLowerCase();
+    const valid = kind === "hwp"
+      ? lowerName.endsWith(".hwp") || lowerName.endsWith(".hwpx")
+      : selected.type === "application/pdf" || lowerName.endsWith(".pdf");
+
+    if (!valid) {
+      event.target.value = "";
+      setErrorMessage(kind === "hwp" ? "한글 파일(.hwp 또는 .hwpx)을 선택해 주세요." : "PDF 파일만 선택할 수 있습니다.");
+      return;
+    }
+
     if (selected.size > 50 * 1024 * 1024) {
       event.target.value = "";
-      setFile(null);
-      return setErrorMessage("파일 크기는 50MB 이하여야 합니다.");
+      setErrorMessage("파일 크기는 각 50MB 이하여야 합니다.");
+      return;
     }
-    setFile(selected);
-    if (!title.trim()) setTitle(selected.name.replace(/\.pdf$/i, ""));
+
+    if (kind === "hwp") setHwpFile(selected);
+    if (kind === "exam") {
+      setExamPdf(selected);
+      if (!title.trim()) setTitle(selected.name.replace(/\.pdf$/i, "").replace(/_시험지$/i, ""));
+    }
+    if (kind === "solution") setSolutionPdf(selected);
   };
 
-  const uploadPdf = async (event: FormEvent<HTMLFormElement>) => {
+  const uploadBundle = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage("");
     setErrorMessage("");
+
     if (!title.trim()) return setErrorMessage("시험지명을 입력해 주세요.");
-    if (!file) return setErrorMessage("등록할 PDF를 선택해 주세요.");
+    if (!hwpFile) return setErrorMessage("한글 원본을 선택해 주세요.");
+    if (!examPdf) return setErrorMessage("시험지 PDF를 선택해 주세요.");
+    if (!solutionPdf) return setErrorMessage("해설지 PDF를 선택해 주세요.");
 
     setUploading(true);
     try {
       const formData = new FormData();
       formData.append("title", title.trim());
       formData.append("source", source.trim());
-      formData.append("file", file);
+      formData.append("grade", grade);
+      formData.append("subject", subject);
+      formData.append("hwpFile", hwpFile);
+      formData.append("examPdf", examPdf);
+      formData.append("solutionPdf", solutionPdf);
+
       const response = await fetch("/api/source-files/upload", { method: "POST", body: formData });
       const result = await response.json() as { success: boolean; message: string };
-      if (!response.ok || !result.success) throw new Error(result.message || "PDF 등록에 실패했습니다.");
+      if (!response.ok || !result.success) throw new Error(result.message || "시험지 등록에 실패했습니다.");
 
-      setMessage("PDF가 정상적으로 등록되었습니다.");
+      setMessage(result.message);
       setTitle("");
-      setFile(null);
-      const input = document.getElementById("sos-pdf-file") as HTMLInputElement | null;
-      if (input) input.value = "";
+      setHwpFile(null);
+      setExamPdf(null);
+      setSolutionPdf(null);
+      ["sos-hwp-file", "sos-exam-pdf", "sos-solution-pdf"].forEach((id) => {
+        const input = document.getElementById(id) as HTMLInputElement | null;
+        if (input) input.value = "";
+      });
       await loadFiles();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "PDF 등록 중 오류가 발생했습니다.");
+      setErrorMessage(error instanceof Error ? error.message : "시험지 등록 중 오류가 발생했습니다.");
     } finally {
       setUploading(false);
     }
-  };
-
-  const originalName = (path: string) => {
-    const name = path.split("/").pop() ?? path;
-    const dash = name.indexOf("-");
-    return dash < 0 ? name : name.slice(dash + 1);
   };
 
   const formatDate = (value: string) => new Intl.DateTimeFormat("ko-KR", {
     year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
   }).format(new Date(value));
 
+  const allReady = Boolean(title.trim() && hwpFile && examPdf && solutionPdf);
+
   return <>
     <section className="page-title-row">
-      <div><h2>AI 문제등록</h2><p>한글에서 만든 시험지 PDF를 올리면 문제은행 등록 작업을 시작합니다.</p></div>
+      <div><h2>AI 문제등록</h2><p>한글 원본·시험지 PDF·해설지 PDF를 한 세트로 등록합니다.</p></div>
     </section>
 
-    <form className="panel ai-upload-panel" onSubmit={uploadPdf}>
-      <div className="ai-upload-grid">
+    <form className="panel ai-upload-panel" onSubmit={uploadBundle}>
+      <div className="ai-upload-grid four-fields">
         <label className="field"><span>시험지명</span><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: H11 다항식 훈련 01" disabled={uploading}/></label>
         <label className="field"><span>출처</span><input value={source} onChange={(e) => setSource(e.target.value)} placeholder="예: 매쓰푸 자체 제작" disabled={uploading}/></label>
+        <label className="field"><span>학년</span><select value={grade} onChange={(e) => setGrade(e.target.value)} disabled={uploading}><option>중1</option><option>중2</option><option>중3</option><option>고1</option><option>고2</option><option>고3</option></select></label>
+        <label className="field"><span>과목</span><select value={subject} onChange={(e) => setSubject(e.target.value)} disabled={uploading}><option>중등수학</option><option>공통수학1</option><option>공통수학2</option><option>대수</option><option>미적분Ⅰ</option><option>확률과 통계</option></select></label>
       </div>
-      <label className={`pdf-drop-zone ${file ? "selected" : ""}`}>
-        <input id="sos-pdf-file" type="file" accept=".pdf,application/pdf" onChange={selectPdf} disabled={uploading}/>
-        <strong>{file ? file.name : "PDF 파일 선택"}</strong>
-        <span>{file ? `${(file.size / 1024 / 1024).toFixed(1)}MB` : "클릭해서 시험지 PDF를 선택하세요 · 최대 50MB"}</span>
-      </label>
+
+      <div className="bundle-upload-grid">
+        <label className={`bundle-drop-zone ${hwpFile ? "selected" : ""}`}>
+          <input id="sos-hwp-file" type="file" accept=".hwp,.hwpx" onChange={(e) => selectFile("hwp", e)} disabled={uploading}/>
+          <b>① 한글 원본</b><strong>{hwpFile ? hwpFile.name : "HWP/HWPX 선택"}</strong><span>{hwpFile ? `${(hwpFile.size / 1024 / 1024).toFixed(1)}MB` : "수정 가능한 원본 파일"}</span>
+        </label>
+        <label className={`bundle-drop-zone ${examPdf ? "selected" : ""}`}>
+          <input id="sos-exam-pdf" type="file" accept=".pdf,application/pdf" onChange={(e) => selectFile("exam", e)} disabled={uploading}/>
+          <b>② 시험지 PDF</b><strong>{examPdf ? examPdf.name : "시험지 PDF 선택"}</strong><span>{examPdf ? `${(examPdf.size / 1024 / 1024).toFixed(1)}MB` : "문항 분리용 시험지"}</span>
+        </label>
+        <label className={`bundle-drop-zone ${solutionPdf ? "selected" : ""}`}>
+          <input id="sos-solution-pdf" type="file" accept=".pdf,application/pdf" onChange={(e) => selectFile("solution", e)} disabled={uploading}/>
+          <b>③ 해설지 PDF</b><strong>{solutionPdf ? solutionPdf.name : "해설지 PDF 선택"}</strong><span>{solutionPdf ? `${(solutionPdf.size / 1024 / 1024).toFixed(1)}MB` : "정답·해설 분석용"}</span>
+        </label>
+      </div>
+
+      <div className="upload-ready-row">
+        <span className={hwpFile ? "ready" : ""}>{hwpFile ? "✓" : "○"} 한글 원본</span>
+        <span className={examPdf ? "ready" : ""}>{examPdf ? "✓" : "○"} 시험지 PDF</span>
+        <span className={solutionPdf ? "ready" : ""}>{solutionPdf ? "✓" : "○"} 해설지 PDF</span>
+      </div>
+
       {message ? <div className="upload-message success">{message}</div> : null}
       {errorMessage ? <div className="upload-message error">{errorMessage}</div> : null}
-      <div className="ai-upload-actions"><button className="primary-button" type="submit" disabled={uploading || !file}>{uploading ? "등록 중..." : "PDF 등록"}</button></div>
+      <div className="ai-upload-actions"><button className="primary-button" type="submit" disabled={uploading || !allReady}>{uploading ? "3개 파일 등록 중..." : "시험지 세트 등록"}</button></div>
     </form>
 
     <section className="panel source-file-panel">
-      <div className="source-file-title"><div><strong>등록된 시험지</strong><span>총 {items.length}개</span></div><button className="secondary-button" type="button" onClick={() => void loadFiles()} disabled={loading}>새로고침</button></div>
+      <div className="source-file-title"><div><strong>등록된 시험지 세트</strong><span>총 {items.length}개</span></div><button className="secondary-button" type="button" onClick={() => void loadFiles()} disabled={loading}>새로고침</button></div>
       {loading ? <div className="source-file-empty">목록을 불러오는 중입니다.</div> : items.length === 0 ? <div className="source-file-empty">등록된 시험지가 없습니다.</div> : <div className="source-file-list">
-        <div className="source-file-head"><span>등록일</span><span>시험지명</span><span>출처</span><span>파일명</span><span>페이지</span><span>상태</span></div>
-        {items.map((item) => <div className="source-file-row" key={item.id}>
-          <span>{formatDate(item.created_at)}</span><strong>{item.title}</strong><span>{item.source || "-"}</span><span title={originalName(item.storage_path)}>{originalName(item.storage_path)}</span><span>{item.page_count || "-"}</span><Status text={sourceStatusLabel[item.status] ?? item.status}/>
-          {item.error_message ? <small>{item.error_message}</small> : null}
+        <div className="source-file-head"><span>등록일</span><span>시험지명</span><span>학년·과목</span><span>파일 구성</span><span>상태</span></div>
+        {items.map((item) => <div className="source-file-row bundle-row" key={item.id}>
+          <span>{formatDate(item.created_at)}</span>
+          <div><strong>{item.title}</strong><small>{item.source || "-"}</small></div>
+          <span>{[item.grade, item.subject].filter(Boolean).join(" · ") || "-"}</span>
+          <div className="file-badges">
+            <span className={item.hwp_path ? "ok" : "missing"}>HWP</span>
+            <span className={item.exam_pdf_path ? "ok" : "missing"}>시험지</span>
+            <span className={item.solution_pdf_path ? "ok" : "missing"}>해설지</span>
+          </div>
+          <Status text={sourceStatusLabel[item.status] ?? item.status}/>
+          {item.error_message ? <small className="bundle-error">{item.error_message}</small> : null}
         </div>)}
       </div>}
     </section>
