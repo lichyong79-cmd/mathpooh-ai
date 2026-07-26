@@ -464,11 +464,12 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
   const [regionDrafts, setRegionDrafts] = useState<Record<number, "자동인식" | "확인필요">>({});
   const [saving, setSaving] = useState(false);
 
+  // 시험 입력 화면은 임시 작업 화면이므로 새로고침 후 복원하지 않습니다.
+  // F5를 누르면 항상 안전한 시험 목록에서 시작합니다.
   useEffect(() => {
-    const saved = window.localStorage.getItem("matspu-exam-tab");
-    if (saved === "list" || saved === "input") setTab(saved);
+    window.localStorage.removeItem("matspu-exam-tab");
+    setTab("list");
   }, []);
-  useEffect(() => { window.localStorage.setItem("matspu-exam-tab", tab); }, [tab]);
 
   const makeEmptyExam = (): Omit<PracticeExam, "id"> => ({
     round: Math.max(0, ...exams.map((exam) => exam.round)) + 1, title: "", examCode: "",
