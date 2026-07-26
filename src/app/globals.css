@@ -193,3 +193,87 @@ body{font-size:16px;line-height:1.5}
     scrollbar-gutter: auto;
   }
 }
+
+/* SOS 18: 시험 목록 좌우 이동 확정 수정
+   - 스크롤 컨테이너 자체에는 min-width를 주지 않는다.
+   - 실제 표 행만 넓게 만들어 내부 스크롤이 생기도록 한다.
+   - 관리 열은 오른쪽에 고정해 수정/삭제를 항상 누를 수 있게 한다. */
+.exam-list-panel {
+  overflow: hidden !important;
+}
+
+.exam-list.data-table {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow-x: scroll !important;
+  overflow-y: hidden !important;
+  scrollbar-width: auto !important;
+  scrollbar-gutter: stable !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+}
+
+.exam-list .table-head,
+.exam-list .table-row {
+  width: 1450px !important;
+  min-width: 1450px !important;
+}
+
+/* 관리 열을 우측 고정 */
+.exam-list .table-head > :last-child,
+.exam-list .table-row > :last-child {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  background: #fff;
+  box-shadow: -10px 0 14px -14px rgba(29,39,68,.5);
+}
+
+.exam-list .table-head > :last-child {
+  background: #f7f8fb;
+  z-index: 4;
+}
+
+.exam-list.data-table::-webkit-scrollbar {
+  display: block !important;
+  height: 14px !important;
+}
+
+.exam-list.data-table::-webkit-scrollbar-track {
+  background: #eef1f6 !important;
+  border-radius: 999px;
+}
+
+.exam-list.data-table::-webkit-scrollbar-thumb {
+  min-width: 90px;
+  background: #8d93a1 !important;
+  border: 3px solid #eef1f6;
+  border-radius: 999px;
+}
+
+/* 태블릿에서도 카드형으로 바꾸지 말고 좌우 스크롤 유지 */
+@media (min-width: 761px) and (max-width: 1280px) {
+  .exam-list-panel {
+    overflow: hidden !important;
+  }
+  .exam-list.data-table {
+    display: block !important;
+    overflow-x: scroll !important;
+    overflow-y: hidden !important;
+  }
+  .exam-list .table-head {
+    display: grid !important;
+  }
+  .exam-list .table-row {
+    display: grid !important;
+    grid-template-columns: 1.8fr 1fr 1fr .78fr .85fr 1.05fr .7fr .9fr !important;
+    gap: 10px !important;
+    padding: 0 11px !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+}
