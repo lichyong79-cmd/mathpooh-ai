@@ -797,6 +797,56 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
   };
 
   return <>
+    <style jsx global>{`
+      /* 좁은 화면에서 고정 관리열이 진행률/파일 영역 위로 겹치는 문제 방지 */
+      @media (max-width: 1500px) {
+        .exam-list .table-head > :last-child,
+        .exam-list .table-row > :last-child {
+          position: static !important;
+          right: auto !important;
+          z-index: auto !important;
+          box-shadow: none !important;
+        }
+
+        .exam-list .table-head,
+        .exam-list .table-row {
+          grid-template-columns:
+            minmax(300px, 1.55fr)
+            160px
+            210px
+            140px
+            160px
+            250px
+            180px
+            140px
+            150px !important;
+          min-width: 1690px !important;
+        }
+
+        .exam-list-panel {
+          overflow: hidden !important;
+        }
+
+        .exam-list.data-table {
+          overflow-x: auto !important;
+          overflow-y: visible !important;
+          scrollbar-gutter: stable;
+        }
+
+        .exam-list .table-row > *,
+        .file-buttons,
+        .exam-progress-cell,
+        .status-control,
+        .row-actions {
+          min-width: 0;
+        }
+
+        .row-actions {
+          flex-wrap: nowrap;
+          white-space: nowrap;
+        }
+      }
+    `}</style>
     <section className="page-title-row"><div><h2>실전 모의고사</h2><p>모든 컴퓨터가 Supabase의 동일한 시험정보와 PDF를 사용합니다.</p></div><button className="primary-button" onClick={startNew}>＋ 실전모의고사 입력</button></section>
     <div className="student-tabs"><button className={tab === "list" ? "active" : ""} onClick={() => setTab("list")}>시험 목록</button><button className={tab === "input" ? "active" : ""} onClick={() => { if (tab !== "input") startNew(); }}>{editingId ? "시험 수정" : "실전모의고사 입력"}</button></div>
     {tab === "list" ? <>
