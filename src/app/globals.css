@@ -145,9 +145,9 @@ body{font-size:16px;line-height:1.5}
 .html-print-actions button:last-child{width:40px!important;padding:0;background:#f2f4f8!important;color:#687087!important;font-size:25px!important}
 .html-print-modal iframe{background:#eef1f6}
 
-/* SOS 16: 시험 목록 이중 가로 스크롤바 제거 */
+/* SOS 17: 시험 목록 가로 이동 복구 — 스크롤은 안쪽에 1개만 표시 */
 .exam-list-panel {
-  overflow-x: hidden !important;
+  overflow: hidden !important;
 }
 
 .exam-list.data-table {
@@ -155,22 +155,41 @@ body{font-size:16px;line-height:1.5}
   max-width: 100%;
   overflow-x: auto !important;
   overflow-y: hidden !important;
-  scrollbar-width: none;      /* Firefox */
-  -ms-overflow-style: none;   /* old Edge */
+  scrollbar-width: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .exam-list.data-table::-webkit-scrollbar {
-  display: none;              /* Chrome, Edge, Safari */
-  width: 0;
-  height: 0;
+  display: block;
+  height: 12px;
 }
 
-@media (max-width: 760px) {
+.exam-list.data-table::-webkit-scrollbar-track {
+  background: #eef1f6;
+  border-radius: 999px;
+}
+
+.exam-list.data-table::-webkit-scrollbar-thumb {
+  background: #9a9a9a;
+  border: 3px solid #eef1f6;
+  border-radius: 999px;
+}
+
+.exam-list.data-table::-webkit-scrollbar-thumb:hover {
+  background: #777;
+}
+
+/* 1280px 이하에서는 기존 카드형 반응형 목록 사용 — 가로 스크롤 불필요 */
+@media (max-width: 1280px) {
   .exam-list-panel {
     overflow: visible !important;
   }
 
   .exam-list.data-table {
+    min-width: 0 !important;
     overflow: visible !important;
+    scrollbar-gutter: auto;
   }
 }
