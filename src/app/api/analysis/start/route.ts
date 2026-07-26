@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || "gpt-5-mini";
+    const model = process.env.OPENAI_MODEL || "gpt-5";
     if (!apiKey) {
       return NextResponse.json(
         { success: false, message: "OPENAI_API_KEY가 없습니다. Vercel 환경변수를 저장한 뒤 재배포해 주세요." },

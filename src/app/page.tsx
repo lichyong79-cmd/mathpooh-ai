@@ -1226,6 +1226,25 @@ type AnalysisQuestion = {
   };
 };
 
+type AnalysisProbe = {
+  page_count_estimate: number;
+  total_questions: number;
+  objective_count: number;
+  subjective_count: number;
+  first_question: {
+    question_no: number;
+    question_type: "objective" | "subjective" | "unknown";
+    subject: string;
+    unit: string;
+    topic: string;
+    difficulty: "하" | "중" | "상" | "최상";
+    answer: string;
+    confidence: number;
+    summary: string;
+  };
+  notes: string;
+};
+
 const analysisStatusLabel: Record<string, string> = {
   WAITING: "분석 대기",
   RUNNING: "분석 중",
@@ -1249,6 +1268,9 @@ function AnalysisPage() {
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [checkingAi, setCheckingAi] = useState(false);
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<AnalysisProbe | null>(null);
+  const [probeModel, setProbeModel] = useState("");
   const [aiConnection, setAiConnection] = useState<{ ok: boolean; message: string } | null>(null);
 
   const selectedSource = sources.find((item) => item.id === selectedId) ?? null;
@@ -1305,7 +1327,7 @@ function AnalysisPage() {
   const changeSource = async (value: string) => {
     setSelectedId(value);
     window.localStorage.setItem("matspu-analysis-source-id", value);
-    setAnalysis(null); setJobs([]); setQuestions([]); setExamUrl(null); setSolutionUrl(null);
+    setAnalysis(null); setJobs([]); setQuestions([]); setExamUrl(null); setSolutionUrl(null); setProbeResult(null); setProbeModel("");
     await loadWorkspace(value);
   };
 
@@ -1326,6 +1348,31 @@ function AnalysisPage() {
       setErrorMessage(text);
     } finally {
       setCheckingAi(false);
+    }
+  };
+
+  const runProbe = async () => {
+    if (!selectedId) return;
+    setProbing(true);
+    setProbeResult(null);
+    setProbeModel("");
+    setMessage("");
+    setErrorMessage("");
+    try {
+      const response = await fetch("/api/analysis/probe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceFileId: selectedId }),
+      });
+      const result = await response.json() as { success: boolean; model?: string; result?: AnalysisProbe; message?: string };
+      if (!response.ok || !result.success || !result.result) throw new Error(result.message || "PDF 1차 판독에 실패했습니다.");
+      setProbeResult(result.result);
+      setProbeModel(result.model || "");
+      setMessage(`1차 판독 완료 · 전체 ${result.result.total_questions}문항 · 1번 문항 분석 완료`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "PDF 1차 판독에 실패했습니다.");
+    } finally {
+      setProbing(false);
     }
   };
 
@@ -1390,10 +1437,33 @@ function AnalysisPage() {
           </button>
           {aiConnection ? <span className={aiConnection.ok ? "ok" : "fail"}>{aiConnection.ok ? "✓" : "!"} {aiConnection.message}</span> : <small>먼저 API 키·결제·모델 연결을 확인합니다.</small>}
         </div>
-        <button className="primary-button analysis-start-button" onClick={() => void startAnalysis()} disabled={starting || loading}>{starting ? "GPT가 PDF 분석 중... (잠시 기다려 주세요)" : analysis ? "AI 분석 다시 시작" : "AI 분석 시작"}</button>
+        <button className="secondary-button analysis-probe-button" type="button" onClick={() => void runProbe()} disabled={probing || starting || loading}>{probing ? "GPT가 시험지를 판독 중..." : "1차 판독 테스트 (문항 수 + 1번)"}</button>
+        <button className="primary-button analysis-start-button" onClick={() => void startAnalysis()} disabled={starting || probing || loading}>{starting ? "GPT가 전체 PDF 분석 중... (잠시 기다려 주세요)" : analysis ? "전체 AI 분석 다시 시작" : "전체 AI 분석 시작"}</button>
         {analysis ? <div className="analysis-manual-controls"><label className="field"><span>진행 단계 메모</span><input value={analysis.current_step} onChange={(e) => setAnalysis({ ...analysis, current_step: e.target.value })}/></label><label className="field"><span>진행률</span><input type="number" min="0" max="100" value={analysis.progress} onChange={(e) => setAnalysis({ ...analysis, progress: Math.max(0, Math.min(100, Number(e.target.value))) })}/></label><button className="secondary-button" onClick={() => void saveWorkspace({ current_step: analysis.current_step, progress: analysis.progress })} disabled={saving}>{saving ? "저장 중..." : "상태 저장"}</button></div> : null}
         <div className="analysis-job-log"><h3>작업 기록</h3>{jobs.length === 0 ? <p>아직 생성된 작업이 없습니다.</p> : jobs.slice(0, 4).map((job) => <article key={job.id}><div><strong>{job.status}</strong><span>{new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(job.created_at))}</span></div><p>{job.logs?.[job.logs.length - 1]?.message || "작업 생성"}</p></article>)}</div>
       </aside>
+      {probeResult ? <section className="panel analysis-probe-result">
+        <div className="source-file-title"><div><strong>GPT 1차 판독 결과</strong><span>{probeModel ? `사용 모델 · ${probeModel}` : ""}</span></div></div>
+        <div className="analysis-probe-stats">
+          <div><span>추정 페이지</span><strong>{probeResult.page_count_estimate}</strong></div>
+          <div><span>전체 문항</span><strong>{probeResult.total_questions}</strong></div>
+          <div><span>객관식</span><strong>{probeResult.objective_count}</strong></div>
+          <div><span>단답·서술</span><strong>{probeResult.subjective_count}</strong></div>
+        </div>
+        <article className="analysis-first-question">
+          <div className="analysis-first-question-head"><strong>{probeResult.first_question.question_no}번 문항</strong><span>{probeResult.first_question.question_type === "objective" ? "객관식" : probeResult.first_question.question_type === "subjective" ? "단답·서술형" : "미분류"}</span></div>
+          <div className="analysis-first-question-grid">
+            <div><span>과목</span><strong>{probeResult.first_question.subject || "-"}</strong></div>
+            <div><span>단원</span><strong>{probeResult.first_question.unit || "-"}</strong></div>
+            <div><span>유형</span><strong>{probeResult.first_question.topic || "-"}</strong></div>
+            <div><span>난이도</span><strong>{probeResult.first_question.difficulty}</strong></div>
+            <div><span>정답</span><strong>{probeResult.first_question.answer || "확인 필요"}</strong></div>
+            <div><span>신뢰도</span><strong>{Math.round(probeResult.first_question.confidence * 100)}%</strong></div>
+          </div>
+          <p>{probeResult.first_question.summary}</p>
+          {probeResult.notes ? <small>{probeResult.notes}</small> : null}
+        </article>
+      </section> : null}
       {questions.length > 0 ? <section className="panel analysis-question-results">
         <div className="source-file-title"><div><strong>AI 문항 분석 결과</strong><span>총 {questions.length}문항 · 검수 필요</span></div></div>
         <div className="analysis-question-table">

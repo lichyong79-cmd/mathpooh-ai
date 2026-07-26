@@ -316,3 +316,20 @@ body{font-size:16px;line-height:1.5}
 .analysis-question-results{grid-column:1/-1;overflow:hidden}.analysis-question-table{overflow:auto}.analysis-question-head,.analysis-question-row{display:grid;grid-template-columns:70px 90px minmax(260px,1fr) 90px 110px 90px;gap:12px;align-items:center;padding:12px 18px;min-width:800px}.analysis-question-head{background:#f6f7fb;color:#7b8498;font-size:12px;font-weight:900;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.analysis-question-row{border-bottom:1px solid #edf0f5;font-size:13px}.analysis-question-row>strong{color:#2f3e60}.analysis-question-row>div{display:flex;flex-direction:column;gap:4px}.analysis-question-row b{font-size:13px;color:#344467}.analysis-question-row small{font-size:11px;color:var(--muted)}
 
 .analysis-ai-check{display:flex;flex-direction:column;gap:8px;margin-top:14px;padding:12px;border:1px solid #e2e8f0;border-radius:12px;background:#f8fafc}.analysis-ai-check button{width:100%}.analysis-ai-check span,.analysis-ai-check small{font-size:12px;line-height:1.45}.analysis-ai-check .ok{color:#047857;font-weight:700}.analysis-ai-check .fail{color:#b91c1c;font-weight:700}
+
+/* SOS19 · GPT 1차 판독 */
+.analysis-probe-button { width: 100%; min-height: 52px; margin-top: 12px; }
+.analysis-probe-result { grid-column: 1 / -1; padding: 24px; }
+.analysis-probe-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.analysis-probe-stats > div { border: 1px solid #e1e7f0; border-radius: 14px; padding: 16px; background: #f8fafc; }
+.analysis-probe-stats span, .analysis-first-question-grid span { display: block; color: #6b7280; font-size: 13px; margin-bottom: 6px; }
+.analysis-probe-stats strong { font-size: 28px; color: #172033; }
+.analysis-first-question { border: 1px solid #dce4ef; border-radius: 18px; padding: 20px; background: #fff; }
+.analysis-first-question-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+.analysis-first-question-head strong { font-size: 22px; }
+.analysis-first-question-head span { padding: 6px 10px; border-radius: 999px; background: #eef4ff; color: #315f9b; font-weight: 700; font-size: 13px; }
+.analysis-first-question-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.analysis-first-question-grid > div { padding: 12px 14px; border-radius: 12px; background: #f7f9fc; }
+.analysis-first-question p { margin: 18px 0 8px; line-height: 1.65; font-weight: 650; }
+.analysis-first-question small { display: block; color: #6b7280; line-height: 1.55; }
+@media (max-width: 900px) { .analysis-probe-stats { grid-template-columns: repeat(2, 1fr); } .analysis-first-question-grid { grid-template-columns: 1fr 1fr; } }
