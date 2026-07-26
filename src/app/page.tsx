@@ -1224,6 +1224,25 @@ type AnalysisQuestion = {
     difficulty?: string | null;
     summary?: string | null;
   };
+  review_result?: {
+    question_type?: string;
+    subject?: string | null;
+    unit?: string | null;
+    topic?: string | null;
+    difficulty?: string | null;
+    summary?: string | null;
+  } | null;
+};
+
+type QuestionDraft = {
+  question_type: string;
+  subject: string;
+  unit: string;
+  topic: string;
+  difficulty: string;
+  answer: string;
+  summary: string;
+  status: string;
 };
 
 type AnalysisProbe = {
@@ -1253,6 +1272,11 @@ const analysisStatusLabel: Record<string, string> = {
   FAILED: "실패",
 };
 
+function getQuestionResult(question: AnalysisQuestion) {
+  const review = question.review_result;
+  return review && Object.keys(review).length > 0 ? review : question.ai_result ?? {};
+}
+
 function AnalysisPage() {
   const [sources, setSources] = useState<SourceFile[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -1272,6 +1296,9 @@ function AnalysisPage() {
   const [probeResult, setProbeResult] = useState<AnalysisProbe | null>(null);
   const [probeModel, setProbeModel] = useState("");
   const [aiConnection, setAiConnection] = useState<{ ok: boolean; message: string } | null>(null);
+  const [selectedQuestionId, setSelectedQuestionId] = useState("");
+  const [questionDraft, setQuestionDraft] = useState<QuestionDraft | null>(null);
+  const [savingQuestion, setSavingQuestion] = useState(false);
 
   const selectedSource = sources.find((item) => item.id === selectedId) ?? null;
 
@@ -1293,8 +1320,13 @@ function AnalysisPage() {
         const detail = await detailResponse.json() as { success: boolean; jobs?: AnalysisJob[]; questions?: AnalysisQuestion[]; message?: string };
         if (!detailResponse.ok || !detail.success) throw new Error(detail.message || "분석 정보를 불러오지 못했습니다.");
         setJobs(detail.jobs ?? []);
-        setQuestions(detail.questions ?? []);
-      } else { setJobs([]); setQuestions([]); }
+        const loadedQuestions = detail.questions ?? [];
+        setQuestions(loadedQuestions);
+        const keepSelected = loadedQuestions.some((item) => item.id === selectedQuestionId)
+          ? selectedQuestionId
+          : loadedQuestions[0]?.id ?? "";
+        setSelectedQuestionId(keepSelected);
+      } else { setJobs([]); setQuestions([]); setSelectedQuestionId(""); setQuestionDraft(null); }
 
       const urlResponse = await fetch(`/api/source-files/${sourceId}/signed-urls`, { cache: "no-store" });
       const urls = await urlResponse.json() as { success: boolean; examUrl?: string | null; solutionUrl?: string | null; message?: string };
@@ -1327,7 +1359,7 @@ function AnalysisPage() {
   const changeSource = async (value: string) => {
     setSelectedId(value);
     window.localStorage.setItem("matspu-analysis-source-id", value);
-    setAnalysis(null); setJobs([]); setQuestions([]); setExamUrl(null); setSolutionUrl(null); setProbeResult(null); setProbeModel("");
+    setAnalysis(null); setJobs([]); setQuestions([]); setSelectedQuestionId(""); setQuestionDraft(null); setExamUrl(null); setSolutionUrl(null); setProbeResult(null); setProbeModel("");
     await loadWorkspace(value);
   };
 
@@ -1403,6 +1435,50 @@ function AnalysisPage() {
     finally { setSaving(false); }
   };
 
+
+  const selectQuestion = (question: AnalysisQuestion) => {
+    const result = getQuestionResult(question);
+    setSelectedQuestionId(question.id);
+    setQuestionDraft({
+      question_type: result.question_type ?? "unknown",
+      subject: result.subject ?? "",
+      unit: result.unit ?? "",
+      topic: result.topic ?? "",
+      difficulty: result.difficulty ?? "중",
+      answer: question.answer ?? "",
+      summary: result.summary ?? "",
+      status: question.status ?? "REVIEW",
+    });
+  };
+
+  useEffect(() => {
+    const question = questions.find((item) => item.id === selectedQuestionId);
+    if (question) selectQuestion(question);
+    else if (questions[0]) selectQuestion(questions[0]);
+  }, [questions, selectedQuestionId]);
+
+  const saveQuestion = async () => {
+    if (!selectedQuestionId || !questionDraft) return;
+    setSavingQuestion(true);
+    setMessage("");
+    setErrorMessage("");
+    try {
+      const response = await fetch(`/api/analysis/questions/${selectedQuestionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(questionDraft),
+      });
+      const result = await response.json() as { success: boolean; question?: AnalysisQuestion; message?: string };
+      if (!response.ok || !result.success || !result.question) throw new Error(result.message || "문항 검수 저장에 실패했습니다.");
+      setQuestions((items) => items.map((item) => item.id === result.question!.id ? result.question! : item));
+      setMessage(`${result.question.question_no}번 문항 검수 내용이 저장되었습니다.`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "문항 검수 저장에 실패했습니다.");
+    } finally {
+      setSavingQuestion(false);
+    }
+  };
+
   const activeUrl = viewer === "exam" ? examUrl : solutionUrl;
   const progress = analysis?.progress ?? 0;
   const stepIndex = !analysis ? 1 : analysis.status === "DONE" ? 4 : analysis.status === "REVIEW" ? 3 : 2;
@@ -1420,7 +1496,7 @@ function AnalysisPage() {
     {errorMessage ? <div className="upload-message error">{errorMessage}</div> : null}
     {message ? <div className="upload-message success">{message}</div> : null}
 
-    {!selectedSource ? <section className="panel source-file-empty">먼저 AI 문제등록에서 시험지를 등록해 주세요.</section> : <div className="analysis-workspace-grid">
+    {!selectedSource ? <section className="panel source-file-empty">먼저 AI 문제등록에서 시험지를 등록해 주세요.</section> : <div className={`analysis-workspace-grid ${questions.length > 0 ? "has-results" : ""}`}>
       <section className="panel analysis-viewer-panel">
         <div className="analysis-panel-head"><div><strong>{selectedSource.title}</strong><span>{[selectedSource.grade, selectedSource.subject, selectedSource.source].filter(Boolean).join(" · ")}</span></div><div className="viewer-tabs"><button className={viewer === "exam" ? "active" : ""} onClick={() => setViewer("exam")}>시험지 PDF</button><button className={viewer === "solution" ? "active" : ""} onClick={() => setViewer("solution")}>해설지 PDF</button></div></div>
         <div className="pdf-workspace-viewer">{loading ? <div>PDF를 불러오는 중입니다.</div> : activeUrl ? <iframe title={viewer === "exam" ? "시험지 PDF" : "해설지 PDF"} src={activeUrl} /> : <div>등록된 PDF가 없습니다.</div>}</div>
@@ -1465,17 +1541,35 @@ function AnalysisPage() {
         </article>
       </section> : null}
       {questions.length > 0 ? <section className="panel analysis-question-results">
-        <div className="source-file-title"><div><strong>AI 문항 분석 결과</strong><span>총 {questions.length}문항 · 검수 필요</span></div></div>
-        <div className="analysis-question-table">
-          <div className="analysis-question-head"><span>번호</span><span>구분</span><span>단원·유형</span><span>난이도</span><span>정답</span><span>신뢰도</span></div>
-          {questions.map((q) => <div className="analysis-question-row" key={q.id}>
-            <strong>{q.question_no}</strong>
-            <span>{q.ai_result?.question_type === "objective" ? "객관식" : q.ai_result?.question_type === "subjective" ? "단답형" : "미분류"}</span>
-            <div><b>{[q.ai_result?.unit, q.ai_result?.topic].filter(Boolean).join(" · ") || "분류 필요"}</b><small>{q.ai_result?.summary || ""}</small></div>
-            <span>{q.ai_result?.difficulty || "-"}</span>
-            <strong>{q.answer || "-"}</strong>
-            <span>{q.confidence == null ? "-" : `${Math.round(Number(q.confidence) * 100)}%`}</span>
-          </div>)}
+        <div className="source-file-title analysis-review-title"><div><strong>AI 문항 분석 결과 · 검수</strong><span>총 {questions.length}문항 · 행을 누르면 오른쪽에서 바로 수정할 수 있습니다.</span></div><span className="review-visibility-note">PDF와 결과가 서로 가리지 않도록 전체 폭으로 표시됩니다.</span></div>
+        <div className="analysis-review-layout">
+          <div className="analysis-question-table">
+            <div className="analysis-question-head"><span>번호</span><span>구분</span><span>단원·유형</span><span>난이도</span><span>정답</span><span>신뢰도</span></div>
+            {questions.map((q) => {
+              const result = getQuestionResult(q);
+              return <button type="button" className={`analysis-question-row ${selectedQuestionId === q.id ? "selected" : ""}`} key={q.id} onClick={() => selectQuestion(q)}>
+                <strong>{q.question_no}</strong>
+                <span>{result?.question_type === "objective" ? "객관식" : result?.question_type === "subjective" ? "단답형" : "미분류"}</span>
+                <div><b>{[result?.unit, result?.topic].filter(Boolean).join(" · ") || "분류 필요"}</b><small>{result?.summary || ""}</small></div>
+                <span>{result?.difficulty || "-"}</span>
+                <strong>{q.answer || "-"}</strong>
+                <span>{q.confidence == null ? "-" : `${Math.round(Number(q.confidence) * 100)}%`}</span>
+              </button>;
+            })}
+          </div>
+          {questionDraft ? <aside className="analysis-question-editor">
+            <div className="question-editor-head"><div><strong>{questions.find((item) => item.id === selectedQuestionId)?.question_no ?? "-"}번 문항 검수</strong><span>AI 초안을 확인하고 필요한 부분만 고치세요.</span></div><span className="question-confidence">신뢰도 {Math.round(Number(questions.find((item) => item.id === selectedQuestionId)?.confidence ?? 0) * 100)}%</span></div>
+            <div className="question-editor-grid">
+              <label><span>구분</span><select value={questionDraft.question_type} onChange={(e) => setQuestionDraft({ ...questionDraft, question_type: e.target.value })}><option value="objective">객관식</option><option value="subjective">단답·서술형</option><option value="unknown">미분류</option></select></label>
+              <label><span>난이도</span><select value={questionDraft.difficulty} onChange={(e) => setQuestionDraft({ ...questionDraft, difficulty: e.target.value })}><option value="하">하</option><option value="중">중</option><option value="상">상</option><option value="최상">최상</option></select></label>
+              <label><span>과목</span><input value={questionDraft.subject} onChange={(e) => setQuestionDraft({ ...questionDraft, subject: e.target.value })}/></label>
+              <label><span>정답</span><input value={questionDraft.answer} onChange={(e) => setQuestionDraft({ ...questionDraft, answer: e.target.value })}/></label>
+              <label className="wide"><span>단원</span><input value={questionDraft.unit} onChange={(e) => setQuestionDraft({ ...questionDraft, unit: e.target.value })}/></label>
+              <label className="wide"><span>유형</span><input value={questionDraft.topic} onChange={(e) => setQuestionDraft({ ...questionDraft, topic: e.target.value })}/></label>
+              <label className="wide"><span>문항 요약</span><textarea rows={4} value={questionDraft.summary} onChange={(e) => setQuestionDraft({ ...questionDraft, summary: e.target.value })}/></label>
+            </div>
+            <div className="question-editor-actions"><button className="secondary-button" type="button" onClick={() => setQuestionDraft({ ...questionDraft, status: "REVIEW" })}>검수 필요</button><button className="primary-button" type="button" onClick={() => void saveQuestion()} disabled={savingQuestion}>{savingQuestion ? "저장 중..." : "이 문항 저장"}</button></div>
+          </aside> : null}
         </div>
       </section> : null}
     </div>}
