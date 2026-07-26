@@ -74,15 +74,32 @@ export default function PdfMapperPage(){
   },[]);
 
   function makeAutoDraft(base:Region[], pages:number):Region[]{
-    const perPage=Math.ceil(base.length/pages);
+    /*
+     * SOS 실전모의고사 기본 편집 구조
+     * 한 페이지를 '왼쪽 위 → 왼쪽 아래 → 오른쪽 위 → 오른쪽 아래' 순서로 배치한다.
+     *
+     * 이전 버전은 행 우선(좌상 → 우상 → 좌하 → 우하)으로 번호를 붙여서
+     * 2번을 우상단으로 잡았고, 한 문항이 비어 보이면 이후 번호가 전부 밀리는 문제가 있었다.
+     * 이제 문항 인식 결과에 번호를 연속 재부여하지 않고, 페이지별 고정 슬롯에 직접 매핑한다.
+     */
+    const slots:Rect[]=[
+      {x:1.6,y:3.0,w:46.8,h:46.0},   // 왼쪽 위
+      {x:1.6,y:50.0,w:46.8,h:47.0},  // 왼쪽 아래
+      {x:51.0,y:3.0,w:47.2,h:46.0},  // 오른쪽 위
+      {x:51.0,y:50.0,w:47.2,h:47.0}, // 오른쪽 아래
+    ];
+
     return base.map((r,i)=>{
-      const pageIndex=Math.floor(i/perPage);
-      const within=i%perPage;
-      const cols=2;
-      const rows=Math.ceil(perPage/cols);
-      const col=within%cols;
-      const row=Math.floor(within/cols);
-      return {...r,page:Math.min(pages,pageIndex+1),x:col===0?4:51,y:5+row*(90/rows),w:45,h:(90/rows)-1.5,source:"auto" as const};
+      const pageIndex=Math.floor(i/4);
+      const slotIndex=i%4;
+      const targetPage=Math.min(Math.max(1,pageIndex+1),Math.max(1,pages));
+      return {
+        ...r,
+        page:targetPage,
+        ...slots[slotIndex],
+        verified:false,
+        source:"auto" as const,
+      };
     });
   }
 

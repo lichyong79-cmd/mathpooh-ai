@@ -26,12 +26,15 @@ type PracticeExam = {
   status: ExamStatus;
   testFile: string;
   solutionFile: string;
+  originalFile: string;
   memo: string;
   testFilePath?: string;
   solutionFilePath?: string;
+  originalFilePath?: string;
+  answers: string[];
 };
 
-type PdfBundle = { test?: File; solution?: File };
+type ExamFileBundle = { test?: File; solution?: File; original?: File };
 
 type Student = {
   id: number;
@@ -80,8 +83,8 @@ const examRounds: ExamRound[] = [
 
 
 const initialPracticeExams: PracticeExam[] = [
-  { id: "demo-1", round: 1, title: "2026 SOS 고1 실전모의고사 1회", examCode: "SOS-H1-2026-01", examDate: "2026-08-02", grade: "고1", subject: "공통수학2", range: "도형의 방정식 ~ 집합과 명제", questionCount: 30, timeLimit: 80, totalScore: 100, objectiveCount: 21, shortAnswerCount: 9, status: "등록완료", testFile: "SOS_H1_01_시험지.pdf", solutionFile: "SOS_H1_01_해설지.pdf", memo: "고1 여름방학 진단용" },
-  { id: "demo-2", round: 2, title: "2026 SOS 고2 실전모의고사 2회", examCode: "SOS-H2-2026-02", examDate: "2026-08-09", grade: "고2", subject: "수학Ⅱ", range: "함수의 극한 ~ 미분", questionCount: 30, timeLimit: 80, totalScore: 100, objectiveCount: 21, shortAnswerCount: 9, status: "작성중", testFile: "", solutionFile: "", memo: "문항 검토 중" },
+  { id: "demo-1", round: 1, title: "2026 SOS 고1 실전모의고사 1회", examCode: "SOS-H1-2026-01", examDate: "2026-08-02", grade: "고1", subject: "공통수학2", range: "도형의 방정식 ~ 집합과 명제", questionCount: 30, timeLimit: 80, totalScore: 100, objectiveCount: 21, shortAnswerCount: 9, status: "등록완료", testFile: "SOS_H1_01_시험지.pdf", solutionFile: "SOS_H1_01_해설지.pdf", originalFile: "", answers: Array(30).fill(""), memo: "고1 여름방학 진단용" },
+  { id: "demo-2", round: 2, title: "2026 SOS 고2 실전모의고사 2회", examCode: "SOS-H2-2026-02", examDate: "2026-08-09", grade: "고2", subject: "수학Ⅱ", range: "함수의 극한 ~ 미분", questionCount: 30, timeLimit: 80, totalScore: 100, objectiveCount: 21, shortAnswerCount: 9, status: "작성중", testFile: "", solutionFile: "", originalFile: "", answers: Array(30).fill(""), memo: "문항 검토 중" },
 ];
 
 const emptyStudent: Omit<Student, "id"> = {
@@ -102,7 +105,7 @@ export default function Home() {
   }, [active]);
   const [students, setStudents] = useState<Student[]>(initialStudents);
   const [practiceExams, setPracticeExams] = useState<PracticeExam[]>(initialPracticeExams);
-  const [examFiles, setExamFiles] = useState<Record<string, PdfBundle>>({});
+  const [examFiles, setExamFiles] = useState<Record<string, ExamFileBundle>>({});
 
   useEffect(() => {
     const config = getSupabaseConfig();
@@ -393,13 +396,16 @@ function examFromRow(row: any): PracticeExam {
     status: (row.status ?? "작성중") as ExamStatus,
     testFile: row.test_file_name ?? "",
     solutionFile: row.solution_file_name ?? "",
+    originalFile: row.original_file_name ?? "",
+    answers: Array.isArray(row.answer_keys) ? row.answer_keys.map(String) : Array(Number(row.question_count ?? 30)).fill(""),
     testFilePath: row.test_file_path ?? "",
     solutionFilePath: row.solution_file_path ?? "",
+    originalFilePath: row.original_file_path ?? "",
     memo: row.memo ?? "",
   };
 }
 
-function examToRow(exam: Omit<PracticeExam, "id">, paths: { testFilePath?: string; solutionFilePath?: string }) {
+function examToRow(exam: Omit<PracticeExam, "id">, paths: { testFilePath?: string; solutionFilePath?: string; originalFilePath?: string }) {
   return {
     round: exam.round,
     title: exam.title,
@@ -416,8 +422,11 @@ function examToRow(exam: Omit<PracticeExam, "id">, paths: { testFilePath?: strin
     status: exam.status,
     test_file_name: exam.testFile,
     solution_file_name: exam.solutionFile,
+    original_file_name: exam.originalFile,
+    answer_keys: exam.answers,
     test_file_path: paths.testFilePath ?? exam.testFilePath ?? "",
     solution_file_path: paths.solutionFilePath ?? exam.solutionFilePath ?? "",
+    original_file_path: paths.originalFilePath ?? exam.originalFilePath ?? "",
     memo: exam.memo,
   };
 }
@@ -428,7 +437,7 @@ function storagePublicUrl(path?: string) {
   return `${config.url}/storage/v1/object/public/exam-files/${path}`;
 }
 
-async function uploadExamPdf(examId: string, kind: "test" | "solution", file: File) {
+async function uploadExamFile(examId: string, kind: "test" | "solution" | "original", file: File) {
   const config = getSupabaseConfig();
   if (!config) throw new Error("Supabase 환경변수가 설정되지 않았습니다.");
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -438,7 +447,7 @@ async function uploadExamPdf(examId: string, kind: "test" | "solution", file: Fi
     headers: {
       apikey: config.key,
       Authorization: `Bearer ${config.key}`,
-      "Content-Type": "application/pdf",
+      "Content-Type": file.type || "application/octet-stream",
       "x-upsert": "true",
     },
     body: file,
@@ -447,10 +456,10 @@ async function uploadExamPdf(examId: string, kind: "test" | "solution", file: Fi
   return path;
 }
 
-function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: PracticeExam[]; setExams: React.Dispatch<React.SetStateAction<PracticeExam[]>>; examFiles: Record<string, PdfBundle>; setExamFiles: React.Dispatch<React.SetStateAction<Record<string, PdfBundle>>> }) {
+function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: PracticeExam[]; setExams: React.Dispatch<React.SetStateAction<PracticeExam[]>>; examFiles: Record<string, ExamFileBundle>; setExamFiles: React.Dispatch<React.SetStateAction<Record<string, ExamFileBundle>>> }) {
   const [tab, setTab] = useState<"list" | "input">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draftFiles, setDraftFiles] = useState<PdfBundle>({});
+  const [draftFiles, setDraftFiles] = useState<ExamFileBundle>({});
   const [preview, setPreview] = useState<{ title: string; source: File | string; fileName: string } | null>(null);
   const [regionDrafts, setRegionDrafts] = useState<Record<number, "자동인식" | "확인필요">>({});
   const [saving, setSaving] = useState(false);
@@ -465,7 +474,7 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
     round: Math.max(0, ...exams.map((exam) => exam.round)) + 1, title: "", examCode: "",
     examDate: new Date().toISOString().slice(0, 10), grade: "고1", subject: "공통수학1", range: "",
     questionCount: 30, timeLimit: 100, totalScore: 100, objectiveCount: 21, shortAnswerCount: 9,
-    status: "작성중", testFile: "", solutionFile: "", testFilePath: "", solutionFilePath: "", memo: "",
+    status: "작성중", testFile: "", solutionFile: "", originalFile: "", testFilePath: "", solutionFilePath: "", originalFilePath: "", answers: Array(30).fill(""), memo: "",
   });
   const [form, setForm] = useState<Omit<PracticeExam, "id">>(() => makeEmptyExam());
   const set = <K extends keyof Omit<PracticeExam, "id">>(key: K, value: Omit<PracticeExam, "id">[K]) => setForm((prev) => ({ ...prev, [key]: value }));
@@ -491,9 +500,10 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
         if (!createResponse.ok) throw new Error(await createResponse.text());
         examId = String((await createResponse.json())[0].id);
       }
-      const paths = { testFilePath: form.testFilePath, solutionFilePath: form.solutionFilePath };
-      if (draftFiles.test) paths.testFilePath = await uploadExamPdf(examId, "test", draftFiles.test);
-      if (draftFiles.solution) paths.solutionFilePath = await uploadExamPdf(examId, "solution", draftFiles.solution);
+      const paths = { testFilePath: form.testFilePath, solutionFilePath: form.solutionFilePath, originalFilePath: form.originalFilePath };
+      if (draftFiles.test) paths.testFilePath = await uploadExamFile(examId, "test", draftFiles.test);
+      if (draftFiles.solution) paths.solutionFilePath = await uploadExamFile(examId, "solution", draftFiles.solution);
+      if (draftFiles.original) paths.originalFilePath = await uploadExamFile(examId, "original", draftFiles.original);
       const row = examToRow(form, paths);
       const updateResponse = await fetch(`${config.url}/rest/v1/exams?id=eq.${examId}`, {
         method: "PATCH",
@@ -519,19 +529,23 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
     setExams((prev) => prev.filter((exam) => exam.id !== id));
   };
 
-  const selectPdf = (kind: "test" | "solution", file?: File) => {
+  const selectExamFile = (kind: "test" | "solution" | "original", file?: File) => {
     if (!file) return;
-    if (file.type !== "application/pdf") return alert("PDF 파일만 등록할 수 있습니다.");
+    if (kind !== "original" && file.type !== "application/pdf") return alert("시험지와 해설지는 PDF 파일만 등록할 수 있습니다.");
+    if (kind === "original" && !/\.(hwp|hwpx)$/i.test(file.name)) return alert("한글 통합본은 HWP 또는 HWPX 파일만 등록할 수 있습니다.");
     setDraftFiles((prev) => ({ ...prev, [kind]: file }));
-    set(kind === "test" ? "testFile" : "solutionFile", file.name);
+    const key = kind === "test" ? "testFile" : kind === "solution" ? "solutionFile" : "originalFile";
+    set(key, file.name);
   };
 
-  const getPdfSource = (kind: "test" | "solution") => {
+  const getFileSource = (kind: "test" | "solution" | "original") => {
     const local = draftFiles[kind];
     if (local) return local;
-    const path = kind === "test" ? form.testFilePath : form.solutionFilePath;
+    const path = kind === "test" ? form.testFilePath : kind === "solution" ? form.solutionFilePath : form.originalFilePath;
     return storagePublicUrl(path);
   };
+
+  const getPdfSource = (kind: "test" | "solution") => getFileSource(kind);
 
   const openSavedPdf = (exam: PracticeExam, kind: "test" | "solution") => {
     const local = examFiles[exam.id]?.[kind];
@@ -540,6 +554,70 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
     const label = kind === "test" ? "시험지" : "해설지";
     if (!source) return alert(`${label} PDF가 등록되지 않았습니다.`);
     setPreview({ title: `${exam.title} · ${label}`, source, fileName: kind === "test" ? exam.testFile : exam.solutionFile });
+  };
+
+  const openOriginal = (exam: PracticeExam) => {
+    const local = examFiles[exam.id]?.original;
+    if (local) {
+      const url = URL.createObjectURL(local); window.open(url, "_blank"); setTimeout(() => URL.revokeObjectURL(url), 30000); return;
+    }
+    const url = storagePublicUrl(exam.originalFilePath);
+    if (!url) return alert("한글 통합본이 등록되지 않았습니다.");
+    window.open(url, "_blank");
+  };
+
+  const updateAnswer = (index: number, value: string) => {
+    const next = Array.from({ length: form.questionCount }, (_, i) => form.answers[i] ?? "");
+    next[index] = value.trim();
+    set("answers", next);
+  };
+
+  const extractAnswersFromSolution = async () => {
+    const source = getPdfSource("solution");
+    if (!source) return alert("해설지 PDF를 먼저 등록해 주세요.");
+    try {
+      const pdfjs = await import("pdfjs-dist");
+      pdfjs.GlobalWorkerOptions.workerSrc = "https://unpkg.com/pdfjs-dist@6.1.200/build/pdf.worker.min.mjs";
+      const data = source instanceof File ? await source.arrayBuffer() : await (await fetch(source)).arrayBuffer();
+      const pdf = await pdfjs.getDocument({ data }).promise;
+      let text = "";
+      for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
+        const page = await pdf.getPage(pageNo);
+        const content = await page.getTextContent();
+        text += " " + content.items.map((item: any) => item.str ?? "").join(" ");
+      }
+      const normalized = text.replace(/\s+/g, " ");
+      const next = Array.from({ length: form.questionCount }, (_, i) => form.answers[i] ?? "");
+      const circled: Record<string, string> = { "①": "1", "②": "2", "③": "3", "④": "4", "⑤": "5" };
+      for (let no = 1; no <= form.questionCount; no += 1) {
+        const nextNo = no + 1;
+        const startMatch = new RegExp(`(?:^|\s)${no}\.\s`).exec(normalized);
+        if (!startMatch) continue;
+        const startAt = (startMatch.index ?? 0) + startMatch[0].length;
+        const after = normalized.slice(startAt);
+        const endMatch = nextNo <= form.questionCount ? new RegExp(`\s${nextNo}\.\s`).exec(after) : null;
+        const block = after.slice(0, endMatch?.index ?? Math.min(after.length, 600));
+        const circle = block.match(/[①②③④⑤]/);
+        if (circle) { next[no - 1] = circled[circle[0]]; continue; }
+        if (no > form.objectiveCount) {
+          const numeric = block.match(/(?:정답|수학교실)?\s*(-?\d{1,4})(?=\s|$)/);
+          if (numeric) next[no - 1] = numeric[1];
+        }
+      }
+      set("answers", next);
+      const found = next.filter(Boolean).length;
+      alert(`${found}/${form.questionCount}개 정답을 자동 추출했습니다. 빈칸이나 오인식만 확인해 주세요.`);
+    } catch (error) {
+      console.error(error); alert("정답 자동 추출에 실패했습니다. 해설지 형식을 확인하거나 직접 입력해 주세요.");
+    }
+  };
+
+  const printAnswerSheet = () => {
+    const popup = window.open("", "_blank", "width=1000,height=800");
+    if (!popup) return alert("팝업이 차단되었습니다.");
+    const cells = Array.from({ length: form.questionCount }, (_, i) => `<div><b>${i + 1}</b><span>${form.answers[i] || "-"}</span></div>`).join("");
+    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${form.examCode} 정답지</title><style>@page{size:A4;margin:16mm}body{font-family:Arial,'Noto Sans KR',sans-serif;color:#17213a}.head{text-align:center;border-bottom:2px solid #17213a;padding-bottom:14px}.head h1{margin:0 0 6px}.meta{font-size:12px;color:#667085}.grid{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid #aaa;border-left:1px solid #aaa;margin-top:24px}.grid div{display:grid;grid-template-columns:42px 1fr;border-right:1px solid #aaa;border-bottom:1px solid #aaa;min-height:42px;align-items:center}.grid b{text-align:center}.grid span{font-weight:800;font-size:18px;text-align:center}.system{margin-top:20px;font-size:9px;color:#aaa;word-break:break-all}</style></head><body><div class="head"><h1>정답</h1><strong>${form.title}</strong><div class="meta">${form.examCode} · 객관식 ${form.objectiveCount}문항 · 단답형 ${form.shortAnswerCount}문항</div></div><div class="grid">${cells}</div><div class="system">SOS_META|CODE=${form.examCode}|ANSWERS=${form.answers.map((answer, i) => `${i + 1}:${answer || "_"}`).join(",")}</div><script>window.onload=()=>window.print();<\/script></body></html>`);
+    popup.document.close();
   };
 
   const printCover = () => {
@@ -567,13 +645,14 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
     {tab === "list" ? <>
       <section className="student-stat-grid"><MiniStat label="전체 시험" value={`${exams.length}회`} note="Supabase 등록 기준" /><MiniStat label="등록 완료" value={`${exams.filter(e => e.status === "등록완료").length}회`} note="응시 등록 가능" /><MiniStat label="작성중" value={`${exams.filter(e => e.status === "작성중").length}회`} note="추가 입력 필요" emphasis /><MiniStat label="마감" value={`${exams.filter(e => e.status === "마감").length}회`} note="종료된 시험" /></section>
       <section className="panel exam-list-panel"><div className="list-summary"><strong>실전모의고사 {exams.length}회</strong><span>컴퓨터가 달라도 동일한 DB 내용을 표시합니다.</span></div><div className="data-table exam-list"><div className="table-head"><span>회차 / 시험명</span><span>시험코드</span><span>대상 / 과목</span><span>시험일</span><span>문항 / 시간</span><span>등록 파일</span><span>상태</span><span>관리</span></div>
-      {exams.map((exam) => <div className="table-row" key={exam.id}><div className="exam-name-cell"><i>{exam.round}</i><div><strong>{exam.title}</strong><small>{exam.range || "범위 미입력"}</small></div></div><b data-label="시험코드">{exam.examCode}</b><span className="nowrap-cell" data-label="대상 / 과목">{exam.grade} · {exam.subject}</span><span className="nowrap-cell" data-label="시험일">{exam.examDate}</span><span className="nowrap-cell" data-label="문항 / 시간">{exam.questionCount}문항 · {exam.timeLimit}분</span><div className="file-buttons" data-label="등록 파일"><button className={exam.testFilePath ? "ready" : ""} onClick={() => openSavedPdf(exam, "test")} disabled={!exam.testFilePath}>시험지 {exam.testFilePath ? "✓" : "-"}</button><button className={exam.solutionFilePath ? "ready" : ""} onClick={() => openSavedPdf(exam, "solution")} disabled={!exam.solutionFilePath}>해설지 {exam.solutionFilePath ? "✓" : "-"}</button></div><Status text={exam.status} /><div className="row-actions"><button onClick={() => editExam(exam)}>수정</button><button className="delete" onClick={() => remove(exam.id)}>삭제</button></div></div>)}</div></section>
+      {exams.map((exam) => <div className="table-row" key={exam.id}><div className="exam-name-cell"><i>{exam.round}</i><div><strong>{exam.title}</strong><small>{exam.range || "범위 미입력"}</small></div></div><b data-label="시험코드">{exam.examCode}</b><span className="nowrap-cell" data-label="대상 / 과목">{exam.grade} · {exam.subject}</span><span className="nowrap-cell" data-label="시험일">{exam.examDate}</span><span className="nowrap-cell" data-label="문항 / 시간">{exam.questionCount}문항 · {exam.timeLimit}분</span><div className="file-buttons" data-label="등록 파일"><button className={exam.testFilePath ? "ready" : ""} onClick={() => openSavedPdf(exam, "test")} disabled={!exam.testFilePath}>시험지 {exam.testFilePath ? "✓" : "-"}</button><button className={exam.solutionFilePath ? "ready" : ""} onClick={() => openSavedPdf(exam, "solution")} disabled={!exam.solutionFilePath}>해설지 {exam.solutionFilePath ? "✓" : "-"}</button><button className={exam.originalFilePath ? "ready" : ""} onClick={() => openOriginal(exam)} disabled={!exam.originalFilePath}>한글 {exam.originalFilePath ? "✓" : "-"}</button></div><Status text={exam.status} /><div className="row-actions"><button onClick={() => editExam(exam)}>수정</button><button className="delete" onClick={() => remove(exam.id)}>삭제</button></div></div>)}</div></section>
     </> : <form className="exam-input-layout" onSubmit={save}>
       <section className="panel exam-form-panel"><div className="form-section-title"><div><span>01</span><div><h3>시험 기본정보</h3><p>이 정보는 Supabase에 저장되어 모든 컴퓨터에서 동일하게 표시됩니다.</p></div></div></div><div className="form-grid exam-form-grid"><Field label="시험 회차 *"><input type="number" min="1" value={form.round} onChange={(e) => set("round", Number(e.target.value))} /></Field><Field label="시험일 *"><input type="date" value={form.examDate} onChange={(e) => set("examDate", e.target.value)} /></Field><label className="field full"><span>시험명 *</span><input value={form.title} onChange={(e) => set("title", e.target.value)} /></label><Field label="시험코드 *"><input value={form.examCode} onChange={(e) => set("examCode", e.target.value)} /></Field><Field label="등록 상태"><select value={form.status} onChange={(e) => set("status", e.target.value as ExamStatus)}><option>작성중</option><option>등록완료</option><option>마감</option></select></Field><Field label="대상 학년"><select value={form.grade} onChange={(e) => set("grade", e.target.value)}><option>중3</option><option>고1</option><option>고2</option><option>고3</option><option>전체</option></select></Field><Field label="과목"><input value={form.subject} onChange={(e) => set("subject", e.target.value)} /></Field><label className="field full"><span>시험 범위</span><input value={form.range} onChange={(e) => set("range", e.target.value)} /></label></div></section>
-      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>02</span><div><h3>문항 구성</h3></div></div></div><div className="form-grid exam-form-grid numbers"><Field label="전체 문항 수"><input type="number" min="1" value={form.questionCount} onChange={(e) => set("questionCount", Number(e.target.value))} /></Field><Field label="총점"><input type="number" min="1" value={form.totalScore} onChange={(e) => set("totalScore", Number(e.target.value))} /></Field><Field label="객관식 문항"><input type="number" min="0" value={form.objectiveCount} onChange={(e) => set("objectiveCount", Number(e.target.value))} /></Field><Field label="단답형 문항"><input type="number" min="0" value={form.shortAnswerCount} onChange={(e) => set("shortAnswerCount", Number(e.target.value))} /></Field><Field label="시험 시간(분)"><input type="number" min="1" value={form.timeLimit} onChange={(e) => set("timeLimit", Number(e.target.value))} /></Field><div className={`question-check ${form.objectiveCount + form.shortAnswerCount === form.questionCount ? "ok" : "warning"}`}><span>문항 합계</span><strong>{form.objectiveCount + form.shortAnswerCount} / {form.questionCount}</strong></div></div></section>
-      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>03</span><div><h3>시험 자료 등록 및 확인</h3><p>한 번 저장한 PDF는 Supabase Storage에서 계속 사용합니다.</p></div></div></div><div className="upload-grid">{(["test", "solution"] as const).map((kind) => { const isTest = kind === "test"; const source = getPdfSource(kind); return <div className="upload-card-wrap" key={kind}><label className="upload-card"><span>{isTest ? "시험지" : "해설지"} PDF</span><strong>{isTest ? form.testFile || "등록된 파일 없음" : form.solutionFile || "등록된 파일 없음"}</strong><input type="file" accept="application/pdf,.pdf" onChange={(e) => selectPdf(kind, e.target.files?.[0])} /><em>{source ? "파일 변경" : "PDF 선택"}</em></label><button type="button" className="pdf-preview-button" disabled={!source} onClick={() => source && setPreview({ title: `${form.title || "현재 시험"} · ${isTest ? "시험지" : "해설지"}`, source, fileName: isTest ? form.testFile : form.solutionFile })}>{isTest ? "시험지" : "해설지"} 미리보기</button></div>; })}</div><label className="field exam-memo"><span>관리 메모</span><textarea value={form.memo} onChange={(e) => set("memo", e.target.value)} /></label></section>
-      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>04</span><div><h3>SOS 시험 표지</h3></div></div></div><div className="cover-builder"><article className="exam-cover-preview"><div className="cover-logo">SOS</div><small>Score Optimization System · MATSPU</small><div className="cover-rule" /><h2>{form.title || "시험명을 입력해 주세요"}</h2><div className="cover-info-grid"><span>대상</span><b>{form.grade}</b><span>과목</span><b>{form.subject || "-"}</b><span>시험일</span><b>{form.examDate || "-"}</b><span>시험시간</span><b>{form.timeLimit}분</b><span>문항수</span><b>{form.questionCount}문항</b><span>총점</span><b>{form.totalScore}점</b></div><div className="cover-student-lines">학생명 ____________________<br />학교 ______________________<br />반 ________ 번호 ________</div></article><div className="cover-actions"><button type="button" className="primary-button" onClick={printCover}>표지 미리보기 · 인쇄</button></div></div></section>
-      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>05</span><div><h3>문항영역 자동 초안</h3><p>03단계에서 이미 올린 시험지를 그대로 불러옵니다. 다시 업로드하지 않습니다.</p></div></div></div><div className="region-builder"><div className="region-toolbar"><div><strong>{form.questionCount}문항 영역 설정</strong><p>{getPdfSource("test") ? `등록 시험지: ${form.testFile}` : "시험지 PDF가 아직 없습니다."}</p></div><div><button type="button" className="primary-button" onClick={createRegionDrafts} disabled={!getPdfSource("test")}>자동 분석 시작</button><button type="button" className="secondary-button" onClick={openMapper} disabled={!getPdfSource("test")}>등록 시험지로 영역 편집</button></div></div>{Object.keys(regionDrafts).length ? <><div className="region-progress"><i style={{ width: `${Math.round((Object.values(regionDrafts).filter(v => v === "자동인식").length / form.questionCount) * 100)}%` }} /></div><div className="region-chip-grid">{Array.from({ length: form.questionCount }, (_, index) => index + 1).map((no) => <button type="button" key={no} className={regionDrafts[no] === "확인필요" ? "needs-check" : "auto-ok"} onClick={() => { if (!editingId) return alert("먼저 시험을 저장해 주세요."); window.location.href = `/pdf-mapper?exam=${encodeURIComponent(editingId)}&questions=${form.questionCount}&active=${no}&auto=1`; }}><b>{no}</b><span>{regionDrafts[no] === "확인필요" ? "확인 필요" : "영역 보기"}</span></button>)}</div></> : <div className="region-empty">{getPdfSource("test") ? <><b>{form.testFile}</b>을 사용합니다. 추가 업로드는 필요 없습니다.</> : <>03단계에서 시험지 PDF를 등록해 주세요.</>}</div>}</div></section>
+      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>02</span><div><h3>문항 구성</h3></div></div></div><div className="form-grid exam-form-grid numbers"><Field label="전체 문항 수"><input type="number" min="1" value={form.questionCount} onChange={(e) => { const count = Number(e.target.value); setForm((prev) => ({ ...prev, questionCount: count, answers: Array.from({ length: count }, (_, i) => prev.answers[i] ?? "") })); }} /></Field><Field label="총점"><input type="number" min="1" value={form.totalScore} onChange={(e) => set("totalScore", Number(e.target.value))} /></Field><Field label="객관식 문항"><input type="number" min="0" value={form.objectiveCount} onChange={(e) => set("objectiveCount", Number(e.target.value))} /></Field><Field label="단답형 문항"><input type="number" min="0" value={form.shortAnswerCount} onChange={(e) => set("shortAnswerCount", Number(e.target.value))} /></Field><Field label="시험 시간(분)"><input type="number" min="1" value={form.timeLimit} onChange={(e) => set("timeLimit", Number(e.target.value))} /></Field><div className={`question-check ${form.objectiveCount + form.shortAnswerCount === form.questionCount ? "ok" : "warning"}`}><span>문항 합계</span><strong>{form.objectiveCount + form.shortAnswerCount} / {form.questionCount}</strong></div></div></section>
+      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>03</span><div><h3>시험 자료 3종 등록</h3><p>한글 통합본은 원본 보관용, 시험지·해설지 PDF는 SOS 운영용입니다.</p></div></div></div><div className="upload-grid three-files">{(["original", "test", "solution"] as const).map((kind) => { const isOriginal = kind === "original"; const isTest = kind === "test"; const label = isOriginal ? "한글 통합본" : isTest ? "시험지 PDF" : "해설지 PDF"; const fileName = isOriginal ? form.originalFile : isTest ? form.testFile : form.solutionFile; const source = getFileSource(kind); return <div className="upload-card-wrap" key={kind}><label className="upload-card"><span>{label}</span><strong>{fileName || "등록된 파일 없음"}</strong><input type="file" accept={isOriginal ? ".hwp,.hwpx,application/haansofthwp" : "application/pdf,.pdf"} onChange={(e) => selectExamFile(kind, e.target.files?.[0])} /><em>{source ? "파일 변경" : "파일 선택"}</em></label>{isOriginal ? <button type="button" className="pdf-preview-button" disabled={!source} onClick={() => { if (source instanceof File) { const url = URL.createObjectURL(source); window.open(url, "_blank"); setTimeout(() => URL.revokeObjectURL(url), 30000); } else if (source) window.open(source, "_blank"); }}>한글 파일 열기</button> : <button type="button" className="pdf-preview-button" disabled={!source} onClick={() => source && setPreview({ title: `${form.title || "현재 시험"} · ${isTest ? "시험지" : "해설지"}`, source, fileName })}>{isTest ? "시험지" : "해설지"} 미리보기</button>}</div>; })}</div><div className="file-standard-note"><b>SOS 표준 등록</b><span>한글 통합본 + 시험지 PDF + 해설지 PDF</span></div><label className="field exam-memo"><span>관리 메모</span><textarea value={form.memo} onChange={(e) => set("memo", e.target.value)} /></label></section>
+      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>04</span><div><h3>정답 자동 추출 및 정답지 생성</h3><p>해설지에서 정답을 읽어 초안을 만들고, 수정 후 SOS 표준 정답지를 인쇄·PDF 저장합니다.</p></div></div></div><div className="answer-toolbar"><div><strong>{form.answers.filter(Boolean).length}/{form.questionCount}개 입력</strong><span>1~{form.objectiveCount}번 객관식 · {form.objectiveCount + 1}~{form.questionCount}번 단답형</span></div><div><button type="button" className="secondary-button" onClick={extractAnswersFromSolution} disabled={!getPdfSource("solution")}>해설지에서 자동 추출</button><button type="button" className="primary-button" onClick={printAnswerSheet} disabled={!form.answers.some(Boolean)}>정답지 자동 생성</button></div></div><div className="answer-key-grid">{Array.from({ length: form.questionCount }, (_, index) => { const no = index + 1; const objective = no <= form.objectiveCount; return <label key={no} className={!form.answers[index] ? "answer-missing" : ""}><b>{no}</b>{objective ? <select value={form.answers[index] ?? ""} onChange={(e) => updateAnswer(index, e.target.value)}><option value="">-</option><option value="1">①</option><option value="2">②</option><option value="3">③</option><option value="4">④</option><option value="5">⑤</option></select> : <input inputMode="numeric" value={form.answers[index] ?? ""} onChange={(e) => updateAnswer(index, e.target.value)} placeholder="답" />}</label>; })}</div></section>
+      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>05</span><div><h3>SOS 시험 표지</h3></div></div></div><div className="cover-builder"><article className="exam-cover-preview"><div className="cover-logo">SOS</div><small>Score Optimization System · MATSPU</small><div className="cover-rule" /><h2>{form.title || "시험명을 입력해 주세요"}</h2><div className="cover-info-grid"><span>대상</span><b>{form.grade}</b><span>과목</span><b>{form.subject || "-"}</b><span>시험일</span><b>{form.examDate || "-"}</b><span>시험시간</span><b>{form.timeLimit}분</b><span>문항수</span><b>{form.questionCount}문항</b><span>총점</span><b>{form.totalScore}점</b></div><div className="cover-student-lines">학생명 ____________________<br />학교 ______________________<br />반 ________ 번호 ________</div></article><div className="cover-actions"><button type="button" className="primary-button" onClick={printCover}>표지 미리보기 · 인쇄</button></div></div></section>
+      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>06</span><div><h3>문항영역 자동 초안</h3><p>03단계에서 이미 올린 시험지를 그대로 불러옵니다. 다시 업로드하지 않습니다.</p></div></div></div><div className="region-builder"><div className="region-toolbar"><div><strong>{form.questionCount}문항 영역 설정</strong><p>{getPdfSource("test") ? `등록 시험지: ${form.testFile}` : "시험지 PDF가 아직 없습니다."}</p></div><div><button type="button" className="primary-button" onClick={createRegionDrafts} disabled={!getPdfSource("test")}>자동 분석 시작</button><button type="button" className="secondary-button" onClick={openMapper} disabled={!getPdfSource("test")}>등록 시험지로 영역 편집</button></div></div>{Object.keys(regionDrafts).length ? <><div className="region-progress"><i style={{ width: `${Math.round((Object.values(regionDrafts).filter(v => v === "자동인식").length / form.questionCount) * 100)}%` }} /></div><div className="region-chip-grid">{Array.from({ length: form.questionCount }, (_, index) => index + 1).map((no) => <button type="button" key={no} className={regionDrafts[no] === "확인필요" ? "needs-check" : "auto-ok"} onClick={() => { if (!editingId) return alert("먼저 시험을 저장해 주세요."); window.location.href = `/pdf-mapper?exam=${encodeURIComponent(editingId)}&questions=${form.questionCount}&active=${no}&auto=1`; }}><b>{no}</b><span>{regionDrafts[no] === "확인필요" ? "확인 필요" : "영역 보기"}</span></button>)}</div></> : <div className="region-empty">{getPdfSource("test") ? <><b>{form.testFile}</b>을 사용합니다. 추가 업로드는 필요 없습니다.</> : <>03단계에서 시험지 PDF를 등록해 주세요.</>}</div>}</div></section>
       <div className="exam-form-actions"><button type="button" className="secondary-button" onClick={() => setTab("list")}>취소</button><button className="primary-button" disabled={saving}>{saving ? "저장 중..." : editingId ? "수정 저장" : "시험 등록"}</button></div>
     </form>}
     {preview ? <PdfPreviewModal title={preview.title} source={preview.source} fileName={preview.fileName} onClose={() => setPreview(null)} /> : null}
