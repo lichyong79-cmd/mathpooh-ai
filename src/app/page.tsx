@@ -241,49 +241,6 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
   const registerAll = () => setRegistrations((prev) => ({ ...prev, [selectedRoundId]: roundStudents.map((student) => student.id) }));
   const clearAll = () => setRegistrations((prev) => ({ ...prev, [selectedRoundId]: [] }));
 
-  const registrationProgress = (exam: PracticeExam) => {
-    const checks = [
-      Boolean(exam.title && exam.examCode && exam.examDate),
-      Boolean(exam.testFilePath && exam.solutionFilePath && exam.originalFilePath),
-      Boolean(exam.answers.filter(Boolean).length === exam.questionCount && exam.answerVerified),
-      exam.coverVerified,
-      exam.regionVerified,
-    ];
-    const done = checks.filter(Boolean).length;
-    return { done, total: checks.length, percent: Math.round((done / checks.length) * 100), checks };
-  };
-
-  const patchExamFields = async (examId: string, fields: Record<string, unknown>) => {
-    const config = getSupabaseConfig();
-    if (!config) return alert("Supabase 환경변수가 없습니다.");
-    const response = await fetch(`${config.url}/rest/v1/exams?id=eq.${examId}`, {
-      method: "PATCH",
-      headers: { apikey: config.key, Authorization: `Bearer ${config.key}`, "Content-Type": "application/json", Prefer: "return=representation" },
-      body: JSON.stringify(fields),
-    });
-    if (!response.ok) throw new Error(await response.text());
-    const saved = examFromRow((await response.json())[0]);
-    setExams((prev) => prev.map((exam) => exam.id === saved.id ? saved : exam));
-    if (editingId === saved.id) { const { id, ...rest } = saved; setForm(rest); }
-  };
-
-  const changeStatusFromList = async (exam: PracticeExam, status: ExamStatus) => {
-    if (status === "등록완료" && registrationProgress(exam).percent < 100) {
-      return alert("모든 등록 단계가 검수 완료되어야 등록완료로 변경할 수 있습니다.");
-    }
-    try { await patchExamFields(exam.id, { status }); }
-    catch (error) { alert(`상태 변경 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`); }
-  };
-
-  const verifyCurrentStep = async (kind: "answer" | "cover" | "region") => {
-    if (!editingId) return alert("먼저 시험 자료를 저장해 주세요.");
-    if (kind === "answer" && form.answers.filter(Boolean).length !== form.questionCount) return alert("모든 정답을 입력한 뒤 검수 완료해 주세요.");
-    const column = kind === "answer" ? "answer_verified" : kind === "cover" ? "cover_verified" : "region_verified";
-    try {
-      await patchExamFields(editingId, { [column]: true });
-      alert(kind === "answer" ? "정답 검수 완료로 표시했습니다." : kind === "cover" ? "표지 검수 완료로 표시했습니다." : "문항영역 검수 완료로 표시했습니다.");
-    } catch (error) { alert(`검수 상태 저장 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`); }
-  };
 
   return <>
     <section className="page-title-row">
@@ -399,49 +356,6 @@ function ResultsPage({ students }: { students: Student[] }) {
   const [search, setSearch] = useState("");
   const [grade, setGrade] = useState("전체");
   const filtered = students.filter((student) => (`${student.name} ${student.school}`).toLowerCase().includes(search.toLowerCase()) && (grade === "전체" || student.grade === grade));
-  const registrationProgress = (exam: PracticeExam) => {
-    const checks = [
-      Boolean(exam.title && exam.examCode && exam.examDate),
-      Boolean(exam.testFilePath && exam.solutionFilePath && exam.originalFilePath),
-      Boolean(exam.answers.filter(Boolean).length === exam.questionCount && exam.answerVerified),
-      exam.coverVerified,
-      exam.regionVerified,
-    ];
-    const done = checks.filter(Boolean).length;
-    return { done, total: checks.length, percent: Math.round((done / checks.length) * 100), checks };
-  };
-
-  const patchExamFields = async (examId: string, fields: Record<string, unknown>) => {
-    const config = getSupabaseConfig();
-    if (!config) return alert("Supabase 환경변수가 없습니다.");
-    const response = await fetch(`${config.url}/rest/v1/exams?id=eq.${examId}`, {
-      method: "PATCH",
-      headers: { apikey: config.key, Authorization: `Bearer ${config.key}`, "Content-Type": "application/json", Prefer: "return=representation" },
-      body: JSON.stringify(fields),
-    });
-    if (!response.ok) throw new Error(await response.text());
-    const saved = examFromRow((await response.json())[0]);
-    setExams((prev) => prev.map((exam) => exam.id === saved.id ? saved : exam));
-    if (editingId === saved.id) { const { id, ...rest } = saved; setForm(rest); }
-  };
-
-  const changeStatusFromList = async (exam: PracticeExam, status: ExamStatus) => {
-    if (status === "등록완료" && registrationProgress(exam).percent < 100) {
-      return alert("모든 등록 단계가 검수 완료되어야 등록완료로 변경할 수 있습니다.");
-    }
-    try { await patchExamFields(exam.id, { status }); }
-    catch (error) { alert(`상태 변경 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`); }
-  };
-
-  const verifyCurrentStep = async (kind: "answer" | "cover" | "region") => {
-    if (!editingId) return alert("먼저 시험 자료를 저장해 주세요.");
-    if (kind === "answer" && form.answers.filter(Boolean).length !== form.questionCount) return alert("모든 정답을 입력한 뒤 검수 완료해 주세요.");
-    const column = kind === "answer" ? "answer_verified" : kind === "cover" ? "cover_verified" : "region_verified";
-    try {
-      await patchExamFields(editingId, { [column]: true });
-      alert(kind === "answer" ? "정답 검수 완료로 표시했습니다." : kind === "cover" ? "표지 검수 완료로 표시했습니다." : "문항영역 검수 완료로 표시했습니다.");
-    } catch (error) { alert(`검수 상태 저장 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`); }
-  };
 
   return <>
     <section className="page-title-row"><div><h2>성적 관리</h2><p>학생별 점수, 최근 응시일과 SOS 진행 상태를 관리합니다.</p></div></section>
