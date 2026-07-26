@@ -144,3 +144,33 @@ body{font-size:16px;line-height:1.5}
 .html-print-actions button{width:auto!important;height:40px;padding:0 16px;border:0;border-radius:9px;background:#5268e8!important;color:#fff!important;font-size:14px!important;font-weight:800}
 .html-print-actions button:last-child{width:40px!important;padding:0;background:#f2f4f8!important;color:#687087!important;font-size:25px!important}
 .html-print-modal iframe{background:#eef1f6}
+
+/* SOS 16: 시험 목록 이중 가로 스크롤바 제거 */
+.exam-list-panel {
+  overflow-x: hidden !important;
+}
+
+.exam-list.data-table {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  scrollbar-width: none;      /* Firefox */
+  -ms-overflow-style: none;   /* old Edge */
+}
+
+.exam-list.data-table::-webkit-scrollbar {
+  display: none;              /* Chrome, Edge, Safari */
+  width: 0;
+  height: 0;
+}
+
+@media (max-width: 760px) {
+  .exam-list-panel {
+    overflow: visible !important;
+  }
+
+  .exam-list.data-table {
+    overflow: visible !important;
+  }
+}
