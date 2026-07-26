@@ -173,7 +173,7 @@ export default function Home() {
           </div>
         </header>
         <div className="page-content">
-          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
+          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage onOpenAnalysis={(sourceFileId) => { window.localStorage.setItem("matspu-analysis-source-id", sourceFileId); setActive("analysis"); }} /> : active === "analysis" ? <AnalysisPage /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
         </div>
       </section>
     </main>
@@ -929,7 +929,7 @@ const sourceStatusLabel: Record<string, string> = {
 
 type UploadFileKind = "hwp" | "exam" | "solution";
 
-function ProblemsPage() {
+function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: string) => void }) {
   const [title, setTitle] = useState("");
   const [source, setSource] = useState("매쓰푸 자체 제작");
   const [grade, setGrade] = useState("고1");
@@ -1181,11 +1181,173 @@ function ProblemsPage() {
             <span className={item.solution_pdf_path ? "ok" : "missing"}>해설지</span>
           </div>
           <Status text={sourceStatusLabel[item.status] ?? item.status}/>
-          <button className="source-edit-button" type="button" onClick={() => startEdit(item)}>수정</button>
+          <div className="source-action-buttons"><button className="analysis-open-button" type="button" onClick={() => onOpenAnalysis(item.id)}>AI 분석</button><button className="source-edit-button" type="button" onClick={() => startEdit(item)}>수정</button></div>
           {item.error_message ? <small className="bundle-error">{item.error_message}</small> : null}
         </div>)}
       </div>}
     </section>
+  </>;
+}
+
+
+type AnalysisRecord = {
+  id: string;
+  source_file_id: string;
+  status: "WAITING" | "RUNNING" | "REVIEW" | "DONE" | "FAILED";
+  progress: number;
+  current_step: string;
+  total_questions: number;
+  objective_count: number;
+  subjective_count: number;
+  updated_at: string;
+};
+
+type AnalysisJob = {
+  id: string;
+  status: string;
+  progress: number;
+  logs: { at?: string; message?: string }[];
+  created_at: string;
+};
+
+const analysisStatusLabel: Record<string, string> = {
+  WAITING: "분석 대기",
+  RUNNING: "분석 중",
+  REVIEW: "검수 대기",
+  DONE: "완료",
+  FAILED: "실패",
+};
+
+function AnalysisPage() {
+  const [sources, setSources] = useState<SourceFile[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [analysis, setAnalysis] = useState<AnalysisRecord | null>(null);
+  const [jobs, setJobs] = useState<AnalysisJob[]>([]);
+  const [examUrl, setExamUrl] = useState<string | null>(null);
+  const [solutionUrl, setSolutionUrl] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<"exam" | "solution">("exam");
+  const [loading, setLoading] = useState(true);
+  const [starting, setStarting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const selectedSource = sources.find((item) => item.id === selectedId) ?? null;
+
+  const loadWorkspace = useCallback(async (sourceId: string) => {
+    if (!sourceId) return;
+    const config = getSupabaseConfig();
+    if (!config) return setErrorMessage("Supabase 환경변수를 확인해 주세요.");
+    setLoading(true);
+    setErrorMessage("");
+    try {
+      const headers = { apikey: config.key, Authorization: `Bearer ${config.key}` };
+      const analysisResponse = await fetch(`${config.url}/rest/v1/source_analysis?source_file_id=eq.${encodeURIComponent(sourceId)}&select=*&limit=1`, { headers, cache: "no-store" });
+      if (!analysisResponse.ok) throw new Error(await analysisResponse.text());
+      const rows = await analysisResponse.json() as AnalysisRecord[];
+      const current = rows[0] ?? null;
+      setAnalysis(current);
+      if (current) {
+        const detailResponse = await fetch(`/api/analysis/${current.id}`, { cache: "no-store" });
+        const detail = await detailResponse.json() as { success: boolean; jobs?: AnalysisJob[]; message?: string };
+        if (!detailResponse.ok || !detail.success) throw new Error(detail.message || "분석 정보를 불러오지 못했습니다.");
+        setJobs(detail.jobs ?? []);
+      } else setJobs([]);
+
+      const urlResponse = await fetch(`/api/source-files/${sourceId}/signed-urls`, { cache: "no-store" });
+      const urls = await urlResponse.json() as { success: boolean; examUrl?: string | null; solutionUrl?: string | null; message?: string };
+      if (!urlResponse.ok || !urls.success) throw new Error(urls.message || "PDF 미리보기를 불러오지 못했습니다.");
+      setExamUrl(urls.examUrl ?? null);
+      setSolutionUrl(urls.solutionUrl ?? null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "작업공간을 불러오지 못했습니다.");
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    const config = getSupabaseConfig();
+    if (!config) { setLoading(false); return; }
+    (async () => {
+      try {
+        const fields = "id,created_at,title,source,grade,subject,storage_path,hwp_path,exam_pdf_path,solution_pdf_path,original_hwp_name,exam_pdf_name,solution_pdf_name,page_count,status,error_message";
+        const response = await fetch(`${config.url}/rest/v1/source_files?select=${fields}&order=created_at.desc`, { headers: { apikey: config.key, Authorization: `Bearer ${config.key}` }, cache: "no-store" });
+        if (!response.ok) throw new Error(await response.text());
+        const rows = await response.json() as SourceFile[];
+        setSources(rows);
+        const saved = window.localStorage.getItem("matspu-analysis-source-id");
+        const initial = rows.some((item) => item.id === saved) ? saved! : rows[0]?.id ?? "";
+        setSelectedId(initial);
+        if (initial) await loadWorkspace(initial); else setLoading(false);
+      } catch (error) { setErrorMessage(error instanceof Error ? error.message : "시험지 목록을 불러오지 못했습니다."); setLoading(false); }
+    })();
+  }, [loadWorkspace]);
+
+  const changeSource = async (value: string) => {
+    setSelectedId(value);
+    window.localStorage.setItem("matspu-analysis-source-id", value);
+    setAnalysis(null); setJobs([]); setExamUrl(null); setSolutionUrl(null);
+    await loadWorkspace(value);
+  };
+
+  const startAnalysis = async () => {
+    if (!selectedId) return;
+    setStarting(true); setMessage(""); setErrorMessage("");
+    try {
+      const response = await fetch("/api/analysis/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceFileId: selectedId }) });
+      const result = await response.json() as { success: boolean; analysis?: AnalysisRecord; message?: string };
+      if (!response.ok || !result.success || !result.analysis) throw new Error(result.message || "AI 분석 시작에 실패했습니다.");
+      setAnalysis(result.analysis);
+      setMessage("AI 분석 작업이 생성되었습니다. 다음 버전에서 PDF 문항 분리 엔진이 이 작업을 이어서 처리합니다.");
+      await loadWorkspace(selectedId);
+    } catch (error) { setErrorMessage(error instanceof Error ? error.message : "AI 분석 시작에 실패했습니다."); }
+    finally { setStarting(false); }
+  };
+
+  const saveWorkspace = async (patch: Partial<AnalysisRecord>) => {
+    if (!analysis) return;
+    setSaving(true); setMessage(""); setErrorMessage("");
+    try {
+      const response = await fetch(`/api/analysis/${analysis.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+      const result = await response.json() as { success: boolean; analysis?: AnalysisRecord; message?: string };
+      if (!response.ok || !result.success || !result.analysis) throw new Error(result.message || "저장에 실패했습니다.");
+      setAnalysis(result.analysis); setMessage("작업 상태가 저장되었습니다.");
+    } catch (error) { setErrorMessage(error instanceof Error ? error.message : "저장에 실패했습니다."); }
+    finally { setSaving(false); }
+  };
+
+  const activeUrl = viewer === "exam" ? examUrl : solutionUrl;
+  const progress = analysis?.progress ?? 0;
+  const stepIndex = !analysis ? 1 : analysis.status === "DONE" ? 4 : analysis.status === "REVIEW" ? 3 : 2;
+
+  return <>
+    <section className="page-title-row analysis-title-row">
+      <div><h2>AI 분석 관리</h2><p>등록한 시험지의 PDF와 분석 작업 상태를 한 화면에서 관리합니다.</p></div>
+      <label className="analysis-source-select"><span>분석할 시험지</span><select value={selectedId} onChange={(e) => void changeSource(e.target.value)} disabled={loading}>{sources.length === 0 ? <option value="">등록된 시험지 없음</option> : sources.map((item) => <option key={item.id} value={item.id}>{item.title} · {item.grade || "학년 미지정"}</option>)}</select></label>
+    </section>
+
+    <section className="analysis-stepper panel">
+      {["업로드", "AI 분석", "검수", "문제은행"].map((label, index) => <div key={label} className={index + 1 <= stepIndex ? "active" : ""}><i>{index + 1}</i><strong>{label}</strong>{index < 3 ? <span>›</span> : null}</div>)}
+    </section>
+
+    {errorMessage ? <div className="upload-message error">{errorMessage}</div> : null}
+    {message ? <div className="upload-message success">{message}</div> : null}
+
+    {!selectedSource ? <section className="panel source-file-empty">먼저 AI 문제등록에서 시험지를 등록해 주세요.</section> : <div className="analysis-workspace-grid">
+      <section className="panel analysis-viewer-panel">
+        <div className="analysis-panel-head"><div><strong>{selectedSource.title}</strong><span>{[selectedSource.grade, selectedSource.subject, selectedSource.source].filter(Boolean).join(" · ")}</span></div><div className="viewer-tabs"><button className={viewer === "exam" ? "active" : ""} onClick={() => setViewer("exam")}>시험지 PDF</button><button className={viewer === "solution" ? "active" : ""} onClick={() => setViewer("solution")}>해설지 PDF</button></div></div>
+        <div className="pdf-workspace-viewer">{loading ? <div>PDF를 불러오는 중입니다.</div> : activeUrl ? <iframe title={viewer === "exam" ? "시험지 PDF" : "해설지 PDF"} src={activeUrl} /> : <div>등록된 PDF가 없습니다.</div>}</div>
+      </section>
+
+      <aside className="panel analysis-control-panel">
+        <div className="analysis-status-line"><span>현재 상태</span><Status text={analysisStatusLabel[analysis?.status ?? "WAITING"] ?? "분석 대기"}/></div>
+        <div className="analysis-progress-title"><strong>{progress}%</strong><span>{analysis?.current_step ?? "분석을 시작해 주세요."}</span></div>
+        <div className="analysis-main-progress"><i style={{ width: `${progress}%` }}/></div>
+        <div className="analysis-count-grid"><div><span>전체 문항</span><strong>{analysis?.total_questions ?? 0}</strong></div><div><span>객관식</span><strong>{analysis?.objective_count ?? 0}</strong></div><div><span>단답형</span><strong>{analysis?.subjective_count ?? 0}</strong></div></div>
+        <button className="primary-button analysis-start-button" onClick={() => void startAnalysis()} disabled={starting || loading}>{starting ? "작업 생성 중..." : analysis ? "AI 분석 다시 시작" : "AI 분석 시작"}</button>
+        {analysis ? <div className="analysis-manual-controls"><label className="field"><span>진행 단계 메모</span><input value={analysis.current_step} onChange={(e) => setAnalysis({ ...analysis, current_step: e.target.value })}/></label><label className="field"><span>진행률</span><input type="number" min="0" max="100" value={analysis.progress} onChange={(e) => setAnalysis({ ...analysis, progress: Math.max(0, Math.min(100, Number(e.target.value))) })}/></label><button className="secondary-button" onClick={() => void saveWorkspace({ current_step: analysis.current_step, progress: analysis.progress })} disabled={saving}>{saving ? "저장 중..." : "상태 저장"}</button></div> : null}
+        <div className="analysis-job-log"><h3>작업 기록</h3>{jobs.length === 0 ? <p>아직 생성된 작업이 없습니다.</p> : jobs.slice(0, 4).map((job) => <article key={job.id}><div><strong>{job.status}</strong><span>{new Intl.DateTimeFormat("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(job.created_at))}</span></div><p>{job.logs?.[job.logs.length - 1]?.message || "작업 생성"}</p></article>)}</div>
+      </aside>
+    </div>}
   </>;
 }
 
