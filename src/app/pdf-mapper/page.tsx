@@ -66,41 +66,48 @@ export default function PdfMapperPage(){
           setRegions(saved.map((r:any)=>({number:r.question_no,page:r.page_no,x:Number(r.x),y:Number(r.y),w:Number(r.width),h:Number(r.height),answer:r.answer||"",type:r.question_type||"choice",verified:Boolean(r.verified),source:r.source||"manual"})));
         }else{
           const initial=emptyRegions(exam.question_count||30,exam.objective_count||21);
-          setRegions(auto?makeAutoDraft(initial,doc.numPages):initial);
+          setRegions(auto ? await detectQuestionRegions(doc, initial) : initial);
         }
       }catch(e){console.error(e);alert(e instanceof Error?e.message:"불러오기 실패");}
       finally{setLoading(false);}
     })();
   },[]);
 
-  function makeAutoDraft(base:Region[], pages:number):Region[]{
-    /*
-     * SOS 실전모의고사 기본 편집 구조
-     * 한 페이지를 '왼쪽 위 → 왼쪽 아래 → 오른쪽 위 → 오른쪽 아래' 순서로 배치한다.
-     *
-     * 이전 버전은 행 우선(좌상 → 우상 → 좌하 → 우하)으로 번호를 붙여서
-     * 2번을 우상단으로 잡았고, 한 문항이 비어 보이면 이후 번호가 전부 밀리는 문제가 있었다.
-     * 이제 문항 인식 결과에 번호를 연속 재부여하지 않고, 페이지별 고정 슬롯에 직접 매핑한다.
-     */
-    const slots:Rect[]=[
-      {x:1.6,y:3.0,w:46.8,h:46.0},   // 왼쪽 위
-      {x:1.6,y:50.0,w:46.8,h:47.0},  // 왼쪽 아래
-      {x:51.0,y:3.0,w:47.2,h:46.0},  // 오른쪽 위
-      {x:51.0,y:50.0,w:47.2,h:47.0}, // 오른쪽 아래
-    ];
-
-    return base.map((r,i)=>{
-      const pageIndex=Math.floor(i/4);
-      const slotIndex=i%4;
-      const targetPage=Math.min(Math.max(1,pageIndex+1),Math.max(1,pages));
-      return {
-        ...r,
-        page:targetPage,
-        ...slots[slotIndex],
-        verified:false,
-        source:"auto" as const,
-      };
-    });
+  async function detectQuestionRegions(doc:any, base:Region[]):Promise<Region[]> {
+    const detected = new Map<number, Region>();
+    for (let pageNo = 1; pageNo <= doc.numPages; pageNo += 1) {
+      const pdfPage = await doc.getPage(pageNo);
+      const viewport = pdfPage.getViewport({ scale: 1 });
+      const content = await pdfPage.getTextContent();
+      const headings: { no:number; x:number; top:number; column:number }[] = [];
+      for (const raw of content.items as any[]) {
+        const text = String(raw.str ?? '').trim();
+        const match = text.match(/^(\d{1,2})\.($|\s)/);
+        if (!match) continue;
+        const no = Number(match[1]);
+        if (no < 1 || no > base.length) continue;
+        const x = Number(raw.transform?.[4] ?? 0);
+        const y = Number(raw.transform?.[5] ?? 0);
+        const fontHeight = Math.max(8, Math.abs(Number(raw.transform?.[3] ?? raw.height ?? 10)));
+        const top = Math.max(0, viewport.height - y - fontHeight);
+        headings.push({ no, x, top, column: x < viewport.width / 2 ? 0 : 1 });
+      }
+      for (const column of [0, 1]) {
+        const list = headings.filter(h => h.column === column).sort((a,b) => a.top - b.top);
+        for (let i = 0; i < list.length; i += 1) {
+          const h = list[i];
+          const nextTop = list[i + 1]?.top ?? viewport.height * 0.965;
+          const x = column === 0 ? 1.2 : 50.2;
+          const y = Math.max(1.5, (h.top / viewport.height) * 100 - 0.8);
+          const bottom = Math.min(97.5, (nextTop / viewport.height) * 100 - 0.5);
+          detected.set(h.no, {
+            ...base[h.no - 1], page: pageNo, x, y, w: column === 0 ? 48.0 : 48.6,
+            h: Math.max(5, bottom - y), verified: false, source: 'auto'
+          });
+        }
+      }
+    }
+    return base.map(r => detected.get(r.number) ?? r);
   }
 
   useEffect(()=>{
