@@ -461,6 +461,7 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftFiles, setDraftFiles] = useState<ExamFileBundle>({});
   const [preview, setPreview] = useState<{ title: string; source: File | string; fileName: string } | null>(null);
+  const [htmlPreview, setHtmlPreview] = useState<{ title: string; html: string } | null>(null);
   const [regionDrafts, setRegionDrafts] = useState<Record<number, "자동인식" | "확인필요">>({});
   const [saving, setSaving] = useState(false);
 
@@ -708,24 +709,9 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
     .replace(/\"/g, "&quot;").replace(/'/g, "&#039;");
 
   const printHtmlSafely = (html: string, title: string) => {
-    // 미리보기는 현재 React 화면과 완전히 분리된 새 탭에서 엽니다.
-    // 새 탭에서 사용자가 직접 인쇄하므로 인쇄창을 닫아도 원래 등록화면의 state와 이벤트가 전혀 영향을 받지 않습니다.
-    const previewWindow = window.open("", "_blank", "noopener,noreferrer");
-    if (!previewWindow) {
-      alert("미리보기 창이 차단되었습니다. 브라우저 주소창 오른쪽에서 팝업을 허용해 주세요.");
-      return;
-    }
-    const safeTitle = escapeHtml(title);
-    const toolbar = `<div class="sos-print-toolbar"><strong>${safeTitle}</strong><button type="button" onclick="window.print()">인쇄</button><button type="button" onclick="window.close()">닫기</button></div>`;
-    const toolbarStyle = `<style>.sos-print-toolbar{position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:10px;padding:10px 14px;background:#17213a;color:#fff;font-family:Arial,'Noto Sans KR',sans-serif}.sos-print-toolbar strong{margin-right:auto}.sos-print-toolbar button{border:0;border-radius:7px;padding:8px 16px;font-weight:800;cursor:pointer}@media print{.sos-print-toolbar{display:none!important}}</style>`;
-    const documentHtml = html
-      .replace(/<head>/i, `<head>${toolbarStyle}`)
-      .replace(/<body([^>]*)>/i, `<body$1>${toolbar}`);
-    previewWindow.document.open();
-    previewWindow.document.write(documentHtml);
-    previewWindow.document.close();
-    previewWindow.document.title = title;
-    previewWindow.focus();
+    // 팝업을 열지 않고 현재 화면 안의 독립 iframe 미리보기로 표시합니다.
+    // 따라서 브라우저 팝업 허용이 필요 없고, 인쇄 취소 후에도 등록 화면이 멈추지 않습니다.
+    setHtmlPreview({ title, html });
   };
 
   const printAnswerSheet = () => {
@@ -768,8 +754,29 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
       <div className="exam-form-actions"><button type="button" className="secondary-button" onClick={() => setTab("list")}>취소</button><button className="primary-button" disabled={saving}>{saving ? "저장 중..." : editingId ? "수정 저장" : "시험 등록"}</button></div>
     </form>}
     {preview ? <PdfPreviewModal title={preview.title} source={preview.source} fileName={preview.fileName} onClose={() => setPreview(null)} /> : null}
+    {htmlPreview ? <HtmlPrintPreviewModal title={htmlPreview.title} html={htmlPreview.html} onClose={() => setHtmlPreview(null)} /> : null}
   </>;
 }
+
+function HtmlPrintPreviewModal({ title, html, onClose }: { title: string; html: string; onClose: () => void }) {
+  const printFrame = () => {
+    const frame = document.getElementById("sos-html-print-frame") as HTMLIFrameElement | null;
+    const target = frame?.contentWindow;
+    if (!target) return alert("인쇄 미리보기를 불러오는 중입니다. 잠시 후 다시 눌러 주세요.");
+    target.focus();
+    target.print();
+  };
+  return <div className="pdf-modal-backdrop" onMouseDown={onClose}>
+    <section className="pdf-modal html-print-modal" onMouseDown={(e) => e.stopPropagation()}>
+      <header>
+        <div><strong>{title}</strong><span>팝업 허용 없이 현재 화면에서 미리보기</span></div>
+        <div className="html-print-actions"><button type="button" onClick={printFrame}>인쇄</button><button type="button" onClick={onClose}>×</button></div>
+      </header>
+      <iframe id="sos-html-print-frame" title={title} srcDoc={html} />
+    </section>
+  </div>;
+}
+
 function PdfPreviewModal({ title, source, fileName, onClose }: { title: string; source: File | string; fileName: string; onClose: () => void }) {
   const [url, setUrl] = useState("");
   useEffect(() => {

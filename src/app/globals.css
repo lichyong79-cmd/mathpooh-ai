@@ -137,3 +137,10 @@ body{font-size:16px;line-height:1.5}
 @media(max-width:1100px){.upload-grid.three-files{grid-template-columns:1fr}.answer-key-grid{grid-template-columns:repeat(5,minmax(72px,1fr))}}
 @media(max-width:680px){.answer-toolbar{align-items:stretch;flex-direction:column}.answer-toolbar>div:last-child button{flex:1}.answer-key-grid{grid-template-columns:repeat(3,minmax(72px,1fr))}.file-standard-note{align-items:flex-start;flex-direction:column;gap:3px}}
 .upload-save-row{margin-top:18px;padding:16px;border:1px solid #d9dfeb;border-radius:12px;background:#f7f9fc;display:flex;align-items:center;gap:16px}.upload-save-button{min-width:230px;height:48px;font-size:16px}.upload-save-row span{font-size:14px;color:#687386}@media(max-width:720px){.upload-save-row{align-items:stretch;flex-direction:column}.upload-save-button{width:100%}}
+
+/* HTML 표지·정답지 미리보기: 팝업 없이 현재 화면 안에서 인쇄 */
+.html-print-modal header{gap:12px}
+.html-print-actions{display:flex!important;align-items:center;gap:8px}
+.html-print-actions button{width:auto!important;height:40px;padding:0 16px;border:0;border-radius:9px;background:#5268e8!important;color:#fff!important;font-size:14px!important;font-weight:800}
+.html-print-actions button:last-child{width:40px!important;padding:0;background:#f2f4f8!important;color:#687087!important;font-size:25px!important}
+.html-print-modal iframe{background:#eef1f6}
