@@ -277,3 +277,10 @@ body{font-size:16px;line-height:1.5}
     box-shadow: none !important;
   }
 }
+
+/* SOS 19: registration progress and list-only status control */
+.status-readonly{display:flex;flex-direction:column;gap:7px;padding:12px 14px;border:1px solid #d9deec;border-radius:14px;background:#f7f8fc}.status-readonly strong{font-size:17px;color:#1f2a44}.status-readonly small{font-size:12px;color:var(--muted)}
+.exam-progress-cell{display:flex;flex-direction:column;gap:6px;min-width:150px}.exam-progress-cell>div:first-child{display:flex;align-items:center;justify-content:space-between}.exam-progress-cell strong{font-size:16px;color:#263457}.exam-progress-cell span,.exam-progress-cell small{font-size:11px;color:var(--muted)}.exam-progress-bar{height:8px;border-radius:999px;background:#e7eaf2;overflow:hidden}.exam-progress-bar i{display:block;height:100%;border-radius:inherit;background:#5368e8;transition:width .2s ease}
+.status-control select{min-width:112px;border:1px solid #d8deeb;border-radius:12px;background:#fff;padding:10px 28px 10px 12px;font-weight:800;color:#28334f}.status-control select:focus{outline:2px solid rgba(83,104,232,.2);border-color:#5368e8}
+.verify-button{border:1px solid #aab5d7;background:#fff;color:#3c4b72;border-radius:12px;padding:11px 14px;font-weight:800;cursor:pointer}.verify-button.verified{border-color:#a9ddca;background:#eef9f4;color:#238260}.verify-button:disabled{opacity:.45;cursor:not-allowed}
+.exam-list .table-head,.exam-list .table-row{grid-template-columns:minmax(330px,1.55fr) 180px 230px 150px 165px 240px 170px 140px 155px;min-width:1760px}
