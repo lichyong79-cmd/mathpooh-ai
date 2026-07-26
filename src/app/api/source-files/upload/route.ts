@@ -119,7 +119,11 @@ export async function POST(request: NextRequest) {
     });
 
     if (!dbResponse.ok) {
-      throw new Error(`DB 등록 실패: ${await dbResponse.text()}`);
+      const errorText = await dbResponse.text();
+      if (dbResponse.status === 401 || dbResponse.status === 403 || errorText.includes("row-level security")) {
+        throw new Error("DB 저장 권한이 아직 설정되지 않았습니다. supabase-v1.3-source-files-rls.sql을 Supabase SQL Editor에서 한 번 실행해 주세요.");
+      }
+      throw new Error(`DB 등록 실패: ${errorText}`);
     }
 
     const rows = await dbResponse.json();
