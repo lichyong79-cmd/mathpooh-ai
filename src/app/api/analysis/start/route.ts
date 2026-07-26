@@ -224,8 +224,8 @@ export async function POST(request: NextRequest) {
             role: "user",
             content: [
               { type: "input_text", text: prompt },
-              { type: "input_file", file_url: examUrl, filename: "exam.pdf" },
-              { type: "input_file", file_url: solutionUrl, filename: "solution.pdf" },
+              { type: "input_file", file_url: examUrl },
+              { type: "input_file", file_url: solutionUrl },
             ],
           },
         ],

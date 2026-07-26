@@ -123,8 +123,8 @@ export async function POST(request: NextRequest) {
         model,
         input: [{ role: "user", content: [
           { type: "input_text", text: prompt },
-          { type: "input_file", file_url: examUrl, filename: "exam.pdf" },
-          { type: "input_file", file_url: solutionUrl, filename: "solution.pdf" },
+          { type: "input_file", file_url: examUrl },
+          { type: "input_file", file_url: solutionUrl },
         ] }],
         text: { format: { type: "json_schema", name: "math_exam_probe", strict: true, schema: probeSchema } },
         max_output_tokens: 3500,
