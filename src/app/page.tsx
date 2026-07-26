@@ -38,6 +38,24 @@ type PracticeExam = {
 };
 
 type ExamFileBundle = { test?: File; solution?: File; original?: File };
+type TrainingProblemStatus = "검수대기" | "사용가능" | "보류";
+type TrainingProblem = {
+  id: string;
+  problemCode: string;
+  grade: string;
+  subject: string;
+  unit: string;
+  difficulty: string;
+  problemType: string;
+  source: string;
+  answer: string;
+  memo: string;
+  status: TrainingProblemStatus;
+  createdAt?: string;
+};
+
+type BulkProblemRow = Omit<TrainingProblem, "id" | "createdAt"> & { rowNo: number; error?: string };
+
 
 type Student = {
   id: number;
@@ -109,6 +127,7 @@ export default function Home() {
   const [students, setStudents] = useState<Student[]>(initialStudents);
   const [practiceExams, setPracticeExams] = useState<PracticeExam[]>(initialPracticeExams);
   const [examFiles, setExamFiles] = useState<Record<string, ExamFileBundle>>({});
+  const [trainingProblems, setTrainingProblems] = useState<TrainingProblem[]>([]);
 
   useEffect(() => {
     const config = getSupabaseConfig();
@@ -125,6 +144,27 @@ export default function Home() {
       } catch (error) {
         console.error("Supabase 시험 목록 불러오기 실패", error);
       }
+    })();
+  }, []);
+
+  useEffect(() => {
+    const config = getSupabaseConfig();
+    if (!config) return;
+    (async () => {
+      try {
+        const response = await fetch(`${config.url}/rest/v1/training_problems?select=*&order=created_at.desc`, {
+          headers: { apikey: config.key, Authorization: `Bearer ${config.key}` },
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error(await response.text());
+        const rows = await response.json();
+        setTrainingProblems(rows.map((row: Record<string, unknown>) => ({
+          id: String(row.id), problemCode: String(row.problem_code ?? ""), grade: String(row.grade ?? ""),
+          subject: String(row.subject ?? ""), unit: String(row.unit ?? ""), difficulty: String(row.difficulty ?? ""),
+          problemType: String(row.problem_type ?? ""), source: String(row.source ?? ""), answer: String(row.answer ?? ""),
+          memo: String(row.memo ?? ""), status: String(row.status ?? "검수대기") as TrainingProblemStatus, createdAt: String(row.created_at ?? ""),
+        })));
+      } catch (error) { console.error("훈련 문제 목록 불러오기 실패", error); }
     })();
   }, []);
 
@@ -174,7 +214,7 @@ export default function Home() {
           </div>
         </header>
         <div className="page-content">
-          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
+          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage problems={trainingProblems} setProblems={setTrainingProblems} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
         </div>
       </section>
     </main>
@@ -897,6 +937,85 @@ function PdfPreviewModal({ title, source, fileName, onClose }: { title: string; 
 }
 function Dashboard({ students, onMove }: { students: Student[]; onMove: (menu: AdminMenu) => void }) {
   return <><section className="welcome-card"><div><span className="pill">MATSPU SOS</span><h2>학생의 점수를 데이터로 최적화합니다.</h2><p>진단부터 훈련 추천까지 매쓰푸의 전체 흐름을 관리하세요.</p></div></section><section className="student-stat-grid"><MiniStat label="등록 학생" value={`${students.length}명`} note="전체 회원" /><MiniStat label="재원 학생" value={`${students.filter(s => s.status === "정상").length}명`} note="현재 학습중" /><MiniStat label="AI 분석 대기" value="12건" note="검토 필요" emphasis /><MiniStat label="추천 승인 대기" value="7건" note="SOS 추천" /></section><section className="empty-page"><div className="empty-icon">⌂</div><h2>대시보드 상세 구성 예정</h2><p>현재는 학생관리 기능을 우선 개발했습니다.</p><button className="primary-button" onClick={() => onMove("students")}>학생 관리 열기</button></section></>;
+}
+
+
+function ProblemsPage({ problems, setProblems }: { problems: TrainingProblem[]; setProblems: React.Dispatch<React.SetStateAction<TrainingProblem[]>> }) {
+  const [tab, setTab] = useState<"list" | "bulk">("bulk");
+  const [text, setText] = useState("");
+  const [preview, setPreview] = useState<BulkProblemRow[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [gradeFilter, setGradeFilter] = useState("전체");
+
+  const splitLine = (line: string) => line.includes("\t") ? line.split("\t") : line.split(",");
+  const normalizeStatus = (value: string): TrainingProblemStatus => value === "사용가능" || value === "보류" ? value : "검수대기";
+  const parseRows = (raw: string) => {
+    const lines = raw.replace(/\r/g, "").split("\n").filter((line) => line.trim());
+    const start = lines[0] && /문제코드|problem.?code/i.test(lines[0]) ? 1 : 0;
+    const rows = lines.slice(start).map((line, index) => {
+      const cols = splitLine(line).map((value) => value.trim().replace(/^"|"$/g, ""));
+      const [problemCode, grade, subject, unit, difficulty, problemType, source, answer, memo, status] = cols;
+      const error = !problemCode ? "문제코드 없음" : !grade ? "학년 없음" : !subject ? "과목 없음" : !unit ? "단원 없음" : !answer ? "정답 없음" : undefined;
+      return { rowNo: index + 1 + start, problemCode: problemCode || "", grade: grade || "", subject: subject || "", unit: unit || "", difficulty: difficulty || "중", problemType: problemType || "객관식", source: source || "", answer: answer || "", memo: memo || "", status: normalizeStatus(status || "") , error };
+    });
+    setPreview(rows);
+  };
+
+  const downloadTemplate = () => {
+    const sample = "문제코드,학년,과목,단원,난이도,문제유형,출처,정답,메모,상태\nH11-다항식-001,고1,공통수학1,다항식,중,객관식,매쓰푸,3,계산형,검수대기\nH11-방정식-002,고1,공통수학1,방정식과 부등식,상,단답형,매쓰푸,12,서술형 변형,사용가능";
+    const blob = new Blob(["\ufeff" + sample], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "SOS_훈련문제_일괄등록_양식.csv"; a.click(); URL.revokeObjectURL(url);
+  };
+
+  const readCsv = async (file: File) => { const content = await file.text(); setText(content); parseRows(content); };
+  const validRows = preview.filter((row) => !row.error);
+  const duplicateCodes = new Set(validRows.filter((row, i, arr) => arr.findIndex((other) => other.problemCode === row.problemCode) !== i).map((row) => row.problemCode));
+
+  const saveBulk = async () => {
+    if (!validRows.length) return alert("등록 가능한 행이 없습니다.");
+    if (duplicateCodes.size) return alert(`중복 문제코드를 먼저 수정해 주세요: ${Array.from(duplicateCodes).join(", ")}`);
+    setSaving(true);
+    try {
+      const config = getSupabaseConfig();
+      const payload = validRows.map(({ rowNo, error, ...row }) => ({ problem_code: row.problemCode, grade: row.grade, subject: row.subject, unit: row.unit, difficulty: row.difficulty, problem_type: row.problemType, source: row.source, answer: row.answer, memo: row.memo, status: row.status }));
+      let saved: TrainingProblem[];
+      if (config) {
+        const response = await fetch(`${config.url}/rest/v1/training_problems`, { method: "POST", headers: { apikey: config.key, Authorization: `Bearer ${config.key}`, "Content-Type": "application/json", Prefer: "return=representation" }, body: JSON.stringify(payload) });
+        if (!response.ok) throw new Error(await response.text());
+        const rows = await response.json();
+        saved = rows.map((row: Record<string, unknown>) => ({ id: String(row.id), problemCode: String(row.problem_code), grade: String(row.grade), subject: String(row.subject), unit: String(row.unit), difficulty: String(row.difficulty), problemType: String(row.problem_type), source: String(row.source ?? ""), answer: String(row.answer), memo: String(row.memo ?? ""), status: String(row.status) as TrainingProblemStatus, createdAt: String(row.created_at ?? "") }));
+      } else {
+        saved = validRows.map(({ rowNo, error, ...row }) => ({ ...row, id: crypto.randomUUID(), createdAt: new Date().toISOString() }));
+      }
+      setProblems((prev) => [...saved, ...prev]); setText(""); setPreview([]); setTab("list"); alert(`${saved.length}개 훈련문제를 등록했습니다.`);
+    } catch (error) { alert(`일괄등록 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`); }
+    finally { setSaving(false); }
+  };
+
+  const removeProblem = async (problem: TrainingProblem) => {
+    if (!confirm(`${problem.problemCode} 문제를 삭제할까요?`)) return;
+    const config = getSupabaseConfig();
+    if (config) {
+      const response = await fetch(`${config.url}/rest/v1/training_problems?id=eq.${problem.id}`, { method: "DELETE", headers: { apikey: config.key, Authorization: `Bearer ${config.key}` } });
+      if (!response.ok) return alert("삭제에 실패했습니다.");
+    }
+    setProblems((prev) => prev.filter((item) => item.id !== problem.id));
+  };
+
+  const filtered = problems.filter((p) => `${p.problemCode} ${p.subject} ${p.unit} ${p.source}`.toLowerCase().includes(search.toLowerCase()) && (gradeFilter === "전체" || p.grade === gradeFilter));
+  return <>
+    <section className="page-title-row"><div><h2>훈련 문제은행</h2><p>훈련문제 정보를 한 번에 등록하고 검수 상태를 관리합니다.</p></div><button className="primary-button" onClick={() => setTab("bulk")}>＋ 훈련문제 일괄등록</button></section>
+    <div className="student-tabs"><button className={tab === "list" ? "active" : ""} onClick={() => setTab("list")}>문제 목록 <b>{problems.length}</b></button><button className={tab === "bulk" ? "active" : ""} onClick={() => setTab("bulk")}>일괄등록</button></div>
+    {tab === "bulk" ? <>
+      <section className="panel bulk-guide"><div><strong>엑셀에서 10개 열을 그대로 복사해 붙여넣으세요.</strong><span>문제코드 · 학년 · 과목 · 단원 · 난이도 · 문제유형 · 출처 · 정답 · 메모 · 상태</span></div><button className="secondary-button" onClick={downloadTemplate}>CSV 양식 받기</button></section>
+      <section className="panel bulk-entry-panel"><div className="bulk-upload-row"><label className="csv-upload">CSV 파일 선택<input type="file" accept=".csv,text/csv" onChange={(e) => e.target.files?.[0] && readCsv(e.target.files[0])} /></label><span>또는 아래 칸에 엑셀 내용을 붙여넣기</span></div><textarea className="bulk-textarea" value={text} onChange={(e) => setText(e.target.value)} placeholder={'H11-다항식-001\t고1\t공통수학1\t다항식\t중\t객관식\t매쓰푸\t3\t계산형\t검수대기'} /><div className="bulk-actions"><button className="secondary-button" onClick={() => parseRows(text)}>내용 분석</button><button className="primary-button" disabled={!validRows.length || saving} onClick={saveBulk}>{saving ? "등록 중..." : `${validRows.length}개 일괄등록`}</button></div></section>
+      {preview.length ? <section className="panel bulk-preview-panel"><div className="list-summary"><strong>등록 미리보기</strong><span>정상 {validRows.length}개 · 오류 {preview.length - validRows.length}개</span></div><div className="bulk-preview-table"><div className="bulk-preview-head"><span>행</span><span>문제코드</span><span>학년/과목</span><span>단원</span><span>난이도</span><span>유형</span><span>정답</span><span>상태</span></div>{preview.map((row) => <div className={`bulk-preview-row ${row.error ? "has-error" : ""}`} key={`${row.rowNo}-${row.problemCode}`}><span>{row.rowNo}</span><strong>{row.problemCode || "-"}</strong><span>{row.grade} · {row.subject}</span><span>{row.unit}</span><span>{row.difficulty}</span><span>{row.problemType}</span><b>{row.answer || "-"}</b><span>{row.error ? row.error : row.status}</span></div>)}</div></section> : null}
+    </> : <>
+      <section className="panel problem-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="문제코드·단원·출처 검색"/><select value={gradeFilter} onChange={(e) => setGradeFilter(e.target.value)}><option>전체</option><option>중3</option><option>고1</option><option>고2</option><option>고3</option></select></section>
+      <section className="panel problem-list-panel"><div className="problem-list-head"><span>문제코드</span><span>학년/과목</span><span>단원</span><span>난이도</span><span>유형</span><span>정답</span><span>상태</span><span>관리</span></div>{filtered.length ? filtered.map((p) => <div className="problem-list-row" key={p.id}><strong>{p.problemCode}</strong><span>{p.grade} · {p.subject}</span><span>{p.unit}</span><span>{p.difficulty}</span><span>{p.problemType}</span><b>{p.answer}</b><Status text={p.status}/><button className="problem-delete" onClick={() => removeProblem(p)}>삭제</button></div>) : <div className="problem-empty">등록된 훈련문제가 없습니다.</div>}</section>
+    </>}
+  </>;
 }
 
 function ComingSoon({ title, onMove }: { title: string; onMove: (menu: AdminMenu) => void }) { return <section className="empty-page"><div className="empty-icon">✦</div><h2>{title}</h2><p>학생관리 다음 단계에서 실제 운영 기능을 연결합니다.</p><button className="primary-button" onClick={() => onMove("students")}>학생 관리로 돌아가기</button></section>; }
