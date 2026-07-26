@@ -942,6 +942,12 @@ function ProblemsPage() {
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editSource, setEditSource] = useState("");
+  const [editGrade, setEditGrade] = useState("고1");
+  const [editSubject, setEditSubject] = useState("공통수학1");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -1059,6 +1065,59 @@ function ProblemsPage() {
     year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
   }).format(new Date(value));
 
+  const startEdit = (item: SourceFile) => {
+    setEditingId(item.id);
+    setEditTitle(item.title);
+    setEditSource(item.source || "");
+    setEditGrade(item.grade || "고1");
+    setEditSubject(item.subject || "공통수학1");
+    setMessage("");
+    setErrorMessage("");
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setMessage("");
+    setErrorMessage("");
+  };
+
+  const saveEdit = async () => {
+    if (!editingId) return;
+    if (!editTitle.trim()) return setErrorMessage("시험지명을 입력해 주세요.");
+
+    const config = getSupabaseConfig();
+    if (!config) return setErrorMessage("Supabase 환경변수를 확인해 주세요.");
+
+    setSavingEdit(true);
+    setMessage("");
+    setErrorMessage("");
+    try {
+      const response = await fetch(`${config.url}/rest/v1/source_files?id=eq.${encodeURIComponent(editingId)}`, {
+        method: "PATCH",
+        headers: {
+          apikey: config.key,
+          Authorization: `Bearer ${config.key}`,
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify({
+          title: editTitle.trim(),
+          source: editSource.trim() || null,
+          grade: editGrade,
+          subject: editSubject,
+        }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      setEditingId(null);
+      setMessage("시험지 정보가 수정되었습니다.");
+      await loadFiles();
+    } catch (error) {
+      setErrorMessage(`수정 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   const allReady = Boolean(title.trim() && hwpFile && examPdf && solutionPdf);
 
   return <>
@@ -1103,8 +1162,16 @@ function ProblemsPage() {
     <section className="panel source-file-panel">
       <div className="source-file-title"><div><strong>등록된 시험지 세트</strong><span>총 {items.length}개</span></div><button className="secondary-button" type="button" onClick={() => void loadFiles()} disabled={loading}>새로고침</button></div>
       {loading ? <div className="source-file-empty">목록을 불러오는 중입니다.</div> : items.length === 0 ? <div className="source-file-empty">등록된 시험지가 없습니다.</div> : <div className="source-file-list">
-        <div className="source-file-head"><span>등록일</span><span>시험지명</span><span>학년·과목</span><span>파일 구성</span><span>상태</span></div>
-        {items.map((item) => <div className="source-file-row bundle-row" key={item.id}>
+        <div className="source-file-head"><span>등록일</span><span>시험지명</span><span>학년·과목</span><span>파일 구성</span><span>상태</span><span>관리</span></div>
+        {items.map((item) => editingId === item.id ? <div className="source-file-edit-row" key={item.id}>
+          <div className="source-file-edit-grid">
+            <label className="field"><span>시험지명</span><input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} disabled={savingEdit}/></label>
+            <label className="field"><span>출처</span><input value={editSource} onChange={(e) => setEditSource(e.target.value)} disabled={savingEdit}/></label>
+            <label className="field"><span>학년</span><select value={editGrade} onChange={(e) => setEditGrade(e.target.value)} disabled={savingEdit}><option>중1</option><option>중2</option><option>중3</option><option>고1</option><option>고2</option><option>고3</option></select></label>
+            <label className="field"><span>과목</span><select value={editSubject} onChange={(e) => setEditSubject(e.target.value)} disabled={savingEdit}><option>중등수학</option><option>공통수학1</option><option>공통수학2</option><option>대수</option><option>미적분Ⅰ</option><option>확률과 통계</option></select></label>
+          </div>
+          <div className="source-file-edit-actions"><button className="secondary-button" type="button" onClick={cancelEdit} disabled={savingEdit}>취소</button><button className="primary-button" type="button" onClick={() => void saveEdit()} disabled={savingEdit}>{savingEdit ? "저장 중..." : "수정 저장"}</button></div>
+        </div> : <div className="source-file-row bundle-row" key={item.id}>
           <span>{formatDate(item.created_at)}</span>
           <div><strong>{item.title}</strong><small>{item.source || "-"}</small></div>
           <span>{[item.grade, item.subject].filter(Boolean).join(" · ") || "-"}</span>
@@ -1114,6 +1181,7 @@ function ProblemsPage() {
             <span className={item.solution_pdf_path ? "ok" : "missing"}>해설지</span>
           </div>
           <Status text={sourceStatusLabel[item.status] ?? item.status}/>
+          <button className="source-edit-button" type="button" onClick={() => startEdit(item)}>수정</button>
           {item.error_message ? <small className="bundle-error">{item.error_message}</small> : null}
         </div>)}
       </div>}
