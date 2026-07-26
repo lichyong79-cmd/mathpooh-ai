@@ -4,13 +4,6 @@ export const runtime = "nodejs";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
-function safeFileName(name: string) {
-  return name
-    .normalize("NFC")
-    .replace(/[^\p{L}\p{N}._-]/gu, "_")
-    .replace(/_+/g, "_");
-}
-
 function isPdf(file: File) {
   return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 }
@@ -89,17 +82,16 @@ export async function POST(request: NextRequest) {
     };
 
     const hwpExtension = hwpFile.name.toLowerCase().endsWith(".hwpx") ? "hwpx" : "hwp";
+    // Supabase Storage 경로에는 원본 한글 파일명을 넣지 않습니다.
+    // 한글/공백/특수문자가 포함된 이름은 InvalidKey 오류를 일으킬 수 있으므로
+    // Storage에는 영문 고정 이름으로 저장하고 원래 파일명은 DB에 별도로 보관합니다.
     const hwpPath = await upload(
       hwpFile,
-      `source-${safeFileName(hwpFile.name)}`,
+      `source.${hwpExtension}`,
       hwpFile.type || "application/octet-stream"
     );
-    const examPdfPath = await upload(examPdf, `exam-${safeFileName(examPdf.name)}`, "application/pdf");
-    const solutionPdfPath = await upload(
-      solutionPdf,
-      `solution-${safeFileName(solutionPdf.name)}`,
-      "application/pdf"
-    );
+    const examPdfPath = await upload(examPdf, "exam.pdf", "application/pdf");
+    const solutionPdfPath = await upload(solutionPdf, "solution.pdf", "application/pdf");
 
     const dbResponse = await fetch(`${url}/rest/v1/source_files`, {
       method: "POST",
