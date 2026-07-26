@@ -534,8 +534,12 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
       const savedExam = examFromRow((await updateResponse.json())[0]);
       setExams((prev) => editingId ? prev.map((exam) => exam.id === savedExam.id ? savedExam : exam) : [savedExam, ...prev]);
       setExamFiles((prev) => ({ ...prev, [savedExam.id]: { ...prev[savedExam.id], ...draftFiles } }));
-      setEditingId(savedExam.id); setDraftFiles({}); setForm(({ ...savedExam, id: undefined } as unknown) as Omit<PracticeExam, "id">);
       alert(`시험 자료를 저장했습니다. 정답 ${savedExam.answers.filter(Boolean).length}/${savedExam.questionCount}개가 입력되었습니다.`);
+      setEditingId(null);
+      setDraftFiles({});
+      setRegionDrafts({});
+      setForm(makeEmptyExam());
+      setTab("list");
     } catch (error) {
       console.error(error); alert(`시험 저장 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
     } finally { setSaving(false); }
