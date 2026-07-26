@@ -581,44 +581,111 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
     set("answers", next);
   };
 
+  const normalizePdfToken = (value: string) => value
+    .replace(/[\uE000-\uF8FF]/g, (char) => {
+      const code = char.charCodeAt(0);
+      // 한글 PDF 수식 글꼴이 숫자를 private-use 영역에 저장하는 경우를 보정합니다.
+      const map: Record<number, string> = {
+        // 일반적인 private-use 숫자 매핑
+        0xE000: "0", 0xE001: "1", 0xE002: "2", 0xE003: "3", 0xE004: "4",
+        0xE005: "5", 0xE006: "6", 0xE007: "7", 0xE008: "8", 0xE009: "9",
+        // 현재 SOS 한글 수식 글꼴 숫자 매핑 (0,1,2,3,4,5,6,7,8,9)
+        0xE03D: "0", 0xE034: "1", 0xE035: "2", 0xE036: "3", 0xE037: "4",
+        0xE038: "5", 0xE039: "6", 0xE03A: "7", 0xE03B: "8", 0xE03C: "9",
+      };
+      return map[code] ?? char;
+    })
+    .replace(/[①②③④⑤]/g, (char) => ({ "①": "1", "②": "2", "③": "3", "④": "4", "⑤": "5" }[char] ?? char))
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const parseSosMeta = (text: string) => {
+    const normalized = normalizePdfToken(text);
+    const meta = normalized.match(/SOS_META\s*\|[^\n\r]*?ANSWERS\s*=\s*([^\n\r]+)/i);
+    if (!meta) return null;
+    const values = Array(form.questionCount).fill("") as string[];
+    for (const pair of meta[1].split(/[;,]/)) {
+      const match = pair.trim().match(/^(\d{1,3})\s*[:=]\s*(-?\d+|_)$/);
+      if (!match) continue;
+      const no = Number(match[1]);
+      if (no >= 1 && no <= form.questionCount && match[2] !== "_") values[no - 1] = match[2];
+    }
+    return values.some(Boolean) ? values : null;
+  };
+
   const readAnswersFromPdf = async (source: File | string) => {
     const pdfjs = await import("pdfjs-dist");
     pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
     const data = source instanceof File ? await source.arrayBuffer() : await (await fetch(source)).arrayBuffer();
     const pdf = await pdfjs.getDocument({ data }).promise;
-    const next = Array.from({ length: form.questionCount }, (_, i) => form.answers[i] ?? "");
-    const circled: Record<string, string> = { "①": "1", "②": "2", "③": "3", "④": "4", "⑤": "5" };
+    const existing = Array.from({ length: form.questionCount }, (_, i) => form.answers[i] ?? "");
 
-    for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
+    // 마지막 페이지부터 역순으로 찾아 '빠른정답'이 있는 한 페이지만 분석합니다.
+    // 해설 본문의 문항번호·수식 숫자와 섞이지 않도록 다른 페이지는 절대 파싱하지 않습니다.
+    for (let pageNo = pdf.numPages; pageNo >= Math.max(1, pdf.numPages - 2); pageNo -= 1) {
       const page = await pdf.getPage(pageNo);
       const content = await page.getTextContent();
-      const lines = new Map<string, { x:number; text:string }[]>();
-      for (const raw of content.items as any[]) {
-        const text = String(raw.str ?? "").trim();
-        if (!text) continue;
-        const x = Number(raw.transform?.[4] ?? 0);
-        const y = Math.round(Number(raw.transform?.[5] ?? 0) / 3) * 3;
-        const pageWidth = Number(page.getViewport({ scale: 1 }).width);
-        const column = x < pageWidth / 2 ? 0 : 1;
-        const key = `${y}:${column}`;
-        const row = lines.get(key) ?? []; row.push({ x, text }); lines.set(key, row);
+      const items = (content.items as any[])
+        .map((raw) => ({
+          text: normalizePdfToken(String(raw.str ?? "")),
+          x: Number(raw.transform?.[4] ?? 0),
+          y: Number(raw.transform?.[5] ?? 0),
+        }))
+        .filter((item) => item.text);
+
+      const pageText = items.map((item) => item.text).join(" ").replace(/\s+/g, " ");
+      if (!/(빠른\s*정답|정답표)/i.test(pageText)) continue;
+
+      // PDF 텍스트 항목을 실제 읽는 순서(위→아래, 왼쪽→오른쪽)로 정렬합니다.
+      const ordered = [...items].sort((a, b) => Math.abs(b.y - a.y) > 3 ? b.y - a.y : a.x - b.x);
+      const lines = new Map<number, { x: number; text: string }[]>();
+      for (const item of ordered) {
+        const lineKey = Math.round(item.y / 3) * 3;
+        const row = lines.get(lineKey) ?? [];
+        row.push({ x: item.x, text: item.text });
+        lines.set(lineKey, row);
       }
-      for (const parts of lines.values()) {
-        const line = parts.sort((a,b) => a.x - b.x).map(v => v.text).join(" ").replace(/\s+/g, " ").trim();
-        const head = line.match(/^(\d{1,2})\.\s*(.*)$/);
-        if (!head) continue;
-        const no = Number(head[1]);
+
+      const parsed = Array(form.questionCount).fill("") as string[];
+      const lineTexts = [...lines.entries()]
+        .sort((a, b) => b[0] - a[0])
+        .map(([, parts]) => parts.sort((a, b) => a.x - b.x).map((v) => v.text).join(" ").replace(/\s+/g, " ").trim());
+
+      for (const line of lineTexts) {
+        // 표준 형식: 1. ③ / 22. 8 / 30. 50
+        const match = line.match(/^\s*(\d{1,3})\s*[.．)]?\s*([①②③④⑤]|-?\d+)\s*$/);
+        if (!match) continue;
+        const no = Number(match[1]);
         if (no < 1 || no > form.questionCount) continue;
-        const rest = head[2];
-        const circle = rest.match(/[①②③④⑤]/);
-        if (circle) { next[no - 1] = circled[circle[0]]; continue; }
-        if (no > form.objectiveCount) {
-          const nums = rest.match(/-?\d{1,4}/g) ?? [];
-          if (nums.length) next[no - 1] = nums[nums.length - 1];
+        const answer = normalizePdfToken(match[2]).replace(/[^0-9-]/g, "");
+        if (!/^-?\d+$/.test(answer)) continue;
+        if (no <= form.objectiveCount && !/^[1-5]$/.test(answer)) continue;
+        parsed[no - 1] = answer;
+      }
+
+      // 일부 PDF는 번호와 답을 한 줄이 아닌 별도 토큰으로 내보내므로 토큰 순서 방식도 보조 적용합니다.
+      if (parsed.filter(Boolean).length < form.questionCount) {
+        const tokens = ordered.flatMap((item) => item.text.split(/\s+/)).filter(Boolean);
+        for (let i = 0; i < tokens.length - 1; i += 1) {
+          const noMatch = tokens[i].match(/^(\d{1,3})[.．)]?$/);
+          if (!noMatch) continue;
+          const no = Number(noMatch[1]);
+          if (no < 1 || no > form.questionCount || parsed[no - 1]) continue;
+          const answer = normalizePdfToken(tokens[i + 1]).replace(/[^0-9-]/g, "");
+          if (!/^-?\d+$/.test(answer)) continue;
+          if (no <= form.objectiveCount && !/^[1-5]$/.test(answer)) continue;
+          parsed[no - 1] = answer;
         }
       }
+
+      const found = parsed.filter(Boolean).length;
+      if (found === form.questionCount) return parsed;
+
+      // 완전 추출이 아니면 사용자가 이미 입력한 답을 지우지 않고, 추출된 칸만 병합합니다.
+      return existing.map((answer, index) => answer || parsed[index]);
     }
-    return next;
+
+    throw new Error("QUICK_ANSWER_PAGE_NOT_FOUND");
   };
 
   const extractAnswersFromSolution = async () => {
@@ -628,25 +695,48 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
       const next = await readAnswersFromPdf(source);
       set("answers", next);
       const found = next.filter(Boolean).length;
-      alert(`${found}/${form.questionCount}개 정답을 자동 추출했습니다.`);
+      alert(found === form.questionCount
+        ? `정답 ${found}개를 모두 자동 추출했습니다.`
+        : `${found}/${form.questionCount}개를 추출했습니다. 비어 있는 답만 확인해 주세요.`);
     } catch (error) {
       console.error(error); alert("정답 자동 추출에 실패했습니다. PDF 내부 글자를 읽을 수 있는지 확인해 주세요.");
     }
   };
 
+  const escapeHtml = (value: unknown) => String(value ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;").replace(/'/g, "&#039;");
+
+  const printHtmlSafely = (html: string, title: string) => {
+    // 미리보기는 현재 React 화면과 완전히 분리된 새 탭에서 엽니다.
+    // 새 탭에서 사용자가 직접 인쇄하므로 인쇄창을 닫아도 원래 등록화면의 state와 이벤트가 전혀 영향을 받지 않습니다.
+    const previewWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (!previewWindow) {
+      alert("미리보기 창이 차단되었습니다. 브라우저 주소창 오른쪽에서 팝업을 허용해 주세요.");
+      return;
+    }
+    const safeTitle = escapeHtml(title);
+    const toolbar = `<div class="sos-print-toolbar"><strong>${safeTitle}</strong><button type="button" onclick="window.print()">인쇄</button><button type="button" onclick="window.close()">닫기</button></div>`;
+    const toolbarStyle = `<style>.sos-print-toolbar{position:sticky;top:0;z-index:99999;display:flex;align-items:center;gap:10px;padding:10px 14px;background:#17213a;color:#fff;font-family:Arial,'Noto Sans KR',sans-serif}.sos-print-toolbar strong{margin-right:auto}.sos-print-toolbar button{border:0;border-radius:7px;padding:8px 16px;font-weight:800;cursor:pointer}@media print{.sos-print-toolbar{display:none!important}}</style>`;
+    const documentHtml = html
+      .replace(/<head>/i, `<head>${toolbarStyle}`)
+      .replace(/<body([^>]*)>/i, `<body$1>${toolbar}`);
+    previewWindow.document.open();
+    previewWindow.document.write(documentHtml);
+    previewWindow.document.close();
+    previewWindow.document.title = title;
+    previewWindow.focus();
+  };
+
   const printAnswerSheet = () => {
-    const popup = window.open("", "_blank", "width=1000,height=800");
-    if (!popup) return alert("팝업이 차단되었습니다.");
-    const cells = Array.from({ length: form.questionCount }, (_, i) => `<div><b>${i + 1}</b><span>${form.answers[i] || "-"}</span></div>`).join("");
-    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${form.examCode} 정답지</title><style>@page{size:A4;margin:16mm}body{font-family:Arial,'Noto Sans KR',sans-serif;color:#17213a}.head{text-align:center;border-bottom:2px solid #17213a;padding-bottom:14px}.head h1{margin:0 0 6px}.meta{font-size:12px;color:#667085}.grid{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid #aaa;border-left:1px solid #aaa;margin-top:24px}.grid div{display:grid;grid-template-columns:42px 1fr;border-right:1px solid #aaa;border-bottom:1px solid #aaa;min-height:42px;align-items:center}.grid b{text-align:center}.grid span{font-weight:800;font-size:18px;text-align:center}.system{margin-top:20px;font-size:9px;color:#aaa;word-break:break-all}</style></head><body><div class="head"><h1>정답</h1><strong>${form.title}</strong><div class="meta">${form.examCode} · 객관식 ${form.objectiveCount}문항 · 단답형 ${form.shortAnswerCount}문항</div></div><div class="grid">${cells}</div><div class="system">SOS_META|CODE=${form.examCode}|ANSWERS=${form.answers.map((answer, i) => `${i + 1}:${answer || "_"}`).join(",")}</div><script>window.onload=()=>window.print();<\/script></body></html>`);
-    popup.document.close();
+    const answers = Array.from({ length: form.questionCount }, (_, i) => form.answers[i] ?? "");
+    const cells = answers.map((answer, i) => `<div><b>${i + 1}</b><span>${escapeHtml(answer || "-")}</span></div>`).join("");
+    const meta = `SOS_META|VERSION=1|CODE=${form.examCode}|COUNT=${form.questionCount}|OBJECTIVE=${form.objectiveCount}|ANSWERS=${answers.map((answer, i) => `${i + 1}:${answer || "_"}`).join(",")}`;
+    printHtmlSafely(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(form.examCode)} 정답지</title><style>@page{size:A4;margin:14mm}*{box-sizing:border-box}body{font-family:Arial,'Noto Sans KR',sans-serif;color:#17213a;margin:0}.head{text-align:center;border-bottom:2px solid #17213a;padding-bottom:12px}.head h1{margin:0 0 6px}.meta{font-size:12px;color:#667085}.grid{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid #999;border-left:1px solid #999;margin-top:20px}.grid div{display:grid;grid-template-columns:36px 1fr;border-right:1px solid #999;border-bottom:1px solid #999;min-height:36px;align-items:center}.grid b{text-align:center;border-right:1px solid #ddd}.grid span{font-weight:800;font-size:17px;text-align:center}.sos-machine{font-size:6px;line-height:1;color:#fff;position:fixed;left:4mm;bottom:3mm;white-space:nowrap}.help{margin-top:12px;text-align:center;font-size:11px;color:#777}</style></head><body><div class="head"><h1>정답표</h1><strong>${escapeHtml(form.title)}</strong><div class="meta">${escapeHtml(form.examCode)} · 객관식 ${form.objectiveCount}문항 · 단답형 ${form.shortAnswerCount}문항</div></div><div class="grid">${cells}</div><div class="help">SOS 표준 정답지 · 이 PDF를 해설지 첫 페이지로 사용하면 정답이 자동 등록됩니다.</div><div class="sos-machine">${escapeHtml(meta)}</div></body></html>`, `${form.examCode} 정답지`);
   };
 
   const printCover = () => {
-    const popup = window.open("", "_blank", "width=900,height=1000");
-    if (!popup) return alert("팝업이 차단되었습니다.");
-    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${form.title}</title><style>body{font-family:Arial,'Noto Sans KR',sans-serif;margin:0;color:#1d2744}.page{width:210mm;min-height:297mm;padding:22mm;box-sizing:border-box}.brand{text-align:center;font-weight:900;font-size:34px}.sub{text-align:center;font-size:14px;color:#667085}.line{height:3px;background:#5268e8;margin:24px 0}.title{text-align:center;font-size:28px;font-weight:900;margin:24px 0 34px}.info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cfd5e6}.info div{padding:14px 16px;border-right:1px solid #cfd5e6;border-bottom:1px solid #cfd5e6}.value{font-size:18px;font-weight:800;margin-top:5px}.student{margin-top:34px;border:1px solid #cfd5e6;padding:22px;line-height:3;font-size:18px}.notice{margin-top:34px;background:#f5f7fb;padding:20px 24px;line-height:1.9}</style></head><body><section class="page"><div class="brand">SOS</div><div class="sub">Score Optimization System · MATSPU</div><div class="line"></div><div class="title">${form.title}</div><div class="info"><div>대상<div class="value">${form.grade}</div></div><div>과목<div class="value">${form.subject}</div></div><div>시험일<div class="value">${form.examDate}</div></div><div>시험시간<div class="value">${form.timeLimit}분</div></div><div>문항수<div class="value">${form.questionCount}문항</div></div><div>총점<div class="value">${form.totalScore}점</div></div></div><div class="student">학생명 _______________________________<br>학교 _________________________________<br>반 ____________ 번호 ____________</div><div class="notice"><strong>응시 안내</strong><br>1. 감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br>2. 제한시간을 지키고 답안을 빠짐없이 작성하세요.<br>3. 시험 종료 후 시험지와 답안을 모두 제출하세요.</div></section><script>window.onload=()=>window.print();<\/script></body></html>`);
-    popup.document.close();
+    printHtmlSafely(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(form.title)}</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{font-family:Arial,'Noto Sans KR',sans-serif;margin:0;color:#1d2744}.page{width:210mm;min-height:297mm;padding:22mm}.brand{text-align:center;font-weight:900;font-size:34px}.sub{text-align:center;font-size:14px;color:#667085}.line{height:3px;background:#5268e8;margin:24px 0}.title{text-align:center;font-size:28px;font-weight:900;margin:24px 0 34px}.info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cfd5e6}.info div{padding:14px 16px;border-right:1px solid #cfd5e6;border-bottom:1px solid #cfd5e6}.value{font-size:18px;font-weight:800;margin-top:5px}.student{margin-top:34px;border:1px solid #cfd5e6;padding:22px;line-height:3;font-size:18px}.notice{margin-top:34px;background:#f5f7fb;padding:20px 24px;line-height:1.9}</style></head><body><section class="page"><div class="brand">SOS</div><div class="sub">Score Optimization System · MATSPU</div><div class="line"></div><div class="title">${escapeHtml(form.title)}</div><div class="info"><div>대상<div class="value">${escapeHtml(form.grade)}</div></div><div>과목<div class="value">${escapeHtml(form.subject)}</div></div><div>시험일<div class="value">${escapeHtml(form.examDate)}</div></div><div>시험시간<div class="value">${form.timeLimit}분</div></div><div>문항수<div class="value">${form.questionCount}문항</div></div><div>총점<div class="value">${form.totalScore}점</div></div></div><div class="student">학생명 _______________________________<br>학교 _________________________________<br>반 ____________ 번호 ____________</div><div class="notice"><strong>응시 안내</strong><br>1. 감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br>2. 제한시간을 지키고 답안을 빠짐없이 작성하세요.<br>3. 시험 종료 후 시험지와 답안을 모두 제출하세요.</div></section></body></html>`, `${form.examCode} 표지`);
   };
 
   const createRegionDrafts = () => {
@@ -672,7 +762,7 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
       <section className="panel exam-form-panel"><div className="form-section-title"><div><span>01</span><div><h3>시험 기본정보</h3><p>이 정보는 Supabase에 저장되어 모든 컴퓨터에서 동일하게 표시됩니다.</p></div></div></div><div className="form-grid exam-form-grid"><Field label="시험 회차 *"><input type="number" min="1" value={form.round} onChange={(e) => set("round", Number(e.target.value))} /></Field><Field label="시험일 *"><input type="date" value={form.examDate} onChange={(e) => set("examDate", e.target.value)} /></Field><label className="field full"><span>시험명 *</span><input value={form.title} onChange={(e) => set("title", e.target.value)} /></label><Field label="시험코드 *"><input value={form.examCode} onChange={(e) => set("examCode", e.target.value)} /></Field><Field label="등록 상태"><select value={form.status} onChange={(e) => set("status", e.target.value as ExamStatus)}><option>작성중</option><option>등록완료</option><option>마감</option></select></Field><Field label="대상 학년"><select value={form.grade} onChange={(e) => set("grade", e.target.value)}><option>중3</option><option>고1</option><option>고2</option><option>고3</option><option>전체</option></select></Field><Field label="과목"><input value={form.subject} onChange={(e) => set("subject", e.target.value)} /></Field><label className="field full"><span>시험 범위</span><input value={form.range} onChange={(e) => set("range", e.target.value)} /></label></div></section>
       <section className="panel exam-form-panel"><div className="form-section-title"><div><span>02</span><div><h3>문항 구성</h3></div></div></div><div className="form-grid exam-form-grid numbers"><Field label="전체 문항 수"><input type="number" min="1" value={form.questionCount} onChange={(e) => { const count = Number(e.target.value); setForm((prev) => ({ ...prev, questionCount: count, answers: Array.from({ length: count }, (_, i) => prev.answers[i] ?? "") })); }} /></Field><Field label="총점"><input type="number" min="1" value={form.totalScore} onChange={(e) => set("totalScore", Number(e.target.value))} /></Field><Field label="객관식 문항"><input type="number" min="0" value={form.objectiveCount} onChange={(e) => set("objectiveCount", Number(e.target.value))} /></Field><Field label="단답형 문항"><input type="number" min="0" value={form.shortAnswerCount} onChange={(e) => set("shortAnswerCount", Number(e.target.value))} /></Field><Field label="시험 시간(분)"><input type="number" min="1" value={form.timeLimit} onChange={(e) => set("timeLimit", Number(e.target.value))} /></Field><div className={`question-check ${form.objectiveCount + form.shortAnswerCount === form.questionCount ? "ok" : "warning"}`}><span>문항 합계</span><strong>{form.objectiveCount + form.shortAnswerCount} / {form.questionCount}</strong></div></div></section>
       <section className="panel exam-form-panel"><div className="form-section-title"><div><span>03</span><div><h3>시험 자료 3종 등록</h3><p>한글 통합본은 원본 보관용, 시험지·해설지 PDF는 SOS 운영용입니다.</p></div></div></div><div className="upload-grid three-files">{(["original", "test", "solution"] as const).map((kind) => { const isOriginal = kind === "original"; const isTest = kind === "test"; const label = isOriginal ? "한글 통합본" : isTest ? "시험지 PDF" : "해설지 PDF"; const fileName = isOriginal ? form.originalFile : isTest ? form.testFile : form.solutionFile; const source = getFileSource(kind); return <div className="upload-card-wrap" key={kind}><label className="upload-card"><span>{label}</span><strong>{fileName || "등록된 파일 없음"}</strong><input type="file" accept={isOriginal ? ".hwp,.hwpx,application/haansofthwp" : "application/pdf,.pdf"} onChange={(e) => selectExamFile(kind, e.target.files?.[0])} /><em>{source ? "파일 변경" : "파일 선택"}</em></label>{isOriginal ? <button type="button" className="pdf-preview-button" disabled={!source} onClick={() => { if (source instanceof File) { const url = URL.createObjectURL(source); window.open(url, "_blank"); setTimeout(() => URL.revokeObjectURL(url), 30000); } else if (source) window.open(source, "_blank"); }}>한글 파일 열기</button> : <button type="button" className="pdf-preview-button" disabled={!source} onClick={() => source && setPreview({ title: `${form.title || "현재 시험"} · ${isTest ? "시험지" : "해설지"}`, source, fileName })}>{isTest ? "시험지" : "해설지"} 미리보기</button>}</div>; })}</div><div className="upload-save-row"><button className="primary-button upload-save-button" disabled={saving}>{saving ? "파일 저장 중..." : "시험 자료 한 번에 저장"}</button><span>선택한 한글·시험지·해설지를 한 번에 저장하고 해설지 정답도 자동으로 읽습니다.</span></div><div className="file-standard-note"><b>SOS 표준 등록</b><span>한글 통합본 + 시험지 PDF + 해설지 PDF</span></div><label className="field exam-memo"><span>관리 메모</span><textarea value={form.memo} onChange={(e) => set("memo", e.target.value)} /></label></section>
-      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>04</span><div><h3>정답 자동 추출 및 정답지 생성</h3><p>해설지에서 정답을 읽어 초안을 만들고, 수정 후 SOS 표준 정답지를 인쇄·PDF 저장합니다.</p></div></div></div><div className="answer-toolbar"><div><strong>{form.answers.filter(Boolean).length}/{form.questionCount}개 입력</strong><span>1~{form.objectiveCount}번 객관식 · {form.objectiveCount + 1}~{form.questionCount}번 단답형</span></div><div><button type="button" className="secondary-button" onClick={extractAnswersFromSolution} disabled={!getPdfSource("solution")}>해설지에서 자동 추출</button><button type="button" className="primary-button" onClick={printAnswerSheet} disabled={!form.answers.some(Boolean)}>정답지 자동 생성</button></div></div><div className="answer-key-grid">{Array.from({ length: form.questionCount }, (_, index) => { const no = index + 1; const objective = no <= form.objectiveCount; return <label key={no} className={!form.answers[index] ? "answer-missing" : ""}><b>{no}</b>{objective ? <select value={form.answers[index] ?? ""} onChange={(e) => updateAnswer(index, e.target.value)}><option value="">-</option><option value="1">①</option><option value="2">②</option><option value="3">③</option><option value="4">④</option><option value="5">⑤</option></select> : <input inputMode="numeric" value={form.answers[index] ?? ""} onChange={(e) => updateAnswer(index, e.target.value)} placeholder="답" />}</label>; })}</div></section>
+      <section className="panel exam-form-panel"><div className="form-section-title"><div><span>04</span><div><h3>빠른 정답 자동 추출</h3><p>해설지 마지막 페이지의 ‘빠른정답’을 읽어 1~30번 답을 자동 입력합니다.</p></div></div></div><div className="answer-toolbar"><div><strong>{form.answers.filter(Boolean).length}/{form.questionCount}개 입력</strong><span>1~{form.objectiveCount}번 객관식 · {form.objectiveCount + 1}~{form.questionCount}번 단답형</span></div><div><button type="button" className="secondary-button" onClick={extractAnswersFromSolution} disabled={!getPdfSource("solution")}>마지막 빠른정답 읽기</button><button type="button" className="primary-button" onClick={printAnswerSheet} disabled={!form.answers.some(Boolean)}>정답지 자동 생성</button></div></div><div className="answer-key-grid">{Array.from({ length: form.questionCount }, (_, index) => { const no = index + 1; const objective = no <= form.objectiveCount; return <label key={no} className={!form.answers[index] ? "answer-missing" : ""}><b>{no}</b>{objective ? <select value={form.answers[index] ?? ""} onChange={(e) => updateAnswer(index, e.target.value)}><option value="">-</option><option value="1">①</option><option value="2">②</option><option value="3">③</option><option value="4">④</option><option value="5">⑤</option></select> : <input inputMode="numeric" value={form.answers[index] ?? ""} onChange={(e) => updateAnswer(index, e.target.value)} placeholder="답" />}</label>; })}</div></section>
       <section className="panel exam-form-panel"><div className="form-section-title"><div><span>05</span><div><h3>SOS 시험 표지</h3></div></div></div><div className="cover-builder"><article className="exam-cover-preview"><div className="cover-logo">SOS</div><small>Score Optimization System · MATSPU</small><div className="cover-rule" /><h2>{form.title || "시험명을 입력해 주세요"}</h2><div className="cover-info-grid"><span>대상</span><b>{form.grade}</b><span>과목</span><b>{form.subject || "-"}</b><span>시험일</span><b>{form.examDate || "-"}</b><span>시험시간</span><b>{form.timeLimit}분</b><span>문항수</span><b>{form.questionCount}문항</b><span>총점</span><b>{form.totalScore}점</b></div><div className="cover-student-lines">학생명 ____________________<br />학교 ______________________<br />반 ________ 번호 ________</div></article><div className="cover-actions"><button type="button" className="primary-button" onClick={printCover}>표지 미리보기 · 인쇄</button></div></div></section>
       <section className="panel exam-form-panel"><div className="form-section-title"><div><span>06</span><div><h3>문항영역 자동 초안</h3><p>03단계에서 이미 올린 시험지를 그대로 불러옵니다. 다시 업로드하지 않습니다.</p></div></div></div><div className="region-builder"><div className="region-toolbar"><div><strong>{form.questionCount}문항 영역 설정</strong><p>{getPdfSource("test") ? `등록 시험지: ${form.testFile}` : "시험지 PDF가 아직 없습니다."}</p></div><div><button type="button" className="primary-button" onClick={createRegionDrafts} disabled={!getPdfSource("test")}>자동 분석 시작</button><button type="button" className="secondary-button" onClick={openMapper} disabled={!getPdfSource("test")}>등록 시험지로 영역 편집</button></div></div>{Object.keys(regionDrafts).length ? <><div className="region-progress"><i style={{ width: `${Math.round((Object.values(regionDrafts).filter(v => v === "자동인식").length / form.questionCount) * 100)}%` }} /></div><div className="region-chip-grid">{Array.from({ length: form.questionCount }, (_, index) => index + 1).map((no) => <button type="button" key={no} className={regionDrafts[no] === "확인필요" ? "needs-check" : "auto-ok"} onClick={() => { if (!editingId) return alert("먼저 시험을 저장해 주세요."); window.location.href = `/pdf-mapper?exam=${encodeURIComponent(editingId)}&questions=${form.questionCount}&active=${no}&auto=1`; }}><b>{no}</b><span>{regionDrafts[no] === "확인필요" ? "확인 필요" : "영역 보기"}</span></button>)}</div></> : <div className="region-empty">{getPdfSource("test") ? <><b>{form.testFile}</b>을 사용합니다. 추가 업로드는 필요 없습니다.</> : <>03단계에서 시험지 PDF를 등록해 주세요.</>}</div>}</div></section>
       <div className="exam-form-actions"><button type="button" className="secondary-button" onClick={() => setTab("list")}>취소</button><button className="primary-button" disabled={saving}>{saving ? "저장 중..." : editingId ? "수정 저장" : "시험 등록"}</button></div>
