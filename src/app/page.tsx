@@ -3,7 +3,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
 
-type AdminMenu = "dashboard" | "students" | "exams" | "problems" | "analysis" | "recommend" | "results" | "settings";
+type AdminMenu = "dashboard" | "students" | "exams" | "problems" | "analysis" | "bank" | "recommend" | "results" | "settings";
 type StudentStatus = "정상" | "휴원" | "퇴원";
 type SosStatus = "분석완료" | "훈련중" | "진단대기" | "미응시";
 type StudentTab = "students" | "registration";
@@ -61,6 +61,7 @@ const menus: MenuItem[] = [
   { id: "exams", label: "실전 모의고사", icon: "▤" },
   { id: "problems", label: "AI 문제등록", icon: "▦" },
   { id: "analysis", label: "AI 분석 관리", icon: "✦", badge: 12 },
+  { id: "bank", label: "문제은행", icon: "▣" },
   { id: "recommend", label: "SOS 추천", icon: "◎", badge: 7 },
   { id: "results", label: "결과 · 이력", icon: "↗" },
   { id: "settings", label: "환경 설정", icon: "⚙" },
@@ -144,13 +145,19 @@ export default function Home() {
         </div>
         <nav className="side-nav">
           <p>운영 메뉴</p>
-          {menus.slice(0, 7).map((menu) => (
-            <button key={menu.id} className={active === menu.id ? "active" : ""} onClick={() => setActive(menu.id)}>
+          {menus.filter((menu) => menu.id !== "settings").map((menu) => (
+            <button key={menu.id} className={active === menu.id ? "active" : ""} onClick={() => {
+              if (menu.id === "bank") {
+                window.location.href = "/problem-bank";
+                return;
+              }
+              setActive(menu.id);
+            }}>
               <i>{menu.icon}</i><span>{menu.label}</span>{menu.badge ? <b>{menu.badge}</b> : null}
             </button>
           ))}
           <p className="system-title">시스템</p>
-          {menus.slice(7).map((menu) => (
+          {menus.filter((menu) => menu.id === "settings").map((menu) => (
             <button key={menu.id} className={active === menu.id ? "active" : ""} onClick={() => setActive(menu.id)}>
               <i>{menu.icon}</i><span>{menu.label}</span>
             </button>
