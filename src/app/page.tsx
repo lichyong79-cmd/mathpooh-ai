@@ -964,6 +964,7 @@ function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: strin
   const [editGrade, setEditGrade] = useState("고1");
   const [editSubject, setEditSubject] = useState("공통수학1");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -1097,6 +1098,25 @@ function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: strin
     setErrorMessage("");
   };
 
+  const removeSource = async (item: SourceFile) => {
+    if (!window.confirm(`${item.title} 시험지 세트를 삭제할까요?\n연결된 AI 분석 결과와 문제은행 문항도 함께 삭제됩니다.`)) return;
+    setDeletingId(item.id);
+    setMessage("");
+    setErrorMessage("");
+    try {
+      const response = await fetch(`/api/source-files/${item.id}`, { method: "DELETE" });
+      const result = await response.json() as { success: boolean; message?: string };
+      if (!response.ok || !result.success) throw new Error(result.message || "삭제에 실패했습니다.");
+      if (editingId === item.id) setEditingId(null);
+      setItems((current) => current.filter((sourceItem) => sourceItem.id !== item.id));
+      setMessage("시험지 세트와 연결된 분석 자료를 삭제했습니다.");
+    } catch (error) {
+      setErrorMessage(`삭제 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const saveEdit = async () => {
     if (!editingId) return;
     if (!editTitle.trim()) return setErrorMessage("시험지명을 입력해 주세요.");
@@ -1198,7 +1218,7 @@ function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: strin
             <span className={item.solution_pdf_path ? "ok" : "missing"}>해설지</span>
           </div>
           <Status text={sourceStatusLabel[item.status] ?? item.status}/>
-          <div className="source-action-buttons"><button className="analysis-open-button" type="button" onClick={() => onOpenAnalysis(item.id)}>AI 분석</button><button className="source-edit-button" type="button" onClick={() => startEdit(item)}>수정</button></div>
+          <div className="source-action-buttons"><button className="analysis-open-button" type="button" onClick={() => onOpenAnalysis(item.id)}>AI 분석</button><button className="source-edit-button" type="button" onClick={() => startEdit(item)} disabled={deletingId === item.id}>수정</button><button className="source-delete-button" type="button" onClick={() => void removeSource(item)} disabled={deletingId === item.id}>{deletingId === item.id ? "삭제 중" : "삭제"}</button></div>
           {item.error_message ? <small className="bundle-error">{item.error_message}</small> : null}
         </div>)}
       </div>}
