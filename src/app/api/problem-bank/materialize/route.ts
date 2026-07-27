@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
     const pdfBytes = new Uint8Array(await pdfResponse.arrayBuffer());
 
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const loadingTask = pdfjs.getDocument({ data: pdfBytes, disableWorker: true });
+    const loadingTask = pdfjs.getDocument({ data: pdfBytes });
     const pdf = await loadingTask.promise;
     const byPage = new Map<number, CropQuestion[]>();
     for (const question of targets) {
