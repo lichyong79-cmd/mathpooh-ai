@@ -234,8 +234,8 @@ export default function QuestionCropPage() {
   return (
     <main className="crop-page">
       <header>
-        <div><small>QUESTION ENGINE V2</small><h1>개별 문항 자르기</h1><p>문항 번호를 고르고 시험지에서 해당 영역을 드래그한 뒤 저장하세요.</p></div>
-        <div className="header-buttons"><button onClick={() => history.back()}>문제은행으로</button><button className="primary" onClick={() => void saveQuestion()} disabled={saving}>{saving ? "저장 중..." : `${activeNo}번 저장`}</button></div>
+        <div><small>AI ANALYSIS · CROP REVIEW</small><h1>문항 영역 검수</h1><p>AI가 잡은 영역을 확인하고, 잘못된 문항만 다시 드래그해 수정하세요.</p></div>
+        <div className="header-buttons"><button onClick={() => { window.location.href = "/problem-bank/ai-upload"; }}>AI 분석 작업장으로</button><button className="primary" onClick={() => void saveQuestion()} disabled={saving}>{saving ? "저장 중..." : `${activeNo}번 저장`}</button></div>
       </header>
 
       {message ? <div className="notice success">{message}</div> : null}

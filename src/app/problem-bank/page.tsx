@@ -356,9 +356,6 @@ export default function ProblemBankPage() {
               <div className="pdf-head">
                 <div><strong>{selected.title}</strong><span>{selected.source_name || "출처 미입력"} · {formatDate(selected.created_at)}</span></div>
                 <div className="image-actions">
-                  <button className="manual-crop-button" type="button" onClick={() => { window.location.href = `/problem-bank/crop?sourceFileId=${encodeURIComponent(selected.source_file_id)}&questionNo=${selected.question_no}`; }}>
-                    문항 직접 자르기
-                  </button>
                   <button className="make-image-button" type="button" onClick={() => void materialize()} disabled={materializing}>
                     {materializing ? "문항 분리 중..." : "좌표 있는 문항 일괄 생성"}
                   </button>
