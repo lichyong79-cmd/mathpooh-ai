@@ -26,7 +26,7 @@ export default function AiWorkspace(){
  useEffect(()=>{void loadList();},[loadList]);
 
  const loadWorkspace=useCallback(async(id:string)=>{setBusy("load");setError("");try{const r=await fetch(`/api/analysis/source/${id}`,{cache:"no-store"});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message||"작업장 로딩 실패");setWorkspace(p);setSelectedId(id);setActiveId(p.questions?.[0]?.id||"");setPage(Number(p.questions?.[0]?.page_no||1));if(p.examUrl){const pdfjs=await import("pdfjs-dist");pdfjs.GlobalWorkerOptions.workerSrc=new URL("pdfjs-dist/build/pdf.worker.min.mjs",import.meta.url).toString();const doc=await pdfjs.getDocument(p.examUrl).promise;pdfRef.current=doc;setPageCount(doc.numPages);}else{pdfRef.current=null;setPageCount(0);}}catch(e){setError(e instanceof Error?e.message:"로딩 실패");}finally{setBusy("");}},[]);
- useEffect(()=>{if(!selectedId&&items[0])void loadWorkspace(items[0].id);},[items,selectedId,loadWorkspace]);
+ useEffect(()=>{if(selectedId||items.length===0)return;const saved=window.localStorage.getItem("matspu-analysis-source-id");const target=saved&&items.some(item=>item.id===saved)?saved:items[0].id;if(saved)window.localStorage.removeItem("matspu-analysis-source-id");void loadWorkspace(target);},[items,selectedId,loadWorkspace]);
 
  useEffect(()=>{(async()=>{if(!pdfRef.current||!canvasRef.current)return;const pg=await pdfRef.current.getPage(page);const viewport=pg.getViewport({scale});const canvas=canvasRef.current;const ctx=canvas.getContext("2d");if(!ctx)return;canvas.width=viewport.width;canvas.height=viewport.height;await pg.render({canvasContext:ctx,viewport}).promise;})().catch(e=>setError(String(e)));},[page,scale,workspace?.examUrl]);
 

@@ -151,6 +151,10 @@ export default function Home() {
                 window.location.href = "/problem-bank";
                 return;
               }
+              if (menu.id === "analysis") {
+                window.location.href = "/problem-bank/ai-upload";
+                return;
+              }
               setActive(menu.id);
             }}>
               <i>{menu.icon}</i><span>{menu.label}</span>{menu.badge ? <b>{menu.badge}</b> : null}
@@ -180,7 +184,7 @@ export default function Home() {
           </div>
         </header>
         <div className="page-content">
-          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage onOpenAnalysis={(sourceFileId) => { window.localStorage.setItem("matspu-analysis-source-id", sourceFileId); setActive("analysis"); }} /> : active === "analysis" ? <AnalysisPage /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
+          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage onOpenAnalysis={(sourceFileId) => { window.localStorage.setItem("matspu-analysis-source-id", sourceFileId); window.location.href = "/problem-bank/ai-upload"; }} /> : active === "analysis" ? <AnalysisPage /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
         </div>
       </section>
     </main>
@@ -1003,12 +1007,12 @@ function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: strin
 
     const lowerName = selected.name.toLowerCase();
     const valid = kind === "hwp"
-      ? lowerName.endsWith(".hwp") || lowerName.endsWith(".hwpx")
+      ? lowerName.endsWith(".hwp") || lowerName.endsWith(".hwpx") || lowerName.endsWith(".pdf")
       : selected.type === "application/pdf" || lowerName.endsWith(".pdf");
 
     if (!valid) {
       event.target.value = "";
-      setErrorMessage(kind === "hwp" ? "한글 파일(.hwp 또는 .hwpx)을 선택해 주세요." : "PDF 파일만 선택할 수 있습니다.");
+      setErrorMessage(kind === "hwp" ? "원본 파일(.hwp, .hwpx 또는 .pdf)을 선택해 주세요." : "PDF 파일만 선택할 수 있습니다.");
       return;
     }
 
@@ -1032,7 +1036,7 @@ function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: strin
     setErrorMessage("");
 
     if (!title.trim()) return setErrorMessage("시험지명을 입력해 주세요.");
-    if (!hwpFile) return setErrorMessage("한글 원본을 선택해 주세요.");
+    if (!hwpFile) return setErrorMessage("원본(HWP/HWPX/PDF)을 선택해 주세요.");
     if (!examPdf) return setErrorMessage("시험지 PDF를 선택해 주세요.");
     if (!solutionPdf) return setErrorMessage("해설지 PDF를 선택해 주세요.");
 
@@ -1129,7 +1133,7 @@ function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: strin
 
   return <>
     <section className="page-title-row">
-      <div><h2>AI 문제등록</h2><p>한글 원본·시험지 PDF·해설지 PDF를 한 세트로 등록합니다.</p></div>
+      <div><h2>AI 문제등록</h2><p>원본(HWP/HWPX/PDF)·시험지 PDF·해설지 PDF를 한 세트로 등록합니다.</p></div>
       <button className="primary-button" type="button" onClick={() => { window.location.href = "/problem-bank"; }}>📚 문제은행 열기</button>
     </section>
 
@@ -1143,8 +1147,8 @@ function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: strin
 
       <div className="bundle-upload-grid">
         <label className={`bundle-drop-zone ${hwpFile ? "selected" : ""}`}>
-          <input id="sos-hwp-file" type="file" accept=".hwp,.hwpx" onChange={(e) => selectFile("hwp", e)} disabled={uploading}/>
-          <b>① 한글 원본</b><strong>{hwpFile ? hwpFile.name : "HWP/HWPX 선택"}</strong><span>{hwpFile ? `${(hwpFile.size / 1024 / 1024).toFixed(1)}MB` : "수정 가능한 원본 파일"}</span>
+          <input id="sos-hwp-file" type="file" accept=".hwp,.hwpx,.pdf,application/pdf" onChange={(e) => selectFile("hwp", e)} disabled={uploading}/>
+          <b>① 원본 파일</b><strong>{hwpFile ? hwpFile.name : "HWP/HWPX/PDF 선택"}</strong><span>{hwpFile ? `${(hwpFile.size / 1024 / 1024).toFixed(1)}MB` : "분석 기준 원본 파일"}</span>
         </label>
         <label className={`bundle-drop-zone ${examPdf ? "selected" : ""}`}>
           <input id="sos-exam-pdf" type="file" accept=".pdf,application/pdf" onChange={(e) => selectFile("exam", e)} disabled={uploading}/>
@@ -1157,7 +1161,7 @@ function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: strin
       </div>
 
       <div className="upload-ready-row">
-        <span className={hwpFile ? "ready" : ""}>{hwpFile ? "✓" : "○"} 한글 원본</span>
+        <span className={hwpFile ? "ready" : ""}>{hwpFile ? "✓" : "○"} 원본 파일</span>
         <span className={examPdf ? "ready" : ""}>{examPdf ? "✓" : "○"} 시험지 PDF</span>
         <span className={solutionPdf ? "ready" : ""}>{solutionPdf ? "✓" : "○"} 해설지 PDF</span>
       </div>
