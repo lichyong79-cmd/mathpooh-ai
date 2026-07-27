@@ -13,6 +13,7 @@ type CropQuestion = {
   crop_y: number | null;
   crop_width: number | null;
   crop_height: number | null;
+  question_image_path?: string | null;
 };
 
 function validCrop(question: CropQuestion) {
@@ -22,7 +23,7 @@ function validCrop(question: CropQuestion) {
 }
 
 async function prepare(request: NextRequest) {
-  const body = await request.json() as { analysisId?: string; sourceFileId?: string };
+  const body = await request.json() as { analysisId?: string; sourceFileId?: string; allowEmptyCrop?: boolean };
   const supabase = createClient();
   let analysisQuery = supabase.from("source_analysis").select("id,source_file_id");
   if (body.analysisId) analysisQuery = analysisQuery.eq("id", body.analysisId);
@@ -41,14 +42,15 @@ async function prepare(request: NextRequest) {
 
   const questionResult = await supabase
     .from("analysis_questions")
-    .select("id,question_no,page_no,crop_x,crop_y,crop_width,crop_height")
+    .select("id,question_no,page_no,crop_x,crop_y,crop_width,crop_height,question_image_path")
     .eq("analysis_id", analysis.data.id)
     .order("question_no");
   if (questionResult.error) throw questionResult.error;
 
-  const questions = ((questionResult.data ?? []) as CropQuestion[]).filter(validCrop);
+  const allQuestions = (questionResult.data ?? []) as CropQuestion[];
+  const questions = body.allowEmptyCrop ? allQuestions : allQuestions.filter(validCrop);
   if (questions.length === 0) {
-    return NextResponse.json({ success: false, message: "문항 영역 좌표가 없습니다." }, { status: 400 });
+    return NextResponse.json({ success: false, message: body.allowEmptyCrop ? "분석 문항이 없습니다." : "문항 영역 좌표가 없습니다." }, { status: 400 });
   }
 
   const signed = await supabase.storage.from("exam-pdf").createSignedUrl(source.data.exam_pdf_path, 60 * 30);
@@ -70,6 +72,11 @@ async function upload(request: NextRequest) {
   const sourceFileId = String(form.get("sourceFileId") ?? "");
   const questionId = String(form.get("questionId") ?? "");
   const questionNo = Number(form.get("questionNo"));
+  const pageNo = Number(form.get("pageNo"));
+  const cropX = Number(form.get("cropX"));
+  const cropY = Number(form.get("cropY"));
+  const cropWidth = Number(form.get("cropWidth"));
+  const cropHeight = Number(form.get("cropHeight"));
 
   if (!(image instanceof File) || !analysisId || !sourceFileId || !questionId || !Number.isFinite(questionNo)) {
     return NextResponse.json({ success: false, message: "문항 이미지 업로드 정보가 올바르지 않습니다." }, { status: 400 });
@@ -85,15 +92,18 @@ async function upload(request: NextRequest) {
   if (stored.error) throw stored.error;
 
   const now = new Date().toISOString();
+  const cropValues = Number.isFinite(pageNo) && pageNo >= 1 && Number.isFinite(cropWidth) && cropWidth > 0 && Number.isFinite(cropHeight) && cropHeight > 0
+    ? { page_no: pageNo, crop_x: cropX, crop_y: cropY, crop_width: cropWidth, crop_height: cropHeight }
+    : {};
   const updateAnalysis = await supabase
     .from("analysis_questions")
-    .update({ question_image_path: path, updated_at: now })
+    .update({ question_image_path: path, ...cropValues, updated_at: now })
     .eq("id", questionId);
   if (updateAnalysis.error) throw updateAnalysis.error;
 
   const updateBank = await supabase
     .from("problem_bank_questions")
-    .update({ question_image_path: path, updated_at: now })
+    .update({ question_image_path: path, ...cropValues, updated_at: now })
     .eq("analysis_question_id", questionId);
   if (updateBank.error) throw updateBank.error;
 
