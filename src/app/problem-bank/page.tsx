@@ -220,14 +220,90 @@ export default function ProblemBankPage() {
     setMessage("");
     setError("");
     try {
-      const response = await fetch("/api/problem-bank/materialize", {
+      type CropQuestion = {
+        id: string;
+        question_no: number;
+        page_no: number;
+        crop_x: number;
+        crop_y: number;
+        crop_width: number;
+        crop_height: number;
+      };
+      type PrepareResult = {
+        success?: boolean;
+        message?: string;
+        analysisId?: string;
+        sourceFileId?: string;
+        pdfUrl?: string;
+        questions?: CropQuestion[];
+      };
+
+      setMessage("시험지 PDF와 문항 좌표를 준비하는 중입니다.");
+      const prepareResponse = await fetch("/api/problem-bank/materialize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sourceFileId: selected.source_file_id }),
       });
-      const result = await response.json() as { success?: boolean; saved?: number; message?: string; errors?: string[] };
-      if (!response.ok || !result.success) throw new Error(result.message || "문항 이미지 생성에 실패했습니다.");
-      setMessage(result.message || `${result.saved ?? 0}개 문항 이미지를 생성했습니다.`);
+      const prepared = await prepareResponse.json() as PrepareResult;
+      if (!prepareResponse.ok || !prepared.success || !prepared.pdfUrl || !prepared.analysisId || !prepared.sourceFileId) {
+        throw new Error(prepared.message || "문항 이미지 생성 준비에 실패했습니다.");
+      }
+
+      const pdfjs = await import("pdfjs-dist");
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+      const pdfBytes = new Uint8Array(await (await fetch(prepared.pdfUrl, { cache: "no-store" })).arrayBuffer());
+      const pdf = await pdfjs.getDocument({ data: pdfBytes }).promise;
+      const questions = prepared.questions ?? [];
+      const grouped = new Map<number, CropQuestion[]>();
+      for (const question of questions) {
+        grouped.set(question.page_no, [...(grouped.get(question.page_no) ?? []), question]);
+      }
+
+      let saved = 0;
+      for (const [pageNo, pageQuestions] of grouped) {
+        if (pageNo < 1 || pageNo > pdf.numPages) continue;
+        setMessage(`${pageNo}페이지 문항 이미지를 생성하는 중입니다. (${saved}/${questions.length})`);
+        const page = await pdf.getPage(pageNo);
+        const viewport = page.getViewport({ scale: 2.2 });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("브라우저 Canvas를 사용할 수 없습니다.");
+        await page.render({ canvas, canvasContext: context, viewport }).promise;
+
+        for (const question of pageQuestions) {
+          const x = Math.max(0, Math.floor(canvas.width * Number(question.crop_x ?? 0) / 100));
+          const y = Math.max(0, Math.floor(canvas.height * Number(question.crop_y ?? 0) / 100));
+          const width = Math.min(canvas.width - x, Math.ceil(canvas.width * Number(question.crop_width) / 100));
+          const height = Math.min(canvas.height - y, Math.ceil(canvas.height * Number(question.crop_height) / 100));
+          if (width < 20 || height < 20) continue;
+
+          const cropped = document.createElement("canvas");
+          cropped.width = width;
+          cropped.height = height;
+          const croppedContext = cropped.getContext("2d");
+          if (!croppedContext) continue;
+          croppedContext.fillStyle = "#ffffff";
+          croppedContext.fillRect(0, 0, width, height);
+          croppedContext.drawImage(canvas, x, y, width, height, 0, 0, width, height);
+          const blob = await new Promise<Blob | null>((resolve) => cropped.toBlob(resolve, "image/webp", 0.9));
+          if (!blob) continue;
+
+          const form = new FormData();
+          form.append("image", blob, `${String(question.question_no).padStart(3, "0")}.webp`);
+          form.append("analysisId", prepared.analysisId);
+          form.append("sourceFileId", prepared.sourceFileId);
+          form.append("questionId", question.id);
+          form.append("questionNo", String(question.question_no));
+          const uploadResponse = await fetch("/api/problem-bank/materialize", { method: "POST", body: form });
+          const uploaded = await uploadResponse.json() as { success?: boolean; message?: string };
+          if (!uploadResponse.ok || !uploaded.success) throw new Error(`${question.question_no}번: ${uploaded.message || "저장 실패"}`);
+          saved += 1;
+        }
+      }
+
+      setMessage(`${saved}개 문항을 개별 이미지로 저장했습니다.`);
       await loadProblems();
       const imageResponse = await fetch(`/api/problem-bank/questions/${selected.id}/image`, { cache: "no-store" });
       const imageResult = await imageResponse.json() as { success?: boolean; imageUrl?: string };

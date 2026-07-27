@@ -121,7 +121,7 @@ export default function PdfMapperPage(){
       const c=canvasRef.current!; const ctx=c.getContext("2d"); if(!ctx)return;
       c.width=Math.floor(viewport.width); c.height=Math.floor(viewport.height);
       c.style.width="100%"; c.style.height="auto";
-      await p.render({canvasContext:ctx,viewport}).promise;
+      await p.render({canvas:c,canvasContext:ctx,viewport}).promise;
       if(!stop) crop(current);
     })();
     return()=>{stop=true};
