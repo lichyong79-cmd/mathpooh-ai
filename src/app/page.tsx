@@ -1123,6 +1123,7 @@ function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: strin
   return <>
     <section className="page-title-row">
       <div><h2>AI 문제등록</h2><p>한글 원본·시험지 PDF·해설지 PDF를 한 세트로 등록합니다.</p></div>
+      <button className="primary-button" type="button" onClick={() => { window.location.href = "/problem-bank"; }}>📚 문제은행 열기</button>
     </section>
 
     <form className="panel ai-upload-panel" onSubmit={uploadBundle}>
