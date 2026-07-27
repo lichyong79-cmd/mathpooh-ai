@@ -17,9 +17,16 @@ type CropQuestion = {
 };
 
 function validCrop(question: CropQuestion) {
+  const x = Number(question.crop_x);
+  const y = Number(question.crop_y);
+  const width = Number(question.crop_width);
+  const height = Number(question.crop_height);
   return Number(question.page_no) >= 1
-    && Number(question.crop_width) > 0
-    && Number(question.crop_height) > 0;
+    && Number.isFinite(x) && Number.isFinite(y)
+    && x >= 0 && y >= 0 && x < 100 && y < 100
+    && width >= 8 && height >= 4
+    && x + width <= 100.5
+    && y + height <= 100.5;
 }
 
 async function prepare(request: NextRequest) {

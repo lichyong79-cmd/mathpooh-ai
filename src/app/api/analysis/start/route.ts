@@ -104,6 +104,44 @@ function parseJson(text: string): AiPayload {
   return parsed;
 }
 
+
+function clampPercent(value: number, min = 0, max = 100) {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeCrop(question: AiQuestion) {
+  let x = Number(question.crop_x);
+  let y = Number(question.crop_y);
+  let width = Number(question.crop_width);
+  let height = Number(question.crop_height);
+
+  // GPT가 백분율(0~100) 대신 비율(0~1) 좌표를 반환하는 경우가 있다.
+  // 이 값을 그대로 CSS %로 쓰면 모든 박스가 좌측 상단에 아주 작게 몰린다.
+  const looksLikeRatio =
+    x >= 0 && y >= 0 && width > 0 && height > 0
+    && x <= 1.2 && y <= 1.2 && width <= 1.2 && height <= 1.2;
+
+  if (looksLikeRatio) {
+    x *= 100;
+    y *= 100;
+    width *= 100;
+    height *= 100;
+  }
+
+  x = clampPercent(x);
+  y = clampPercent(y);
+  width = clampPercent(width, 0.1);
+  height = clampPercent(height, 0.1);
+
+  // 페이지 밖으로 넘친 부분만 잘라낸다.
+  width = Math.min(width, 100 - x);
+  height = Math.min(height, 100 - y);
+
+  const valid = width >= 8 && height >= 4 && x < 99 && y < 99;
+  return { x, y, width, height, valid };
+}
+
 function openAiError(status: number, body: string) {
   let message = body;
   try {
@@ -227,6 +265,7 @@ export async function POST(request: NextRequest) {
       "confidence는 문항 위치, 문항번호, 정답, 단원, 유형, 난이도 판단을 종합한 신뢰도다. 하나라도 불확실하면 0.85 미만으로 낮춘다.",
       "summary는 문제의 핵심 요구를 한 문장으로 요약하되 풀이 전체를 쓰지 않는다.",
       "각 문항이 있는 시험지 페이지 번호와 문항 전체 영역을 페이지 기준 백분율 좌표로 반환한다.",
+      "좌표는 반드시 0~100 숫자로 쓴다. 0~1 비율값은 절대 사용하지 않는다. 예: 페이지 왼쪽 8%, 위 12%, 폭 40%, 높이 18%이면 crop_x=8, crop_y=12, crop_width=40, crop_height=18이다.",
       "crop_x, crop_y는 왼쪽·위쪽 시작점이고 crop_width, crop_height는 선택지까지 포함한 전체 문항 크기다.",
       "문항 번호 바로 위에서 시작하고 다음 문항 번호 직전에서 끝나도록 하며, 선택지·보기·그래프·도형·표를 모두 포함한다.",
       "2단 편집 시험지는 각 단의 경계를 넘지 않게 자르고, 한 문항이 다음 페이지로 이어지면 실제 본문이 가장 많이 있는 페이지를 기준으로 잡는다.",
@@ -283,17 +322,23 @@ export async function POST(request: NextRequest) {
       .eq("id", analysis.id);
 
     await supabase.from("analysis_questions").delete().eq("analysis_id", analysis.id);
-    const rows = questions.map((question) => ({
+    const normalizedQuestions = questions.map((question) => ({
+      question,
+      crop: normalizeCrop(question),
+    }));
+
+    const rows = normalizedQuestions.map(({ question, crop }) => ({
       analysis_id: analysis.id,
       question_no: Number(question.question_no),
       answer: question.answer.trim() || null,
       status: "APPROVED",
       confidence: Math.max(0, Math.min(1, Number(question.confidence))),
-      page_no: Number(question.page_no),
-      crop_x: Number(question.crop_x),
-      crop_y: Number(question.crop_y),
-      crop_width: Number(question.crop_width),
-      crop_height: Number(question.crop_height),
+      page_no: Math.max(1, Number(question.page_no) || 1),
+      crop_x: crop.x,
+      crop_y: crop.y,
+      crop_width: crop.width,
+      crop_height: crop.height,
+      review_reason: crop.valid ? null : "AI 문항 위치가 비정상입니다. 자르기 박스를 확인해 주세요.",
       ai_result: {
         question_type: question.question_type,
         subject: question.subject || source.subject || null,
@@ -310,10 +355,18 @@ export async function POST(request: NextRequest) {
       .select("id,question_no,answer,status,confidence,ai_result,review_result");
     if (inserted.error) throw inserted.error;
 
-    const insertedQuestions = (inserted.data ?? []) as Array<{ id:string; answer:string|null; confidence:number|null; ai_result:Record<string,unknown>|null }>;
+    const insertedQuestions = (inserted.data ?? []) as Array<{ id:string; question_no:number; answer:string|null; confidence:number|null; ai_result:Record<string,unknown>|null }>;
+    const invalidCropQuestionNos = new Set(
+      normalizedQuestions
+        .filter(({ crop }) => !crop.valid)
+        .map(({ question }) => Number(question.question_no)),
+    );
+
     const reviewQuestions = insertedQuestions.filter((question) => {
       const result = (question.ai_result ?? {}) as Record<string, unknown>;
-      return Number(question.confidence ?? 0) < 0.85
+      const questionNo = Number((question as { question_no?: number }).question_no);
+      return invalidCropQuestionNos.has(questionNo)
+        || Number(question.confidence ?? 0) < 0.85
         || !String(question.answer ?? "").trim()
         || !String(result.unit ?? "").trim()
         || !String(result.topic ?? "").trim()
@@ -381,6 +434,8 @@ export async function POST(request: NextRequest) {
       questionCount: questions.length,
       autoRegistered: 0,
       reviewPending: reviewQuestions.length,
+      cropValidCount: normalizedQuestions.filter(({ crop }) => crop.valid).length,
+      cropInvalidCount: normalizedQuestions.filter(({ crop }) => !crop.valid).length,
       model,
       responseId: aiRaw.id ?? null,
       usage: aiRaw.usage ?? null,
