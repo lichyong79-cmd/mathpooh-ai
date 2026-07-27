@@ -64,7 +64,7 @@ export default function AiWorkspace(){
    const uploadResponse=await fetch("/api/problem-bank/materialize",{method:"POST",body:form});const uploadResult=await uploadResponse.json();if(!uploadResponse.ok||!uploadResult.success)throw new Error(uploadResult.message||`${q.question_no}번 이미지 저장 실패`);
    completed+=1;setSaveState(`문항 이미지 생성 ${completed}/${prepared.questions.length}`);
   }
-  if(doc?.destroy)await doc.destroy();setSaveState(`문항 이미지 ${completed}개 생성 완료`);return completed;
+  doc.cleanup();setSaveState(`문항 이미지 ${completed}개 생성 완료`);return completed;
  }
  async function analyze(){if(!workspace)return;setBusy("analyze");setError("");setMessage("");try{const sourceFileId=workspace.source.id;const r=await fetch("/api/analysis/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sourceFileId})});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message);await loadWorkspace(sourceFileId);const cropped=await materializeAll(sourceFileId);setMessage(`AI 분석과 문항 자르기 완료 · ${p.questionCount}문항 기본확정 · 재확인 권장 ${p.reviewPending||0}문항 · 이미지 ${cropped}개 생성`);await loadWorkspace(sourceFileId);await loadList();}catch(e){setError(e instanceof Error?e.message:"AI 분석 실패");}finally{setBusy("");}}
 
