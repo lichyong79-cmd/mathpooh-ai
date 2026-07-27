@@ -100,6 +100,10 @@ export default function Home() {
 
   useEffect(() => {
     const saved = window.localStorage.getItem("matspu-admin-menu") as AdminMenu | null;
+    if (saved === "analysis") {
+      window.location.replace("/problem-bank/ai-upload");
+      return;
+    }
     if (saved && menus.some((menu) => menu.id === saved)) setActive(saved);
   }, []);
 
@@ -151,6 +155,11 @@ export default function Home() {
                 window.location.href = "/problem-bank";
                 return;
               }
+              if (menu.id === "analysis") {
+                window.localStorage.setItem("matspu-admin-menu", "students");
+                window.location.href = "/problem-bank/ai-upload";
+                return;
+              }
               setActive(menu.id);
             }}>
               <i>{menu.icon}</i><span>{menu.label}</span>{menu.badge ? <b>{menu.badge}</b> : null}
@@ -180,7 +189,7 @@ export default function Home() {
           </div>
         </header>
         <div className="page-content">
-          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage onOpenAnalysis={(sourceFileId) => { window.localStorage.setItem("matspu-analysis-source-id", sourceFileId); setActive("analysis"); }} /> : active === "analysis" ? <AnalysisPage /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
+          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage onOpenAnalysis={(sourceFileId) => { window.localStorage.setItem("matspu-analysis-source-id", sourceFileId); window.localStorage.setItem("matspu-admin-menu", "students"); window.location.href = "/problem-bank/ai-upload"; }} /> : active === "analysis" ? <AnalysisPage /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
         </div>
       </section>
     </main>
