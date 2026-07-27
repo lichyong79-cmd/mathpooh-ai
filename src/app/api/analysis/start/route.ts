@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { registerQuestions } from "@/lib/problem-bank";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -276,8 +277,44 @@ export async function POST(request: NextRequest) {
       },
     }));
 
-    const inserted = await supabase.from("analysis_questions").insert(rows);
+    const inserted = await supabase
+      .from("analysis_questions")
+      .insert(rows)
+      .select("id,question_no,answer,status,confidence,ai_result,review_result");
     if (inserted.error) throw inserted.error;
+
+    const insertedQuestions = inserted.data ?? [];
+    const autoQuestions = insertedQuestions.filter((question) => Number(question.confidence ?? 0) >= 0.95);
+    const reviewQuestions = insertedQuestions.filter((question) => Number(question.confidence ?? 0) < 0.95);
+
+    if (autoQuestions.length > 0) {
+      await registerQuestions(supabase, source, autoQuestions);
+      const autoIds = autoQuestions.map((question) => question.id);
+      const autoUpdatedAt = new Date().toISOString();
+      const autoUpdate = await supabase
+        .from("analysis_questions")
+        .update({
+          status: "AUTO_REGISTERED",
+          review_reason: null,
+          auto_registered_at: autoUpdatedAt,
+          updated_at: autoUpdatedAt,
+        })
+        .in("id", autoIds);
+      if (autoUpdate.error) throw autoUpdate.error;
+    }
+
+    if (reviewQuestions.length > 0) {
+      const reviewIds = reviewQuestions.map((question) => question.id);
+      const reviewUpdate = await supabase
+        .from("analysis_questions")
+        .update({
+          status: "REVIEW",
+          review_reason: "AI 신뢰도 95% 미만",
+          updated_at: new Date().toISOString(),
+        })
+        .in("id", reviewIds);
+      if (reviewUpdate.error) throw reviewUpdate.error;
+    }
 
     const objectiveCount = questions.filter((question) => question.question_type === "objective").length;
     const subjectiveCount = questions.filter((question) => question.question_type === "subjective").length;
@@ -285,9 +322,11 @@ export async function POST(request: NextRequest) {
     const updated = await supabase
       .from("source_analysis")
       .update({
-        status: "REVIEW",
+        status: reviewQuestions.length > 0 ? "REVIEW" : "DONE",
         progress: 100,
-        current_step: "AI 분석 완료 · 검수 필요",
+        current_step: reviewQuestions.length > 0
+          ? `AI 분석 완료 · 자동등록 ${autoQuestions.length}개 · 검수대기 ${reviewQuestions.length}개`
+          : `AI 분석 완료 · ${autoQuestions.length}개 자동등록`,
         total_questions: questions.length,
         objective_count: objectiveCount,
         subjective_count: subjectiveCount,
@@ -320,6 +359,8 @@ export async function POST(request: NextRequest) {
       success: true,
       analysis: updated.data,
       questionCount: questions.length,
+      autoRegistered: autoQuestions.length,
+      reviewPending: reviewQuestions.length,
       model,
       responseId: aiRaw.id ?? null,
       usage: aiRaw.usage ?? null,
