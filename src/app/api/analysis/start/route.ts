@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { registerQuestions } from "@/lib/problem-bank";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -220,13 +219,18 @@ export async function POST(request: NextRequest) {
       "시험지에 실제 존재하는 모든 문항을 번호순으로 분석한다.",
       "정답은 반드시 해설지에서 확인하고, 확인이 어려우면 빈 문자열로 둔다.",
       "객관식은 objective, 단답형·서술형은 subjective로 분류한다.",
-      "unit은 교육과정상의 단원명, topic은 해당 문항의 핵심 유형을 짧게 쓴다.",
-      "difficulty는 하·중·상·최상 중 하나다.",
-      "confidence는 정답 및 분류 전체에 대한 신뢰도를 0~1로 표시한다.",
+      "unit은 반드시 현재 선택된 과목의 교육과정 단원명으로 쓴다. 막연한 표현(수학, 계산, 함수 등)은 금지한다.",
+      "topic은 학생이 실제로 사용해야 하는 핵심 개념·발상·문제 유형이 드러나도록 12~30자 안에서 구체적으로 쓴다.",
+      "difficulty는 계산량, 개념 결합 수, 낯선 조건 해석, 풀이 단계 수를 함께 판단해 하·중·상·최상 중 하나로 분류한다.",
+      "정답은 해설지의 정답표와 해당 해설을 교차 확인한다. 객관식은 ①~⑤ 중 하나, 주관식은 최종값만 쓴다.",
+      "문항번호가 시험지와 해설지에서 일치하는지 반드시 확인하며, 중복 번호나 누락 번호를 만들지 않는다.",
+      "confidence는 문항 위치, 문항번호, 정답, 단원, 유형, 난이도 판단을 종합한 신뢰도다. 하나라도 불확실하면 0.85 미만으로 낮춘다.",
       "summary는 문제의 핵심 요구를 한 문장으로 요약하되 풀이 전체를 쓰지 않는다.",
       "각 문항이 있는 시험지 페이지 번호와 문항 전체 영역을 페이지 기준 백분율 좌표로 반환한다.",
       "crop_x, crop_y는 왼쪽·위쪽 시작점이고 crop_width, crop_height는 선택지까지 포함한 전체 문항 크기다.",
-      "문항 번호 바로 위에서 시작하고 다음 문항 번호 직전에서 끝나도록 하며, 좌우 여백은 수식·그림이 잘리지 않게 포함한다.",
+      "문항 번호 바로 위에서 시작하고 다음 문항 번호 직전에서 끝나도록 하며, 선택지·보기·그래프·도형·표를 모두 포함한다.",
+      "2단 편집 시험지는 각 단의 경계를 넘지 않게 자르고, 한 문항이 다음 페이지로 이어지면 실제 본문이 가장 많이 있는 페이지를 기준으로 잡는다.",
+      "박스는 지나치게 넓거나 높게 잡지 말고 문항 콘텐츠 바깥 여백은 각 방향 1~2% 정도만 둔다.",
       `시험지 정보: ${source.title} / ${source.source ?? ""} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
     ].join("\n");
 
@@ -283,7 +287,7 @@ export async function POST(request: NextRequest) {
       analysis_id: analysis.id,
       question_no: Number(question.question_no),
       answer: question.answer.trim() || null,
-      status: "REVIEW",
+      status: "APPROVED",
       confidence: Math.max(0, Math.min(1, Number(question.confidence))),
       page_no: Number(question.page_no),
       crop_x: Number(question.crop_x),
@@ -306,41 +310,31 @@ export async function POST(request: NextRequest) {
       .select("id,question_no,answer,status,confidence,ai_result,review_result");
     if (inserted.error) throw inserted.error;
 
-    const insertedQuestions = inserted.data ?? [];
-    const autoQuestions = insertedQuestions.filter((question) => Number(question.confidence ?? 0) >= 0.95);
-    const reviewQuestions = insertedQuestions.filter((question) => Number(question.confidence ?? 0) < 0.95);
-
-    if (autoQuestions.length > 0) {
-      await registerQuestions(supabase, source, autoQuestions);
-      const autoIds = autoQuestions.map((question) => question.id);
-      const autoUpdatedAt = new Date().toISOString();
-      const autoUpdate = await supabase
-        .from("analysis_questions")
-        .update({
-          status: "AUTO_REGISTERED",
-          review_reason: null,
-          auto_registered_at: autoUpdatedAt,
-          updated_at: autoUpdatedAt,
-        })
-        .in("id", autoIds);
-      if (autoUpdate.error) throw autoUpdate.error;
-    }
-
-    // 문항 메타데이터 저장 이후 실제 문항 이미지는 별도 materialize API에서 생성합니다.
-    // 좌표 검수가 필요한 경우 분석 화면에서 수정한 뒤 다시 생성할 수 있습니다.
+    const insertedQuestions = (inserted.data ?? []) as Array<{ id:string; answer:string|null; confidence:number|null; ai_result:Record<string,unknown>|null }>;
+    const reviewQuestions = insertedQuestions.filter((question) => {
+      const result = (question.ai_result ?? {}) as Record<string, unknown>;
+      return Number(question.confidence ?? 0) < 0.85
+        || !String(question.answer ?? "").trim()
+        || !String(result.unit ?? "").trim()
+        || !String(result.topic ?? "").trim()
+        || String(result.question_type ?? "unknown") === "unknown";
+    });
 
     if (reviewQuestions.length > 0) {
       const reviewIds = reviewQuestions.map((question) => question.id);
       const reviewUpdate = await supabase
         .from("analysis_questions")
         .update({
-          status: "REVIEW",
-          review_reason: "AI 신뢰도 95% 미만",
+          review_reason: "AI 판단이 불확실한 항목이 있습니다. 틀린 부분만 수정하세요.",
           updated_at: new Date().toISOString(),
         })
         .in("id", reviewIds);
       if (reviewUpdate.error) throw reviewUpdate.error;
     }
+
+    // 모든 문항은 기본 승인 상태다. 사용자는 잘못된 박스·정답·분류만 수정한다.
+    // 실제 문항 이미지는 분석 직후 브라우저 작업장에서 자동 생성하고,
+    // 문제은행 등록 직전에도 다시 생성해 수정된 박스를 반영한다.
 
     const objectiveCount = questions.filter((question) => question.question_type === "objective").length;
     const subjectiveCount = questions.filter((question) => question.question_type === "subjective").length;
@@ -348,11 +342,11 @@ export async function POST(request: NextRequest) {
     const updated = await supabase
       .from("source_analysis")
       .update({
-        status: reviewQuestions.length > 0 ? "REVIEW" : "DONE",
+        status: "REVIEW",
         progress: 100,
         current_step: reviewQuestions.length > 0
-          ? `AI 분석 완료 · 자동등록 ${autoQuestions.length}개 · 검수대기 ${reviewQuestions.length}개`
-          : `AI 분석 완료 · ${autoQuestions.length}개 자동등록`,
+          ? `AI 분석 완료 · 전체 ${questions.length}개 기본확정 · 재확인 권장 ${reviewQuestions.length}개`
+          : `AI 분석 완료 · 전체 ${questions.length}개 기본확정`,
         total_questions: questions.length,
         objective_count: objectiveCount,
         subjective_count: subjectiveCount,
@@ -385,7 +379,7 @@ export async function POST(request: NextRequest) {
       success: true,
       analysis: updated.data,
       questionCount: questions.length,
-      autoRegistered: autoQuestions.length,
+      autoRegistered: 0,
       reviewPending: reviewQuestions.length,
       model,
       responseId: aiRaw.id ?? null,
