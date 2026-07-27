@@ -1471,9 +1471,18 @@ function AnalysisPage() {
       });
       const result = await response.json() as { success: boolean; question?: AnalysisQuestion; message?: string };
       if (!response.ok || !result.success || !result.question) throw new Error(result.message || "문항 검수 저장에 실패했습니다.");
-      setQuestions((items) => items.map((item) => item.id === result.question!.id ? result.question! : item));
+      const savedQuestion = result.question;
+      setQuestions((items) => items.map((item) => item.id === savedQuestion.id ? savedQuestion : item));
       setQuestionDraft((draft) => draft ? { ...draft, status } : draft);
-      setMessage(status === "APPROVED" ? `${result.question.question_no}번 문항을 검수 확정했습니다.` : `${result.question.question_no}번 문항을 검수 필요 상태로 저장했습니다.`);
+      setMessage(status === "APPROVED" ? `${savedQuestion.question_no}번 문항을 검수 확정했습니다.` : `${savedQuestion.question_no}번 문항을 검수 필요 상태로 저장했습니다.`);
+
+      if (status === "APPROVED") {
+        const currentIndex = questions.findIndex((item) => item.id === savedQuestion.id);
+        const nextQuestion = questions.slice(currentIndex + 1).find((item) => item.status !== "APPROVED")
+          ?? questions.slice(0, currentIndex).find((item) => item.status !== "APPROVED")
+          ?? questions[currentIndex + 1];
+        if (nextQuestion) selectQuestion(nextQuestion);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "문항 검수 저장에 실패했습니다.");
     } finally {
@@ -1516,6 +1525,7 @@ function AnalysisPage() {
   };
 
   const activeUrl = viewer === "exam" ? examUrl : solutionUrl;
+  const activePdfUrl = activeUrl ? `${activeUrl}${activeUrl.includes("#") ? "&" : "#"}zoom=page-width` : "";
   const progress = analysis?.progress ?? 0;
   const stepIndex = !analysis ? 1 : analysis.status === "DONE" ? 4 : analysis.status === "REVIEW" ? 3 : 2;
   const approvedCount = questions.filter((item) => item.status === "APPROVED").length;
@@ -1536,7 +1546,7 @@ function AnalysisPage() {
     {!selectedSource ? <section className="panel source-file-empty">먼저 AI 문제등록에서 시험지를 등록해 주세요.</section> : <div className={`analysis-workspace-grid ${questions.length > 0 ? "has-results" : ""}`}>
       <section className="panel analysis-viewer-panel">
         <div className="analysis-panel-head"><div><strong>{selectedSource.title}</strong><span>{[selectedSource.grade, selectedSource.subject, selectedSource.source].filter(Boolean).join(" · ")}</span></div><div className="viewer-tabs"><button className={viewer === "exam" ? "active" : ""} onClick={() => setViewer("exam")}>시험지 PDF</button><button className={viewer === "solution" ? "active" : ""} onClick={() => setViewer("solution")}>해설지 PDF</button></div></div>
-        <div className="pdf-workspace-viewer">{loading ? <div>PDF를 불러오는 중입니다.</div> : activeUrl ? <iframe title={viewer === "exam" ? "시험지 PDF" : "해설지 PDF"} src={activeUrl} /> : <div>등록된 PDF가 없습니다.</div>}</div>
+        <div className="pdf-workspace-viewer">{loading ? <div>PDF를 불러오는 중입니다.</div> : activeUrl ? <iframe title={viewer === "exam" ? "시험지 PDF" : "해설지 PDF"} src={activePdfUrl} /> : <div>등록된 PDF가 없습니다.</div>}</div>
       </section>
 
       <aside className="panel analysis-control-panel">
@@ -1589,7 +1599,7 @@ function AnalysisPage() {
               </div>
             </div>
             <div className="analysis-review-pdf">
-              {activeUrl ? <iframe key={`${viewer}-${activeUrl}`} src={activeUrl} title={viewer === "exam" ? "시험지 PDF 미리보기" : "해설지 PDF 미리보기"} /> : <span>미리볼 PDF가 없습니다.</span>}
+              {activeUrl ? <iframe key={`${viewer}-${activePdfUrl}`} src={activePdfUrl} title={viewer === "exam" ? "시험지 PDF 미리보기" : "해설지 PDF 미리보기"} /> : <span>미리볼 PDF가 없습니다.</span>}
             </div>
           </section>
           <section className="analysis-review-side">
