@@ -1299,6 +1299,7 @@ function AnalysisPage() {
   const [selectedQuestionId, setSelectedQuestionId] = useState("");
   const [questionDraft, setQuestionDraft] = useState<QuestionDraft | null>(null);
   const [savingQuestion, setSavingQuestion] = useState(false);
+  const [registeringBank, setRegisteringBank] = useState(false);
 
   const selectedSource = sources.find((item) => item.id === selectedId) ?? null;
 
@@ -1457,7 +1458,7 @@ function AnalysisPage() {
     else if (questions[0]) selectQuestion(questions[0]);
   }, [questions, selectedQuestionId]);
 
-  const saveQuestion = async () => {
+  const saveQuestion = async (status: "REVIEW" | "APPROVED" = "APPROVED") => {
     if (!selectedQuestionId || !questionDraft) return;
     setSavingQuestion(true);
     setMessage("");
@@ -1466,12 +1467,13 @@ function AnalysisPage() {
       const response = await fetch(`/api/analysis/questions/${selectedQuestionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(questionDraft),
+        body: JSON.stringify({ ...questionDraft, status }),
       });
       const result = await response.json() as { success: boolean; question?: AnalysisQuestion; message?: string };
       if (!response.ok || !result.success || !result.question) throw new Error(result.message || "문항 검수 저장에 실패했습니다.");
       setQuestions((items) => items.map((item) => item.id === result.question!.id ? result.question! : item));
-      setMessage(`${result.question.question_no}번 문항 검수 내용이 저장되었습니다.`);
+      setQuestionDraft((draft) => draft ? { ...draft, status } : draft);
+      setMessage(status === "APPROVED" ? `${result.question.question_no}번 문항을 검수 확정했습니다.` : `${result.question.question_no}번 문항을 검수 필요 상태로 저장했습니다.`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "문항 검수 저장에 실패했습니다.");
     } finally {
@@ -1479,9 +1481,44 @@ function AnalysisPage() {
     }
   };
 
+  const moveQuestion = (direction: -1 | 1) => {
+    const index = questions.findIndex((item) => item.id === selectedQuestionId);
+    const next = questions[index + direction];
+    if (next) selectQuestion(next);
+  };
+
+  const registerProblemBank = async () => {
+    if (!analysis) return;
+    const unapproved = questions.filter((item) => item.status !== "APPROVED");
+    if (unapproved.length > 0) {
+      setErrorMessage(`아직 검수 확정하지 않은 문항이 ${unapproved.length}개 있습니다.`);
+      return;
+    }
+    if (!window.confirm(`${questions.length}개 문항을 문제은행에 등록할까요? 같은 시험을 다시 등록하면 최신 검수 내용으로 갱신됩니다.`)) return;
+    setRegisteringBank(true);
+    setMessage("");
+    setErrorMessage("");
+    try {
+      const response = await fetch("/api/problem-bank/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysisId: analysis.id }),
+      });
+      const result = await response.json() as { success: boolean; registered?: number; embedded?: number; message?: string };
+      if (!response.ok || !result.success) throw new Error(result.message || "문제은행 등록에 실패했습니다.");
+      setAnalysis((current) => current ? { ...current, status: "DONE", progress: 100, current_step: "문제은행 등록 완료" } : current);
+      setMessage(`문제은행 등록 완료 · ${result.registered ?? questions.length}문항 · Embedding ${result.embedded ?? 0}개 생성`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "문제은행 등록에 실패했습니다.");
+    } finally {
+      setRegisteringBank(false);
+    }
+  };
+
   const activeUrl = viewer === "exam" ? examUrl : solutionUrl;
   const progress = analysis?.progress ?? 0;
   const stepIndex = !analysis ? 1 : analysis.status === "DONE" ? 4 : analysis.status === "REVIEW" ? 3 : 2;
+  const approvedCount = questions.filter((item) => item.status === "APPROVED").length;
 
   return <>
     <section className="page-title-row analysis-title-row">
@@ -1541,7 +1578,7 @@ function AnalysisPage() {
         </article>
       </section> : null}
       {questions.length > 0 ? <section className="panel analysis-question-results">
-        <div className="source-file-title analysis-review-title"><div><strong>AI 문항 분석 결과 · 검수</strong><span>총 {questions.length}문항 · 행을 누르면 오른쪽에서 바로 수정할 수 있습니다.</span></div><span className="review-visibility-note">원본 PDF를 옆에 두고 문항별로 바로 확정합니다.</span></div>
+        <div className="source-file-title analysis-review-title"><div><strong>AI 문항 분석 결과 · 검수</strong><span>총 {questions.length}문항 · 검수 확정 {approvedCount}문항</span></div><div className="review-bank-actions"><span className={`review-visibility-note ${approvedCount === questions.length ? "complete" : ""}`}>{approvedCount === questions.length ? "모든 문항 검수 완료" : `남은 문항 ${questions.length - approvedCount}개`}</span><button type="button" className="primary-button" disabled={registeringBank || approvedCount !== questions.length} onClick={() => void registerProblemBank()}>{registeringBank ? "문제은행 등록 중..." : analysis?.status === "DONE" ? "문제은행 다시 반영" : "문제은행 등록"}</button></div></div>
         <div className="analysis-review-layout">
           <section className="analysis-review-preview">
             <div className="analysis-review-preview-head">
@@ -1560,13 +1597,13 @@ function AnalysisPage() {
               <div className="analysis-question-head"><span>번호</span><span>구분</span><span>단원·유형</span><span>난이도</span><span>정답</span><span>신뢰도</span></div>
               {questions.map((q) => {
                 const result = getQuestionResult(q);
-                return <button type="button" className={`analysis-question-row ${selectedQuestionId === q.id ? "selected" : ""}`} key={q.id} onClick={() => selectQuestion(q)}>
+                return <button type="button" className={`analysis-question-row ${selectedQuestionId === q.id ? "selected" : ""} ${q.status === "APPROVED" ? "approved" : ""}`} key={q.id} onClick={() => selectQuestion(q)}>
                   <strong>{q.question_no}</strong>
                   <span>{result?.question_type === "objective" ? "객관식" : result?.question_type === "subjective" ? "단답형" : "미분류"}</span>
                   <div><b>{[result?.unit, result?.topic].filter(Boolean).join(" · ") || "분류 필요"}</b><small>{result?.summary || ""}</small></div>
                   <span>{result?.difficulty || "-"}</span>
                   <strong>{q.answer || "-"}</strong>
-                  <span>{q.confidence == null ? "-" : `${Math.round(Number(q.confidence) * 100)}%`}</span>
+                  <span className="question-row-confidence">{q.status === "APPROVED" ? "✓ 확정" : q.confidence == null ? "-" : `${Math.round(Number(q.confidence) * 100)}%`}</span>
                 </button>;
               })}
             </div>
@@ -1581,7 +1618,8 @@ function AnalysisPage() {
                 <label className="wide"><span>유형</span><input value={questionDraft.topic} onChange={(e) => setQuestionDraft({ ...questionDraft, topic: e.target.value })}/></label>
                 <label className="wide"><span>문항 요약</span><textarea rows={4} value={questionDraft.summary} onChange={(e) => setQuestionDraft({ ...questionDraft, summary: e.target.value })}/></label>
               </div>
-              <div className="question-editor-actions"><button className="secondary-button" type="button" onClick={() => setQuestionDraft({ ...questionDraft, status: "REVIEW" })}>검수 필요</button><button className="primary-button" type="button" onClick={() => void saveQuestion()} disabled={savingQuestion}>{savingQuestion ? "저장 중..." : "이 문항 저장"}</button></div>
+              <div className="question-editor-nav"><button type="button" onClick={() => moveQuestion(-1)} disabled={questions.findIndex((item) => item.id === selectedQuestionId) <= 0}>← 이전 문항</button><span>{questions.findIndex((item) => item.id === selectedQuestionId) + 1} / {questions.length}</span><button type="button" onClick={() => moveQuestion(1)} disabled={questions.findIndex((item) => item.id === selectedQuestionId) >= questions.length - 1}>다음 문항 →</button></div>
+              <div className="question-editor-actions"><button className="secondary-button" type="button" onClick={() => void saveQuestion("REVIEW")} disabled={savingQuestion}>검수 필요로 저장</button><button className="primary-button" type="button" onClick={() => void saveQuestion("APPROVED")} disabled={savingQuestion}>{savingQuestion ? "저장 중..." : questionDraft.status === "APPROVED" ? "검수 내용 다시 저장" : "검수 확정"}</button></div>
             </aside> : null}
           </section>
         </div>
