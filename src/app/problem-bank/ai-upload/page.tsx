@@ -1,232 +1,61 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-type SourceFile = {
-  id: string;
-  created_at: string;
-  title: string;
-  source: string | null;
-  grade: string | null;
-  subject: string | null;
-  original_hwp_name: string | null;
-  exam_pdf_name: string | null;
-  solution_pdf_name: string | null;
-  status: string;
-  error_message: string | null;
-};
+type SourceFile={id:string;created_at:string;title:string;source:string|null;grade:string|null;subject:string|null;original_hwp_name:string|null;exam_pdf_name:string|null;solution_pdf_name:string|null;status:string;error_message:string|null};
+type Analysis={id:string;status:string;progress:number;current_step:string}|null;
+type Meta={question_type:string;subject:string|null;unit:string|null;topic:string|null;difficulty:string;summary:string|null};
+type Question={id:string;analysis_id:string;question_no:number;answer:string|null;status:string;confidence:number|null;page_no:number|null;crop_x:number|null;crop_y:number|null;crop_width:number|null;crop_height:number|null;ai_result:Partial<Meta>;review_result:Partial<Meta>};
+type Workspace={source:SourceFile;analysis:Analysis;questions:Question[];examUrl:string|null;solutionUrl:string|null};
+type Rect={x:number;y:number;w:number;h:number};
+type Drag={mode:"move"|"resize";id:string;startX:number;startY:number;origin:Rect};
 
-type UploadResponse = { success: boolean; message: string; data?: SourceFile };
-type AnalysisResponse = { success?: boolean; message?: string; analysisId?: string };
+const statusLabel:Record<string,string>={uploaded:"업로드 완료",RUNNING:"AI 분석 중",REVIEW:"검수 중",DONE:"등록 완료",FAILED:"실패",completed:"분석 완료"};
+const clamp=(n:number,min:number,max:number)=>Math.min(max,Math.max(min,n));
+const metaOf=(q:Question):Meta=>({question_type:String(q.review_result?.question_type||q.ai_result?.question_type||"unknown"),subject:(q.review_result?.subject??q.ai_result?.subject??null) as string|null,unit:(q.review_result?.unit??q.ai_result?.unit??null) as string|null,topic:(q.review_result?.topic??q.ai_result?.topic??null) as string|null,difficulty:String(q.review_result?.difficulty||q.ai_result?.difficulty||"중"),summary:(q.review_result?.summary??q.ai_result?.summary??null) as string|null});
 
-type BundleFiles = {
-  hwpFile: File | null;
-  examPdf: File | null;
-  solutionPdf: File | null;
-};
+export default function AiWorkspace(){
+ const supabase=useMemo(()=>createClient(),[]); const canvasRef=useRef<HTMLCanvasElement>(null); const overlayRef=useRef<HTMLDivElement>(null); const pdfRef=useRef<any>(null); const dragRef=useRef<Drag|null>(null); const saveTimers=useRef<Record<string,ReturnType<typeof setTimeout>>>({});
+ const [items,setItems]=useState<SourceFile[]>([]); const [selectedId,setSelectedId]=useState(""); const [workspace,setWorkspace]=useState<Workspace|null>(null); const [activeId,setActiveId]=useState(""); const [page,setPage]=useState(1); const [pageCount,setPageCount]=useState(0); const [scale,setScale]=useState(1.25);
+ const [title,setTitle]=useState(""); const [source,setSource]=useState(""); const [grade,setGrade]=useState("고1"); const [subject,setSubject]=useState("공통수학1"); const [files,setFiles]=useState<{hwp:File|null;exam:File|null;solution:File|null}>({hwp:null,exam:null,solution:null});
+ const [busy,setBusy]=useState(""); const [message,setMessage]=useState(""); const [error,setError]=useState(""); const [saveState,setSaveState]=useState("저장됨");
+ const questions=workspace?.questions??[]; const active=questions.find(q=>q.id===activeId)||questions[0]; const pageQuestions=questions.filter(q=>Number(q.page_no||1)===page&&Number(q.crop_width||0)>0&&q.status!=="REJECTED");
 
-const statusLabel: Record<string, string> = {
-  uploaded: "업로드 완료",
-  splitting: "PDF 분리 중",
-  pages_created: "페이지 생성 완료",
-  analyzing: "AI 분석 중",
-  RUNNING: "AI 분석 중",
-  completed: "분석 완료",
-  COMPLETED: "분석 완료",
-  failed: "실패",
-  FAILED: "실패",
-};
+ const loadList=useCallback(async()=>{const {data,error: listError}=await supabase.from("source_files").select("id,created_at,title,source,grade,subject,original_hwp_name,exam_pdf_name,solution_pdf_name,status,error_message").order("created_at",{ascending:false}); if(listError)setError(listError.message); else setItems((data??[]) as SourceFile[]);},[supabase]);
+ useEffect(()=>{void loadList();},[loadList]);
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
+ const loadWorkspace=useCallback(async(id:string)=>{setBusy("load");setError("");try{const r=await fetch(`/api/analysis/source/${id}`,{cache:"no-store"});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message||"작업장 로딩 실패");setWorkspace(p);setSelectedId(id);setActiveId(p.questions?.[0]?.id||"");setPage(Number(p.questions?.[0]?.page_no||1));if(p.examUrl){const pdfjs=await import("pdfjs-dist");pdfjs.GlobalWorkerOptions.workerSrc=new URL("pdfjs-dist/build/pdf.worker.min.mjs",import.meta.url).toString();const doc=await pdfjs.getDocument(p.examUrl).promise;pdfRef.current=doc;setPageCount(doc.numPages);}else{pdfRef.current=null;setPageCount(0);}}catch(e){setError(e instanceof Error?e.message:"로딩 실패");}finally{setBusy("");}},[]);
+ useEffect(()=>{if(!selectedId&&items[0])void loadWorkspace(items[0].id);},[items,selectedId,loadWorkspace]);
 
-function fileIsPdf(file: File) {
-  return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-}
+ useEffect(()=>{(async()=>{if(!pdfRef.current||!canvasRef.current)return;const pg=await pdfRef.current.getPage(page);const viewport=pg.getViewport({scale});const canvas=canvasRef.current;const ctx=canvas.getContext("2d");if(!ctx)return;canvas.width=viewport.width;canvas.height=viewport.height;await pg.render({canvasContext:ctx,viewport}).promise;})().catch(e=>setError(String(e)));},[page,scale,workspace?.examUrl]);
 
-function fileIsHwp(file: File) {
-  const name = file.name.toLowerCase();
-  return name.endsWith(".hwp") || name.endsWith(".hwpx");
-}
+ function choose(kind:"hwp"|"exam"|"solution",e:ChangeEvent<HTMLInputElement>){const f=e.target.files?.[0]||null;if(f&&f.size>50*1024*1024){setError("파일은 각각 50MB 이하여야 합니다.");e.target.value="";return;}setFiles(v=>({...v,[kind]:f}));if(kind==="exam"&&f&&!title)setTitle(f.name.replace(/\.pdf$/i,""));}
+ async function upload(e:FormEvent){e.preventDefault();if(!title.trim()||!files.hwp||!files.exam||!files.solution){setError("원본, 시험지 PDF, 해설지 PDF와 시험지명을 모두 입력하세요.");return;}setBusy("upload");setError("");try{const f=new FormData();f.append("title",title.trim());f.append("source",source.trim());f.append("grade",grade);f.append("subject",subject);f.append("hwpFile",files.hwp);f.append("examPdf",files.exam);f.append("solutionPdf",files.solution);const r=await fetch("/api/source-files/upload",{method:"POST",body:f});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message);setMessage("업로드 완료");setTitle("");setSource("");setFiles({hwp:null,exam:null,solution:null});await loadList();await loadWorkspace(p.data.id);}catch(e){setError(e instanceof Error?e.message:"업로드 실패");}finally{setBusy("");}}
+ async function analyze(){if(!workspace)return;setBusy("analyze");setError("");setMessage("");try{const r=await fetch("/api/analysis/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sourceFileId:workspace.source.id})});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message);setMessage("AI 분석 완료. 박스와 문항정보를 검수하세요.");await loadWorkspace(workspace.source.id);await loadList();}catch(e){setError(e instanceof Error?e.message:"AI 분석 실패");}finally{setBusy("");}}
 
-export default function AiAnalysisWorkspacePage() {
-  const supabase = useMemo(() => createClient(), []);
-  const [title, setTitle] = useState("");
-  const [source, setSource] = useState("");
-  const [grade, setGrade] = useState("고1");
-  const [subject, setSubject] = useState("공통수학1");
-  const [files, setFiles] = useState<BundleFiles>({ hwpFile: null, examPdf: null, solutionPdf: null });
-  const [items, setItems] = useState<SourceFile[]>([]);
-  const [loadingList, setLoadingList] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [workingId, setWorkingId] = useState<string | null>(null);
-  const [message, setMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
+ function localPatch(id:string,patch:Partial<Question>){setWorkspace(w=>w?{...w,questions:w.questions.map(q=>q.id===id?{...q,...patch}:q)}:w);}
+ function scheduleSave(q:Question,patch:Record<string,unknown>){setSaveState("저장 중...");clearTimeout(saveTimers.current[q.id]);saveTimers.current[q.id]=setTimeout(async()=>{try{const r=await fetch(`/api/analysis/questions/${q.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(patch)});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message);setWorkspace(w=>w?{...w,questions:w.questions.map(x=>x.id===q.id?p.question:x)}:w);setSaveState("자동저장 완료");}catch(e){setSaveState("저장 실패");setError(e instanceof Error?e.message:"저장 실패");}},500);}
+ function updateMeta(key:keyof Meta,value:string){if(!active)return;const m={...metaOf(active),[key]:value};localPatch(active.id,{review_result:m});scheduleSave(active,{review_result:m});}
+ function updateField(key:"question_no"|"answer"|"page_no",value:string|number){if(!active)return;const patch:any={[key]:key==="answer"?value:Number(value)};localPatch(active.id,patch);scheduleSave(active,patch);}
+ function rect(q:Question):Rect{return{x:Number(q.crop_x||0),y:Number(q.crop_y||0),w:Number(q.crop_width||0),h:Number(q.crop_height||0)}}
+ function point(e:PointerEvent){const b=overlayRef.current!.getBoundingClientRect();return{x:(e.clientX-b.left)/b.width*100,y:(e.clientY-b.top)/b.height*100};}
+ function startDrag(e:PointerEvent,q:Question,mode:"move"|"resize"){e.stopPropagation();(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);const p=point(e);dragRef.current={mode,id:q.id,startX:p.x,startY:p.y,origin:rect(q)};setActiveId(q.id);}
+ function move(e:PointerEvent){const d=dragRef.current;if(!d)return;const q=questions.find(x=>x.id===d.id);if(!q)return;const p=point(e),dx=p.x-d.startX,dy=p.y-d.startY;let r={...d.origin};if(d.mode==="move"){r.x=clamp(d.origin.x+dx,0,100-d.origin.w);r.y=clamp(d.origin.y+dy,0,100-d.origin.h);}else{r.w=clamp(d.origin.w+dx,2,100-d.origin.x);r.h=clamp(d.origin.h+dy,2,100-d.origin.y);}localPatch(q.id,{crop_x:r.x,crop_y:r.y,crop_width:r.w,crop_height:r.h});}
+ function endDrag(){const d=dragRef.current;if(!d)return;dragRef.current=null;const q=questions.find(x=>x.id===d.id);if(q)scheduleSave(q,{crop_x:q.crop_x,crop_y:q.crop_y,crop_width:q.crop_width,crop_height:q.crop_height});}
+ async function addBox(){if(!workspace?.analysis)return;setBusy("add");try{const next=Math.max(0,...questions.map(q=>q.question_no))+1;const r=await fetch("/api/analysis/questions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({analysisId:workspace.analysis.id,questionNo:next,pageNo:page,x:5,y:5,width:42,height:18})});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message);setWorkspace(w=>w?{...w,questions:[...w.questions,p.question]}:w);setActiveId(p.question.id);}catch(e){setError(e instanceof Error?e.message:"추가 실패");}finally{setBusy("");}}
+ async function remove(){if(!active)return;if(!confirm(`${active.question_no}번 문항 박스를 삭제할까요?`))return;const r=await fetch(`/api/analysis/questions/${active.id}`,{method:"DELETE"});const p=await r.json();if(!r.ok||!p.success){setError(p.message||"삭제 실패");return;}setWorkspace(w=>w?{...w,questions:w.questions.filter(q=>q.id!==active.id)}:w);setActiveId(questions.find(q=>q.id!==active.id)?.id||"");}
+ async function setApproved(q:Question,approved:boolean){localPatch(q.id,{status:approved?"APPROVED":"REVIEW"});scheduleSave(q,{status:approved?"APPROVED":"REVIEW"});}
+ async function approveAll(){for(const q of questions.filter(q=>q.status!=="REJECTED")){localPatch(q.id,{status:"APPROVED"});scheduleSave(q,{status:"APPROVED"});}setMessage("모든 문항을 검수 완료로 표시했습니다.");}
+ async function register(){if(!workspace?.analysis)return;setBusy("register");setError("");try{await new Promise(r=>setTimeout(r,700));const r=await fetch("/api/problem-bank/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({analysisId:workspace.analysis.id})});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message);setMessage(p.message);await loadWorkspace(workspace.source.id);await loadList();}catch(e){setError(e instanceof Error?e.message:"등록 실패");}finally{setBusy("");}}
+ const approved=questions.filter(q=>q.status==="APPROVED").length;
 
-  const loadSourceFiles = useCallback(async () => {
-    setLoadingList(true);
-    const { data, error } = await supabase
-      .from("source_files")
-      .select("id,created_at,title,source,grade,subject,original_hwp_name,exam_pdf_name,solution_pdf_name,status,error_message")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setErrorMessage(`목록 조회 실패: ${error.message}`);
-      setLoadingList(false);
-      return;
-    }
-    setItems((data ?? []) as SourceFile[]);
-    setLoadingList(false);
-  }, [supabase]);
-
-  useEffect(() => { void loadSourceFiles(); }, [loadSourceFiles]);
-
-  function selectFile(kind: keyof BundleFiles, event: ChangeEvent<HTMLInputElement>) {
-    const selected = event.target.files?.[0] ?? null;
-    setMessage("");
-    setErrorMessage("");
-    if (!selected) return setFiles((current) => ({ ...current, [kind]: null }));
-    const valid = kind === "hwpFile" ? fileIsHwp(selected) : fileIsPdf(selected);
-    if (!valid) {
-      event.target.value = "";
-      setErrorMessage(kind === "hwpFile" ? "한글 원본은 .hwp 또는 .hwpx만 가능합니다." : "PDF 파일만 선택할 수 있습니다.");
-      return;
-    }
-    if (selected.size > 50 * 1024 * 1024) {
-      event.target.value = "";
-      setErrorMessage("파일 크기는 각각 50MB 이하여야 합니다.");
-      return;
-    }
-    setFiles((current) => ({ ...current, [kind]: selected }));
-    if (!title.trim() && kind === "examPdf") setTitle(selected.name.replace(/\.pdf$/i, ""));
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setMessage("");
-    setErrorMessage("");
-    if (!title.trim()) return setErrorMessage("시험지명을 입력해 주세요.");
-    if (!files.hwpFile || !files.examPdf || !files.solutionPdf) return setErrorMessage("한글 원본, 시험지 PDF, 해설지 PDF를 모두 선택해 주세요.");
-
-    setUploading(true);
-    try {
-      const form = new FormData();
-      form.append("title", title.trim());
-      form.append("source", source.trim());
-      form.append("grade", grade);
-      form.append("subject", subject);
-      form.append("hwpFile", files.hwpFile);
-      form.append("examPdf", files.examPdf);
-      form.append("solutionPdf", files.solutionPdf);
-      const response = await fetch("/api/source-files/upload", { method: "POST", body: form });
-      const result = await response.json() as UploadResponse;
-      if (!response.ok || !result.success) throw new Error(result.message || "시험지 세트 등록에 실패했습니다.");
-      setMessage("시험지 세트를 등록했습니다. 아래에서 AI 문항분리를 시작하세요.");
-      setTitle("");
-      setSource("");
-      setFiles({ hwpFile: null, examPdf: null, solutionPdf: null });
-      for (const id of ["hwp-file", "exam-pdf", "solution-pdf"]) {
-        const input = document.getElementById(id) as HTMLInputElement | null;
-        if (input) input.value = "";
-      }
-      await loadSourceFiles();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "등록 중 오류가 발생했습니다.");
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function startAnalysis(item: SourceFile) {
-    setWorkingId(item.id);
-    setMessage("");
-    setErrorMessage("");
-    try {
-      const response = await fetch("/api/analysis/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceFileId: item.id }),
-      });
-      const result = await response.json() as AnalysisResponse;
-      if (!response.ok || !result.success) throw new Error(result.message || "AI 분석에 실패했습니다.");
-      setMessage(`${item.title}: AI가 문항 번호·영역·내용을 분석했습니다. 이제 문항 영역을 검수하세요.`);
-      await loadSourceFiles();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "AI 분석 중 오류가 발생했습니다.");
-    } finally {
-      setWorkingId(null);
-    }
-  }
-
-  const allFilesReady = Boolean(files.hwpFile && files.examPdf && files.solutionPdf);
-
-  return (
-    <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 md:px-8">
-      <div className="mx-auto max-w-7xl">
-        <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="mb-1 text-sm font-bold text-amber-600">MATHPOOH SOS · QUESTION FACTORY</p>
-            <h1 className="text-3xl font-black">AI 분석 작업장</h1>
-            <p className="mt-2 text-sm text-slate-500">PDF를 AI가 문항별로 나누고, 잘못 잡힌 영역만 사람이 수정한 뒤 문제은행으로 보냅니다.</p>
-          </div>
-          <button className="rounded-xl border bg-white px-4 py-2 font-bold" onClick={() => { window.location.href = "/problem-bank"; }}>문제은행 보기</button>
-        </header>
-
-        <section className="mb-6 grid gap-3 md:grid-cols-4">
-          {["1. 시험지 세트 등록", "2. AI 문항 자동분리", "3. 문항 영역 검수", "4. 문제은행 등록"].map((step, index) => (
-            <div key={step} className={`rounded-2xl border p-4 font-bold ${index === 2 ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-white"}`}>{step}</div>
-          ))}
-        </section>
-
-        <section className="mb-8 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-black">새 시험지 세트 등록</h2>
-          <form onSubmit={handleSubmit} className="mt-5 grid gap-4 lg:grid-cols-4">
-            <label className="grid gap-2"><span className="text-sm font-bold">시험지명</span><input className="h-11 rounded-xl border px-4" value={title} onChange={(e) => setTitle(e.target.value)} disabled={uploading} /></label>
-            <label className="grid gap-2"><span className="text-sm font-bold">출처</span><input className="h-11 rounded-xl border px-4" value={source} onChange={(e) => setSource(e.target.value)} disabled={uploading} /></label>
-            <label className="grid gap-2"><span className="text-sm font-bold">학년</span><select className="h-11 rounded-xl border px-3" value={grade} onChange={(e) => setGrade(e.target.value)} disabled={uploading}>{["중1","중2","중3","고1","고2","고3"].map((v) => <option key={v}>{v}</option>)}</select></label>
-            <label className="grid gap-2"><span className="text-sm font-bold">과목</span><select className="h-11 rounded-xl border px-3" value={subject} onChange={(e) => setSubject(e.target.value)} disabled={uploading}>{["중등수학","공통수학1","공통수학2","대수","미적분Ⅰ","확률과 통계"].map((v) => <option key={v}>{v}</option>)}</select></label>
-
-            <label className="rounded-xl border border-dashed p-4"><span className="block text-sm font-black">① 한글 원본</span><input id="hwp-file" className="mt-3 block w-full text-sm" type="file" accept=".hwp,.hwpx" onChange={(e) => selectFile("hwpFile", e)} disabled={uploading} /><small className="mt-2 block text-slate-500">{files.hwpFile?.name || ".hwp / .hwpx"}</small></label>
-            <label className="rounded-xl border border-dashed p-4"><span className="block text-sm font-black">② 시험지 PDF</span><input id="exam-pdf" className="mt-3 block w-full text-sm" type="file" accept=".pdf,application/pdf" onChange={(e) => selectFile("examPdf", e)} disabled={uploading} /><small className="mt-2 block text-slate-500">{files.examPdf?.name || "문제가 있는 PDF"}</small></label>
-            <label className="rounded-xl border border-dashed p-4"><span className="block text-sm font-black">③ 해설지 PDF</span><input id="solution-pdf" className="mt-3 block w-full text-sm" type="file" accept=".pdf,application/pdf" onChange={(e) => selectFile("solutionPdf", e)} disabled={uploading} /><small className="mt-2 block text-slate-500">{files.solutionPdf?.name || "정답·해설 PDF"}</small></label>
-            <div className="flex items-end"><button className="h-12 w-full rounded-xl bg-slate-900 px-6 font-black text-white disabled:opacity-40" type="submit" disabled={uploading || !allFilesReady}>{uploading ? "등록 중..." : "시험지 세트 등록"}</button></div>
-          </form>
-          {message && <p className="mt-4 rounded-xl bg-emerald-50 p-3 font-semibold text-emerald-700">{message}</p>}
-          {errorMessage && <p className="mt-4 rounded-xl bg-red-50 p-3 font-semibold text-red-700">{errorMessage}</p>}
-        </section>
-
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b px-5 py-4"><h2 className="text-lg font-black">분석 대기·진행 목록 ({items.length})</h2><button className="rounded-lg border px-3 py-2 text-sm font-bold" onClick={() => void loadSourceFiles()} disabled={loadingList}>새로고침</button></div>
-          {loadingList ? <div className="p-10 text-center">목록을 불러오는 중입니다.</div> : items.length === 0 ? <div className="p-10 text-center text-slate-500">등록된 시험지가 없습니다.</div> : (
-            <div className="divide-y">
-              {items.map((item) => (
-                <article key={item.id} className="grid gap-4 p-5 lg:grid-cols-[1fr_auto] lg:items-center">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2"><strong className="text-lg">{item.title}</strong><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold">{item.grade || "학년 미입력"}</span><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold">{item.subject || "과목 미입력"}</span></div>
-                    <p className="mt-2 text-sm text-slate-500">{item.source || "출처 미입력"} · {formatDate(item.created_at)}</p>
-                    <p className="mt-1 text-xs text-slate-400">{item.exam_pdf_name || "시험지 PDF"} / {item.solution_pdf_name || "해설지 PDF"}</p>
-                    {item.error_message ? <p className="mt-2 text-sm font-semibold text-red-600">{item.error_message}</p> : null}
-                  </div>
-                  <div className="flex flex-wrap gap-2 lg:justify-end">
-                    <span className="self-center rounded-lg bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700">{statusLabel[item.status] ?? item.status}</span>
-                    <button className="rounded-xl bg-slate-900 px-4 py-2.5 font-bold text-white disabled:opacity-40" disabled={workingId === item.id} onClick={() => void startAnalysis(item)}>{workingId === item.id ? "AI 분석 중..." : "AI 문항분리 시작"}</button>
-                    <button className="rounded-xl border border-amber-500 bg-amber-50 px-4 py-2.5 font-black text-amber-800" onClick={() => { window.location.href = `/problem-bank/crop?sourceFileId=${encodeURIComponent(item.id)}`; }}>문항 영역 검수</button>
-                    <button className="rounded-xl border px-4 py-2.5 font-bold" onClick={() => { window.location.href = "/review"; }}>내용 검수·등록</button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
-    </main>
-  );
+ return <main className="aw"><header><div><small>MATHPOOH SOS</small><h1>AI 분석 작업장</h1><p>업로드 → AI 분석 → 박스·정보 검수 → 승인 문항 등록</p></div><div className="top-actions"><span>{saveState}</span><button onClick={()=>location.href="/problem-bank"}>문제은행</button></div></header>
+ <section className="upload"><form onSubmit={upload}><input placeholder="시험지명" value={title} onChange={e=>setTitle(e.target.value)}/><input placeholder="출처" value={source} onChange={e=>setSource(e.target.value)}/><select value={grade} onChange={e=>setGrade(e.target.value)}>{["중1","중2","중3","고1","고2","고3"].map(x=><option key={x}>{x}</option>)}</select><select value={subject} onChange={e=>setSubject(e.target.value)}>{["중등수학","공통수학1","공통수학2","대수","미적분Ⅰ","확률과 통계"].map(x=><option key={x}>{x}</option>)}</select><label>원본 HWP/PDF<input type="file" accept=".hwp,.hwpx,.pdf" onChange={e=>choose("hwp",e)}/><b>{files.hwp?.name||"선택"}</b></label><label>시험지 PDF<input type="file" accept=".pdf" onChange={e=>choose("exam",e)}/><b>{files.exam?.name||"선택"}</b></label><label>해설지 PDF<input type="file" accept=".pdf" onChange={e=>choose("solution",e)}/><b>{files.solution?.name||"선택"}</b></label><button disabled={!!busy}>{busy==="upload"?"업로드 중":"세트 업로드"}</button></form></section>
+ {(message||error)&&<div className={error?"notice error":"notice"}>{error||message}</div>}
+ <section className="picker"><select value={selectedId} onChange={e=>void loadWorkspace(e.target.value)}><option value="">시험지 선택</option>{items.map(i=><option value={i.id} key={i.id}>{i.title} · {statusLabel[i.status]||i.status}</option>)}</select><button onClick={analyze} disabled={!workspace||!!busy}>{busy==="analyze"?"AI 분석 중...":"AI 분석 실행"}</button><button onClick={approveAll} disabled={!questions.length}>전체 검수 완료</button><button className="gold" onClick={register} disabled={!approved||!!busy}>{busy==="register"?"등록 중...":`승인 ${approved}문항 문제은행 등록`}</button></section>
+ {!workspace?<div className="empty">시험지 세트를 업로드하거나 선택하세요.</div>:<><section className="summary"><b>{workspace.source.title}</b><span>{workspace.source.grade} · {workspace.source.subject}</span><span>{workspace.analysis?.current_step||"AI 분석 전"}</span><span>문항 {questions.length} · 승인 {approved}</span></section>
+ <div className="grid"><aside className="numbers"><div className="side-head"><b>문항</b><button onClick={addBox}>+ 추가</button></div><div className="numgrid">{questions.filter(q=>q.status!=="REJECTED").map(q=><button key={q.id} className={`${q.id===active?.id?"active":""} ${q.status==="APPROVED"?"approved":""}`} onClick={()=>{setActiveId(q.id);setPage(Number(q.page_no||1));}}>{q.question_no}</button>)}</div>{active&&<div className="editor"><label>문항번호<input type="number" value={active.question_no} onChange={e=>updateField("question_no",e.target.value)}/></label><label>페이지<input type="number" value={active.page_no||1} onChange={e=>{updateField("page_no",e.target.value);setPage(Number(e.target.value));}}/></label><label>정답<input value={active.answer||""} onChange={e=>updateField("answer",e.target.value)}/></label><label>유형<select value={metaOf(active).question_type} onChange={e=>updateMeta("question_type",e.target.value)}><option value="objective">객관식</option><option value="subjective">주관식</option><option value="unknown">미분류</option></select></label><label>난이도<select value={metaOf(active).difficulty} onChange={e=>updateMeta("difficulty",e.target.value)}>{["하","중","상","최상"].map(x=><option key={x}>{x}</option>)}</select></label><label>단원<input value={metaOf(active).unit||""} onChange={e=>updateMeta("unit",e.target.value)}/></label><label>유형명<input value={metaOf(active).topic||""} onChange={e=>updateMeta("topic",e.target.value)}/></label><button className={active.status==="APPROVED"?"unapprove":"approve"} onClick={()=>void setApproved(active,active.status!=="APPROVED")}>{active.status==="APPROVED"?"검수 취소":"검수 완료"}</button><button className="delete" onClick={remove}>문항 삭제</button></div>}</aside>
+ <section className="viewer"><div className="toolbar"><button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={page<=1}>이전</button><b>{page}/{pageCount||"?"}</b><button onClick={()=>setPage(p=>Math.min(pageCount||p+1,p+1))} disabled={!!pageCount&&page>=pageCount}>다음</button><button onClick={()=>setScale(s=>Math.max(.7,s-.15))}>－</button><span>{Math.round(scale*100)}%</span><button onClick={()=>setScale(s=>Math.min(2.2,s+.15))}>＋</button><em>박스 드래그 이동 · 우하단 핸들 크기조절</em></div><div className="canvas"><canvas ref={canvasRef}/><div ref={overlayRef} className="overlay" onPointerMove={move} onPointerUp={endDrag} onPointerCancel={endDrag}>{pageQuestions.map(q=>{const r=rect(q);return <div key={q.id} className={`box ${q.id===active?.id?"active":""} ${q.status==="APPROVED"?"approved":""}`} style={{left:`${r.x}%`,top:`${r.y}%`,width:`${r.w}%`,height:`${r.h}%`}} onPointerDown={e=>startDrag(e,q,"move")}><span>{q.question_no}</span><i onPointerDown={e=>startDrag(e,q,"resize")}/></div>})}</div></div></section></div></>}
+ <style jsx>{`*{box-sizing:border-box}.aw{min-height:100vh;background:#f3f5f8;color:#172033;padding:22px;font-family:Arial,"Pretendard",sans-serif}.aw>header{max-width:1800px;margin:auto;display:flex;justify-content:space-between;align-items:end}.aw h1{margin:3px 0;font-size:32px}.aw header p{margin:0;color:#6d7688}.aw header small{color:#b88922;font-weight:900}.top-actions{display:flex;align-items:center;gap:10px}.top-actions span{font-size:13px;color:#667085}.aw button,.aw input,.aw select{font:inherit}.aw button{cursor:pointer}.upload,.picker,.summary,.numbers,.viewer,.empty{background:#fff;border:1px solid #dfe4ec;border-radius:15px}.upload{max-width:1800px;margin:18px auto 10px;padding:14px}.upload form{display:grid;grid-template-columns:1.3fr 1fr 110px 150px repeat(3,1.2fr) 140px;gap:9px}.upload input,.upload select,.picker select,.editor input,.editor select{height:42px;border:1px solid #d8dee8;border-radius:9px;padding:0 11px;background:#fff}.upload label{height:42px;border:1px dashed #bdc6d5;border-radius:9px;padding:4px 9px;overflow:hidden;font-size:11px;color:#667085}.upload label input{display:none}.upload label b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#172033}.upload button,.picker button,.top-actions button,.side-head button{border:1px solid #d4dae5;border-radius:9px;background:#fff;font-weight:800}.upload button{background:#172033;color:#fff;border:0}.notice{max-width:1800px;margin:10px auto;padding:11px 15px;border-radius:10px;background:#eaf8ef;color:#177044;font-weight:700}.notice.error{background:#fff0f0;color:#b42318}.picker{max-width:1800px;margin:10px auto;padding:12px;display:flex;gap:9px}.picker select{min-width:340px;flex:1}.picker button{padding:0 17px}.picker .gold{background:#b88922;color:#fff;border-color:#b88922}.summary{max-width:1800px;margin:10px auto;padding:14px 18px;display:grid;grid-template-columns:2fr 1fr 2fr 1fr;gap:15px}.grid{max-width:1800px;margin:auto;display:grid;grid-template-columns:300px minmax(0,1fr);gap:12px;align-items:start}.numbers{padding:14px;position:sticky;top:10px;max-height:calc(100vh - 20px);overflow:auto}.side-head{display:flex;justify-content:space-between;align-items:center}.side-head button{padding:7px 10px}.numgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:12px 0}.numgrid button{height:36px;border:1px solid #d9dfE9;background:#fff;border-radius:8px;font-weight:900}.numgrid button.active{background:#334ecf;color:#fff}.numgrid button.approved{box-shadow:inset 0 0 0 2px #27936e}.editor{border-top:1px solid #e7eaf0;padding-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px}.editor label{font-size:12px;font-weight:800;color:#596274}.editor label:nth-of-type(n+3){grid-column:1/-1}.editor input,.editor select{width:100%;margin-top:4px}.editor button{grid-column:1/-1;height:40px;border-radius:9px;font-weight:900}.approve{background:#eaf8f1;border:1px solid #9bd2bd;color:#177653}.unapprove{background:#fff7e8;border:1px solid #ebca83;color:#875e00}.delete{background:#fff1f1;border:1px solid #efb2b2;color:#b42318}.viewer{overflow:auto}.toolbar{height:54px;border-bottom:1px solid #e4e8ef;display:flex;align-items:center;gap:8px;padding:0 12px;position:sticky;top:0;background:#fff;z-index:4}.toolbar button{height:34px;border:1px solid #d7dde7;background:#fff;border-radius:8px}.toolbar em{margin-left:auto;color:#6a7487;font-size:13px}.canvas{position:relative;width:max-content;margin:14px auto;background:#fff;box-shadow:0 2px 18px rgba(0,0,0,.08)}.canvas canvas{display:block}.overlay{position:absolute;inset:0;touch-action:none}.box{position:absolute;border:2px solid #e29c28;background:rgba(255,190,66,.12);cursor:move;user-select:none}.box.active{border:3px solid #e34d4d;background:rgba(227,77,77,.12);z-index:2}.box.approved{border-color:#27936e;background:rgba(39,147,110,.1)}.box span{position:absolute;left:-2px;top:-24px;background:#172033;color:#fff;padding:3px 7px;border-radius:5px;font-weight:900}.box i{position:absolute;width:16px;height:16px;right:-8px;bottom:-8px;border:2px solid #fff;background:#334ecf;border-radius:50%;cursor:nwse-resize}.empty{max-width:1800px;margin:12px auto;padding:80px;text-align:center;color:#727b8c}@media(max-width:1200px){.upload form{grid-template-columns:repeat(4,1fr)}.grid{grid-template-columns:260px minmax(0,1fr)}}@media(max-width:760px){.aw{padding:10px}.aw>header,.picker{align-items:stretch;flex-direction:column}.upload form{grid-template-columns:1fr}.picker select{min-width:0}.summary,.grid{grid-template-columns:1fr}.numbers{position:static;max-height:none}.toolbar em{display:none}}`}</style></main>;
 }

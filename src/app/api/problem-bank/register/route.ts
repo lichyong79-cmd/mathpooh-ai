@@ -41,16 +41,8 @@ export async function POST(request: NextRequest) {
 
     const questions = questionQuery.data ?? [];
     const registerable = questions.filter((item) =>
-      item.status === "APPROVED" || item.status === "AUTO_REGISTERED"
+      item.status === "APPROVED"
     );
-    const pending = questions.filter((item) => item.status === "REVIEW");
-
-    if (pending.length > 0) {
-      return NextResponse.json(
-        { success: false, message: `검수대기 문항이 ${pending.length}개 있습니다.` },
-        { status: 409 },
-      );
-    }
     if (registerable.length === 0) {
       return NextResponse.json({ success: false, message: "등록할 문항이 없습니다." }, { status: 400 });
     }

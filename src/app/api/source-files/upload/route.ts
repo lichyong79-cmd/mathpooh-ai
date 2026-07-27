@@ -8,9 +8,9 @@ function isPdf(file: File) {
   return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 }
 
-function isHwp(file: File) {
+function isOriginal(file: File) {
   const lower = file.name.toLowerCase();
-  return lower.endsWith(".hwp") || lower.endsWith(".hwpx");
+  return lower.endsWith(".hwp") || lower.endsWith(".hwpx") || lower.endsWith(".pdf");
 }
 
 export async function POST(request: NextRequest) {
@@ -39,8 +39,8 @@ export async function POST(request: NextRequest) {
     if (!title) {
       return NextResponse.json({ success: false, message: "시험지명을 입력해 주세요." }, { status: 400 });
     }
-    if (!(hwpFile instanceof File) || !isHwp(hwpFile)) {
-      return NextResponse.json({ success: false, message: "한글 원본(.hwp 또는 .hwpx)을 선택해 주세요." }, { status: 400 });
+    if (!(hwpFile instanceof File) || !isOriginal(hwpFile)) {
+      return NextResponse.json({ success: false, message: "원본(.hwp, .hwpx 또는 .pdf)을 선택해 주세요." }, { status: 400 });
     }
     if (!(examPdf instanceof File) || !isPdf(examPdf)) {
       return NextResponse.json({ success: false, message: "시험지 PDF를 선택해 주세요." }, { status: 400 });
@@ -81,14 +81,15 @@ export async function POST(request: NextRequest) {
       return path;
     };
 
-    const hwpExtension = hwpFile.name.toLowerCase().endsWith(".hwpx") ? "hwpx" : "hwp";
+    const lowerOriginal = hwpFile.name.toLowerCase();
+    const hwpExtension = lowerOriginal.endsWith(".pdf") ? "pdf" : lowerOriginal.endsWith(".hwpx") ? "hwpx" : "hwp";
     // Supabase Storage 경로에는 원본 한글 파일명을 넣지 않습니다.
     // 한글/공백/특수문자가 포함된 이름은 InvalidKey 오류를 일으킬 수 있으므로
     // Storage에는 영문 고정 이름으로 저장하고 원래 파일명은 DB에 별도로 보관합니다.
     const hwpPath = await upload(
       hwpFile,
       `source.${hwpExtension}`,
-      hwpFile.type || "application/octet-stream"
+      hwpFile.type || (hwpExtension === "pdf" ? "application/pdf" : "application/octet-stream")
     );
     const examPdfPath = await upload(examPdf, "exam.pdf", "application/pdf");
     const solutionPdfPath = await upload(solutionPdf, "solution.pdf", "application/pdf");
@@ -129,7 +130,7 @@ export async function POST(request: NextRequest) {
     const rows = await dbResponse.json();
     return NextResponse.json({
       success: true,
-      message: "한글 원본, 시험지 PDF, 해설지 PDF가 등록되었습니다.",
+      message: "원본, 시험지 PDF, 해설지 PDF가 등록되었습니다.",
       data: rows[0],
     });
   } catch (error) {
