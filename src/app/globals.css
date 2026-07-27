@@ -356,3 +356,16 @@ body{font-size:16px;line-height:1.5}
 .question-editor-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}.question-editor-actions button{min-width:120px}
 @media(max-width:1180px){.analysis-review-layout{grid-template-columns:1fr}.analysis-question-table{border-right:0;border-bottom:1px solid var(--line);max-height:560px}.analysis-review-title{align-items:flex-start;flex-direction:column}.review-visibility-note{border-radius:10px}}
 @media(max-width:700px){.question-editor-grid{grid-template-columns:1fr}.question-editor-grid label.wide{grid-column:auto}.question-editor-actions{flex-direction:column}.question-editor-actions button{width:100%}}
+
+/* SOS22 · 원본 PDF를 옆에 둔 문항 검수 */
+.analysis-review-layout{grid-template-columns:minmax(520px,1.12fr) minmax(560px,.88fr);gap:14px;padding:14px;background:#f5f7fb}
+.analysis-review-preview,.analysis-review-side{min-width:0;border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}
+.analysis-review-preview{position:sticky;top:14px;align-self:start}
+.analysis-review-preview-head{min-height:66px;padding:11px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px}
+.analysis-review-preview-head>div:first-child{display:flex;flex-direction:column;gap:4px}.analysis-review-preview-head strong{font-size:16px;color:#273552}.analysis-review-preview-head span{font-size:11px;color:var(--muted)}
+.analysis-review-pdf{height:760px;background:#e8ecf2;display:grid;place-items:center;color:#7b8497;font-weight:800}.analysis-review-pdf iframe{width:100%;height:100%;border:0;background:#fff}
+.analysis-review-side{display:flex;flex-direction:column}.analysis-review-side .analysis-question-table{max-height:350px;border-right:0;border-bottom:1px solid var(--line)}
+.analysis-review-side .analysis-question-editor{flex:1}
+@media(max-width:1320px){.analysis-review-layout{grid-template-columns:minmax(460px,1fr) minmax(500px,1fr)}.analysis-review-pdf{height:700px}}
+@media(max-width:1050px){.analysis-review-layout{grid-template-columns:1fr}.analysis-review-preview{position:static}.analysis-review-pdf{height:600px}.analysis-review-side .analysis-question-table{max-height:420px}}
+@media(max-width:700px){.analysis-review-layout{padding:8px}.analysis-review-preview-head{align-items:stretch;flex-direction:column}.analysis-review-pdf{height:520px}}

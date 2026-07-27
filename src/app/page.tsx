@@ -1541,35 +1541,49 @@ function AnalysisPage() {
         </article>
       </section> : null}
       {questions.length > 0 ? <section className="panel analysis-question-results">
-        <div className="source-file-title analysis-review-title"><div><strong>AI 문항 분석 결과 · 검수</strong><span>총 {questions.length}문항 · 행을 누르면 오른쪽에서 바로 수정할 수 있습니다.</span></div><span className="review-visibility-note">PDF와 결과가 서로 가리지 않도록 전체 폭으로 표시됩니다.</span></div>
+        <div className="source-file-title analysis-review-title"><div><strong>AI 문항 분석 결과 · 검수</strong><span>총 {questions.length}문항 · 행을 누르면 오른쪽에서 바로 수정할 수 있습니다.</span></div><span className="review-visibility-note">원본 PDF를 옆에 두고 문항별로 바로 확정합니다.</span></div>
         <div className="analysis-review-layout">
-          <div className="analysis-question-table">
-            <div className="analysis-question-head"><span>번호</span><span>구분</span><span>단원·유형</span><span>난이도</span><span>정답</span><span>신뢰도</span></div>
-            {questions.map((q) => {
-              const result = getQuestionResult(q);
-              return <button type="button" className={`analysis-question-row ${selectedQuestionId === q.id ? "selected" : ""}`} key={q.id} onClick={() => selectQuestion(q)}>
-                <strong>{q.question_no}</strong>
-                <span>{result?.question_type === "objective" ? "객관식" : result?.question_type === "subjective" ? "단답형" : "미분류"}</span>
-                <div><b>{[result?.unit, result?.topic].filter(Boolean).join(" · ") || "분류 필요"}</b><small>{result?.summary || ""}</small></div>
-                <span>{result?.difficulty || "-"}</span>
-                <strong>{q.answer || "-"}</strong>
-                <span>{q.confidence == null ? "-" : `${Math.round(Number(q.confidence) * 100)}%`}</span>
-              </button>;
-            })}
-          </div>
-          {questionDraft ? <aside className="analysis-question-editor">
-            <div className="question-editor-head"><div><strong>{questions.find((item) => item.id === selectedQuestionId)?.question_no ?? "-"}번 문항 검수</strong><span>AI 초안을 확인하고 필요한 부분만 고치세요.</span></div><span className="question-confidence">신뢰도 {Math.round(Number(questions.find((item) => item.id === selectedQuestionId)?.confidence ?? 0) * 100)}%</span></div>
-            <div className="question-editor-grid">
-              <label><span>구분</span><select value={questionDraft.question_type} onChange={(e) => setQuestionDraft({ ...questionDraft, question_type: e.target.value })}><option value="objective">객관식</option><option value="subjective">단답·서술형</option><option value="unknown">미분류</option></select></label>
-              <label><span>난이도</span><select value={questionDraft.difficulty} onChange={(e) => setQuestionDraft({ ...questionDraft, difficulty: e.target.value })}><option value="하">하</option><option value="중">중</option><option value="상">상</option><option value="최상">최상</option></select></label>
-              <label><span>과목</span><input value={questionDraft.subject} onChange={(e) => setQuestionDraft({ ...questionDraft, subject: e.target.value })}/></label>
-              <label><span>정답</span><input value={questionDraft.answer} onChange={(e) => setQuestionDraft({ ...questionDraft, answer: e.target.value })}/></label>
-              <label className="wide"><span>단원</span><input value={questionDraft.unit} onChange={(e) => setQuestionDraft({ ...questionDraft, unit: e.target.value })}/></label>
-              <label className="wide"><span>유형</span><input value={questionDraft.topic} onChange={(e) => setQuestionDraft({ ...questionDraft, topic: e.target.value })}/></label>
-              <label className="wide"><span>문항 요약</span><textarea rows={4} value={questionDraft.summary} onChange={(e) => setQuestionDraft({ ...questionDraft, summary: e.target.value })}/></label>
+          <section className="analysis-review-preview">
+            <div className="analysis-review-preview-head">
+              <div><strong>원본 PDF 미리보기</strong><span>시험지와 해설지를 옆에 띄워 놓고 바로 검수합니다.</span></div>
+              <div className="viewer-tabs">
+                <button type="button" className={viewer === "exam" ? "active" : ""} onClick={() => setViewer("exam")}>시험지 PDF</button>
+                <button type="button" className={viewer === "solution" ? "active" : ""} onClick={() => setViewer("solution")}>해설지 PDF</button>
+              </div>
             </div>
-            <div className="question-editor-actions"><button className="secondary-button" type="button" onClick={() => setQuestionDraft({ ...questionDraft, status: "REVIEW" })}>검수 필요</button><button className="primary-button" type="button" onClick={() => void saveQuestion()} disabled={savingQuestion}>{savingQuestion ? "저장 중..." : "이 문항 저장"}</button></div>
-          </aside> : null}
+            <div className="analysis-review-pdf">
+              {activeUrl ? <iframe key={`${viewer}-${activeUrl}`} src={activeUrl} title={viewer === "exam" ? "시험지 PDF 미리보기" : "해설지 PDF 미리보기"} /> : <span>미리볼 PDF가 없습니다.</span>}
+            </div>
+          </section>
+          <section className="analysis-review-side">
+            <div className="analysis-question-table">
+              <div className="analysis-question-head"><span>번호</span><span>구분</span><span>단원·유형</span><span>난이도</span><span>정답</span><span>신뢰도</span></div>
+              {questions.map((q) => {
+                const result = getQuestionResult(q);
+                return <button type="button" className={`analysis-question-row ${selectedQuestionId === q.id ? "selected" : ""}`} key={q.id} onClick={() => selectQuestion(q)}>
+                  <strong>{q.question_no}</strong>
+                  <span>{result?.question_type === "objective" ? "객관식" : result?.question_type === "subjective" ? "단답형" : "미분류"}</span>
+                  <div><b>{[result?.unit, result?.topic].filter(Boolean).join(" · ") || "분류 필요"}</b><small>{result?.summary || ""}</small></div>
+                  <span>{result?.difficulty || "-"}</span>
+                  <strong>{q.answer || "-"}</strong>
+                  <span>{q.confidence == null ? "-" : `${Math.round(Number(q.confidence) * 100)}%`}</span>
+                </button>;
+              })}
+            </div>
+            {questionDraft ? <aside className="analysis-question-editor">
+              <div className="question-editor-head"><div><strong>{questions.find((item) => item.id === selectedQuestionId)?.question_no ?? "-"}번 문항 검수</strong><span>왼쪽 원본과 비교해 필요한 부분만 고치세요.</span></div><span className="question-confidence">신뢰도 {Math.round(Number(questions.find((item) => item.id === selectedQuestionId)?.confidence ?? 0) * 100)}%</span></div>
+              <div className="question-editor-grid">
+                <label><span>구분</span><select value={questionDraft.question_type} onChange={(e) => setQuestionDraft({ ...questionDraft, question_type: e.target.value })}><option value="objective">객관식</option><option value="subjective">단답·서술형</option><option value="unknown">미분류</option></select></label>
+                <label><span>난이도</span><select value={questionDraft.difficulty} onChange={(e) => setQuestionDraft({ ...questionDraft, difficulty: e.target.value })}><option value="하">하</option><option value="중">중</option><option value="상">상</option><option value="최상">최상</option></select></label>
+                <label><span>과목</span><input value={questionDraft.subject} onChange={(e) => setQuestionDraft({ ...questionDraft, subject: e.target.value })}/></label>
+                <label><span>정답</span><input value={questionDraft.answer} onChange={(e) => setQuestionDraft({ ...questionDraft, answer: e.target.value })}/></label>
+                <label className="wide"><span>단원</span><input value={questionDraft.unit} onChange={(e) => setQuestionDraft({ ...questionDraft, unit: e.target.value })}/></label>
+                <label className="wide"><span>유형</span><input value={questionDraft.topic} onChange={(e) => setQuestionDraft({ ...questionDraft, topic: e.target.value })}/></label>
+                <label className="wide"><span>문항 요약</span><textarea rows={4} value={questionDraft.summary} onChange={(e) => setQuestionDraft({ ...questionDraft, summary: e.target.value })}/></label>
+              </div>
+              <div className="question-editor-actions"><button className="secondary-button" type="button" onClick={() => setQuestionDraft({ ...questionDraft, status: "REVIEW" })}>검수 필요</button><button className="primary-button" type="button" onClick={() => void saveQuestion()} disabled={savingQuestion}>{savingQuestion ? "저장 중..." : "이 문항 저장"}</button></div>
+            </aside> : null}
+          </section>
         </div>
       </section> : null}
     </div>}
