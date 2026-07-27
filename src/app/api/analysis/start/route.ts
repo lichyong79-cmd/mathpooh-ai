@@ -16,6 +16,11 @@ type AiQuestion = {
   difficulty: "하" | "중" | "상" | "최상";
   confidence: number;
   summary: string;
+  page_no: number;
+  crop_x: number;
+  crop_y: number;
+  crop_width: number;
+  crop_height: number;
 };
 
 type AiPayload = {
@@ -53,6 +58,11 @@ const analysisSchema = {
           "difficulty",
           "confidence",
           "summary",
+          "page_no",
+          "crop_x",
+          "crop_y",
+          "crop_width",
+          "crop_height",
         ],
         properties: {
           question_no: { type: "integer", minimum: 1, maximum: 200 },
@@ -64,6 +74,11 @@ const analysisSchema = {
           difficulty: { type: "string", enum: ["하", "중", "상", "최상"] },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           summary: { type: "string" },
+          page_no: { type: "integer", minimum: 1, maximum: 500 },
+          crop_x: { type: "number", minimum: 0, maximum: 100 },
+          crop_y: { type: "number", minimum: 0, maximum: 100 },
+          crop_width: { type: "number", exclusiveMinimum: 0, maximum: 100 },
+          crop_height: { type: "number", exclusiveMinimum: 0, maximum: 100 },
         },
       },
     },
@@ -209,6 +224,9 @@ export async function POST(request: NextRequest) {
       "difficulty는 하·중·상·최상 중 하나다.",
       "confidence는 정답 및 분류 전체에 대한 신뢰도를 0~1로 표시한다.",
       "summary는 문제의 핵심 요구를 한 문장으로 요약하되 풀이 전체를 쓰지 않는다.",
+      "각 문항이 있는 시험지 페이지 번호와 문항 전체 영역을 페이지 기준 백분율 좌표로 반환한다.",
+      "crop_x, crop_y는 왼쪽·위쪽 시작점이고 crop_width, crop_height는 선택지까지 포함한 전체 문항 크기다.",
+      "문항 번호 바로 위에서 시작하고 다음 문항 번호 직전에서 끝나도록 하며, 좌우 여백은 수식·그림이 잘리지 않게 포함한다.",
       `시험지 정보: ${source.title} / ${source.source ?? ""} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
     ].join("\n");
 
@@ -267,6 +285,11 @@ export async function POST(request: NextRequest) {
       answer: question.answer.trim() || null,
       status: "REVIEW",
       confidence: Math.max(0, Math.min(1, Number(question.confidence))),
+      page_no: Number(question.page_no),
+      crop_x: Number(question.crop_x),
+      crop_y: Number(question.crop_y),
+      crop_width: Number(question.crop_width),
+      crop_height: Number(question.crop_height),
       ai_result: {
         question_type: question.question_type,
         subject: question.subject || source.subject || null,
@@ -302,6 +325,9 @@ export async function POST(request: NextRequest) {
         .in("id", autoIds);
       if (autoUpdate.error) throw autoUpdate.error;
     }
+
+    // 문항 메타데이터 저장 이후 실제 문항 이미지는 별도 materialize API에서 생성합니다.
+    // 좌표 검수가 필요한 경우 분석 화면에서 수정한 뒤 다시 생성할 수 있습니다.
 
     if (reviewQuestions.length > 0) {
       const reviewIds = reviewQuestions.map((question) => question.id);

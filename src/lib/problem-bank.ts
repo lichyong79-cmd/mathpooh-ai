@@ -7,6 +7,12 @@ type AnalysisQuestion = {
   confidence: number | null;
   ai_result: Record<string, unknown> | null;
   review_result: Record<string, unknown> | null;
+  page_no?: number | null;
+  crop_x?: number | null;
+  crop_y?: number | null;
+  crop_width?: number | null;
+  crop_height?: number | null;
+  question_image_path?: string | null;
 };
 
 type SourceFile = {
@@ -96,6 +102,12 @@ export async function registerQuestions(
       exam_pdf_path: source.exam_pdf_path,
       solution_pdf_path: source.solution_pdf_path,
       confidence: question.confidence,
+      page_no: question.page_no ?? null,
+      crop_x: question.crop_x ?? null,
+      crop_y: question.crop_y ?? null,
+      crop_width: question.crop_width ?? null,
+      crop_height: question.crop_height ?? null,
+      question_image_path: question.question_image_path ?? null,
       embedding_text: embeddingTexts[index],
       embedding: embeddings[index] ?? null,
       status: "ACTIVE",

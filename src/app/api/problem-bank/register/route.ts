@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
 
     const questionQuery = await supabase
       .from("analysis_questions")
-      .select("id,question_no,answer,status,confidence,ai_result,review_result")
+      .select("id,question_no,answer,status,confidence,ai_result,review_result,page_no,crop_x,crop_y,crop_width,crop_height,question_image_path")
       .eq("analysis_id", analysisId)
       .order("question_no");
     if (questionQuery.error) throw questionQuery.error;

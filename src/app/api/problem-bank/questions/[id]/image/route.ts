@@ -1,0 +1,29 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET(_: NextRequest, context: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await context.params;
+    const supabase = createClient();
+    const question = await supabase
+      .from("problem_bank_questions")
+      .select("question_image_path")
+      .eq("id", id)
+      .single();
+    if (question.error || !question.data?.question_image_path) {
+      return NextResponse.json({ success: false, message: "문항 이미지가 없습니다." }, { status: 404 });
+    }
+    const signed = await supabase.storage.from("question-images")
+      .createSignedUrl(question.data.question_image_path, 60 * 30);
+    if (signed.error) throw signed.error;
+    return NextResponse.json({ success: true, imageUrl: signed.data.signedUrl });
+  } catch (error) {
+    return NextResponse.json({
+      success: false,
+      message: error instanceof Error ? error.message : "문항 이미지를 불러오지 못했습니다.",
+    }, { status: 500 });
+  }
+}

@@ -23,6 +23,8 @@ type Problem = {
   status: "ACTIVE" | "HOLD" | "ARCHIVED";
   created_at: string;
   updated_at: string;
+  question_image_path: string | null;
+  page_no: number | null;
 };
 
 type Draft = Pick<Problem, "title" | "grade" | "subject" | "unit" | "topic" | "difficulty" | "question_type" | "answer" | "summary" | "source_name" | "status">;
@@ -65,9 +67,9 @@ export default function ProblemBankPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<Draft>(emptyDraft);
-  const [examUrl, setExamUrl] = useState<string | null>(null);
-  const [solutionUrl, setSolutionUrl] = useState<string | null>(null);
-  const [viewer, setViewer] = useState<"exam" | "solution">("exam");
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageLoading, setImageLoading] = useState(false);
+  const [materializing, setMaterializing] = useState(false);
 
   const loadProblems = useCallback(async () => {
     const config = getSupabaseConfig();
@@ -83,7 +85,7 @@ export default function ProblemBankPage() {
       const fields = [
         "id", "source_file_id", "analysis_question_id", "question_no", "problem_code", "title",
         "grade", "subject", "unit", "topic", "difficulty", "question_type", "answer", "summary",
-        "source_name", "confidence", "status", "created_at", "updated_at",
+        "source_name", "confidence", "status", "created_at", "updated_at", "question_image_path", "page_no",
       ].join(",");
       const response = await fetch(
         `${config.url}/rest/v1/problem_bank_questions?select=${fields}&order=created_at.desc`,
@@ -107,8 +109,7 @@ export default function ProblemBankPage() {
   useEffect(() => {
     if (!selected) {
       setDraft(emptyDraft);
-      setExamUrl(null);
-      setSolutionUrl(null);
+      setImageUrl(null);
       return;
     }
 
@@ -126,19 +127,18 @@ export default function ProblemBankPage() {
       status: selected.status,
     });
 
-    setViewer("exam");
-    setExamUrl(null);
-    setSolutionUrl(null);
+    setImageUrl(null);
+    setImageLoading(true);
     void (async () => {
       try {
-        const response = await fetch(`/api/source-files/${selected.source_file_id}/signed-urls`, { cache: "no-store" });
-        const result = await response.json() as { success?: boolean; examUrl?: string | null; solutionUrl?: string | null; message?: string };
-        if (!response.ok || !result.success) throw new Error(result.message || "PDF 주소를 불러오지 못했습니다.");
-        setExamUrl(result.examUrl ?? null);
-        setSolutionUrl(result.solutionUrl ?? null);
+        const response = await fetch(`/api/problem-bank/questions/${selected.id}/image`, { cache: "no-store" });
+        const result = await response.json() as { success?: boolean; imageUrl?: string; message?: string };
+        if (!response.ok || !result.success) throw new Error(result.message || "문항 이미지를 불러오지 못했습니다.");
+        setImageUrl(result.imageUrl ?? null);
       } catch {
-        setExamUrl(null);
-        setSolutionUrl(null);
+        setImageUrl(null);
+      } finally {
+        setImageLoading(false);
       }
     })();
   }, [selected]);
@@ -214,7 +214,30 @@ export default function ProblemBankPage() {
     }
   };
 
-  const shownPdf = viewer === "exam" ? examUrl : solutionUrl;
+  const materialize = async () => {
+    if (!selected) return;
+    setMaterializing(true);
+    setMessage("");
+    setError("");
+    try {
+      const response = await fetch("/api/problem-bank/materialize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceFileId: selected.source_file_id }),
+      });
+      const result = await response.json() as { success?: boolean; saved?: number; message?: string; errors?: string[] };
+      if (!response.ok || !result.success) throw new Error(result.message || "문항 이미지 생성에 실패했습니다.");
+      setMessage(result.message || `${result.saved ?? 0}개 문항 이미지를 생성했습니다.`);
+      await loadProblems();
+      const imageResponse = await fetch(`/api/problem-bank/questions/${selected.id}/image`, { cache: "no-store" });
+      const imageResult = await imageResponse.json() as { success?: boolean; imageUrl?: string };
+      setImageUrl(imageResult.success ? imageResult.imageUrl ?? null : null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "문항 이미지 생성에 실패했습니다.");
+    } finally {
+      setMaterializing(false);
+    }
+  };
 
   return (
     <main className="bank-page">
@@ -256,12 +279,13 @@ export default function ProblemBankPage() {
             <div className="pdf-panel">
               <div className="pdf-head">
                 <div><strong>{selected.title}</strong><span>{selected.source_name || "출처 미입력"} · {formatDate(selected.created_at)}</span></div>
-                <div className="pdf-tabs">
-                  <button className={viewer === "exam" ? "active" : ""} onClick={() => setViewer("exam")}>시험지</button>
-                  <button className={viewer === "solution" ? "active" : ""} onClick={() => setViewer("solution")}>해설지</button>
-                </div>
+                <button className="make-image-button" type="button" onClick={() => void materialize()} disabled={materializing}>
+                  {materializing ? "문항 분리 중..." : "이 시험지 문항 이미지 생성"}
+                </button>
               </div>
-              <div className="pdf-viewer">{shownPdf ? <iframe title={`${viewer} PDF`} src={`${shownPdf}#page=1&view=FitH`} /> : <span>표시할 PDF가 없습니다.</span>}</div>
+              <div className="question-viewer">
+                {imageLoading ? <span>문항 이미지를 불러오는 중입니다.</span> : imageUrl ? <img src={imageUrl} alt={`${selected.question_no}번 문항`} /> : <div className="no-image"><b>개별 문항 이미지가 없습니다.</b><span>위 버튼을 눌러 이 시험지의 문항을 각각 저장해 주세요.</span></div>}
+              </div>
             </div>
 
             <form className="edit-panel" onSubmit={(event) => { event.preventDefault(); void save(); }}>
@@ -286,7 +310,7 @@ export default function ProblemBankPage() {
       </section>
 
       <style jsx>{`
-        .bank-page{min-height:100vh;background:#f4f6fa;color:#263657;padding:24px;font-family:Arial,"Noto Sans KR",sans-serif}.bank-header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;max-width:1800px;margin:0 auto 18px}.bank-header p{margin:8px 0 2px;color:#5368e8;font-size:12px;font-weight:900;letter-spacing:.08em}.bank-header h1{margin:0;font-size:32px}.bank-header span{display:block;margin-top:6px;color:#7b8497;font-size:13px}.back-button,.refresh-button{border:1px solid #d9deea;background:#fff;border-radius:11px;padding:10px 13px;font-weight:800;color:#44506d;cursor:pointer}.filter-bar{max-width:1800px;margin:0 auto 14px;display:grid;grid-template-columns:minmax(280px,1.5fr) repeat(4,minmax(130px,.55fr));gap:10px;padding:14px;background:#fff;border:1px solid #e0e4ed;border-radius:15px}.filter-bar input,.filter-bar select{height:44px;border:1px solid #d8deea;border-radius:10px;background:#fff;padding:0 12px;font:inherit;color:#334163}.notice{max-width:1800px;margin:0 auto 12px;padding:12px 14px;border-radius:11px;font-size:13px;font-weight:800}.notice.success{background:#eaf8f1;color:#17805b}.notice.error{background:#fff0f1;color:#b84451}.bank-layout{max-width:1800px;margin:0 auto;display:grid;grid-template-columns:minmax(440px,.72fr) minmax(760px,1.28fr);gap:14px}.problem-list,.problem-detail{background:#fff;border:1px solid #e0e4ed;border-radius:16px;overflow:hidden;min-width:0}.problem-list{max-height:calc(100vh - 190px);overflow:auto}.list-head,.problem-row{display:grid;grid-template-columns:105px minmax(220px,1fr) 70px;gap:12px;align-items:center}.list-head{position:sticky;top:0;z-index:2;padding:13px 16px;background:#f7f8fb;color:#7b8497;font-size:12px;font-weight:900;border-bottom:1px solid #e5e8ef}.problem-row{width:100%;padding:14px 16px;border:0;border-bottom:1px solid #edf0f5;background:#fff;text-align:left;color:inherit;cursor:pointer}.problem-row:hover{background:#f8f9ff}.problem-row.selected{background:#eef2ff;box-shadow:inset 4px 0 0 #5368e8}.problem-row div{display:flex;flex-direction:column;gap:4px;min-width:0}.problem-row strong{font-size:15px}.problem-row b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.problem-row small{color:#8a92a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.problem-row>span{justify-self:start;padding:5px 8px;border-radius:999px;background:#f0f2f7;font-size:12px;font-weight:900}.problem-detail{display:grid;grid-template-columns:minmax(420px,1.15fr) minmax(360px,.85fr);min-height:720px}.pdf-panel{min-width:0;border-right:1px solid #e2e6ee}.pdf-head,.edit-head{min-height:68px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 16px;border-bottom:1px solid #e4e7ee}.pdf-head>div:first-child,.edit-head>div{display:flex;flex-direction:column;gap:4px}.pdf-head span,.edit-head span{font-size:12px;color:#7b8497}.pdf-tabs{display:flex;gap:6px}.pdf-tabs button{border:1px solid #d8deea;background:#fff;border-radius:9px;padding:8px 11px;font-weight:800;cursor:pointer}.pdf-tabs button.active{background:#5368e8;color:#fff;border-color:#5368e8}.pdf-viewer{height:calc(100vh - 280px);min-height:650px;background:#eef1f5;display:grid;place-items:center;color:#7b8497;font-weight:800}.pdf-viewer iframe{width:100%;height:100%;border:0;background:#fff}.edit-panel{min-width:0;background:#fbfcff;display:flex;flex-direction:column}.edit-head code{font-size:11px;color:#5368e8;background:#eef2ff;padding:7px 9px;border-radius:8px;max-width:180px;overflow:hidden;text-overflow:ellipsis}.edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px;padding:16px;overflow:auto}.edit-grid label{display:flex;flex-direction:column;gap:6px}.edit-grid label.wide{grid-column:1/-1}.edit-grid label span{font-size:12px;font-weight:900;color:#6d778b}.edit-grid input,.edit-grid select,.edit-grid textarea{width:100%;border:1px solid #d8deea;border-radius:10px;background:#fff;padding:0 11px;color:#263657;font:inherit;font-weight:700;box-sizing:border-box}.edit-grid input,.edit-grid select{height:42px}.edit-grid textarea{padding:11px;resize:vertical;line-height:1.5}.edit-actions{margin-top:auto;display:flex;justify-content:flex-end;gap:9px;padding:14px 16px;border-top:1px solid #e4e7ee;background:#fff}.edit-actions button{min-width:110px;height:42px;border-radius:10px;font-weight:900;cursor:pointer}.delete-button{border:1px solid #edc8cc;background:#fff;color:#b84451}.save-button{border:1px solid #5368e8;background:#5368e8;color:#fff}.edit-actions button:disabled{opacity:.5;cursor:not-allowed}.empty{padding:70px 20px;text-align:center;color:#8a92a3}.empty.large{grid-column:1/-1;display:grid;place-items:center;min-height:600px}@media(max-width:1250px){.bank-layout{grid-template-columns:390px minmax(0,1fr)}.problem-detail{grid-template-columns:1fr}.pdf-panel{border-right:0;border-bottom:1px solid #e2e6ee}.pdf-viewer{height:600px;min-height:0}}@media(max-width:900px){.bank-page{padding:12px}.filter-bar{grid-template-columns:1fr 1fr}.filter-bar input{grid-column:1/-1}.bank-layout{grid-template-columns:1fr}.problem-list{max-height:440px}.bank-header{align-items:stretch;flex-direction:column}.refresh-button{align-self:flex-start}}@media(max-width:560px){.filter-bar{grid-template-columns:1fr}.filter-bar input{grid-column:auto}.list-head,.problem-row{grid-template-columns:80px minmax(150px,1fr) 55px}.edit-grid{grid-template-columns:1fr}.edit-grid label.wide{grid-column:auto}.pdf-head{align-items:flex-start;flex-direction:column}.pdf-viewer{height:500px}}
+        .bank-page{min-height:100vh;background:#f4f6fa;color:#263657;padding:24px;font-family:Arial,"Noto Sans KR",sans-serif}.bank-header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;max-width:1800px;margin:0 auto 18px}.bank-header p{margin:8px 0 2px;color:#5368e8;font-size:12px;font-weight:900;letter-spacing:.08em}.bank-header h1{margin:0;font-size:32px}.bank-header span{display:block;margin-top:6px;color:#7b8497;font-size:13px}.back-button,.refresh-button{border:1px solid #d9deea;background:#fff;border-radius:11px;padding:10px 13px;font-weight:800;color:#44506d;cursor:pointer}.filter-bar{max-width:1800px;margin:0 auto 14px;display:grid;grid-template-columns:minmax(280px,1.5fr) repeat(4,minmax(130px,.55fr));gap:10px;padding:14px;background:#fff;border:1px solid #e0e4ed;border-radius:15px}.filter-bar input,.filter-bar select{height:44px;border:1px solid #d8deea;border-radius:10px;background:#fff;padding:0 12px;font:inherit;color:#334163}.notice{max-width:1800px;margin:0 auto 12px;padding:12px 14px;border-radius:11px;font-size:13px;font-weight:800}.notice.success{background:#eaf8f1;color:#17805b}.notice.error{background:#fff0f1;color:#b84451}.bank-layout{max-width:1800px;margin:0 auto;display:grid;grid-template-columns:minmax(440px,.72fr) minmax(760px,1.28fr);gap:14px}.problem-list,.problem-detail{background:#fff;border:1px solid #e0e4ed;border-radius:16px;overflow:hidden;min-width:0}.problem-list{max-height:calc(100vh - 190px);overflow:auto}.list-head,.problem-row{display:grid;grid-template-columns:105px minmax(220px,1fr) 70px;gap:12px;align-items:center}.list-head{position:sticky;top:0;z-index:2;padding:13px 16px;background:#f7f8fb;color:#7b8497;font-size:12px;font-weight:900;border-bottom:1px solid #e5e8ef}.problem-row{width:100%;padding:14px 16px;border:0;border-bottom:1px solid #edf0f5;background:#fff;text-align:left;color:inherit;cursor:pointer}.problem-row:hover{background:#f8f9ff}.problem-row.selected{background:#eef2ff;box-shadow:inset 4px 0 0 #5368e8}.problem-row div{display:flex;flex-direction:column;gap:4px;min-width:0}.problem-row strong{font-size:15px}.problem-row b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.problem-row small{color:#8a92a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.problem-row>span{justify-self:start;padding:5px 8px;border-radius:999px;background:#f0f2f7;font-size:12px;font-weight:900}.problem-detail{display:grid;grid-template-columns:minmax(420px,1.15fr) minmax(360px,.85fr);min-height:720px}.pdf-panel{min-width:0;border-right:1px solid #e2e6ee}.pdf-head,.edit-head{min-height:68px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 16px;border-bottom:1px solid #e4e7ee}.pdf-head>div:first-child,.edit-head>div{display:flex;flex-direction:column;gap:4px}.pdf-head span,.edit-head span{font-size:12px;color:#7b8497}.make-image-button{border:1px solid #5368e8;background:#5368e8;color:#fff;border-radius:9px;padding:9px 12px;font-weight:900;cursor:pointer}.make-image-button:disabled{opacity:.55}.question-viewer{height:calc(100vh - 280px);min-height:650px;background:#eef1f5;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:28px;color:#7b8497;font-weight:800}.question-viewer img{display:block;max-width:100%;height:auto;background:#fff;box-shadow:0 8px 28px rgba(32,45,74,.12)}.no-image{min-height:520px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}.no-image span{font-size:13px;font-weight:600}.edit-panel{min-width:0;background:#fbfcff;display:flex;flex-direction:column}.edit-head code{font-size:11px;color:#5368e8;background:#eef2ff;padding:7px 9px;border-radius:8px;max-width:180px;overflow:hidden;text-overflow:ellipsis}.edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px;padding:16px;overflow:auto}.edit-grid label{display:flex;flex-direction:column;gap:6px}.edit-grid label.wide{grid-column:1/-1}.edit-grid label span{font-size:12px;font-weight:900;color:#6d778b}.edit-grid input,.edit-grid select,.edit-grid textarea{width:100%;border:1px solid #d8deea;border-radius:10px;background:#fff;padding:0 11px;color:#263657;font:inherit;font-weight:700;box-sizing:border-box}.edit-grid input,.edit-grid select{height:42px}.edit-grid textarea{padding:11px;resize:vertical;line-height:1.5}.edit-actions{margin-top:auto;display:flex;justify-content:flex-end;gap:9px;padding:14px 16px;border-top:1px solid #e4e7ee;background:#fff}.edit-actions button{min-width:110px;height:42px;border-radius:10px;font-weight:900;cursor:pointer}.delete-button{border:1px solid #edc8cc;background:#fff;color:#b84451}.save-button{border:1px solid #5368e8;background:#5368e8;color:#fff}.edit-actions button:disabled{opacity:.5;cursor:not-allowed}.empty{padding:70px 20px;text-align:center;color:#8a92a3}.empty.large{grid-column:1/-1;display:grid;place-items:center;min-height:600px}@media(max-width:1250px){.bank-layout{grid-template-columns:390px minmax(0,1fr)}.problem-detail{grid-template-columns:1fr}.pdf-panel{border-right:0;border-bottom:1px solid #e2e6ee}.question-viewer{height:600px;min-height:0}}@media(max-width:900px){.bank-page{padding:12px}.filter-bar{grid-template-columns:1fr 1fr}.filter-bar input{grid-column:1/-1}.bank-layout{grid-template-columns:1fr}.problem-list{max-height:440px}.bank-header{align-items:stretch;flex-direction:column}.refresh-button{align-self:flex-start}}@media(max-width:560px){.filter-bar{grid-template-columns:1fr}.filter-bar input{grid-column:auto}.list-head,.problem-row{grid-template-columns:80px minmax(150px,1fr) 55px}.edit-grid{grid-template-columns:1fr}.edit-grid label.wide{grid-column:auto}.pdf-head{align-items:flex-start;flex-direction:column}.question-viewer{height:500px}}
       `}</style>
     </main>
   );
