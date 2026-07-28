@@ -66,7 +66,50 @@ export default function AiWorkspace(){
   }
   doc.cleanup();setSaveState(`문항 이미지 ${completed}개 생성 완료`);return completed;
  }
- async function analyze(){if(!workspace)return;setBusy("analyze");setError("");setMessage("");try{const sourceFileId=workspace.source.id;const r=await fetch("/api/analysis/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sourceFileId})});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message);await loadWorkspace(sourceFileId);const cropped=await materializeAll(sourceFileId);setMessage(`AI 분석 완료 · ${p.questionCount}문항 · 자동 자르기 ${cropped}문항${p.cropInvalidCount?` · 위치 확인 ${p.cropInvalidCount}문항`:""} · 재확인 권장 ${p.reviewPending||0}문항`);await loadWorkspace(sourceFileId);await loadList();}catch(e){setError(e instanceof Error?e.message:"AI 분석 실패");}finally{setBusy("");}}
+ type PdfAnchor={questionNo:number;pageNo:number;column:"left"|"right";x:number;y:number};
+ function questionColumn(q:Question):"left"|"right"|"full"{const x=Number(q.crop_x||0),w=Number(q.crop_width||0);if(w>70)return "full";return x<48?"left":"right";}
+ function stableColumnRect(column:"left"|"right"|"full"){if(column==="left")return{x:4,width:45.2};if(column==="right")return{x:50.8,width:45.2};return{x:4,width:92};}
+ function parseQuestionNo(text:string){const normalized=text.trim().replace(/^[\[({]\s*/,"");const match=normalized.match(/^(\d{1,3})\s*[.)]\s*/);if(!match)return null;const n=Number(match[1]);return n>=1&&n<=200?n:null;}
+ async function patchCrop(question:Question,patch:Partial<Question>){const r=await fetch(`/api/analysis/questions/${question.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(patch)});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message||`${question.question_no}번 좌표 저장 실패`);return p.question as Question;}
+ function findLastInk(canvas:HTMLCanvasElement,xPct:number,widthPct:number,topPct:number,bottomPct:number){
+  const ctx=canvas.getContext("2d",{willReadFrequently:true});if(!ctx)return null;
+  const inset=Math.max(8,Math.round(canvas.width*.012));
+  const x0=clamp(Math.floor(canvas.width*xPct/100)+inset,0,canvas.width-1),x1=clamp(Math.ceil(canvas.width*(xPct+widthPct)/100)-inset,x0+1,canvas.width);
+  const y0=clamp(Math.floor(canvas.height*topPct/100),0,canvas.height-1),y1=clamp(Math.ceil(canvas.height*bottomPct/100),y0+1,canvas.height);
+  const image=ctx.getImageData(x0,y0,x1-x0,y1-y0),data=image.data,rowWidth=x1-x0;
+  const minInk=Math.max(3,Math.floor(rowWidth*.0035));let last=-1;
+  for(let y=0;y<y1-y0;y++){
+   let ink=0;const row=y*rowWidth*4;
+   for(let x=0;x<rowWidth;x+=1){const i=row+x*4;const lum=data[i]*.299+data[i+1]*.587+data[i+2]*.114;if(data[i+3]>20&&lum<190){ink++;if(ink>=minInk)break;}}
+   if(ink>=minInk)last=y;
+  }
+  return last<0?null:(y0+last)/canvas.height*100;
+ }
+ async function refineQuestionCrops(sourceFileId:string){
+  setSaveState("PDF 텍스트 좌표 읽는 중...");
+  const workspaceResponse=await fetch(`/api/analysis/source/${sourceFileId}`,{cache:"no-store"});const fresh=await workspaceResponse.json();if(!workspaceResponse.ok||!fresh.success)throw new Error(fresh.message||"문항 좌표 불러오기 실패");
+  const freshQuestions=(fresh.questions||[]) as Question[];if(!freshQuestions.length)return{updated:0,anchorCount:0};
+  const rawUrl=typeof fresh.examUrl==="string"?fresh.examUrl:(typeof fresh.examUrl?.signedUrl==="string"?fresh.examUrl.signedUrl:"");if(!rawUrl)throw new Error("시험지 PDF 주소가 없습니다.");
+  const pdfjs=await import("pdfjs-dist");pdfjs.GlobalWorkerOptions.workerSrc=new URL("pdfjs-dist/build/pdf.worker.min.mjs",import.meta.url).toString();
+  const pdfResponse=await fetch(rawUrl,{cache:"no-store"});if(!pdfResponse.ok)throw new Error(`시험지 PDF 불러오기 실패 (${pdfResponse.status})`);const bytes=new Uint8Array(await pdfResponse.arrayBuffer());const doc=await pdfjs.getDocument({data:bytes}).promise;
+  const anchors:PdfAnchor[]=[];const canvases=new Map<number,HTMLCanvasElement>();
+  for(let pageNo=1;pageNo<=doc.numPages;pageNo++){
+   setSaveState(`PDF OCR 좌표 분석 ${pageNo}/${doc.numPages}`);const pg=await doc.getPage(pageNo);const viewport=pg.getViewport({scale:2});
+   const canvas=document.createElement("canvas");canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);const ctx=canvas.getContext("2d");if(!ctx)throw new Error("PDF 분석 캔버스를 만들 수 없습니다.");await pg.render({canvas,canvasContext:ctx,viewport}).promise;canvases.set(pageNo,canvas);
+   const text=await pg.getTextContent();
+   for(const raw of text.items as any[]){if(typeof raw?.str!=="string")continue;const questionNo=parseQuestionNo(raw.str);if(!questionNo)continue;const tx=Number(raw.transform?.[4]??0),ty=Number(raw.transform?.[5]??0);const [vx,vy]=viewport.convertToViewportPoint(tx,ty);const itemHeight=Math.max(8,Math.abs(Number(raw.height||10))*2);const x=vx/viewport.width*100,y=(vy-itemHeight)/viewport.height*100;
+    const column=x<45?"left":x>48?"right":null;if(!column)continue;const inStartBand=column==="left"?(x>=4&&x<=22):(x>=50&&x<=70);if(!inStartBand)continue;anchors.push({questionNo,pageNo,column,x,y:clamp(y,0,99)});
+   }
+  }
+  const starts=new Map<string,number>();let anchorCount=0;
+  for(const q of freshQuestions){const column=questionColumn(q);const candidates=anchors.filter(a=>a.questionNo===Number(q.question_no)&&a.pageNo===Number(q.page_no||1)&&(column==="full"||a.column===column));if(candidates.length){const current=Number(q.crop_y||0);candidates.sort((a,b)=>Math.abs(a.y-current)-Math.abs(b.y-current));starts.set(q.id,candidates[0].y);anchorCount++;}else starts.set(q.id,Number(q.crop_y||0));}
+  const sorted=[...freshQuestions].sort((a,b)=>Number(a.page_no||1)-Number(b.page_no||1)||(starts.get(a.id)||0)-(starts.get(b.id)||0));const updated:Question[]=[];
+  for(let index=0;index<sorted.length;index++){
+   const q=sorted[index],pageNo=Number(q.page_no||1),column=questionColumn(q),start=clamp((starts.get(q.id)??Number(q.crop_y||0))-.55,0,98);const rect=stableColumnRect(column);const next=sorted.find((candidate,i)=>i>index&&Number(candidate.page_no||1)===pageNo&&questionColumn(candidate)===column&&(starts.get(candidate.id)??0)>start+1);const hardBottom=next?clamp((starts.get(next.id)??99)-.7,start+4,98.5):98.2;const canvas=canvases.get(pageNo);const lastInk=canvas?findLastInk(canvas,rect.x,rect.width,start,hardBottom):null;const bottom=clamp(lastInk==null?hardBottom:lastInk+1.15,start+4,hardBottom);const patch={crop_x:rect.x,crop_y:start,crop_width:rect.width,crop_height:bottom-start};updated.push(await patchCrop(q,patch));setSaveState(`실제 문항영역 보정 ${updated.length}/${sorted.length}`);
+  }
+  doc.cleanup();setWorkspace((w)=>w?{...w,questions:updated.sort((a,b)=>a.question_no-b.question_no)}:w);setSaveState(`PDF 좌표 ${anchorCount}개 · 문항영역 ${updated.length}개 보정 완료`);return{updated:updated.length,anchorCount};
+ }
+ async function analyze(){if(!workspace)return;setBusy("analyze");setError("");setMessage("");try{const sourceFileId=workspace.source.id;const r=await fetch("/api/analysis/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sourceFileId})});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message);const refined=await refineQuestionCrops(sourceFileId);const cropped=await materializeAll(sourceFileId);setMessage(`분석 완료 · ${p.questionCount}문항 · PDF 문항번호 ${refined.anchorCount}개 확인 · 실제영역 ${refined.updated}개 보정 · 이미지 ${cropped}개 생성`);await loadWorkspace(sourceFileId);await loadList();}catch(e){setError(e instanceof Error?e.message:"AI 분석 실패");}finally{setBusy("");}}
 
  function localPatch(id:string,patch:Partial<Question>){setWorkspace(w=>w?{...w,questions:w.questions.map(q=>q.id===id?{...q,...patch}:q)}:w);}
  function scheduleSave(q:Question,patch:Record<string,unknown>){setSaveState("저장 중...");clearTimeout(saveTimers.current[q.id]);saveTimers.current[q.id]=setTimeout(async()=>{try{const r=await fetch(`/api/analysis/questions/${q.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(patch)});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message);setWorkspace(w=>w?{...w,questions:w.questions.map(x=>x.id===q.id?p.question:x)}:w);setSaveState("자동저장 완료");}catch(e){setSaveState("저장 실패");setError(e instanceof Error?e.message:"저장 실패");}},500);}
