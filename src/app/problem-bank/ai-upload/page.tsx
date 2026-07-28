@@ -105,31 +105,7 @@ export default function AiWorkspace(){
   for(const q of freshQuestions){const column=questionColumn(q);const candidates=anchors.filter(a=>a.questionNo===Number(q.question_no)&&a.pageNo===Number(q.page_no||1)&&(column==="full"||a.column===column));if(candidates.length){const current=Number(q.crop_y||0);candidates.sort((a,b)=>Math.abs(a.y-current)-Math.abs(b.y-current));starts.set(q.id,candidates[0].y);anchorCount++;}else starts.set(q.id,Number(q.crop_y||0));}
   const sorted=[...freshQuestions].sort((a,b)=>Number(a.page_no||1)-Number(b.page_no||1)||(starts.get(a.id)||0)-(starts.get(b.id)||0));const updated:Question[]=[];
   for(let index=0;index<sorted.length;index++){
-   const q=sorted[index];
-   const pageNo=Number(q.page_no||1);
-   const column=questionColumn(q);
-   const anchorY=starts.get(q.id)??Number(q.crop_y||0);
-   const previous=[...sorted].slice(0,index).reverse().find(candidate=>Number(candidate.page_no||1)===pageNo&&questionColumn(candidate)===column);
-   const next=sorted.find((candidate,i)=>i>index&&Number(candidate.page_no||1)===pageNo&&questionColumn(candidate)===column&&(starts.get(candidate.id)??0)>anchorY+1);
-
-   // PDF 텍스트 좌표는 문항번호 글자의 기준선에 가까워 분수의 분자·근호 윗부분이 잘릴 수 있다.
-   // 각 페이지·단의 첫 문항은 소제목과 출처 문구까지 포함하도록 더 위에서 시작한다.
-   const topPadding=previous?1.6:3.2;
-   const start=clamp(anchorY-topPadding,0,98);
-   const rect=stableColumnRect(column);
-
-   // 다음 문항이 있으면 그 시작 직전까지만 검사한다.
-   // 단의 마지막 문항은 페이지 하단 꼬리말과 장식선을 제외하기 위해 94% 아래를 보지 않는다.
-   const footerLimit=94.0;
-   const hardBottom=next
-    ?clamp((starts.get(next.id)??99)-.7,start+4,footerLimit)
-    :clamp(footerLimit,start+4,footerLimit);
-   const canvas=canvases.get(pageNo);
-   const lastInk=canvas?findLastInk(canvas,rect.x,rect.width,start,hardBottom):null;
-   const bottom=clamp(lastInk==null?hardBottom:lastInk+1.15,start+4,hardBottom);
-   const patch={crop_x:rect.x,crop_y:start,crop_width:rect.width,crop_height:bottom-start};
-   updated.push(await patchCrop(q,patch));
-   setSaveState(`실제 문항영역 보정 ${updated.length}/${sorted.length}`);
+   const q=sorted[index],pageNo=Number(q.page_no||1),column=questionColumn(q),start=clamp((starts.get(q.id)??Number(q.crop_y||0))-.55,0,98);const rect=stableColumnRect(column);const next=sorted.find((candidate,i)=>i>index&&Number(candidate.page_no||1)===pageNo&&questionColumn(candidate)===column&&(starts.get(candidate.id)??0)>start+1);const hardBottom=next?clamp((starts.get(next.id)??99)-.7,start+4,98.5):98.2;const canvas=canvases.get(pageNo);const lastInk=canvas?findLastInk(canvas,rect.x,rect.width,start,hardBottom):null;const bottom=clamp(lastInk==null?hardBottom:lastInk+1.15,start+4,hardBottom);const patch={crop_x:rect.x,crop_y:start,crop_width:rect.width,crop_height:bottom-start};updated.push(await patchCrop(q,patch));setSaveState(`실제 문항영역 보정 ${updated.length}/${sorted.length}`);
   }
   doc.cleanup();setWorkspace((w)=>w?{...w,questions:updated.sort((a,b)=>a.question_no-b.question_no)}:w);setSaveState(`PDF 좌표 ${anchorCount}개 · 문항영역 ${updated.length}개 보정 완료`);return{updated:updated.length,anchorCount};
  }
