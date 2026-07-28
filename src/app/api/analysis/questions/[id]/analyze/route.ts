@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -41,6 +42,9 @@ function outputText(payload: OpenAiPayload) {
 }
 
 export async function POST(_: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const denied = await requireUser();
+  if (denied) return denied;
+
   try {
     const { id } = await context.params;
     const apiKey = process.env.OPENAI_API_KEY;
@@ -58,7 +62,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     const question = questionResult.data as any;
     const analysisResult = await supabase.from("source_analysis").select("source_file_id").eq("id", question.analysis_id).single();
     if (analysisResult.error || !analysisResult.data) throw analysisResult.error ?? new Error("분석 정보를 찾을 수 없습니다.");
-    const sourceResult = await supabase.from("source_files").select("title,grade,subject").eq("id", analysisResult.data.source_file_id).single();
+    const sourceResult = await supabase.from("source_files").select("title,grade,subject,solution_pdf_path").eq("id", analysisResult.data.source_file_id).single();
     if (sourceResult.error) throw sourceResult.error;
     if (!question.question_image_path) {
       return NextResponse.json({ success: false, message: "문항 이미지가 없습니다. 먼저 전체 AI 분석을 실행해 주세요." }, { status: 400 });
@@ -67,6 +71,11 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     const signed = await supabase.storage.from("question-images").createSignedUrl(question.question_image_path, 60 * 10);
     if (signed.error) throw signed.error;
     const source = sourceResult.data;
+    let solutionUrl = "";
+    if (source?.solution_pdf_path) {
+      const solutionSigned = await supabase.storage.from("exam-pdf").createSignedUrl(source.solution_pdf_path, 60 * 10);
+      if (!solutionSigned.error) solutionUrl = solutionSigned.data.signedUrl;
+    }
 
     const prompt = `당신은 한국 중고등 수학 문항을 분류하는 MathPooh MPAI 분석기입니다.
 첨부된 한 문항 이미지만 분석하여 Problem DNA를 생성하세요.
@@ -80,7 +89,8 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 - 요구능력과 핵심개념은 중복 없이 짧은 배열로 작성합니다.
 - 풀이전략은 정답 자체보다 해결 접근을 1~3문장으로 적습니다.
 - 핵심 한줄(summary)은 이 문항이 무엇을 평가하는지 한 문장으로 적습니다.
-- 이미지에서 정답을 확정할 수 없으면 answer는 빈 문자열로 둡니다.
+- 해설지 PDF가 함께 제공되면 문항번호에 맞는 정답과 해설을 확인하여 answer를 채웁니다.
+- 해설지에서 확인할 수 없으면 answer는 빈 문자열로 둡니다.
 - 보이지 않는 내용을 추측하지 말고 confidence에 반영합니다.`;
 
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -91,6 +101,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
         input: [{ role: "user", content: [
           { type: "input_text", text: prompt },
           { type: "input_image", image_url: signed.data.signedUrl, detail: "high" },
+          ...(solutionUrl ? [{ type: "input_file", file_url: solutionUrl }] : []),
         ] }],
         text: { format: { type: "json_schema", name: "problem_dna", strict: true, schema: dnaSchema } },
         max_output_tokens: 1800,
@@ -133,6 +144,26 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 
     const updated = await supabase.from("analysis_questions").update(patch).eq("id", id).select("*").single();
     if (updated.error) throw updated.error;
+
+    const allQuestions = await supabase
+      .from("analysis_questions")
+      .select("id,status,review_result")
+      .eq("analysis_id", question.analysis_id);
+    if (!allQuestions.error) {
+      const rows = allQuestions.data ?? [];
+      const completed = rows.filter((row: any) => row.review_result && Object.keys(row.review_result).length > 0).length;
+      const total = rows.length;
+      const progress = total > 0 ? 35 + Math.round((completed / total) * 65) : 100;
+      await supabase.from("source_analysis").update({
+        status: completed >= total && total > 0 ? "REVIEW" : "RUNNING",
+        progress,
+        current_step: completed >= total && total > 0
+          ? `문항 자르기·분석 완료 · ${total}개`
+          : `3단계 · 문항별 AI 분석 ${completed}/${total}`,
+        ...(completed >= total && total > 0 ? { finished_at: new Date().toISOString() } : {}),
+        updated_at: new Date().toISOString(),
+      }).eq("id", question.analysis_id);
+    }
 
     return NextResponse.json({ success: true, question: updated.data, dna });
   } catch (error) {
