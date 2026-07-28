@@ -136,11 +136,9 @@ function buildCrops(layouts: LayoutQuestion[]) {
       .filter(candidate => candidate.start_y < current.start_y - 0.5)
       .sort((a, b) => b.start_y - a.start_y)[0];
     const next = sameLane.find(candidate => candidate.start_y > current.start_y + 0.5);
-    const isFirstInLane = !previous;
-
-    // 문항번호의 기준선보다 위로 솟는 분수·근호가 잘리지 않도록 기본 위 여백을 늘린다.
-    // 각 단의 첫 문항은 AI가 제목·문항 첫 줄 아래를 시작점으로 오인할 수 있어 더 넓게 복원한다.
-    const topPadding = isFirstInLane ? 4.2 : 2.0;
+    // OCR의 start_y는 실제 인쇄물 최상단을 기준으로 받으므로 상단을 과하게 확장하지 않는다.
+    // 첫 문항도 별도 확대하지 않아 페이지 머리말·단원 제목이 함께 잘리는 현상을 막는다.
+    const topPadding = 0.8;
     const previousBottomGuard = previous
       ? clamp(previous.content_bottom_y + 0.35, 3.8, current.start_y - 0.3)
       : 3.8;
