@@ -142,6 +142,89 @@ function normalizeCrop(question: AiQuestion) {
   return { x, y, width, height, valid };
 }
 
+
+type NormalizedQuestion = {
+  question: AiQuestion;
+  crop: ReturnType<typeof normalizeCrop>;
+};
+
+function median(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/**
+ * AI 좌표를 그대로 저장하지 않고 같은 페이지의 문항 시작점과 편집 단을 이용해
+ * 실제 자르기 경계를 다시 만든다. 핵심은 각 문항의 아래쪽을 "다음 문항 시작 직전"으로
+ * 맞추는 것이다. 이 방식은 선택지/도형이 빠지거나 다음 문항이 섞이는 현상을 크게 줄인다.
+ */
+function stabilizeQuestionCrops(items: NormalizedQuestion[]): NormalizedQuestion[] {
+  const result = items.map((item) => ({ ...item, crop: { ...item.crop } }));
+  const byPage = new Map<number, NormalizedQuestion[]>();
+
+  for (const item of result) {
+    const page = Math.max(1, Number(item.question.page_no) || 1);
+    const list = byPage.get(page) ?? [];
+    list.push(item);
+    byPage.set(page, list);
+  }
+
+  for (const pageItems of byPage.values()) {
+    const usable = pageItems.filter((item) => item.crop.valid);
+    if (!usable.length) continue;
+
+    const centers = usable.map((item) => item.crop.x + item.crop.width / 2);
+    const leftCount = centers.filter((center) => center < 50).length;
+    const rightCount = centers.filter((center) => center >= 50).length;
+    const twoColumn = leftCount >= 2 && rightCount >= 2 && median(usable.map((item) => item.crop.width)) < 62;
+
+    const groups = twoColumn
+      ? [
+          usable.filter((item) => item.crop.x + item.crop.width / 2 < 50),
+          usable.filter((item) => item.crop.x + item.crop.width / 2 >= 50),
+        ]
+      : [usable];
+
+    for (const group of groups) {
+      group.sort((a, b) => a.crop.y - b.crop.y || a.question.question_no - b.question.question_no);
+      if (!group.length) continue;
+
+      const columnLeft = twoColumn
+        ? (group[0].crop.x + group[0].crop.width / 2 < 50 ? 2.2 : 50.3)
+        : Math.max(1.5, Math.min(...group.map((item) => item.crop.x)) - 0.8);
+      const columnRight = twoColumn
+        ? (group[0].crop.x + group[0].crop.width / 2 < 50 ? 49.7 : 97.8)
+        : Math.min(98.5, Math.max(...group.map((item) => item.crop.x + item.crop.width)) + 0.8);
+
+      for (let index = 0; index < group.length; index += 1) {
+        const current = group[index];
+        const next = group[index + 1];
+        const top = clampPercent(current.crop.y - 0.7, 0, 99);
+        const aiBottom = current.crop.y + current.crop.height;
+        const nextTop = next ? next.crop.y : 98.5;
+
+        // 다음 문항과 겹치지 않되 AI가 잡은 선택지/도형 끝은 최대한 보존한다.
+        const boundaryBottom = next ? Math.max(top + 4, nextTop - 0.8) : 98.5;
+        const bottom = next
+          ? boundaryBottom
+          : Math.min(98.5, Math.max(aiBottom + 0.8, top + 4));
+
+        current.crop = {
+          x: columnLeft,
+          y: top,
+          width: Math.max(8, columnRight - columnLeft),
+          height: Math.max(4, bottom - top),
+          valid: columnRight - columnLeft >= 8 && bottom - top >= 4,
+        };
+      }
+    }
+  }
+
+  return result;
+}
+
 function openAiError(status: number, body: string) {
   let message = body;
   try {
@@ -265,9 +348,11 @@ export async function POST(request: NextRequest) {
       "confidence는 문항 위치, 문항번호, 정답, 단원, 유형, 난이도 판단을 종합한 신뢰도다. 하나라도 불확실하면 0.85 미만으로 낮춘다.",
       "summary는 문제의 핵심 요구를 한 문장으로 요약하되 풀이 전체를 쓰지 않는다.",
       "각 문항이 있는 시험지 페이지 번호와 문항 전체 영역을 페이지 기준 백분율 좌표로 반환한다.",
+      "좌표 판단에서 가장 중요한 것은 문항번호가 시작되는 정확한 x,y 위치다. 문항번호 시작점은 반드시 정확히 잡는다.",
       "좌표는 반드시 0~100 숫자로 쓴다. 0~1 비율값은 절대 사용하지 않는다. 예: 페이지 왼쪽 8%, 위 12%, 폭 40%, 높이 18%이면 crop_x=8, crop_y=12, crop_width=40, crop_height=18이다.",
       "crop_x, crop_y는 왼쪽·위쪽 시작점이고 crop_width, crop_height는 선택지까지 포함한 전체 문항 크기다.",
       "문항 번호 바로 위에서 시작하고 다음 문항 번호 직전에서 끝나도록 하며, 선택지·보기·그래프·도형·표를 모두 포함한다.",
+      "2단 시험지는 왼쪽 단과 오른쪽 단을 절대 섞지 않는다. 같은 단의 다음 문항 번호가 시작되는 y좌표를 현재 문항의 아래 경계 기준으로 삼는다.",
       "2단 편집 시험지는 각 단의 경계를 넘지 않게 자르고, 한 문항이 다음 페이지로 이어지면 실제 본문이 가장 많이 있는 페이지를 기준으로 잡는다.",
       "박스는 지나치게 넓거나 높게 잡지 말고 문항 콘텐츠 바깥 여백은 각 방향 1~2% 정도만 둔다.",
       `시험지 정보: ${source.title} / ${source.source ?? ""} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
@@ -322,10 +407,10 @@ export async function POST(request: NextRequest) {
       .eq("id", analysis.id);
 
     await supabase.from("analysis_questions").delete().eq("analysis_id", analysis.id);
-    const normalizedQuestions = questions.map((question) => ({
+    const normalizedQuestions = stabilizeQuestionCrops(questions.map((question) => ({
       question,
       crop: normalizeCrop(question),
-    }));
+    })));
 
     const rows = normalizedQuestions.map(({ question, crop }) => ({
       analysis_id: analysis.id,
