@@ -5,7 +5,16 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-type AiQuestion = {
+type LayoutQuestion = {
+  question_no: number;
+  page_no: number;
+  column: "left" | "right" | "full";
+  start_y: number;
+  content_bottom_y: number;
+  confidence: number;
+};
+
+type AnalysisQuestion = {
   question_no: number;
   answer: string;
   question_type: "objective" | "subjective" | "unknown";
@@ -15,16 +24,6 @@ type AiQuestion = {
   difficulty: "하" | "중" | "상" | "최상";
   confidence: number;
   summary: string;
-  page_no: number;
-  crop_x: number;
-  crop_y: number;
-  crop_width: number;
-  crop_height: number;
-};
-
-type AiPayload = {
-  total_questions: number;
-  questions: AiQuestion[];
 };
 
 type OpenAiPayload = {
@@ -34,12 +33,37 @@ type OpenAiPayload = {
   usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number };
 };
 
+const layoutSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["questions"],
+  properties: {
+    questions: {
+      type: "array",
+      minItems: 1,
+      maxItems: 200,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["question_no", "page_no", "column", "start_y", "content_bottom_y", "confidence"],
+        properties: {
+          question_no: { type: "integer", minimum: 1, maximum: 200 },
+          page_no: { type: "integer", minimum: 1, maximum: 500 },
+          column: { type: "string", enum: ["left", "right", "full"] },
+          start_y: { type: "number", minimum: 0, maximum: 100 },
+          content_bottom_y: { type: "number", minimum: 0, maximum: 100 },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+        },
+      },
+    },
+  },
+} as const;
+
 const analysisSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["total_questions", "questions"],
+  required: ["questions"],
   properties: {
-    total_questions: { type: "integer", minimum: 1, maximum: 200 },
     questions: {
       type: "array",
       minItems: 1,
@@ -48,20 +72,8 @@ const analysisSchema = {
         type: "object",
         additionalProperties: false,
         required: [
-          "question_no",
-          "answer",
-          "question_type",
-          "subject",
-          "unit",
-          "topic",
-          "difficulty",
-          "confidence",
-          "summary",
-          "page_no",
-          "crop_x",
-          "crop_y",
-          "crop_width",
-          "crop_height",
+          "question_no", "answer", "question_type", "subject", "unit", "topic",
+          "difficulty", "confidence", "summary",
         ],
         properties: {
           question_no: { type: "integer", minimum: 1, maximum: 200 },
@@ -73,156 +85,74 @@ const analysisSchema = {
           difficulty: { type: "string", enum: ["하", "중", "상", "최상"] },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           summary: { type: "string" },
-          page_no: { type: "integer", minimum: 1, maximum: 500 },
-          crop_x: { type: "number", minimum: 0, maximum: 100 },
-          crop_y: { type: "number", minimum: 0, maximum: 100 },
-          crop_width: { type: "number", exclusiveMinimum: 0, maximum: 100 },
-          crop_height: { type: "number", exclusiveMinimum: 0, maximum: 100 },
         },
       },
     },
   },
 } as const;
 
-function getOutputText(payload: OpenAiPayload): string {
+function outputText(payload: OpenAiPayload) {
   if (typeof payload.output_text === "string") return payload.output_text;
-  const chunks: string[] = [];
-  for (const item of payload.output ?? []) {
-    for (const content of item.content ?? []) {
-      if (typeof content.text === "string") chunks.push(content.text);
-    }
-  }
-  return chunks.join("\n");
+  return (payload.output ?? []).flatMap(item => item.content ?? []).map(content => content.text ?? "").join("\n");
 }
 
-function parseJson(text: string): AiPayload {
-  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  const parsed = JSON.parse(cleaned) as AiPayload;
-  if (!Array.isArray(parsed.questions) || parsed.questions.length === 0) {
-    throw new Error("AI가 문항 목록을 반환하지 않았습니다.");
-  }
-  return parsed;
+function parseJson<T>(payload: OpenAiPayload): T {
+  const cleaned = outputText(payload).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  return JSON.parse(cleaned) as T;
 }
 
-
-function clampPercent(value: number, min = 0, max = 100) {
-  if (!Number.isFinite(value)) return min;
-  return Math.min(max, Math.max(min, value));
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
 }
 
-function normalizeCrop(question: AiQuestion) {
-  let x = Number(question.crop_x);
-  let y = Number(question.crop_y);
-  let width = Number(question.crop_width);
-  let height = Number(question.crop_height);
-
-  // GPT가 백분율(0~100) 대신 비율(0~1) 좌표를 반환하는 경우가 있다.
-  // 이 값을 그대로 CSS %로 쓰면 모든 박스가 좌측 상단에 아주 작게 몰린다.
-  const looksLikeRatio =
-    x >= 0 && y >= 0 && width > 0 && height > 0
-    && x <= 1.2 && y <= 1.2 && width <= 1.2 && height <= 1.2;
-
-  if (looksLikeRatio) {
-    x *= 100;
-    y *= 100;
-    width *= 100;
-    height *= 100;
-  }
-
-  x = clampPercent(x);
-  y = clampPercent(y);
-  width = clampPercent(width, 0.1);
-  height = clampPercent(height, 0.1);
-
-  // 페이지 밖으로 넘친 부분만 잘라낸다.
-  width = Math.min(width, 100 - x);
-  height = Math.min(height, 100 - y);
-
-  const valid = width >= 8 && height >= 4 && x < 99 && y < 99;
-  return { x, y, width, height, valid };
-}
-
-
-type NormalizedQuestion = {
-  question: AiQuestion;
-  crop: ReturnType<typeof normalizeCrop>;
-};
-
-function median(values: number[]) {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+function columnRect(column: LayoutQuestion["column"]) {
+  if (column === "left") return { x: 3.5, width: 46.5 };
+  if (column === "right") return { x: 50, width: 46.5 };
+  return { x: 3.5, width: 93 };
 }
 
 /**
- * AI 좌표를 그대로 저장하지 않고 같은 페이지의 문항 시작점과 편집 단을 이용해
- * 실제 자르기 경계를 다시 만든다. 핵심은 각 문항의 아래쪽을 "다음 문항 시작 직전"으로
- * 맞추는 것이다. 이 방식은 선택지/도형이 빠지거나 다음 문항이 섞이는 현상을 크게 줄인다.
+ * OCR은 문항의 시작점과 실제 콘텐츠 끝점만 찾는다.
+ * 최종 crop 끝점은 같은 페이지·같은 단의 다음 문항 시작점과 비교해 코드가 결정한다.
  */
-function stabilizeQuestionCrops(items: NormalizedQuestion[]): NormalizedQuestion[] {
-  const result = items.map((item) => ({ ...item, crop: { ...item.crop } }));
-  const byPage = new Map<number, NormalizedQuestion[]>();
+function buildCrops(layouts: LayoutQuestion[]) {
+  const normalized = layouts
+    .map(item => ({
+      ...item,
+      question_no: Number(item.question_no),
+      page_no: Math.max(1, Number(item.page_no) || 1),
+      start_y: clamp(Number(item.start_y), 0, 99),
+      content_bottom_y: clamp(Number(item.content_bottom_y), 0.5, 100),
+      confidence: clamp(Number(item.confidence), 0, 1),
+    }))
+    .filter(item => Number.isFinite(item.question_no))
+    .sort((a, b) => a.page_no - b.page_no || a.start_y - b.start_y || a.question_no - b.question_no);
 
-  for (const item of result) {
-    const page = Math.max(1, Number(item.question.page_no) || 1);
-    const list = byPage.get(page) ?? [];
-    list.push(item);
-    byPage.set(page, list);
-  }
+  return normalized.map(current => {
+    const next = normalized.find(candidate =>
+      candidate.page_no === current.page_no
+      && candidate.column === current.column
+      && candidate.start_y > current.start_y + 0.5,
+    );
 
-  for (const pageItems of byPage.values()) {
-    const usable = pageItems.filter((item) => item.crop.valid);
-    if (!usable.length) continue;
+    const top = clamp(current.start_y - 0.8, 0, 99);
+    const contentBottom = clamp(current.content_bottom_y + 1.2, top + 4, 99.2);
+    const nextBoundary = next ? clamp(next.start_y - 1.1, top + 4, 99.2) : 99.2;
 
-    const centers = usable.map((item) => item.crop.x + item.crop.width / 2);
-    const leftCount = centers.filter((center) => center < 50).length;
-    const rightCount = centers.filter((center) => center >= 50).length;
-    const twoColumn = leftCount >= 2 && rightCount >= 2 && median(usable.map((item) => item.crop.width)) < 62;
+    // OCR이 실제 콘텐츠 끝을 잘 찾으면 불필요한 대형 여백을 제거한다.
+    // 단, 다음 문항을 침범하지 않도록 다음 시작점 직전에서 강제로 막는다.
+    const bottom = Math.min(Math.max(contentBottom, top + 5), nextBoundary);
+    const col = columnRect(current.column);
 
-    const groups = twoColumn
-      ? [
-          usable.filter((item) => item.crop.x + item.crop.width / 2 < 50),
-          usable.filter((item) => item.crop.x + item.crop.width / 2 >= 50),
-        ]
-      : [usable];
-
-    for (const group of groups) {
-      group.sort((a, b) => a.crop.y - b.crop.y || a.question.question_no - b.question.question_no);
-      if (!group.length) continue;
-
-      const columnLeft = twoColumn
-        ? (group[0].crop.x + group[0].crop.width / 2 < 50 ? 2.2 : 50.3)
-        : Math.max(1.5, Math.min(...group.map((item) => item.crop.x)) - 0.8);
-      const columnRight = twoColumn
-        ? (group[0].crop.x + group[0].crop.width / 2 < 50 ? 49.7 : 97.8)
-        : Math.min(98.5, Math.max(...group.map((item) => item.crop.x + item.crop.width)) + 0.8);
-
-      for (let index = 0; index < group.length; index += 1) {
-        const current = group[index];
-        const next = group[index + 1];
-        const top = clampPercent(current.crop.y - 0.7, 0, 99);
-        const aiBottom = current.crop.y + current.crop.height;
-        const nextTop = next ? next.crop.y : 98.5;
-
-        // 다음 문항과 겹치지 않되 AI가 잡은 선택지/도형 끝은 최대한 보존한다.
-        const boundaryBottom = next ? Math.max(top + 4, nextTop - 0.8) : 98.5;
-        const bottom = next
-          ? boundaryBottom
-          : Math.min(98.5, Math.max(aiBottom + 0.8, top + 4));
-
-        current.crop = {
-          x: columnLeft,
-          y: top,
-          width: Math.max(8, columnRight - columnLeft),
-          height: Math.max(4, bottom - top),
-          valid: columnRight - columnLeft >= 8 && bottom - top >= 4,
-        };
-      }
-    }
-  }
-
-  return result;
+    return {
+      ...current,
+      crop_x: col.x,
+      crop_y: top,
+      crop_width: col.width,
+      crop_height: clamp(bottom - top, 4, 100 - top),
+      crop_valid: bottom > top + 3 && current.content_bottom_y >= current.start_y,
+    };
+  });
 }
 
 function openAiError(status: number, body: string) {
@@ -230,13 +160,43 @@ function openAiError(status: number, body: string) {
   try {
     const parsed = JSON.parse(body) as { error?: { message?: string } };
     message = parsed.error?.message || body;
-  } catch {
-    // plain text response
-  }
+  } catch { /* plain text */ }
   if (status === 401) return "OpenAI API 키가 올바르지 않습니다.";
   if (status === 429) return `OpenAI 결제 또는 사용 한도를 확인해 주세요. ${message}`;
   if (status === 404) return `설정된 AI 모델을 사용할 수 없습니다. ${message}`;
   return `OpenAI 분석 실패 (${status}): ${message}`;
+}
+
+async function callOpenAi(args: {
+  apiKey: string;
+  model: string;
+  prompt: string;
+  files: string[];
+  schemaName: string;
+  schema: typeof layoutSchema | typeof analysisSchema;
+  maxOutputTokens: number;
+}) {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${args.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: args.model,
+      input: [{
+        role: "user",
+        content: [
+          { type: "input_text", text: args.prompt },
+          ...args.files.map(file_url => ({ type: "input_file", file_url })),
+        ],
+      }],
+      text: { format: { type: "json_schema", name: args.schemaName, strict: true, schema: args.schema } },
+      max_output_tokens: args.maxOutputTokens,
+    }),
+    signal: AbortSignal.timeout(280_000),
+    cache: "no-store",
+  });
+
+  if (!response.ok) throw new Error(openAiError(response.status, await response.text()));
+  return await response.json() as OpenAiPayload;
 }
 
 export async function POST(request: NextRequest) {
@@ -245,301 +205,193 @@ export async function POST(request: NextRequest) {
   let jobId: string | null = null;
 
   try {
-    const { sourceFileId } = (await request.json()) as { sourceFileId?: string };
-    if (!sourceFileId) {
-      return NextResponse.json({ success: false, message: "시험지를 선택해 주세요." }, { status: 400 });
-    }
+    const { sourceFileId } = await request.json() as { sourceFileId?: string };
+    if (!sourceFileId) return NextResponse.json({ success: false, message: "시험지를 선택해 주세요." }, { status: 400 });
 
     const apiKey = process.env.OPENAI_API_KEY;
     const model = process.env.OPENAI_MODEL || "gpt-5";
-    if (!apiKey) {
-      return NextResponse.json(
-        { success: false, message: "OPENAI_API_KEY가 없습니다. Vercel 환경변수를 저장한 뒤 재배포해 주세요." },
-        { status: 500 },
-      );
-    }
+    if (!apiKey) return NextResponse.json({ success: false, message: "OPENAI_API_KEY가 없습니다." }, { status: 500 });
 
-    const { data: source, error: sourceError } = await supabase
+    const sourceResult = await supabase
       .from("source_files")
       .select("id,title,source,grade,subject,exam_pdf_path,solution_pdf_path")
       .eq("id", sourceFileId)
       .single();
+    if (sourceResult.error || !sourceResult.data) return NextResponse.json({ success: false, message: "시험지를 찾을 수 없습니다." }, { status: 404 });
+    const source = sourceResult.data;
+    if (!source.exam_pdf_path || !source.solution_pdf_path) return NextResponse.json({ success: false, message: "시험지 PDF와 해설지 PDF가 모두 필요합니다." }, { status: 400 });
 
-    if (sourceError || !source) {
-      return NextResponse.json({ success: false, message: "시험지를 찾을 수 없습니다." }, { status: 404 });
+    let analysisResult = await supabase.from("source_analysis").select("*").eq("source_file_id", sourceFileId).maybeSingle();
+    if (analysisResult.error) throw analysisResult.error;
+    if (!analysisResult.data) {
+      analysisResult = await supabase.from("source_analysis").insert({ source_file_id: sourceFileId }).select("*").single();
+      if (analysisResult.error) throw analysisResult.error;
     }
-    if (!source.exam_pdf_path || !source.solution_pdf_path) {
-      return NextResponse.json({ success: false, message: "시험지 PDF와 해설지 PDF가 모두 필요합니다." }, { status: 400 });
-    }
-
-    let { data: analysis, error: analysisError } = await supabase
-      .from("source_analysis")
-      .select("*")
-      .eq("source_file_id", sourceFileId)
-      .maybeSingle();
-    if (analysisError) throw analysisError;
-
-    if (!analysis) {
-      const created = await supabase
-        .from("source_analysis")
-        .insert({ source_file_id: sourceFileId })
-        .select("*")
-        .single();
-      if (created.error) throw created.error;
-      analysis = created.data;
-    }
+    const analysis = analysisResult.data;
     analysisId = analysis.id;
 
     const startedAt = new Date().toISOString();
-    const baseLogs = [{ at: startedAt, message: `AI 분석 시작 · ${model}` }];
-    const createdJob = await supabase
-      .from("analysis_jobs")
-      .insert({
-        analysis_id: analysis.id,
-        job_type: "FULL_ANALYSIS",
-        status: "RUNNING",
-        progress: 10,
-        started_at: startedAt,
-        logs: baseLogs,
-      })
-      .select("*")
-      .single();
-    if (createdJob.error) throw createdJob.error;
-    jobId = createdJob.data.id;
+    const baseLogs = [{ at: startedAt, message: `OCR 우선 분석 시작 · ${model}` }];
+    const job = await supabase.from("analysis_jobs").insert({
+      analysis_id: analysis.id,
+      job_type: "FULL_ANALYSIS",
+      status: "RUNNING",
+      progress: 5,
+      started_at: startedAt,
+      logs: baseLogs,
+    }).select("*").single();
+    if (job.error) throw job.error;
+    jobId = job.data.id;
 
-    await supabase
-      .from("source_analysis")
-      .update({
-        status: "RUNNING",
-        progress: 10,
-        current_step: "시험지·해설지 PDF 준비 중",
-        started_at: startedAt,
-        finished_at: null,
-        updated_at: startedAt,
-      })
-      .eq("id", analysis.id);
+    await supabase.from("source_analysis").update({
+      status: "RUNNING", progress: 5, current_step: "시험지 OCR 준비 중", started_at: startedAt,
+      finished_at: null, updated_at: startedAt,
+    }).eq("id", analysis.id);
 
     const sign = async (path: string) => {
-      const result = await supabase.storage.from("exam-pdf").createSignedUrl(path, 60 * 60);
-      if (result.error) throw result.error;
-      return result.data.signedUrl;
+      const signed = await supabase.storage.from("exam-pdf").createSignedUrl(path, 60 * 60);
+      if (signed.error) throw signed.error;
+      return signed.data.signedUrl;
     };
-    const [examUrl, solutionUrl] = await Promise.all([
-      sign(source.exam_pdf_path),
-      sign(source.solution_pdf_path),
-    ]);
+    const [examUrl, solutionUrl] = await Promise.all([sign(source.exam_pdf_path), sign(source.solution_pdf_path)]);
 
-    await supabase
-      .from("source_analysis")
-      .update({ progress: 25, current_step: "GPT가 PDF를 읽고 문항을 분석하는 중", updated_at: new Date().toISOString() })
-      .eq("id", analysis.id);
+    await supabase.from("source_analysis").update({ progress: 15, current_step: "1차 OCR · 문항번호와 실제 영역 탐색 중" }).eq("id", analysis.id);
 
-    const prompt = [
-      "너는 한국 중·고등 수학 시험지 분석 전문가다.",
-      "첫 번째 PDF는 시험지이고 두 번째 PDF는 해설지다.",
+    const layoutPrompt = [
+      "너는 한국 수학 시험지 OCR·레이아웃 판독기다.",
+      "첨부된 파일은 시험지 PDF 한 개다. 정답·난이도·단원은 분석하지 않는다.",
+      "시험지에 실제 인쇄된 문항 번호를 모두 찾는다. 머리말의 연도, 쪽수, 예제 번호, 해설 참조번호는 문항으로 세지 않는다.",
+      "각 문항에 대해 page_no, column, start_y, content_bottom_y만 정확히 반환한다.",
+      "column은 왼쪽 단 left, 오른쪽 단 right, 페이지 전체 폭 문항 full 중 하나다.",
+      "start_y는 문항 번호와 첫 문장이 시작하는 가장 위 위치다.",
+      "content_bottom_y는 해당 문항의 선택지·보기·표·그래프·도형까지 포함한 실제 인쇄 콘텐츠의 가장 아래 위치다.",
+      "start_y와 content_bottom_y는 페이지 높이 기준 0~100 백분율이다. 0~1 비율값은 사용하지 않는다.",
+      "큰 여백은 콘텐츠로 보지 않는다. 다음 문항 직전까지 무조건 늘리지 말고 실제 글자·수식·그림이 끝나는 곳을 찾는다.",
+      "도형이 본문보다 아래에 있으면 반드시 도형 아래까지 content_bottom_y를 내려 잡는다.",
+      "문항이 다음 페이지로 이어지는 특수한 경우에는 본문이 시작된 페이지를 기준으로 잡고 confidence를 낮춘다.",
+      "번호 누락·중복 없이 실제 문항 순서대로 반환한다.",
+      `시험지 정보: ${source.title} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
+    ].join("\n");
+
+    const layoutRaw = await callOpenAi({
+      apiKey, model, prompt: layoutPrompt, files: [examUrl],
+      schemaName: "math_exam_ocr_layout", schema: layoutSchema, maxOutputTokens: 10000,
+    });
+    const layoutPayload = parseJson<{ questions: LayoutQuestion[] }>(layoutRaw);
+    const crops = buildCrops(layoutPayload.questions);
+    if (!crops.length) throw new Error("OCR이 문항 번호를 찾지 못했습니다.");
+
+    await supabase.from("source_analysis").update({ progress: 55, current_step: `1차 OCR 완료 · ${crops.length}개 문항 · 2차 내용 분석 중` }).eq("id", analysis.id);
+
+    const analysisPrompt = [
+      "너는 한국 중·고등 수학 문항 분석 전문가다.",
+      "첫 번째 PDF는 시험지, 두 번째 PDF는 해설지다.",
+      "좌표나 문항 영역은 절대 판단하지 않는다. 문항번호별 내용 분석만 한다.",
       "시험지에 실제 존재하는 모든 문항을 번호순으로 분석한다.",
-      "정답은 반드시 해설지에서 확인하고, 확인이 어려우면 빈 문자열로 둔다.",
+      "정답은 해설지의 정답표와 해당 해설을 교차 확인한다. 확인이 어려우면 빈 문자열로 둔다.",
       "객관식은 objective, 단답형·서술형은 subjective로 분류한다.",
-      "unit은 반드시 현재 선택된 과목의 교육과정 단원명으로 쓴다. 막연한 표현(수학, 계산, 함수 등)은 금지한다.",
-      "topic은 학생이 실제로 사용해야 하는 핵심 개념·발상·문제 유형이 드러나도록 12~30자 안에서 구체적으로 쓴다.",
-      "difficulty는 계산량, 개념 결합 수, 낯선 조건 해석, 풀이 단계 수를 함께 판단해 하·중·상·최상 중 하나로 분류한다.",
-      "정답은 해설지의 정답표와 해당 해설을 교차 확인한다. 객관식은 ①~⑤ 중 하나, 주관식은 최종값만 쓴다.",
-      "문항번호가 시험지와 해설지에서 일치하는지 반드시 확인하며, 중복 번호나 누락 번호를 만들지 않는다.",
-      "confidence는 문항 위치, 문항번호, 정답, 단원, 유형, 난이도 판단을 종합한 신뢰도다. 하나라도 불확실하면 0.85 미만으로 낮춘다.",
-      "summary는 문제의 핵심 요구를 한 문장으로 요약하되 풀이 전체를 쓰지 않는다.",
-      "각 문항이 있는 시험지 페이지 번호와 문항 전체 영역을 페이지 기준 백분율 좌표로 반환한다.",
-      "좌표 판단에서 가장 중요한 것은 문항번호가 시작되는 정확한 x,y 위치다. 문항번호 시작점은 반드시 정확히 잡는다.",
-      "좌표는 반드시 0~100 숫자로 쓴다. 0~1 비율값은 절대 사용하지 않는다. 예: 페이지 왼쪽 8%, 위 12%, 폭 40%, 높이 18%이면 crop_x=8, crop_y=12, crop_width=40, crop_height=18이다.",
-      "crop_x, crop_y는 왼쪽·위쪽 시작점이고 crop_width, crop_height는 선택지까지 포함한 전체 문항 크기다.",
-      "문항 번호 바로 위에서 시작하고 다음 문항 번호 직전에서 끝나도록 하며, 선택지·보기·그래프·도형·표를 모두 포함한다.",
-      "2단 시험지는 왼쪽 단과 오른쪽 단을 절대 섞지 않는다. 같은 단의 다음 문항 번호가 시작되는 y좌표를 현재 문항의 아래 경계 기준으로 삼는다.",
-      "2단 편집 시험지는 각 단의 경계를 넘지 않게 자르고, 한 문항이 다음 페이지로 이어지면 실제 본문이 가장 많이 있는 페이지를 기준으로 잡는다.",
-      "박스는 지나치게 넓거나 높게 잡지 말고 문항 콘텐츠 바깥 여백은 각 방향 1~2% 정도만 둔다.",
+      "unit은 선택 과목의 교육과정 단원명으로 구체적으로 쓴다.",
+      "topic은 핵심 개념·발상·유형이 드러나도록 12~30자로 쓴다.",
+      "difficulty는 하·중·상·최상 중 하나다.",
+      "summary는 문제의 핵심 요구를 한 문장으로 요약한다.",
+      "문항번호 누락·중복을 만들지 않는다.",
       `시험지 정보: ${source.title} / ${source.source ?? ""} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
     ].join("\n");
 
-    const openAiResponse = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        input: [
-          {
-            role: "user",
-            content: [
-              { type: "input_text", text: prompt },
-              { type: "input_file", file_url: examUrl },
-              { type: "input_file", file_url: solutionUrl },
-            ],
-          },
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "math_exam_analysis",
-            strict: true,
-            schema: analysisSchema,
+    const analysisRaw = await callOpenAi({
+      apiKey, model, prompt: analysisPrompt, files: [examUrl, solutionUrl],
+      schemaName: "math_exam_content_analysis", schema: analysisSchema, maxOutputTokens: 16000,
+    });
+    const analysisPayload = parseJson<{ questions: AnalysisQuestion[] }>(analysisRaw);
+    const analysisByNo = new Map(analysisPayload.questions.map(item => [Number(item.question_no), item]));
+
+    await supabase.from("source_analysis").update({ progress: 80, current_step: "OCR 좌표와 문항 분석 결과 결합 중" }).eq("id", analysis.id);
+    await supabase.from("analysis_questions").delete().eq("analysis_id", analysis.id);
+
+    const rows = crops.map(crop => {
+      const meta = analysisByNo.get(crop.question_no);
+      const combinedConfidence = Math.min(crop.confidence, Number(meta?.confidence ?? 0.55));
+      return {
+        analysis_id: analysis.id,
+        question_no: crop.question_no,
+        answer: meta?.answer?.trim() || null,
+        status: "APPROVED",
+        confidence: combinedConfidence,
+        page_no: crop.page_no,
+        crop_x: crop.crop_x,
+        crop_y: crop.crop_y,
+        crop_width: crop.crop_width,
+        crop_height: crop.crop_height,
+        review_reason: crop.crop_valid ? null : "OCR 문항 영역을 확인해 주세요.",
+        ai_result: {
+          question_type: meta?.question_type ?? "unknown",
+          subject: meta?.subject || source.subject || null,
+          unit: meta?.unit || null,
+          topic: meta?.topic || null,
+          difficulty: meta?.difficulty ?? "중",
+          summary: meta?.summary || null,
+          ocr_layout: {
+            column: crop.column,
+            start_y: crop.start_y,
+            content_bottom_y: crop.content_bottom_y,
           },
         },
-        max_output_tokens: 16000,
-      }),
-      signal: AbortSignal.timeout(280_000),
-      cache: "no-store",
+      };
     });
 
-    if (!openAiResponse.ok) {
-      const detail = await openAiResponse.text();
-      throw new Error(openAiError(openAiResponse.status, detail));
-    }
-
-    const aiRaw = await openAiResponse.json() as OpenAiPayload;
-    const parsed = parseJson(getOutputText(aiRaw));
-    const questions = parsed.questions
-      .filter((question) => Number.isFinite(Number(question.question_no)))
-      .sort((a, b) => Number(a.question_no) - Number(b.question_no));
-
-    await supabase
-      .from("source_analysis")
-      .update({ progress: 75, current_step: "문항별 분석 결과 저장 중", updated_at: new Date().toISOString() })
-      .eq("id", analysis.id);
-
-    await supabase.from("analysis_questions").delete().eq("analysis_id", analysis.id);
-    const normalizedQuestions = stabilizeQuestionCrops(questions.map((question) => ({
-      question,
-      crop: normalizeCrop(question),
-    })));
-
-    const rows = normalizedQuestions.map(({ question, crop }) => ({
-      analysis_id: analysis.id,
-      question_no: Number(question.question_no),
-      answer: question.answer.trim() || null,
-      status: "APPROVED",
-      confidence: Math.max(0, Math.min(1, Number(question.confidence))),
-      page_no: Math.max(1, Number(question.page_no) || 1),
-      crop_x: crop.x,
-      crop_y: crop.y,
-      crop_width: crop.width,
-      crop_height: crop.height,
-      review_reason: crop.valid ? null : "AI 문항 위치가 비정상입니다. 자르기 박스를 확인해 주세요.",
-      ai_result: {
-        question_type: question.question_type,
-        subject: question.subject || source.subject || null,
-        unit: question.unit || null,
-        topic: question.topic || null,
-        difficulty: question.difficulty,
-        summary: question.summary || null,
-      },
-    }));
-
-    const inserted = await supabase
-      .from("analysis_questions")
-      .insert(rows)
-      .select("id,question_no,answer,status,confidence,ai_result,review_result");
+    const inserted = await supabase.from("analysis_questions").insert(rows).select("id,question_no,answer,confidence,ai_result");
     if (inserted.error) throw inserted.error;
 
-    const insertedQuestions = (inserted.data ?? []) as Array<{ id:string; question_no:number; answer:string|null; confidence:number|null; ai_result:Record<string,unknown>|null }>;
-    const invalidCropQuestionNos = new Set(
-      normalizedQuestions
-        .filter(({ crop }) => !crop.valid)
-        .map(({ question }) => Number(question.question_no)),
-    );
-
-    const reviewQuestions = insertedQuestions.filter((question) => {
+    const insertedQuestions = inserted.data ?? [];
+    const reviewIds = insertedQuestions.filter(question => {
       const result = (question.ai_result ?? {}) as Record<string, unknown>;
-      const questionNo = Number((question as { question_no?: number }).question_no);
-      return invalidCropQuestionNos.has(questionNo)
-        || Number(question.confidence ?? 0) < 0.85
+      return Number(question.confidence ?? 0) < 0.82
         || !String(question.answer ?? "").trim()
         || !String(result.unit ?? "").trim()
         || !String(result.topic ?? "").trim()
         || String(result.question_type ?? "unknown") === "unknown";
-    });
+    }).map(question => question.id);
 
-    if (reviewQuestions.length > 0) {
-      const reviewIds = reviewQuestions.map((question) => question.id);
-      const reviewUpdate = await supabase
-        .from("analysis_questions")
-        .update({
-          review_reason: "AI 판단이 불확실한 항목이 있습니다. 틀린 부분만 수정하세요.",
-          updated_at: new Date().toISOString(),
-        })
-        .in("id", reviewIds);
+    if (reviewIds.length) {
+      const reviewUpdate = await supabase.from("analysis_questions").update({
+        review_reason: "OCR 또는 AI 판단이 불확실합니다. 틀린 부분만 수정하세요.",
+        updated_at: new Date().toISOString(),
+      }).in("id", reviewIds);
       if (reviewUpdate.error) throw reviewUpdate.error;
     }
 
-    // 모든 문항은 기본 승인 상태다. 사용자는 잘못된 박스·정답·분류만 수정한다.
-    // 실제 문항 이미지는 분석 직후 브라우저 작업장에서 자동 생성하고,
-    // 문제은행 등록 직전에도 다시 생성해 수정된 박스를 반영한다.
-
-    const objectiveCount = questions.filter((question) => question.question_type === "objective").length;
-    const subjectiveCount = questions.filter((question) => question.question_type === "subjective").length;
+    const objectiveCount = analysisPayload.questions.filter(q => q.question_type === "objective").length;
+    const subjectiveCount = analysisPayload.questions.filter(q => q.question_type === "subjective").length;
     const finishedAt = new Date().toISOString();
-    const updated = await supabase
-      .from("source_analysis")
-      .update({
-        status: "REVIEW",
-        progress: 100,
-        current_step: reviewQuestions.length > 0
-          ? `AI 분석 완료 · 전체 ${questions.length}개 기본확정 · 재확인 권장 ${reviewQuestions.length}개`
-          : `AI 분석 완료 · 전체 ${questions.length}개 기본확정`,
-        total_questions: questions.length,
-        objective_count: objectiveCount,
-        subjective_count: subjectiveCount,
-        finished_at: finishedAt,
-        updated_at: finishedAt,
-      })
-      .eq("id", analysis.id)
-      .select("*")
-      .single();
+    const updated = await supabase.from("source_analysis").update({
+      status: "REVIEW", progress: 100,
+      current_step: `OCR 우선 분석 완료 · ${rows.length}개 문항 · 재확인 권장 ${reviewIds.length}개`,
+      total_questions: rows.length, objective_count: objectiveCount, subjective_count: subjectiveCount,
+      finished_at: finishedAt, updated_at: finishedAt,
+    }).eq("id", analysis.id).select("*").single();
     if (updated.error) throw updated.error;
 
-    const usageText = aiRaw.usage?.total_tokens
-      ? ` · ${aiRaw.usage.total_tokens.toLocaleString("ko-KR")} tokens`
-      : "";
-    await supabase
-      .from("analysis_jobs")
-      .update({
-        status: "DONE",
-        progress: 100,
-        finished_at: finishedAt,
-        updated_at: finishedAt,
-        logs: [
-          ...baseLogs,
-          { at: finishedAt, message: `${questions.length}개 문항 분석 완료${usageText}` },
-        ],
-      })
-      .eq("id", jobId);
+    const totalTokens = Number(layoutRaw.usage?.total_tokens ?? 0) + Number(analysisRaw.usage?.total_tokens ?? 0);
+    await supabase.from("analysis_jobs").update({
+      status: "DONE", progress: 100, finished_at: finishedAt, updated_at: finishedAt,
+      logs: [...baseLogs, { at: finishedAt, message: `${rows.length}개 OCR·분석 완료${totalTokens ? ` · ${totalTokens.toLocaleString("ko-KR")} tokens` : ""}` }],
+    }).eq("id", jobId);
 
     return NextResponse.json({
       success: true,
       analysis: updated.data,
-      questionCount: questions.length,
-      autoRegistered: 0,
-      reviewPending: reviewQuestions.length,
-      cropValidCount: normalizedQuestions.filter(({ crop }) => crop.valid).length,
-      cropInvalidCount: normalizedQuestions.filter(({ crop }) => !crop.valid).length,
+      questionCount: rows.length,
+      reviewPending: reviewIds.length,
+      cropValidCount: crops.filter(crop => crop.crop_valid).length,
+      cropInvalidCount: crops.filter(crop => !crop.crop_valid).length,
+      mode: "OCR_FIRST_TWO_PASS",
       model,
-      responseId: aiRaw.id ?? null,
-      usage: aiRaw.usage ?? null,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "AI 분석에 실패했습니다.";
     const failedAt = new Date().toISOString();
-    if (analysisId) {
-      await supabase
-        .from("source_analysis")
-        .update({ status: "FAILED", progress: 0, current_step: message, updated_at: failedAt })
-        .eq("id", analysisId);
-    }
-    if (jobId) {
-      await supabase
-        .from("analysis_jobs")
-        .update({ status: "FAILED", error_message: message, finished_at: failedAt, updated_at: failedAt })
-        .eq("id", jobId);
-    }
+    if (analysisId) await supabase.from("source_analysis").update({ status: "FAILED", progress: 0, current_step: message, updated_at: failedAt }).eq("id", analysisId);
+    if (jobId) await supabase.from("analysis_jobs").update({ status: "FAILED", error_message: message, finished_at: failedAt, updated_at: failedAt }).eq("id", jobId);
     return NextResponse.json({ success: false, message }, { status: 500 });
   }
 }
