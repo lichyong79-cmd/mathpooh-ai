@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
+  const denied = await requireUser();
+  if (denied) return denied;
+
   try {
     const body = await request.json() as { analysisId?: string; questionNo?: number; pageNo?: number; x?: number; y?: number; width?: number; height?: number };
     if (!body.analysisId) return NextResponse.json({ success: false, message: "분석 ID가 없습니다." }, { status: 400 });

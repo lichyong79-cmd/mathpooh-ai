@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -78,6 +79,9 @@ function friendlyError(status: number, body: string) {
 }
 
 export async function POST(request: NextRequest) {
+  const denied = await requireUser();
+  if (denied) return denied;
+
   try {
     const { sourceFileId } = (await request.json()) as { sourceFileId?: string };
     if (!sourceFileId) return NextResponse.json({ success: false, message: "시험지를 선택해 주세요." }, { status: 400 });

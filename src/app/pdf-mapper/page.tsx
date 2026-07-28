@@ -2,6 +2,7 @@
 
 import { PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
+import { authHeaders, signedStorageUrl } from "@/lib/supabase/rest";
 
 type Rect = { x:number; y:number; w:number; h:number };
 type Region = Rect & { number:number; page:number; answer:string; type:"choice"|"short"; verified:boolean; source:"auto"|"manual" };
@@ -44,13 +45,13 @@ export default function PdfMapperPage(){
       const config=getSupabaseConfig();
       if(!config||!id){setLoading(false);return;}
       try{
-        const h={apikey:config.key,Authorization:`Bearer ${config.key}`};
+        const h={...(await authHeaders())};
         const examRes=await fetch(`${config.url}/rest/v1/exams?id=eq.${encodeURIComponent(id)}&select=id,exam_code,test_file_name,test_file_path,question_count,objective_count`,{headers:h,cache:"no-store"});
         if(!examRes.ok) throw new Error(await examRes.text());
         const exam=(await examRes.json())[0];
         if(!exam?.test_file_path) throw new Error("등록된 시험지 PDF가 없습니다.");
         setExamCode(exam.exam_code||"SOS"); setExamPdfName(exam.test_file_name||"시험지.pdf");
-        const url=`${config.url}/storage/v1/object/public/exam-files/${exam.test_file_path}`;
+        const url=await signedStorageUrl("exam-files",exam.test_file_path);
         const pdfRes=await fetch(url,{cache:"no-store"});
         if(!pdfRes.ok) throw new Error("등록 시험지를 불러오지 못했습니다.");
         const bytes=new Uint8Array(await pdfRes.arrayBuffer());
@@ -149,7 +150,7 @@ export default function PdfMapperPage(){
     const config=getSupabaseConfig(); if(!config||!examId)return alert("Supabase 연결을 확인해 주세요.");
     setSaving(true);
     try{
-      const h={apikey:config.key,Authorization:`Bearer ${config.key}`,"Content-Type":"application/json"};
+      const h={...(await authHeaders()),"Content-Type":"application/json"};
       await fetch(`${config.url}/rest/v1/question_regions?exam_id=eq.${encodeURIComponent(examId)}`,{method:"DELETE",headers:h});
       const body=regions.map(r=>({exam_id:examId,question_no:r.number,page_no:r.page,x:r.x,y:r.y,width:r.w,height:r.h,question_type:r.type,answer:r.answer,verified:r.verified,source:r.source}));
       const res=await fetch(`${config.url}/rest/v1/question_regions`,{method:"POST",headers:{...h,Prefer:"return=minimal"},body:JSON.stringify(body)});

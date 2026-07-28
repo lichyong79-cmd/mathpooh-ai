@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
+import { authHeaders } from "@/lib/supabase/rest";
 
 type Problem = {
   id: string;
@@ -88,7 +89,7 @@ export default function ProblemBankPage() {
       ].join(",");
       const response = await fetch(
         `${config.url}/rest/v1/problem_bank_questions?select=${fields}&order=created_at.desc`,
-        { headers: { apikey: config.key, Authorization: `Bearer ${config.key}` }, cache: "no-store" },
+        { headers: { ...(await authHeaders()) }, cache: "no-store" },
       );
       if (!response.ok) throw new Error(await response.text());
       const rows = (await response.json()) as Problem[];
@@ -170,8 +171,7 @@ export default function ProblemBankPage() {
       const response = await fetch(`${config.url}/rest/v1/problem_bank_questions?id=eq.${selected.id}`, {
         method: "PATCH",
         headers: {
-          apikey: config.key,
-          Authorization: `Bearer ${config.key}`,
+          ...(await authHeaders()),
           "Content-Type": "application/json",
           Prefer: "return=representation",
         },
@@ -199,7 +199,7 @@ export default function ProblemBankPage() {
     try {
       const response = await fetch(`${config.url}/rest/v1/problem_bank_questions?id=eq.${selected.id}`, {
         method: "DELETE",
-        headers: { apikey: config.key, Authorization: `Bearer ${config.key}` },
+        headers: { ...(await authHeaders()) },
       });
       if (!response.ok) throw new Error(await response.text());
       const remaining = items.filter((item) => item.id !== selected.id);

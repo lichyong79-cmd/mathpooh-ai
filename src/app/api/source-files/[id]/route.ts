@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 
 export async function DELETE(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const denied = await requireUser();
+  if (denied) return denied;
+
   try {
     const { id } = await context.params;
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");

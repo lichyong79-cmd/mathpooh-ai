@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -211,6 +212,9 @@ async function callOpenAi(args: {
 }
 
 export async function POST(request: NextRequest) {
+  const denied = await requireUser();
+  if (denied) return denied;
+
   const supabase = createClient();
   let analysisId: string | null = null;
   let jobId: string | null = null;

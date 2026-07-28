@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 
@@ -14,6 +15,9 @@ function isOriginal(file: File) {
 }
 
 export async function POST(request: NextRequest) {
+  const denied = await requireUser();
+  if (denied) return denied;
+
   const uploadedPaths: string[] = [];
 
   try {
