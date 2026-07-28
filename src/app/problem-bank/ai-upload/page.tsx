@@ -372,6 +372,32 @@ export default function AnalysisWorkspacePage() {
     });
   }
 
+  async function uploadQuestionCrop(
+    pdfDocument: any,
+    question: Question,
+    analysisId: string,
+    sourceFileId: string,
+  ) {
+    const blob = await cropQuestionImage(pdfDocument, question);
+    const form = new FormData();
+    form.append("image", blob, `${String(question.question_no).padStart(3, "0")}.webp`);
+    form.append("analysisId", analysisId);
+    form.append("sourceFileId", sourceFileId);
+    form.append("questionId", question.id);
+    form.append("questionNo", String(question.question_no));
+    form.append("pageNo", String(question.page_no));
+    form.append("cropX", String(question.crop_x));
+    form.append("cropY", String(question.crop_y));
+    form.append("cropWidth", String(question.crop_width));
+    form.append("cropHeight", String(question.crop_height));
+
+    const upload = await fetch("/api/problem-bank/materialize", { method: "POST", body: form });
+    const uploadPayload = await upload.json();
+    if (!upload.ok || !uploadPayload.success) {
+      throw new Error(`${question.question_no}번 이미지 저장 실패: ${uploadPayload.message ?? "알 수 없는 오류"}`);
+    }
+  }
+
   async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T, index: number) => Promise<void>) {
     let cursor = 0;
     const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -418,33 +444,34 @@ export default function AnalysisWorkspacePage() {
       const pdfDocument = await pdfjs.getDocument({ data: bytes }).promise;
 
       let materialized = 0;
-      for (const question of cropQuestions) {
-        const blob = await cropQuestionImage(pdfDocument, question);
-        const form = new FormData();
-        form.append("image", blob, `${String(question.question_no).padStart(3, "0")}.webp`);
-        form.append("analysisId", payload.analysisId);
-        form.append("sourceFileId", payload.sourceFileId);
-        form.append("questionId", question.id);
-        form.append("questionNo", String(question.question_no));
-        form.append("pageNo", String(question.page_no));
-        form.append("cropX", String(question.crop_x));
-        form.append("cropY", String(question.crop_y));
-        form.append("cropWidth", String(question.crop_width));
-        form.append("cropHeight", String(question.crop_height));
+      let adjustedCount = 0;
+      const verifiedQuestions: Question[] = [];
+      for (const initialQuestion of cropQuestions) {
+        let question = initialQuestion;
+        await uploadQuestionCrop(pdfDocument, question, payload.analysisId, payload.sourceFileId);
 
-        const upload = await fetch("/api/problem-bank/materialize", { method: "POST", body: form });
-        const uploadPayload = await upload.json();
-        if (!upload.ok || !uploadPayload.success) {
-          throw new Error(`${question.question_no}번 이미지 저장 실패: ${uploadPayload.message ?? "알 수 없는 오류"}`);
+        setMessage(`2단계 · ${question.question_no}번 크롭 품질 검수 중...`);
+        const reviewResponse = await fetch(`/api/analysis/questions/${question.id}/review-crop`, { method: "POST" });
+        const reviewPayload = await reviewResponse.json();
+        if (!reviewResponse.ok || !reviewPayload.success) {
+          throw new Error(`${question.question_no}번 크롭 검수 실패: ${reviewPayload.message ?? "알 수 없는 오류"}`);
         }
+
+        if (reviewPayload.adjusted && reviewPayload.question) {
+          question = reviewPayload.question as Question;
+          await uploadQuestionCrop(pdfDocument, question, payload.analysisId, payload.sourceFileId);
+          adjustedCount += 1;
+        }
+
+        verifiedQuestions.push(question);
         materialized += 1;
-        setMessage(`2단계 · 문항 이미지 생성 ${materialized}/${cropQuestions.length}`);
+        setMessage(`2단계 · 문항 이미지 생성·검수 ${materialized}/${cropQuestions.length} · 수정 ${adjustedCount}`);
       }
 
       let analyzed = 0;
       const failures: string[] = [];
-      setMessage(`3단계 · 문항별 AI 분석 0/${cropQuestions.length}`);
-      await runWithConcurrency(cropQuestions, 3, async (question) => {
+      setMessage(`3단계 · 문항별 AI 분석 0/${verifiedQuestions.length}`);
+      await runWithConcurrency(verifiedQuestions, 3, async (question) => {
         try {
           const analyze = await fetch(`/api/analysis/questions/${question.id}/analyze`, { method: "POST" });
           const analyzePayload = await analyze.json();
@@ -455,7 +482,7 @@ export default function AnalysisWorkspacePage() {
           failures.push(`${question.question_no}번: ${caught instanceof Error ? caught.message : "분석 실패"}`);
         } finally {
           analyzed += 1;
-          setMessage(`3단계 · 문항별 AI 분석 ${analyzed}/${cropQuestions.length}`);
+          setMessage(`3단계 · 문항별 AI 분석 ${analyzed}/${verifiedQuestions.length}`);
         }
       });
 
