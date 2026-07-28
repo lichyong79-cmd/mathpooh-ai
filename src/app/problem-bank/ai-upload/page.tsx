@@ -77,11 +77,13 @@ export default function AiWorkspace(){
   const x0=clamp(Math.floor(canvas.width*xPct/100)+inset,0,canvas.width-1),x1=clamp(Math.ceil(canvas.width*(xPct+widthPct)/100)-inset,x0+1,canvas.width);
   const y0=clamp(Math.floor(canvas.height*topPct/100),0,canvas.height-1),y1=clamp(Math.ceil(canvas.height*bottomPct/100),y0+1,canvas.height);
   const image=ctx.getImageData(x0,y0,x1-x0,y1-y0),data=image.data,rowWidth=x1-x0;
-  const minInk=Math.max(3,Math.floor(rowWidth*.0035));let last=-1;
+  const minInk=Math.max(3,Math.floor(rowWidth*.0035));
+  const maxInk=Math.floor(rowWidth*.68); // 페이지 하단의 긴 가로선은 문항 잉크에서 제외
+  let last=-1;
   for(let y=0;y<y1-y0;y++){
    let ink=0;const row=y*rowWidth*4;
-   for(let x=0;x<rowWidth;x+=1){const i=row+x*4;const lum=data[i]*.299+data[i+1]*.587+data[i+2]*.114;if(data[i+3]>20&&lum<190){ink++;if(ink>=minInk)break;}}
-   if(ink>=minInk)last=y;
+   for(let x=0;x<rowWidth;x+=1){const i=row+x*4;const lum=data[i]*.299+data[i+1]*.587+data[i+2]*.114;if(data[i+3]>20&&lum<190)ink++;}
+   if(ink>=minInk&&ink<=maxInk)last=y;
   }
   return last<0?null:(y0+last)/canvas.height*100;
  }
@@ -101,11 +103,28 @@ export default function AiWorkspace(){
     const column=x<45?"left":x>48?"right":null;if(!column)continue;const inStartBand=column==="left"?(x>=4&&x<=22):(x>=50&&x<=70);if(!inStartBand)continue;anchors.push({questionNo,pageNo,column,x,y:clamp(y,0,99)});
    }
   }
-  const starts=new Map<string,number>();let anchorCount=0;
-  for(const q of freshQuestions){const column=questionColumn(q);const candidates=anchors.filter(a=>a.questionNo===Number(q.question_no)&&a.pageNo===Number(q.page_no||1)&&(column==="full"||a.column===column));if(candidates.length){const current=Number(q.crop_y||0);candidates.sort((a,b)=>Math.abs(a.y-current)-Math.abs(b.y-current));starts.set(q.id,candidates[0].y);anchorCount++;}else starts.set(q.id,Number(q.crop_y||0));}
+  const starts=new Map<string,number>();const columns=new Map<string,"left"|"right"|"full">();let anchorCount=0;
+  for(const q of freshQuestions){
+   const originalColumn=questionColumn(q);
+   const sameNo=anchors.filter(a=>a.questionNo===Number(q.question_no)&&a.pageNo===Number(q.page_no||1));
+   const candidates=originalColumn==="full"?sameNo:sameNo.filter(a=>a.column===originalColumn);
+   if(candidates.length){
+    const current=Number(q.crop_y||0);candidates.sort((a,b)=>Math.abs(a.y-current)-Math.abs(b.y-current));
+    const anchor=candidates[0];starts.set(q.id,anchor.y);columns.set(q.id,anchor.column);anchorCount++;
+   }else{starts.set(q.id,Number(q.crop_y||0));columns.set(q.id,originalColumn);}
+  }
   const sorted=[...freshQuestions].sort((a,b)=>Number(a.page_no||1)-Number(b.page_no||1)||(starts.get(a.id)||0)-(starts.get(b.id)||0));const updated:Question[]=[];
   for(let index=0;index<sorted.length;index++){
-   const q=sorted[index],pageNo=Number(q.page_no||1),column=questionColumn(q),start=clamp((starts.get(q.id)??Number(q.crop_y||0))-1.1,0,98);const rect=stableColumnRect(column);const next=sorted.find((candidate,i)=>i>index&&Number(candidate.page_no||1)===pageNo&&questionColumn(candidate)===column&&(starts.get(candidate.id)??0)>start+1);const hardBottom=next?clamp((starts.get(next.id)??99)-.7,start+4,98.5):98.2;const canvas=canvases.get(pageNo);const lastInk=canvas?findLastInk(canvas,rect.x,rect.width,start,hardBottom):null;const bottom=clamp(lastInk==null?hardBottom:lastInk+1.15,start+4,hardBottom);const patch={crop_x:rect.x,crop_y:start,crop_width:rect.width,crop_height:bottom-start};updated.push(await patchCrop(q,patch));setSaveState(`실제 문항영역 보정 ${updated.length}/${sorted.length}`);
+   const q=sorted[index],pageNo=Number(q.page_no||1),column=columns.get(q.id)??questionColumn(q);
+   // PDF 문항번호 글자의 최상단 바로 위만 남긴다. 이전 문항의 분류표시가 붙지 않도록 위로 확장하지 않는다.
+   const start=clamp((starts.get(q.id)??Number(q.crop_y||0))-.18,0,97);
+   const rect=stableColumnRect(column);
+   const next=sorted.find((candidate,i)=>i>index&&Number(candidate.page_no||1)===pageNo&&(columns.get(candidate.id)??questionColumn(candidate))===column&&(starts.get(candidate.id)??0)>start+1);
+   // 다음 문항 직전 또는 페이지 본문 안전선까지만 탐색한다. 꼬리말/하단선은 절대 포함하지 않는다.
+   const hardBottom=next?clamp((starts.get(next.id)??93)-.55,start+4,93.2):93.2;
+   const canvas=canvases.get(pageNo);const lastInk=canvas?findLastInk(canvas,rect.x,rect.width,start,hardBottom):null;
+   const bottom=clamp(lastInk==null?hardBottom:lastInk+.72,start+4,hardBottom);
+   const patch={crop_x:rect.x,crop_y:start,crop_width:rect.width,crop_height:bottom-start};updated.push(await patchCrop(q,patch));setSaveState(`실제 문항영역 보정 ${updated.length}/${sorted.length}`);
   }
   doc.cleanup();setWorkspace((w)=>w?{...w,questions:updated.sort((a,b)=>a.question_no-b.question_no)}:w);setSaveState(`PDF 좌표 ${anchorCount}개 · 문항영역 ${updated.length}개 보정 완료`);return{updated:updated.length,anchorCount};
  }
