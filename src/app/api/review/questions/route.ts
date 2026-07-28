@@ -18,7 +18,6 @@ export async function GET() {
         ai_result,
         review_result,
         review_reason,
-        question_image_path,
         created_at,
         source_analysis!inner(
           source_file_id,
