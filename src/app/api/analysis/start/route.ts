@@ -129,19 +129,32 @@ function buildCrops(layouts: LayoutQuestion[]) {
     .sort((a, b) => a.page_no - b.page_no || a.start_y - b.start_y || a.question_no - b.question_no);
 
   return normalized.map(current => {
-    const next = normalized.find(candidate =>
-      candidate.page_no === current.page_no
-      && candidate.column === current.column
-      && candidate.start_y > current.start_y + 0.5,
+    const sameLane = normalized.filter(candidate =>
+      candidate.page_no === current.page_no && candidate.column === current.column,
     );
+    const previous = [...sameLane]
+      .filter(candidate => candidate.start_y < current.start_y - 0.5)
+      .sort((a, b) => b.start_y - a.start_y)[0];
+    const next = sameLane.find(candidate => candidate.start_y > current.start_y + 0.5);
+    const isFirstInLane = !previous;
 
-    const top = clamp(current.start_y - 0.8, 0, 99);
-    const contentBottom = clamp(current.content_bottom_y + 1.2, top + 4, 99.2);
-    const nextBoundary = next ? clamp(next.start_y - 1.1, top + 4, 99.2) : 99.2;
+    // 문항번호의 기준선보다 위로 솟는 분수·근호가 잘리지 않도록 기본 위 여백을 늘린다.
+    // 각 단의 첫 문항은 AI가 제목·문항 첫 줄 아래를 시작점으로 오인할 수 있어 더 넓게 복원한다.
+    const topPadding = isFirstInLane ? 4.2 : 2.0;
+    const previousBottomGuard = previous
+      ? clamp(previous.content_bottom_y + 0.35, 3.8, current.start_y - 0.3)
+      : 3.8;
+    const top = clamp(Math.max(current.start_y - topPadding, previousBottomGuard), 3.8, 98);
+
+    // 페이지 하단의 출판사 문구·꼬리말은 문항 콘텐츠로 보지 않는다.
+    // AI가 끝점을 하단 꼬리말까지 내려 잡은 경우에만 안전영역 위로 되돌린다.
+    const footerSafeBottom = current.content_bottom_y >= 94 ? 92.8 : current.content_bottom_y;
+    const contentBottom = clamp(footerSafeBottom + 1.0, top + 4, 93.8);
+    const nextBoundary = next ? clamp(next.start_y - 1.1, top + 4, 93.8) : 93.8;
 
     // OCR이 실제 콘텐츠 끝을 잘 찾으면 불필요한 대형 여백을 제거한다.
-    // 단, 다음 문항을 침범하지 않도록 다음 시작점 직전에서 강제로 막는다.
-    const bottom = Math.min(Math.max(contentBottom, top + 5), nextBoundary);
+    // 단, 다음 문항을 침범하지 않고 페이지 꼬리말 안전영역을 넘지 않도록 강제로 막는다.
+    const bottom = Math.min(Math.max(contentBottom, top + 5), nextBoundary, 93.8);
     const col = columnRect(current.column);
 
     return {
@@ -263,11 +276,13 @@ export async function POST(request: NextRequest) {
       "시험지에 실제 인쇄된 문항 번호를 모두 찾는다. 머리말의 연도, 쪽수, 예제 번호, 해설 참조번호는 문항으로 세지 않는다.",
       "각 문항에 대해 page_no, column, start_y, content_bottom_y만 정확히 반환한다.",
       "column은 왼쪽 단 left, 오른쪽 단 right, 페이지 전체 폭 문항 full 중 하나다.",
-      "start_y는 문항 번호와 첫 문장이 시작하는 가장 위 위치다.",
+      "start_y는 문항 번호만의 기준선이 아니라, 분수의 분자·근호·윗첨자를 포함해 문항의 실제 인쇄물이 시작하는 가장 위 위치다.",
+      "특히 문항 첫 수식이 번호 기준선 위로 솟아 있으면 그 수식의 최상단을 start_y로 잡는다.",
       "content_bottom_y는 해당 문항의 선택지·보기·표·그래프·도형까지 포함한 실제 인쇄 콘텐츠의 가장 아래 위치다.",
       "start_y와 content_bottom_y는 페이지 높이 기준 0~100 백분율이다. 0~1 비율값은 사용하지 않는다.",
       "큰 여백은 콘텐츠로 보지 않는다. 다음 문항 직전까지 무조건 늘리지 말고 실제 글자·수식·그림이 끝나는 곳을 찾는다.",
       "도형이 본문보다 아래에 있으면 반드시 도형 아래까지 content_bottom_y를 내려 잡는다.",
+      "페이지 맨 아래의 출판사 문구, 슬로건, 저작권 문구, 페이지 장식선은 문항에 포함하지 않는다.",
       "문항이 다음 페이지로 이어지는 특수한 경우에는 본문이 시작된 페이지를 기준으로 잡고 confidence를 낮춘다.",
       "번호 누락·중복 없이 실제 문항 순서대로 반환한다.",
       `시험지 정보: ${source.title} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
