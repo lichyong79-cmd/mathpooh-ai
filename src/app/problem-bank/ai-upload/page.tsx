@@ -71,21 +71,30 @@ export default function AiWorkspace(){
  function stableColumnRect(column:"left"|"right"|"full"){if(column==="left")return{x:4,width:45.2};if(column==="right")return{x:50.8,width:45.2};return{x:4,width:92};}
  function parseQuestionNo(text:string){const normalized=text.trim().replace(/^[\[({]\s*/,"");const match=normalized.match(/^(\d{1,3})\s*[.)]\s*/);if(!match)return null;const n=Number(match[1]);return n>=1&&n<=200?n:null;}
  async function patchCrop(question:Question,patch:Partial<Question>){const r=await fetch(`/api/analysis/questions/${question.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(patch)});const p=await r.json();if(!r.ok||!p.success)throw new Error(p.message||`${question.question_no}번 좌표 저장 실패`);return p.question as Question;}
- function findLastInk(canvas:HTMLCanvasElement,xPct:number,widthPct:number,topPct:number,bottomPct:number){
+ function findQuestionBottom(canvas:HTMLCanvasElement,xPct:number,widthPct:number,topPct:number,bottomPct:number){
   const ctx=canvas.getContext("2d",{willReadFrequently:true});if(!ctx)return null;
-  const inset=Math.max(8,Math.round(canvas.width*.012));
+  const inset=Math.max(10,Math.round(canvas.width*.014));
   const x0=clamp(Math.floor(canvas.width*xPct/100)+inset,0,canvas.width-1),x1=clamp(Math.ceil(canvas.width*(xPct+widthPct)/100)-inset,x0+1,canvas.width);
   const y0=clamp(Math.floor(canvas.height*topPct/100),0,canvas.height-1),y1=clamp(Math.ceil(canvas.height*bottomPct/100),y0+1,canvas.height);
   const image=ctx.getImageData(x0,y0,x1-x0,y1-y0),data=image.data,rowWidth=x1-x0;
   const minInk=Math.max(3,Math.floor(rowWidth*.0035));
-  const maxInk=Math.floor(rowWidth*.68); // 페이지 하단의 긴 가로선은 문항 잉크에서 제외
-  let last=-1;
+  const maxLineInk=Math.floor(rowWidth*.72); // 굵은 제목선/구분선은 본문으로 세지 않음
+  const active:number[]=[];
   for(let y=0;y<y1-y0;y++){
    let ink=0;const row=y*rowWidth*4;
    for(let x=0;x<rowWidth;x+=1){const i=row+x*4;const lum=data[i]*.299+data[i+1]*.587+data[i+2]*.114;if(data[i+3]>20&&lum<190)ink++;}
-   if(ink>=minInk&&ink<=maxInk)last=y;
+   if(ink>=minInk&&ink<maxLineInk)active.push(y);
   }
-  return last<0?null:(y0+last)/canvas.height*100;
+  if(!active.length)return null;
+
+  // 문항 내부의 줄 간격은 이어 붙이고, 큰 공백 뒤의 꼬리말/다음 영역은 버린다.
+  const maxGap=Math.max(22,Math.round(canvas.height*.026));
+  let last=active[0];
+  for(let i=1;i<active.length;i++){
+   if(active[i]-active[i-1]>maxGap)break;
+   last=active[i];
+  }
+  return (y0+last)/canvas.height*100;
  }
  async function refineQuestionCrops(sourceFileId:string){
   setSaveState("PDF 텍스트 좌표 읽는 중...");
@@ -105,25 +114,27 @@ export default function AiWorkspace(){
   }
   const starts=new Map<string,number>();const columns=new Map<string,"left"|"right"|"full">();let anchorCount=0;
   for(const q of freshQuestions){
-   const originalColumn=questionColumn(q);
-   const sameNo=anchors.filter(a=>a.questionNo===Number(q.question_no)&&a.pageNo===Number(q.page_no||1));
-   const candidates=originalColumn==="full"?sameNo:sameNo.filter(a=>a.column===originalColumn);
+   const currentY=Number(q.crop_y||0),currentColumn=questionColumn(q);
+   const candidates=anchors.filter(a=>a.questionNo===Number(q.question_no)&&a.pageNo===Number(q.page_no||1));
    if(candidates.length){
-    const current=Number(q.crop_y||0);candidates.sort((a,b)=>Math.abs(a.y-current)-Math.abs(b.y-current));
-    const anchor=candidates[0];starts.set(q.id,anchor.y);columns.set(q.id,anchor.column);anchorCount++;
-   }else{starts.set(q.id,Number(q.crop_y||0));columns.set(q.id,originalColumn);}
+    // 기존 박스의 열이 틀려도 PDF 문항번호 자체의 열을 최종 기준으로 사용한다. (7·8, 19·20 분리)
+    candidates.sort((a,b)=>Math.abs(a.y-currentY)-Math.abs(b.y-currentY));
+    starts.set(q.id,candidates[0].y);columns.set(q.id,candidates[0].column);anchorCount++;
+   }else{
+    starts.set(q.id,currentY);columns.set(q.id,currentColumn);
+   }
   }
   const sorted=[...freshQuestions].sort((a,b)=>Number(a.page_no||1)-Number(b.page_no||1)||(starts.get(a.id)||0)-(starts.get(b.id)||0));const updated:Question[]=[];
   for(let index=0;index<sorted.length;index++){
    const q=sorted[index],pageNo=Number(q.page_no||1),column=columns.get(q.id)??questionColumn(q);
-   // PDF 문항번호 글자의 최상단 바로 위만 남긴다. 이전 문항의 분류표시가 붙지 않도록 위로 확장하지 않는다.
-   const start=clamp((starts.get(q.id)??Number(q.crop_y||0))-.18,0,97);
+   // 문항번호 바로 위 0.45%만 남긴다. 제목/문항분류가 붙는 기존 1.1% 여백은 제거한다.
+   const start=clamp((starts.get(q.id)??Number(q.crop_y||0))-.45,0,96);
    const rect=stableColumnRect(column);
    const next=sorted.find((candidate,i)=>i>index&&Number(candidate.page_no||1)===pageNo&&(columns.get(candidate.id)??questionColumn(candidate))===column&&(starts.get(candidate.id)??0)>start+1);
-   // 다음 문항 직전 또는 페이지 본문 안전선까지만 탐색한다. 꼬리말/하단선은 절대 포함하지 않는다.
-   const hardBottom=next?clamp((starts.get(next.id)??93)-.55,start+4,93.2):93.2;
-   const canvas=canvases.get(pageNo);const lastInk=canvas?findLastInk(canvas,rect.x,rect.width,start,hardBottom):null;
-   const bottom=clamp(lastInk==null?hardBottom:lastInk+.72,start+4,hardBottom);
+   // 같은 열의 다음 문항번호가 가장 강한 하단 경계다. 마지막 문항도 꼬리말 영역(95% 이후)은 탐색하지 않는다.
+   const hardBottom=next?clamp((starts.get(next.id)??95)-.35,start+3.2,95):95;
+   const canvas=canvases.get(pageNo);const contentBottom=canvas?findQuestionBottom(canvas,rect.x,rect.width,start,hardBottom):null;
+   const bottom=clamp(contentBottom==null?hardBottom:contentBottom+.65,start+3.2,hardBottom);
    const patch={crop_x:rect.x,crop_y:start,crop_width:rect.width,crop_height:bottom-start};updated.push(await patchCrop(q,patch));setSaveState(`실제 문항영역 보정 ${updated.length}/${sorted.length}`);
   }
   doc.cleanup();setWorkspace((w)=>w?{...w,questions:updated.sort((a,b)=>a.question_no-b.question_no)}:w);setSaveState(`PDF 좌표 ${anchorCount}개 · 문항영역 ${updated.length}개 보정 완료`);return{updated:updated.length,anchorCount};
