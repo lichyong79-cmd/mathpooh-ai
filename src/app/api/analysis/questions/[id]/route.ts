@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
-const STATUSES = ["WAITING", "RUNNING", "REVIEW", "APPROVED", "AUTO_REGISTERED", "REGISTERED", "REJECTED", "FAILED"];
+const STATUSES = ["WAITING", "RUNNING", "REVIEW", "APPROVED", "AUTO_REGISTERED", "REJECTED", "FAILED"];
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const denied = await requireUser();

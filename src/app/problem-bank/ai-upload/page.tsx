@@ -95,6 +95,14 @@ function valueOf(question: Question, key: string) {
   return String(review[key] ?? ai[key] ?? "");
 }
 
+function isBankRegistered(question: Question) {
+  return String(question.review_result?.bank_status ?? "") === "REGISTERED";
+}
+
+function displayQuestionStatus(question: Question) {
+  return isBankRegistered(question) ? "등록 완료" : (statusText[question.status] ?? question.status);
+}
+
 
 const CROP_PADDING = {
   left: 18,
@@ -1152,8 +1160,10 @@ export default function AnalysisWorkspacePage() {
   const analysisStatus = workspace?.analysis?.status ?? workspace?.source.status ?? "uploaded";
   const progress = Math.max(0, Math.min(100, Number(workspace?.analysis?.progress ?? 0)));
   const croppedCount = questions.filter((question) => hasValidCrop(question)).length;
-  const registeredQuestions = questions.filter((question) => question.status === "REGISTERED");
-  const pendingQuestions = questions.filter((question) => question.status === "AUTO_REGISTERED" || question.status === "APPROVED");
+  const registeredQuestions = questions.filter((question) => isBankRegistered(question));
+  const pendingQuestions = questions.filter((question) =>
+    !isBankRegistered(question) && (question.status === "AUTO_REGISTERED" || question.status === "APPROVED")
+  );
   const reviewQuestions = questions.filter((question) => question.status === "REVIEW");
   const failedQuestions = questions.filter((question) => question.status === "FAILED" || question.status === "REJECTED");
   const visibleQuestions = viewMode === "registered" ? registeredQuestions
@@ -1277,17 +1287,17 @@ export default function AnalysisWorkspacePage() {
           {viewMode !== "single" ? (
             <section className={`all-crops-grid ${viewMode === "review" ? "review-large-grid" : ""}`}>
               {visibleQuestions.map((question) => (
-                <article key={question.id} className={`crop-card ${question.status === "REGISTERED" ? "registered-card" : question.status === "AUTO_REGISTERED" || question.status === "APPROVED" ? "auto" : question.status === "REVIEW" ? "hold" : "failed-card"}`}>
+                <article key={question.id} className={`crop-card ${isBankRegistered(question) ? "registered-card" : question.status === "AUTO_REGISTERED" || question.status === "APPROVED" ? "auto" : question.status === "REVIEW" ? "hold" : "failed-card"}`}>
                   <button className="card-open" onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>
                     <div className="crop-thumb">
                       {thumbnailUrls[question.id] ? <img src={thumbnailUrls[question.id]} alt={`${question.question_no}번 잘린 문항`} /> : <span>{thumbnailBusy ? "미리보기 생성 중..." : "미리보기 없음"}</span>}
                     </div>
-                    <div className="crop-card-head"><strong>{question.question_no}번</strong><span>{statusText[question.status] ?? question.status}</span></div>
+                    <div className="crop-card-head"><strong>{question.question_no}번</strong><span>{displayQuestionStatus(question)}</span></div>
                     <small>{valueOf(question, "unit") || "단원 분석 전"}</small>
                     <small>신뢰도 {question.confidence == null ? "-" : `${Math.round(Number(question.confidence) * 100)}%`}</small>
                     {question.review_reason ? <small className="review-reason">{question.review_reason}</small> : null}
                   </button>
-                  {(question.status === "AUTO_REGISTERED" || question.status === "APPROVED") ? <div className="review-card-actions single-action pending-actions">
+                  {(!isBankRegistered(question) && (question.status === "AUTO_REGISTERED" || question.status === "APPROVED")) ? <div className="review-card-actions single-action pending-actions">
                     <button className="register-now" onClick={() => void registerPendingQuestions([question])} disabled={!!busy}>이 문항 문제은행 등록</button>
                   </div> : null}
                   {question.status === "REVIEW" ? <div className="review-card-actions">
@@ -1296,7 +1306,7 @@ export default function AnalysisWorkspacePage() {
                     <button className="register-now" onClick={() => void approveAndRegister(question)} disabled={!!busy}>현재 결과로 등록</button>
                     <button className="exclude" onClick={() => void excludeQuestion(question)} disabled={!!busy}>등록 제외</button>
                   </div> : null}
-                  {question.status === "REGISTERED" ? <div className="review-card-actions single-action">
+                  {isBankRegistered(question) ? <div className="review-card-actions single-action">
                     <button className="register-now" onClick={() => router.push("/problem-bank")}>문제은행에서 보기</button>
                   </div> : null}
                 </article>

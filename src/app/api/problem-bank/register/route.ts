@@ -56,16 +56,29 @@ export async function POST(request: NextRequest) {
     const result = await registerQuestions(supabase, sourceQuery.data, registerable);
     const now = new Date().toISOString();
 
-    // 실제 문제은행 등록이 끝난 문항만 REGISTERED로 확정한다.
+    // analysis_questions.status는 AI 분석/검토 상태만 관리한다.
+    // DB check constraint에 REGISTERED가 없으므로 등록 여부는 review_result 안의
+    // bank_status / bank_registered_at으로 별도 기록한다.
     // analysis_question_id 기반 upsert이므로 같은 작업을 다시 실행해도 중복 등록되지 않는다.
-    const registeredIds = registerable.map((item) => item.id);
-    if (registeredIds.length > 0) {
-      const registeredUpdate = await supabase
-        .from("analysis_questions")
-        .update({ status: "REGISTERED", review_reason: null, updated_at: now })
-        .in("id", registeredIds);
-      if (registeredUpdate.error) throw registeredUpdate.error;
-    }
+    const registrationUpdates = await Promise.all(
+      registerable.map(async (item) => {
+        const nextReviewResult = {
+          ...(item.review_result ?? {}),
+          bank_status: "REGISTERED",
+          bank_registered_at: now,
+        };
+        return supabase
+          .from("analysis_questions")
+          .update({
+            review_result: nextReviewResult,
+            review_reason: null,
+            updated_at: now,
+          })
+          .eq("id", item.id);
+      }),
+    );
+    const registrationUpdateError = registrationUpdates.find((item) => item.error)?.error;
+    if (registrationUpdateError) throw registrationUpdateError;
     const analysisUpdate = await supabase
       .from("source_analysis")
       .update({
