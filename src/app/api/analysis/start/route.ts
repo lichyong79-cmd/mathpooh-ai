@@ -164,6 +164,45 @@ function normalizeAiCrops(items: AiCropQuestion[]) {
   return [...byQuestion.values()].sort((a, b) => a.question_no - b.question_no);
 }
 
+
+function intersectionOverUnion(a: AiCropQuestion, b: AiCropQuestion) {
+  if (a.page_no !== b.page_no) return 0;
+  const left = Math.max(a.crop_x, b.crop_x);
+  const top = Math.max(a.crop_y, b.crop_y);
+  const right = Math.min(a.crop_x + a.crop_width, b.crop_x + b.crop_width);
+  const bottom = Math.min(a.crop_y + a.crop_height, b.crop_y + b.crop_height);
+  const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+  if (intersection <= 0) return 0;
+  const union = a.crop_width * a.crop_height + b.crop_width * b.crop_height - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+function findDuplicateCrops(items: AiCropQuestion[]) {
+  const duplicates: Array<{ first: number; second: number; page: number; overlap: number }> = [];
+  for (let i = 0; i < items.length; i += 1) {
+    for (let j = i + 1; j < items.length; j += 1) {
+      const a = items[i];
+      const b = items[j];
+      if (a.page_no !== b.page_no) continue;
+      const overlap = intersectionOverUnion(a, b);
+      const nearlySame =
+        Math.abs(a.crop_x - b.crop_x) < 0.7 &&
+        Math.abs(a.crop_y - b.crop_y) < 0.7 &&
+        Math.abs(a.crop_width - b.crop_width) < 0.7 &&
+        Math.abs(a.crop_height - b.crop_height) < 0.7;
+      if (overlap >= 0.86 || nearlySame) {
+        duplicates.push({
+          first: a.question_no,
+          second: b.question_no,
+          page: a.page_no,
+          overlap: Math.round(overlap * 1000) / 1000,
+        });
+      }
+    }
+  }
+  return duplicates;
+}
+
 function openAiError(status: number, body: string) {
   let message = body;
   try {
@@ -354,11 +393,14 @@ export async function POST(request: NextRequest) {
       "현재 문항 위의 이전 문항 선택지나 아래의 다음 문항 번호·본문은 절대로 포함하지 않는다.",
       "두 단 편집이면 각 문항이 속한 단 안에서만 가로 범위를 잡고, 다른 단의 문항이나 빈 공간을 포함하지 않는다.",
       "문항이 한 단 전체 너비를 쓰면 실제 내용 너비만 포함한다. 홀짝 번호로 단을 추측하지 않는다.",
-      "문항의 위쪽은 문항번호와 위로 튀는 분수·지수·근호가 잘리지 않게 약간의 여백만 둔다.",
+      "문항의 위쪽은 실제 인쇄된 문항번호의 윗부분부터 시작한다. 문항번호보다 위나 왼쪽에 있는 별표(★), 난이도 아이콘, 장식기호, 단원 표시는 절대로 포함하지 않는다.",
+      "분수·지수·근호가 문항번호보다 위로 튀는 경우에만 그 수식이 잘리지 않을 최소 여백을 둔다.",
       "문항의 아래쪽은 선택지·도형이 끝난 직후까지만 두고 큰 빈 여백을 포함하지 않는다.",
       "페이지 머리말, 시험 제목, 이름란, 쪽번호, 출판사·저작권 문구는 포함하지 않는다.",
       "예제·설명·참고문항처럼 번호가 있더라도 실제 시험 문항이 아니면 제외한다.",
       "문항번호는 실제 인쇄된 번호를 사용하고 누락·중복하지 않는다.",
+      "같은 페이지의 서로 다른 문항에 동일하거나 거의 동일한 사각형 좌표를 절대로 반환하지 않는다. 각 문항은 반드시 자기 문항번호가 보이는 고유 영역이어야 한다.",
+      "반환 전 같은 페이지의 모든 사각형을 서로 비교하여, 한 문항 영역이 다른 문항 영역과 대부분 겹치면 좌표를 다시 찾는다.",
       "영역이 명확하면 confidence를 높게, 페이지 경계에 걸리거나 영역이 애매하면 낮게 주고 review_reason에 이유를 쓴다.",
       "확실하면 review_reason은 빈 문자열로 둔다.",
       `시험지 정보: ${source.title} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
@@ -401,10 +443,54 @@ export async function POST(request: NextRequest) {
       }),
     ]);
 
-    const cropPayload = parseJson<{ questions: AiCropQuestion[] }>(cropRaw);
-    const crops = normalizeAiCrops(cropPayload.questions);
+    let cropPayload = parseJson<{ questions: AiCropQuestion[] }>(cropRaw);
+    let crops = normalizeAiCrops(cropPayload.questions);
     if (!crops.length) {
       throw new Error("AI가 문항 영역을 찾지 못했습니다.");
+    }
+
+    // 같은 페이지의 여러 문항이 첫 문항 좌표를 공유하는 잘못된 결과는 저장하지 않는다.
+    // 중복이 감지되면 시험지 비전을 한 번 더 호출해 좌표만 바로잡는다.
+    let duplicateCrops = findDuplicateCrops(crops);
+    if (duplicateCrops.length) {
+      await supabase
+        .from("source_analysis")
+        .update({
+          progress: 55,
+          current_step: `중복 문항 영역 ${duplicateCrops.length}건 감지 · 좌표 재판독 중`,
+        })
+        .eq("id", analysis.id);
+
+      const correctionPrompt = [
+        cropPrompt,
+        "",
+        "이전 판독에서 아래 문항들이 같은 페이지의 동일한 첫 문항 영역을 공유하는 오류가 발생했다.",
+        JSON.stringify(duplicateCrops),
+        "시험지 전체를 다시 직접 보고 모든 문항의 사각형을 새로 산출하라.",
+        "이전 좌표를 복사하거나 재사용하지 말고, 각 question_no가 실제로 보이는 서로 다른 고유 영역만 반환하라.",
+        "문항 위/왼쪽의 별표(★)나 장식은 제외하고 실제 문항번호부터 시작하라.",
+      ].join("\n");
+
+      const correctedRaw = await callOpenAi({
+        apiKey,
+        model: cropModel,
+        prompt: correctionPrompt,
+        files: [examUrl],
+        schemaName: "math_exam_visual_bounding_boxes_corrected_v2",
+        schema: cropSchema,
+        maxOutputTokens: 9000,
+      });
+      cropPayload = parseJson<{ questions: AiCropQuestion[] }>(correctedRaw);
+      crops = normalizeAiCrops(cropPayload.questions);
+      duplicateCrops = findDuplicateCrops(crops);
+    }
+
+    if (duplicateCrops.length) {
+      const sample = duplicateCrops
+        .slice(0, 6)
+        .map((item) => `${item.page}쪽 ${item.first}번/${item.second}번`)
+        .join(", ");
+      throw new Error(`AI 문항 좌표 중복을 자동으로 막았습니다: ${sample}. 다시 분석해 주세요.`);
     }
 
     const analysisPayload = parseJson<{ questions: AnalysisQuestion[] }>(analysisRaw);
