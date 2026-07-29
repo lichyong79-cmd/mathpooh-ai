@@ -82,19 +82,26 @@ function valueOf(question: Question, key: string) {
 }
 
 
-function trimVerticalWhitespace(source: HTMLCanvasElement, padding = 14) {
+function trimVerticalWhitespace(source: HTMLCanvasElement, padding = 8) {
   const context = source.getContext("2d", { willReadFrequently: true });
   if (!context) return { canvas: source, top: 0, bottom: source.height };
   const { width, height } = source;
   const pixels = context.getImageData(0, 0, width, height).data;
-  const minimumDarkPixels = Math.max(4, Math.floor(width * 0.0025));
+
+  // 세로 테두리선이나 스캔 잡음 한 줄 때문에 여백으로 판단하지 않도록
+  // 좌우 끝 4%는 제외하고, 한 행에 충분한 검은 픽셀이 있을 때만 내용으로 본다.
+  const scanLeft = Math.max(0, Math.floor(width * 0.04));
+  const scanRight = Math.min(width, Math.ceil(width * 0.96));
+  const scanWidth = Math.max(1, scanRight - scanLeft);
+  const minimumDarkPixels = Math.max(8, Math.floor(scanWidth * 0.007));
   const rowHasContent = (y: number) => {
     let dark = 0;
-    for (let x = 0; x < width; x += 2) {
+    for (let x = scanLeft; x < scanRight; x += 2) {
       const index = (y * width + x) * 4;
       const alpha = pixels[index + 3];
-      const luminance = (pixels[index] + pixels[index + 1] + pixels[index + 2]) / 3;
-      if (alpha > 20 && luminance < 225) {
+      const luminance =
+        pixels[index] * 0.299 + pixels[index + 1] * 0.587 + pixels[index + 2] * 0.114;
+      if (alpha > 20 && luminance < 205) {
         dark += 1;
         if (dark >= minimumDarkPixels) return true;
       }
@@ -119,6 +126,20 @@ function trimVerticalWhitespace(source: HTMLCanvasElement, padding = 14) {
   outputContext.fillRect(0, 0, output.width, output.height);
   outputContext.drawImage(source, 0, top, width, output.height, 0, 0, width, output.height);
   return { canvas: output, top, bottom };
+}
+
+function refineColumnCrop(question: Question) {
+  const x = Number(question.crop_x ?? 0);
+  const width = Number(question.crop_width ?? 0);
+  const center = x + width / 2;
+  const inset = 1.6;
+
+  // 2단 편집물 보정:
+  // 좌단 문항은 바깥쪽 시작선을 오른쪽으로, 우단 문항은 시작선을 왼쪽으로 이동한다.
+  if (center < 50) {
+    return { x: x + inset, width: Math.max(1, width - inset) };
+  }
+  return { x: Math.max(0, x - inset), width: Math.min(100 - Math.max(0, x - inset), width + inset) };
 }
 
 function hasValidCrop(question: Question | null) {
@@ -420,9 +441,10 @@ export default function AnalysisWorkspacePage() {
           await page.render({ canvasContext: context, viewport }).promise;
           pageCache.set(targetPage, sourceCanvas);
         }
-        const sx = Math.floor(sourceCanvas.width * Number(question.crop_x) / 100);
+        const horizontal = refineColumnCrop(question);
+        const sx = Math.floor(sourceCanvas.width * horizontal.x / 100);
         const sy = Math.floor(sourceCanvas.height * Number(question.crop_y) / 100);
-        const sw = Math.max(1, Math.ceil(sourceCanvas.width * Number(question.crop_width) / 100));
+        const sw = Math.max(1, Math.ceil(sourceCanvas.width * horizontal.width / 100));
         const sh = Math.max(1, Math.ceil(sourceCanvas.height * Number(question.crop_height) / 100));
         const crop = document.createElement("canvas");
         crop.width = sw; crop.height = sh;
@@ -431,7 +453,7 @@ export default function AnalysisWorkspacePage() {
         cropContext.fillStyle = "#fff";
         cropContext.fillRect(0, 0, sw, sh);
         cropContext.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-        next[question.id] = trimVerticalWhitespace(crop, 8).canvas.toDataURL("image/jpeg", .78);
+        next[question.id] = trimVerticalWhitespace(crop, 7).canvas.toDataURL("image/jpeg", .78);
       }
       setThumbnailUrls(next);
     } finally {
@@ -635,9 +657,10 @@ export default function AnalysisWorkspacePage() {
     if (!sourceContext) throw new Error("PDF 캔버스를 만들지 못했습니다.");
     await page.render({ canvasContext: sourceContext, viewport }).promise;
 
-    const sx = Math.floor(sourceCanvas.width * Number(question.crop_x) / 100);
+    const horizontal = refineColumnCrop(question);
+    const sx = Math.floor(sourceCanvas.width * horizontal.x / 100);
     const sy = Math.floor(sourceCanvas.height * Number(question.crop_y) / 100);
-    const sw = Math.max(1, Math.ceil(sourceCanvas.width * Number(question.crop_width) / 100));
+    const sw = Math.max(1, Math.ceil(sourceCanvas.width * horizontal.width / 100));
     const sh = Math.max(1, Math.ceil(sourceCanvas.height * Number(question.crop_height) / 100));
     const out = document.createElement("canvas");
     out.width = sw; out.height = sh;
@@ -646,7 +669,7 @@ export default function AnalysisWorkspacePage() {
     outContext.fillStyle = "#fff";
     outContext.fillRect(0, 0, sw, sh);
     outContext.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-    const trimmed = trimVerticalWhitespace(out, 14);
+    const trimmed = trimVerticalWhitespace(out, 8);
     const adjustedCropY = Number(question.crop_y) + (trimmed.top / sourceCanvas.height) * 100;
     const adjustedCropHeight = (trimmed.canvas.height / sourceCanvas.height) * 100;
     const blob = await new Promise<Blob>((resolve, reject) => trimmed.canvas.toBlob((value) => value ? resolve(value) : reject(new Error("이미지 변환 실패")), "image/webp", .92));
@@ -657,9 +680,9 @@ export default function AnalysisWorkspacePage() {
     form.append("questionId", question.id);
     form.append("questionNo", String(question.question_no));
     form.append("pageNo", String(question.page_no));
-    form.append("cropX", String(question.crop_x));
+    form.append("cropX", String(horizontal.x));
     form.append("cropY", String(adjustedCropY));
-    form.append("cropWidth", String(question.crop_width));
+    form.append("cropWidth", String(horizontal.width));
     form.append("cropHeight", String(adjustedCropHeight));
     const response = await fetch("/api/problem-bank/materialize", { method: "POST", body: form });
     const payload = await response.json();
