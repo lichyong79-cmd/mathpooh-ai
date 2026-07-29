@@ -13,6 +13,7 @@ type AiCropQuestion = {
   crop_y: number;
   crop_width: number;
   crop_height: number;
+  question_number_y: number;
   confidence: number;
   review_reason: string;
 };
@@ -55,6 +56,7 @@ const cropSchema = {
           "crop_y",
           "crop_width",
           "crop_height",
+          "question_number_y",
           "confidence",
           "review_reason",
         ],
@@ -65,6 +67,7 @@ const cropSchema = {
           crop_y: { type: "number", minimum: 0, maximum: 100 },
           crop_width: { type: "number", minimum: 1, maximum: 100 },
           crop_height: { type: "number", minimum: 1, maximum: 100 },
+          question_number_y: { type: "number", minimum: 0, maximum: 100 },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           review_reason: { type: "string" },
         },
@@ -145,9 +148,17 @@ function normalizeAiCrops(items: AiCropQuestion[]) {
     if (!Number.isFinite(questionNo) || questionNo < 1) continue;
 
     const x = clamp(Number(item.crop_x), 0, 99);
-    const y = clamp(Number(item.crop_y), 0, 99);
+    const rawY = clamp(Number(item.crop_y), 0, 99);
+    const rawHeight = clamp(Number(item.crop_height), 1, 100 - rawY);
+    const rawBottom = rawY + rawHeight;
+    const numberAnchor = clamp(Number(item.question_number_y), rawY, rawBottom - 0.2);
+
+    // AI가 문항 간 구간의 시작을 crop_y로 잡더라도 실제 인쇄된 문항번호 위치로
+    // 시작점만 강제 이동한다. 기존 아래쪽 끝은 유지하므로 선택지·도형은 잘리지 않는다.
+    // 페이지 높이의 0.28%만 안전 여백으로 남기며, 번호 위의 별표/장식은 포함하지 않는다.
+    const y = clamp(numberAnchor - 0.28, 0, rawBottom - 0.2);
     const width = clamp(Number(item.crop_width), 1, 100 - x);
-    const height = clamp(Number(item.crop_height), 1, 100 - y);
+    const height = clamp(rawBottom - y, 0.2, 100 - y);
 
     byQuestion.set(questionNo, {
       question_no: questionNo,
@@ -156,6 +167,7 @@ function normalizeAiCrops(items: AiCropQuestion[]) {
       crop_y: y,
       crop_width: width,
       crop_height: height,
+      question_number_y: numberAnchor,
       confidence: clamp(Number(item.confidence), 0, 1),
       review_reason: String(item.review_reason ?? "").trim(),
     });
@@ -388,12 +400,15 @@ export async function POST(request: NextRequest) {
     const cropPrompt = [
       "너는 한국 수학 시험지에서 각 실제 문항의 사각형 영역을 찾는 비전 판독기다.",
       "별표 유무와 관계없이 시험지에 인쇄된 실제 문항을 모두 찾는다.",
-      "각 문항마다 page_no, question_no, crop_x, crop_y, crop_width, crop_height를 페이지 전체 기준 0~100 백분율로 직접 반환한다.",
+      "각 문항마다 page_no, question_no, crop_x, crop_y, crop_width, crop_height, question_number_y를 페이지 전체 기준 0~100 백분율로 직접 반환한다.",
+      "question_number_y는 별표나 장식이 아니라 실제 인쇄된 해당 문항번호(예: 11., 12.) 글자의 맨 위 y좌표다.",
       "crop 사각형은 문항번호부터 본문, 모든 수식, 보기, 선택지, 표, 그래프, 도형의 마지막 요소까지 포함해야 한다.",
       "현재 문항 위의 이전 문항 선택지나 아래의 다음 문항 번호·본문은 절대로 포함하지 않는다.",
       "두 단 편집이면 각 문항이 속한 단 안에서만 가로 범위를 잡고, 다른 단의 문항이나 빈 공간을 포함하지 않는다.",
       "문항이 한 단 전체 너비를 쓰면 실제 내용 너비만 포함한다. 홀짝 번호로 단을 추측하지 않는다.",
-      "문항의 위쪽은 실제 인쇄된 문항번호의 윗부분부터 시작한다. 문항번호보다 위나 왼쪽에 있는 별표(★), 난이도 아이콘, 장식기호, 단원 표시는 절대로 포함하지 않는다.",
+      "crop_y도 실제 인쇄된 문항번호 행 부근으로 잡되, 최종 시작점은 question_number_y를 기준으로 코드가 보정한다.",
+      "문항번호보다 위나 왼쪽에 있는 별표(★), 난이도 아이콘, 장식기호, 단원 표시는 question_number_y로 절대로 잡지 않는다.",
+      "별표가 없는 문서에서도 question_number_y는 반드시 해당 문항번호 자체의 맨 위를 가리킨다.",
       "분수·지수·근호가 문항번호보다 위로 튀는 경우에만 그 수식이 잘리지 않을 최소 여백을 둔다.",
       "문항의 아래쪽은 선택지·도형이 끝난 직후까지만 두고 큰 빈 여백을 포함하지 않는다.",
       "페이지 머리말, 시험 제목, 이름란, 쪽번호, 출판사·저작권 문구는 포함하지 않는다.",
@@ -469,6 +484,7 @@ export async function POST(request: NextRequest) {
         "시험지 전체를 다시 직접 보고 모든 문항의 사각형을 새로 산출하라.",
         "이전 좌표를 복사하거나 재사용하지 말고, 각 question_no가 실제로 보이는 서로 다른 고유 영역만 반환하라.",
         "문항 위/왼쪽의 별표(★)나 장식은 제외하고 실제 문항번호부터 시작하라.",
+        "각 문항의 question_number_y를 실제 인쇄된 번호 글자의 맨 위로 다시 측정하라.",
       ].join("\n");
 
       const correctedRaw = await callOpenAi({
@@ -548,6 +564,7 @@ export async function POST(request: NextRequest) {
               y: crop.crop_y,
               width: crop.crop_width,
               height: crop.crop_height,
+              question_number_y: crop.question_number_y,
             },
           },
         },
