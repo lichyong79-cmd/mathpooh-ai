@@ -82,50 +82,140 @@ function valueOf(question: Question, key: string) {
 }
 
 
-function trimVerticalWhitespace(source: HTMLCanvasElement, padding = 8) {
+const CONTENT_PADDING = {
+  left: 18,
+  top: 14,
+  right: 18,
+  bottom: 18,
+} as const;
+
+type ContentTrimResult = {
+  canvas: HTMLCanvasElement;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+/**
+ * AI가 찾은 넓은 문항 영역 안에서 실제 내용(문자/수식/도형/표/선택지)의
+ * 경계를 다시 찾고, 모든 문항에 같은 픽셀 여백을 적용한다.
+ *
+ * 긴 세로 다단선은 문항 내용으로 보지 않도록 제거한다.
+ */
+function trimToContentBox(source: HTMLCanvasElement): ContentTrimResult {
   const context = source.getContext("2d", { willReadFrequently: true });
-  if (!context) return { canvas: source, top: 0, bottom: source.height };
+  if (!context) {
+    return { canvas: source, left: 0, top: 0, right: source.width, bottom: source.height };
+  }
+
   const { width, height } = source;
   const pixels = context.getImageData(0, 0, width, height).data;
+  const rowCounts = new Uint32Array(height);
+  const columnCounts = new Uint32Array(width);
+  const dark = new Uint8Array(width * height);
 
-  // 세로 테두리선이나 스캔 잡음 한 줄 때문에 여백으로 판단하지 않도록
-  // 좌우 끝 4%는 제외하고, 한 행에 충분한 검은 픽셀이 있을 때만 내용으로 본다.
-  const scanLeft = Math.max(0, Math.floor(width * 0.04));
-  const scanRight = Math.min(width, Math.ceil(width * 0.96));
-  const scanWidth = Math.max(1, scanRight - scanLeft);
-  const minimumDarkPixels = Math.max(8, Math.floor(scanWidth * 0.007));
-  const rowHasContent = (y: number) => {
-    let dark = 0;
-    for (let x = scanLeft; x < scanRight; x += 2) {
-      const index = (y * width + x) * 4;
-      const alpha = pixels[index + 3];
+  // 흰 종이/연한 붉은 오버레이는 제외하고 인쇄된 검은 내용만 탐지한다.
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixelIndex = (y * width + x) * 4;
+      const alpha = pixels[pixelIndex + 3];
       const luminance =
-        pixels[index] * 0.299 + pixels[index + 1] * 0.587 + pixels[index + 2] * 0.114;
-      if (alpha > 20 && luminance < 205) {
-        dark += 1;
-        if (dark >= minimumDarkPixels) return true;
+        pixels[pixelIndex] * 0.299 +
+        pixels[pixelIndex + 1] * 0.587 +
+        pixels[pixelIndex + 2] * 0.114;
+      if (alpha > 24 && luminance < 210) {
+        dark[y * width + x] = 1;
+        rowCounts[y] += 1;
+        columnCounts[x] += 1;
       }
     }
-    return false;
+  }
+
+  // 페이지 중앙 다단선처럼 거의 전 높이에 걸친 얇은 세로선은 무시한다.
+  const ignoredColumn = new Uint8Array(width);
+  const longLineThreshold = Math.max(40, Math.floor(height * 0.58));
+  for (let x = 0; x < width; x += 1) {
+    if (columnCounts[x] >= longLineThreshold) {
+      const from = Math.max(0, x - 2);
+      const to = Math.min(width - 1, x + 2);
+      for (let lineX = from; lineX <= to; lineX += 1) ignoredColumn[lineX] = 1;
+    }
+  }
+
+  const effectiveRowCounts = new Uint32Array(height);
+  const effectiveColumnCounts = new Uint32Array(width);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (!dark[y * width + x] || ignoredColumn[x]) continue;
+      effectiveRowCounts[y] += 1;
+      effectiveColumnCounts[x] += 1;
+    }
+  }
+
+  // 한두 개 먼지 픽셀은 내용 경계로 사용하지 않는다.
+  const minimumRowInk = Math.max(3, Math.floor(width * 0.0025));
+  const minimumColumnInk = Math.max(3, Math.floor(height * 0.0025));
+  const rowHasContent = (y: number) => {
+    const from = Math.max(0, y - 1);
+    const to = Math.min(height - 1, y + 1);
+    let total = 0;
+    for (let yy = from; yy <= to; yy += 1) total += effectiveRowCounts[yy];
+    return total >= minimumRowInk;
+  };
+  const columnHasContent = (x: number) => {
+    const from = Math.max(0, x - 1);
+    const to = Math.min(width - 1, x + 1);
+    let total = 0;
+    for (let xx = from; xx <= to; xx += 1) total += effectiveColumnCounts[xx];
+    return total >= minimumColumnInk;
   };
 
-  let first = 0;
-  while (first < height && !rowHasContent(first)) first += 1;
-  let last = height - 1;
-  while (last > first && !rowHasContent(last)) last -= 1;
-  if (first >= height || last <= first) return { canvas: source, top: 0, bottom: height };
+  let contentTop = 0;
+  while (contentTop < height && !rowHasContent(contentTop)) contentTop += 1;
+  let contentBottom = height - 1;
+  while (contentBottom > contentTop && !rowHasContent(contentBottom)) contentBottom -= 1;
+  let contentLeft = 0;
+  while (contentLeft < width && !columnHasContent(contentLeft)) contentLeft += 1;
+  let contentRight = width - 1;
+  while (contentRight > contentLeft && !columnHasContent(contentRight)) contentRight -= 1;
 
-  const top = Math.max(0, first - padding);
-  const bottom = Math.min(height, last + padding + 1);
+  if (
+    contentTop >= height ||
+    contentLeft >= width ||
+    contentBottom <= contentTop ||
+    contentRight <= contentLeft
+  ) {
+    return { canvas: source, left: 0, top: 0, right: width, bottom: height };
+  }
+
+  const left = Math.max(0, contentLeft - CONTENT_PADDING.left);
+  const top = Math.max(0, contentTop - CONTENT_PADDING.top);
+  const right = Math.min(width, contentRight + CONTENT_PADDING.right + 1);
+  const bottom = Math.min(height, contentBottom + CONTENT_PADDING.bottom + 1);
+
   const output = document.createElement("canvas");
-  output.width = width;
+  output.width = Math.max(1, right - left);
   output.height = Math.max(1, bottom - top);
   const outputContext = output.getContext("2d");
-  if (!outputContext) return { canvas: source, top: 0, bottom: height };
+  if (!outputContext) {
+    return { canvas: source, left: 0, top: 0, right: width, bottom: height };
+  }
   outputContext.fillStyle = "#fff";
   outputContext.fillRect(0, 0, output.width, output.height);
-  outputContext.drawImage(source, 0, top, width, output.height, 0, 0, width, output.height);
-  return { canvas: output, top, bottom };
+  outputContext.drawImage(
+    source,
+    left,
+    top,
+    output.width,
+    output.height,
+    0,
+    0,
+    output.width,
+    output.height,
+  );
+
+  return { canvas: output, left, top, right, bottom };
 }
 
 function refineColumnCrop(question: Question) {
@@ -453,7 +543,7 @@ export default function AnalysisWorkspacePage() {
         cropContext.fillStyle = "#fff";
         cropContext.fillRect(0, 0, sw, sh);
         cropContext.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-        next[question.id] = trimVerticalWhitespace(crop, 7).canvas.toDataURL("image/jpeg", .78);
+        next[question.id] = trimToContentBox(crop).canvas.toDataURL("image/jpeg", .78);
       }
       setThumbnailUrls(next);
     } finally {
@@ -669,8 +759,10 @@ export default function AnalysisWorkspacePage() {
     outContext.fillStyle = "#fff";
     outContext.fillRect(0, 0, sw, sh);
     outContext.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-    const trimmed = trimVerticalWhitespace(out, 8);
+    const trimmed = trimToContentBox(out);
+    const adjustedCropX = horizontal.x + (trimmed.left / sourceCanvas.width) * 100;
     const adjustedCropY = Number(question.crop_y) + (trimmed.top / sourceCanvas.height) * 100;
+    const adjustedCropWidth = (trimmed.canvas.width / sourceCanvas.width) * 100;
     const adjustedCropHeight = (trimmed.canvas.height / sourceCanvas.height) * 100;
     const blob = await new Promise<Blob>((resolve, reject) => trimmed.canvas.toBlob((value) => value ? resolve(value) : reject(new Error("이미지 변환 실패")), "image/webp", .92));
     const form = new FormData();
@@ -680,9 +772,9 @@ export default function AnalysisWorkspacePage() {
     form.append("questionId", question.id);
     form.append("questionNo", String(question.question_no));
     form.append("pageNo", String(question.page_no));
-    form.append("cropX", String(horizontal.x));
+    form.append("cropX", String(adjustedCropX));
     form.append("cropY", String(adjustedCropY));
-    form.append("cropWidth", String(horizontal.width));
+    form.append("cropWidth", String(adjustedCropWidth));
     form.append("cropHeight", String(adjustedCropHeight));
     const response = await fetch("/api/problem-bank/materialize", { method: "POST", body: form });
     const payload = await response.json();
