@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 
     const questions = questionQuery.data ?? [];
     const registerable = questions.filter((item) =>
-      item.status === "APPROVED"
+      item.status === "APPROVED" || item.status === "AUTO_REGISTERED"
     );
     if (registerable.length === 0) {
       return NextResponse.json({ success: false, message: "등록할 문항이 없습니다." }, { status: 400 });
@@ -53,6 +53,17 @@ export async function POST(request: NextRequest) {
 
     const result = await registerQuestions(supabase, sourceQuery.data, registerable);
     const now = new Date().toISOString();
+
+    // 실제 문제은행 등록이 끝난 문항만 REGISTERED로 확정한다.
+    // analysis_question_id 기반 upsert이므로 같은 작업을 다시 실행해도 중복 등록되지 않는다.
+    const registeredIds = registerable.map((item) => item.id);
+    if (registeredIds.length > 0) {
+      const registeredUpdate = await supabase
+        .from("analysis_questions")
+        .update({ status: "REGISTERED", review_reason: null, updated_at: now })
+        .in("id", registeredIds);
+      if (registeredUpdate.error) throw registeredUpdate.error;
+    }
     const analysisUpdate = await supabase
       .from("source_analysis")
       .update({

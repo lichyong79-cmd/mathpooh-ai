@@ -992,12 +992,40 @@ export default function AnalysisWorkspacePage() {
 
     try {
       await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+      // 분석 기준을 통과한 문항을 한 번에 문제은행으로 넘긴다.
+      // 임베딩도 묶어서 생성하므로 문항별 등록보다 빠르고, upsert라 재실행해도 중복되지 않는다.
+      let registered = 0;
+      const analysisId = workspace.analysis?.id;
+      if (analysisId) {
+        const registerResponse = await fetch("/api/problem-bank/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ analysisId }),
+        });
+        const registerRaw = await registerResponse.text();
+        let registerPayload: any = null;
+        try {
+          registerPayload = registerRaw ? JSON.parse(registerRaw) : null;
+        } catch {
+          throw new Error(`문제은행 등록 응답이 JSON이 아닙니다. HTTP ${registerResponse.status}`);
+        }
+
+        // 자동등록 대상이 0개인 경우는 오류가 아니라 전부 검토대상인 정상 상황이다.
+        if (registerResponse.ok && registerPayload?.success) {
+          registered = Number(registerPayload.registered ?? 0);
+          await loadWorkspace(selectedId);
+        } else if (registerResponse.status !== 400 || !String(registerPayload?.message ?? "").includes("등록할 문항이 없습니다")) {
+          throw new Error(registerPayload?.message || "문제은행 자동등록에 실패했습니다.");
+        }
+      }
+
       if (failures.length) {
         const preview = failures.slice(0, 4).map((item) => `${item.questionNo}번`).join(", ");
         setError(`분석 실패 ${failures.length}문항(${preview}${failures.length > 4 ? " 외" : ""})은 검토대상으로 보류했습니다.`);
-        setMessage(`자동 처리 계속 완료 · 성공 ${questions.length - failures.length} · 보류 ${failures.length}`);
+        setMessage(`자동 처리 완료 · 문제은행 등록 ${registered} · 검토보류 ${failures.length}`);
       } else {
-        setMessage("자동 처리 완료 · 정상 문항은 자동등록, 이상 문항은 검토대상으로 보류했습니다.");
+        setMessage(`자동 처리 완료 · 문제은행 등록 ${registered}문항 · 나머지는 검토대상으로 보류했습니다.`);
       }
       setViewMode("review");
     } catch (caught) {
@@ -1026,7 +1054,7 @@ export default function AnalysisWorkspacePage() {
   const analysisStatus = workspace?.analysis?.status ?? workspace?.source.status ?? "uploaded";
   const progress = Math.max(0, Math.min(100, Number(workspace?.analysis?.progress ?? 0)));
   const croppedCount = questions.filter((question) => hasValidCrop(question)).length;
-  const autoCount = questions.filter((question) => question.status === "AUTO_REGISTERED").length;
+  const autoCount = questions.filter((question) => question.status === "AUTO_REGISTERED" || question.status === "REGISTERED").length;
   const reviewQuestions = questions.filter((question) => question.status === "REVIEW" || Number(question.confidence ?? 0) < .86);
   const visibleQuestions = viewMode === "review" ? reviewQuestions : questions;
 
@@ -1104,7 +1132,7 @@ export default function AnalysisWorkspacePage() {
               <button className={viewMode === "all" ? "active" : ""} onClick={() => setViewMode("all")}>전체 한번에 보기</button>
               <button className={viewMode === "review" ? "active review" : ""} onClick={() => setViewMode("review")}>검토대상 {reviewQuestions.length}</button>
             </div>
-            <div className="pipeline-counts"><b>자동등록 {autoCount}</b><b>보류 {reviewQuestions.length}</b></div>
+            <div className="pipeline-counts"><b>문제은행 등록 {autoCount}</b><b>보류 {reviewQuestions.length}</b></div>
             <button className="queue-button" onClick={() => void runAutoPipeline()} disabled={!questions.length || !!busy}>
               {busy === "queue" ? `자동 처리 ${queueProgress.done}/${queueProgress.total}` : "자르기 저장 + 문항분석 자동 실행"}
             </button>
@@ -1113,11 +1141,11 @@ export default function AnalysisWorkspacePage() {
           {viewMode !== "single" ? (
             <section className="all-crops-grid">
               {visibleQuestions.map((question) => (
-                <button key={question.id} className={`crop-card ${question.status === "AUTO_REGISTERED" ? "auto" : "hold"}`} onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>
+                <button key={question.id} className={`crop-card ${question.status === "AUTO_REGISTERED" || question.status === "REGISTERED" ? "auto" : "hold"}`} onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>
                   <div className="crop-thumb">
                     {thumbnailUrls[question.id] ? <img src={thumbnailUrls[question.id]} alt={`${question.question_no}번 잘린 문항`} /> : <span>{thumbnailBusy ? "미리보기 생성 중..." : "미리보기 없음"}</span>}
                   </div>
-                  <div className="crop-card-head"><strong>{question.question_no}번</strong><span>{question.status === "AUTO_REGISTERED" ? "자동등록" : question.status === "WAITING" || question.status === "PENDING" ? "분석대기" : "검토보류"}</span></div>
+                  <div className="crop-card-head"><strong>{question.question_no}번</strong><span>{question.status === "REGISTERED" ? "등록완료" : question.status === "AUTO_REGISTERED" ? "등록대기" : question.status === "WAITING" || question.status === "PENDING" ? "분석대기" : "검토보류"}</span></div>
                   <small>{valueOf(question, "unit") || "단원 분석 전"}</small>
                   <small>신뢰도 {question.confidence == null ? "-" : `${Math.round(Number(question.confidence) * 100)}%`}</small>
                 </button>
