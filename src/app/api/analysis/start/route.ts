@@ -244,7 +244,8 @@ export async function POST(request: NextRequest) {
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || "gpt-5";
+    const cropModel = process.env.OPENAI_CROP_MODEL || process.env.OPENAI_MODEL || "gpt-5";
+    const analysisModel = process.env.OPENAI_ANALYSIS_MODEL || "gpt-5-mini";
     if (!apiKey) {
       return NextResponse.json(
         { success: false, message: "OPENAI_API_KEY가 없습니다." },
@@ -294,7 +295,7 @@ export async function POST(request: NextRequest) {
     analysisId = analysis.id;
 
     const startedAt = new Date().toISOString();
-    const baseLogs = [{ at: startedAt, message: `AI 직접 자르기 시작 · ${model}` }];
+    const baseLogs = [{ at: startedAt, message: `AI 자르기 ${cropModel} · 빠른 분석 ${analysisModel}` }];
 
     const job = await supabase
       .from("analysis_jobs")
@@ -375,7 +376,8 @@ export async function POST(request: NextRequest) {
       "unit은 교육과정 단원명으로 구체적으로 쓴다.",
       "topic은 핵심 개념·발상·유형이 드러나도록 12~30자로 쓴다.",
       "difficulty는 하·중·상·최상 중 하나다.",
-      "summary는 문제의 핵심 요구를 한 문장으로 요약한다.",
+      "summary는 25자 안팎의 매우 짧은 한 문장으로 작성한다.",
+      "설명이나 풀이를 길게 쓰지 말고 분류 결과만 간결하게 반환한다.",
       "문항번호를 누락하거나 중복하지 않는다.",
       `시험지 정보: ${source.title} / ${source.source ?? ""} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
     ].join("\n");
@@ -383,21 +385,21 @@ export async function POST(request: NextRequest) {
     const [cropRaw, analysisRaw] = await Promise.all([
       callOpenAi({
         apiKey,
-        model,
+        model: cropModel,
         prompt: cropPrompt,
         files: [examUrl],
         schemaName: "math_exam_direct_crop",
         schema: cropSchema,
-        maxOutputTokens: 14000,
+        maxOutputTokens: 9000,
       }),
       callOpenAi({
         apiKey,
-        model,
+        model: analysisModel,
         prompt: analysisPrompt,
         files: [examUrl, solutionUrl],
         schemaName: "math_exam_content_analysis",
         schema: analysisSchema,
-        maxOutputTokens: 16000,
+        maxOutputTokens: 6500,
       }),
     ]);
 
@@ -551,7 +553,7 @@ export async function POST(request: NextRequest) {
       cropValidCount: crops.filter((crop) => crop.confidence >= 0.82).length,
       cropInvalidCount: crops.filter((crop) => crop.confidence < 0.82).length,
       mode: "AI_DIRECT_VISION",
-      model,
+      model: `${cropModel} + ${analysisModel}`,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "AI 분석에 실패했습니다.";
