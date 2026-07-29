@@ -82,154 +82,121 @@ function valueOf(question: Question, key: string) {
 }
 
 
-const CONTENT_PADDING = {
+const CROP_PADDING = {
   left: 18,
-  top: 14,
+  top: 16,
   right: 18,
-  bottom: 18,
+  bottom: 20,
 } as const;
 
-type ContentTrimResult = {
+const AUTO_EXPAND = {
+  x: 3.2,
+  top: 4.5,
+  bottom: 8.0,
+} as const;
+
+type CanonicalCrop = {
+  rect: Rect;
   canvas: HTMLCanvasElement;
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
 };
 
 /**
- * AI가 찾은 넓은 문항 영역 안에서 실제 내용(문자/수식/도형/표/선택지)의
- * 경계를 다시 찾고, 모든 문항에 같은 픽셀 여백을 적용한다.
- *
- * 긴 세로 다단선은 문항 내용으로 보지 않도록 제거한다.
+ * 유일한 자동 자르기 엔진.
+ * AI 좌표를 안전하게 넓힌 뒤, 실제 인쇄 내용의 경계를 한 번만 계산한다.
+ * 빨간 박스/미리보기/전체 썸네일/저장/자동분석이 모두 이 결과를 사용한다.
  */
-function trimToContentBox(source: HTMLCanvasElement): ContentTrimResult {
-  const context = source.getContext("2d", { willReadFrequently: true });
-  if (!context) {
-    return { canvas: source, left: 0, top: 0, right: source.width, bottom: source.height };
-  }
+function buildCanonicalCrop(pageCanvas: HTMLCanvasElement, input: Rect): CanonicalCrop {
+  const isLeftColumn = input.x + input.width / 2 < 50;
+  const columnMin = isLeftColumn ? 0 : 50.35;
+  const columnMax = isLeftColumn ? 49.65 : 100;
 
-  const { width, height } = source;
-  const pixels = context.getImageData(0, 0, width, height).data;
-  const rowCounts = new Uint32Array(height);
-  const columnCounts = new Uint32Array(width);
-  const dark = new Uint8Array(width * height);
+  const expandedLeft = Math.max(columnMin, input.x - AUTO_EXPAND.x);
+  const expandedTop = Math.max(0, input.y - AUTO_EXPAND.top);
+  const expandedRight = Math.min(columnMax, input.x + input.width + AUTO_EXPAND.x);
+  const expandedBottom = Math.min(100, input.y + input.height + AUTO_EXPAND.bottom);
 
-  // 흰 종이/연한 붉은 오버레이는 제외하고 인쇄된 검은 내용만 탐지한다.
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const pixelIndex = (y * width + x) * 4;
-      const alpha = pixels[pixelIndex + 3];
-      const luminance =
-        pixels[pixelIndex] * 0.299 +
-        pixels[pixelIndex + 1] * 0.587 +
-        pixels[pixelIndex + 2] * 0.114;
-      if (alpha > 24 && luminance < 210) {
-        dark[y * width + x] = 1;
-        rowCounts[y] += 1;
-        columnCounts[x] += 1;
+  const sx = Math.max(0, Math.floor(pageCanvas.width * expandedLeft / 100));
+  const sy = Math.max(0, Math.floor(pageCanvas.height * expandedTop / 100));
+  const ex = Math.min(pageCanvas.width, Math.ceil(pageCanvas.width * expandedRight / 100));
+  const ey = Math.min(pageCanvas.height, Math.ceil(pageCanvas.height * expandedBottom / 100));
+  const sw = Math.max(1, ex - sx);
+  const sh = Math.max(1, ey - sy);
+
+  const region = document.createElement("canvas");
+  region.width = sw;
+  region.height = sh;
+  const regionContext = region.getContext("2d", { willReadFrequently: true });
+  if (!regionContext) return { rect: input, canvas: region };
+  regionContext.fillStyle = "#fff";
+  regionContext.fillRect(0, 0, sw, sh);
+  regionContext.drawImage(pageCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+  const pixels = regionContext.getImageData(0, 0, sw, sh).data;
+  const rowInk = new Uint32Array(sh);
+  const colInk = new Uint32Array(sw);
+
+  // 검정/회색 인쇄물만 집계. 중앙 구분선은 expanded 영역 밖으로 이미 제외된다.
+  for (let y = 0; y < sh; y += 1) {
+    for (let x = 0; x < sw; x += 1) {
+      const i = (y * sw + x) * 4;
+      const lum = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
+      if (pixels[i + 3] > 20 && lum < 225) {
+        rowInk[y] += 1;
+        colInk[x] += 1;
       }
     }
   }
 
-  // 페이지 중앙 다단선처럼 거의 전 높이에 걸친 얇은 세로선은 무시한다.
-  const ignoredColumn = new Uint8Array(width);
-  const longLineThreshold = Math.max(40, Math.floor(height * 0.58));
-  for (let x = 0; x < width; x += 1) {
-    if (columnCounts[x] >= longLineThreshold) {
-      const from = Math.max(0, x - 2);
-      const to = Math.min(width - 1, x + 2);
-      for (let lineX = from; lineX <= to; lineX += 1) ignoredColumn[lineX] = 1;
-    }
+  const rowMin = Math.max(2, Math.floor(sw * 0.0015));
+  const colMin = Math.max(2, Math.floor(sh * 0.0015));
+  const rowHas = (y: number) => rowInk[y] >= rowMin;
+  const colHas = (x: number) => colInk[x] >= colMin;
+
+  let top = 0;
+  while (top < sh && !rowHas(top)) top += 1;
+  let bottom = sh - 1;
+  while (bottom > top && !rowHas(bottom)) bottom -= 1;
+  let left = 0;
+  while (left < sw && !colHas(left)) left += 1;
+  let right = sw - 1;
+  while (right > left && !colHas(right)) right -= 1;
+
+  if (top >= sh || left >= sw || bottom <= top || right <= left) {
+    return { rect: input, canvas: region };
   }
 
-  const effectiveRowCounts = new Uint32Array(height);
-  const effectiveColumnCounts = new Uint32Array(width);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      if (!dark[y * width + x] || ignoredColumn[x]) continue;
-      effectiveRowCounts[y] += 1;
-      effectiveColumnCounts[x] += 1;
-    }
-  }
+  left = Math.max(0, left - CROP_PADDING.left);
+  top = Math.max(0, top - CROP_PADDING.top);
+  right = Math.min(sw - 1, right + CROP_PADDING.right);
+  bottom = Math.min(sh - 1, bottom + CROP_PADDING.bottom);
 
-  // 한두 개 먼지 픽셀은 내용 경계로 사용하지 않는다.
-  const minimumRowInk = Math.max(3, Math.floor(width * 0.0025));
-  const minimumColumnInk = Math.max(3, Math.floor(height * 0.0025));
-  const rowHasContent = (y: number) => {
-    const from = Math.max(0, y - 1);
-    const to = Math.min(height - 1, y + 1);
-    let total = 0;
-    for (let yy = from; yy <= to; yy += 1) total += effectiveRowCounts[yy];
-    return total >= minimumRowInk;
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, right - left + 1);
+  out.height = Math.max(1, bottom - top + 1);
+  const outContext = out.getContext("2d");
+  if (!outContext) return { rect: input, canvas: region };
+  outContext.fillStyle = "#fff";
+  outContext.fillRect(0, 0, out.width, out.height);
+  outContext.drawImage(region, left, top, out.width, out.height, 0, 0, out.width, out.height);
+
+  return {
+    rect: {
+      x: ((sx + left) / pageCanvas.width) * 100,
+      y: ((sy + top) / pageCanvas.height) * 100,
+      width: (out.width / pageCanvas.width) * 100,
+      height: (out.height / pageCanvas.height) * 100,
+    },
+    canvas: out,
   };
-  const columnHasContent = (x: number) => {
-    const from = Math.max(0, x - 1);
-    const to = Math.min(width - 1, x + 1);
-    let total = 0;
-    for (let xx = from; xx <= to; xx += 1) total += effectiveColumnCounts[xx];
-    return total >= minimumColumnInk;
-  };
-
-  let contentTop = 0;
-  while (contentTop < height && !rowHasContent(contentTop)) contentTop += 1;
-  let contentBottom = height - 1;
-  while (contentBottom > contentTop && !rowHasContent(contentBottom)) contentBottom -= 1;
-  let contentLeft = 0;
-  while (contentLeft < width && !columnHasContent(contentLeft)) contentLeft += 1;
-  let contentRight = width - 1;
-  while (contentRight > contentLeft && !columnHasContent(contentRight)) contentRight -= 1;
-
-  if (
-    contentTop >= height ||
-    contentLeft >= width ||
-    contentBottom <= contentTop ||
-    contentRight <= contentLeft
-  ) {
-    return { canvas: source, left: 0, top: 0, right: width, bottom: height };
-  }
-
-  const left = Math.max(0, contentLeft - CONTENT_PADDING.left);
-  const top = Math.max(0, contentTop - CONTENT_PADDING.top);
-  const right = Math.min(width, contentRight + CONTENT_PADDING.right + 1);
-  const bottom = Math.min(height, contentBottom + CONTENT_PADDING.bottom + 1);
-
-  const output = document.createElement("canvas");
-  output.width = Math.max(1, right - left);
-  output.height = Math.max(1, bottom - top);
-  const outputContext = output.getContext("2d");
-  if (!outputContext) {
-    return { canvas: source, left: 0, top: 0, right: width, bottom: height };
-  }
-  outputContext.fillStyle = "#fff";
-  outputContext.fillRect(0, 0, output.width, output.height);
-  outputContext.drawImage(
-    source,
-    left,
-    top,
-    output.width,
-    output.height,
-    0,
-    0,
-    output.width,
-    output.height,
-  );
-
-  return { canvas: output, left, top, right, bottom };
 }
 
-function refineColumnCrop(question: Question) {
-  const x = Number(question.crop_x ?? 0);
-  const width = Number(question.crop_width ?? 0);
-  const center = x + width / 2;
-  const inset = 1.6;
-
-  // 2단 편집물 보정:
-  // 좌단 문항은 바깥쪽 시작선을 오른쪽으로, 우단 문항은 시작선을 왼쪽으로 이동한다.
-  if (center < 50) {
-    return { x: x + inset, width: Math.max(1, width - inset) };
-  }
-  return { x: Math.max(0, x - inset), width: Math.min(100 - Math.max(0, x - inset), width + inset) };
+function questionRect(question: Question): Rect {
+  return {
+    x: Number(question.crop_x ?? 0),
+    y: Number(question.crop_y ?? 0),
+    width: Number(question.crop_width ?? 0),
+    height: Number(question.crop_height ?? 0),
+  };
 }
 
 function hasValidCrop(question: Question | null) {
@@ -409,17 +376,41 @@ export default function AnalysisWorkspacePage() {
 
     if (hasValidCrop(activeQuestion)) {
       setPageNo(Math.max(1, Number(activeQuestion.page_no ?? 1)));
-      setSelection({
-        x: Number(activeQuestion.crop_x ?? 0),
-        y: Number(activeQuestion.crop_y ?? 0),
-        width: Number(activeQuestion.crop_width ?? 0),
-        height: Number(activeQuestion.crop_height ?? 0),
-      });
+      // 화면/저장/썸네일은 모두 canonical effect가 계산한 하나의 좌표를 사용한다.
+      setSelection(null);
     } else {
       setSelection(null);
       setPreview("");
     }
   }, [activeQuestion]);
+
+  useEffect(() => {
+    if (!pdfDoc || !activeQuestion || !hasValidCrop(activeQuestion)) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const targetPage = Number(activeQuestion.page_no);
+        const page = await pdfDoc.getPage(targetPage);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: Math.max(1.7, 1800 / base.width) });
+        const pageCanvas = document.createElement("canvas");
+        pageCanvas.width = Math.ceil(viewport.width);
+        pageCanvas.height = Math.ceil(viewport.height);
+        const context = pageCanvas.getContext("2d");
+        if (!context) return;
+        await page.render({ canvasContext: context, viewport }).promise;
+        const canonical = buildCanonicalCrop(pageCanvas, questionRect(activeQuestion));
+        if (cancelled) return;
+        setSelection(canonical.rect);
+        setPreview(canonical.canvas.toDataURL("image/webp", 0.92));
+      } catch (caught) {
+        if (!cancelled) setError(caught instanceof Error ? caught.message : "최종 자르기 좌표를 계산하지 못했습니다.");
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [pdfDoc, activeQuestion]);
 
   const updatePreview = useCallback((rect: Rect | null) => {
     const canvas = canvasRef.current;
@@ -531,19 +522,8 @@ export default function AnalysisWorkspacePage() {
           await page.render({ canvasContext: context, viewport }).promise;
           pageCache.set(targetPage, sourceCanvas);
         }
-        const horizontal = refineColumnCrop(question);
-        const sx = Math.floor(sourceCanvas.width * horizontal.x / 100);
-        const sy = Math.floor(sourceCanvas.height * Number(question.crop_y) / 100);
-        const sw = Math.max(1, Math.ceil(sourceCanvas.width * horizontal.width / 100));
-        const sh = Math.max(1, Math.ceil(sourceCanvas.height * Number(question.crop_height) / 100));
-        const crop = document.createElement("canvas");
-        crop.width = sw; crop.height = sh;
-        const cropContext = crop.getContext("2d");
-        if (!cropContext) continue;
-        cropContext.fillStyle = "#fff";
-        cropContext.fillRect(0, 0, sw, sh);
-        cropContext.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-        next[question.id] = trimToContentBox(crop).canvas.toDataURL("image/jpeg", .78);
+        const canonical = buildCanonicalCrop(sourceCanvas, questionRect(question));
+        next[question.id] = canonical.canvas.toDataURL("image/jpeg", .78);
       }
       setThumbnailUrls(next);
     } finally {
@@ -747,24 +727,12 @@ export default function AnalysisWorkspacePage() {
     if (!sourceContext) throw new Error("PDF 캔버스를 만들지 못했습니다.");
     await page.render({ canvasContext: sourceContext, viewport }).promise;
 
-    const horizontal = refineColumnCrop(question);
-    const sx = Math.floor(sourceCanvas.width * horizontal.x / 100);
-    const sy = Math.floor(sourceCanvas.height * Number(question.crop_y) / 100);
-    const sw = Math.max(1, Math.ceil(sourceCanvas.width * horizontal.width / 100));
-    const sh = Math.max(1, Math.ceil(sourceCanvas.height * Number(question.crop_height) / 100));
-    const out = document.createElement("canvas");
-    out.width = sw; out.height = sh;
-    const outContext = out.getContext("2d");
-    if (!outContext) throw new Error("문항 이미지를 만들지 못했습니다.");
-    outContext.fillStyle = "#fff";
-    outContext.fillRect(0, 0, sw, sh);
-    outContext.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-    const trimmed = trimToContentBox(out);
-    const adjustedCropX = horizontal.x + (trimmed.left / sourceCanvas.width) * 100;
-    const adjustedCropY = Number(question.crop_y) + (trimmed.top / sourceCanvas.height) * 100;
-    const adjustedCropWidth = (trimmed.canvas.width / sourceCanvas.width) * 100;
-    const adjustedCropHeight = (trimmed.canvas.height / sourceCanvas.height) * 100;
-    const blob = await new Promise<Blob>((resolve, reject) => trimmed.canvas.toBlob((value) => value ? resolve(value) : reject(new Error("이미지 변환 실패")), "image/webp", .92));
+    const canonical = buildCanonicalCrop(sourceCanvas, questionRect(question));
+    const adjustedCropX = canonical.rect.x;
+    const adjustedCropY = canonical.rect.y;
+    const adjustedCropWidth = canonical.rect.width;
+    const adjustedCropHeight = canonical.rect.height;
+    const blob = await new Promise<Blob>((resolve, reject) => canonical.canvas.toBlob((value) => value ? resolve(value) : reject(new Error("이미지 변환 실패")), "image/webp", .92));
     const form = new FormData();
     form.append("image", blob, `${String(question.question_no).padStart(3, "0")}.webp`);
     form.append("analysisId", workspace.analysis.id);
