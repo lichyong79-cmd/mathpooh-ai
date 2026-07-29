@@ -228,13 +228,23 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     };
 
     const confidence = Number(dna.confidence);
+    const normalizedConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
+    const finalAnswer = typeof dna.answer === "string" ? dna.answer.trim() : String(question.answer ?? "").trim();
+    const autoPass =
+      normalizedConfidence >= 0.86 &&
+      Boolean(finalAnswer) &&
+      Boolean(String(reviewResult.unit ?? "").trim()) &&
+      Boolean(String(reviewResult.topic ?? "").trim()) &&
+      String(reviewResult.question_type ?? "unknown") !== "unknown";
+
     const patch: Record<string, unknown> = {
       review_result: reviewResult,
-      confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
-      status: "REVIEW",
+      confidence: normalizedConfidence,
+      status: autoPass ? "AUTO_REGISTERED" : "REVIEW",
+      review_reason: autoPass ? null : "자동 판정 기준을 통과하지 못해 검토대상으로 보류되었습니다.",
       updated_at: new Date().toISOString(),
     };
-    if (typeof dna.answer === "string" && dna.answer.trim()) patch.answer = dna.answer.trim();
+    if (finalAnswer) patch.answer = finalAnswer;
 
     const updated = await supabase.from("analysis_questions").update(patch).eq("id", id).select("*").single();
     if (updated.error) throw updated.error;

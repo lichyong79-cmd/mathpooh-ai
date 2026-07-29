@@ -286,7 +286,7 @@ export async function POST(request: NextRequest) {
   let jobId: string | null = null;
 
   try {
-    const { sourceFileId } = (await request.json()) as { sourceFileId?: string };
+    const { sourceFileId, mode = "crop-only" } = (await request.json()) as { sourceFileId?: string; mode?: "crop-only" | "full" };
     if (!sourceFileId) {
       return NextResponse.json(
         { success: false, message: "시험지를 선택해 주세요." },
@@ -318,9 +318,9 @@ export async function POST(request: NextRequest) {
     }
 
     const source = sourceResult.data;
-    if (!source.exam_pdf_path || !source.solution_pdf_path) {
+    if (!source.exam_pdf_path || (mode === "full" && !source.solution_pdf_path)) {
       return NextResponse.json(
-        { success: false, message: "시험지 PDF와 해설지 PDF가 모두 필요합니다." },
+        { success: false, message: mode === "full" ? "시험지 PDF와 해설지 PDF가 모두 필요합니다." : "시험지 PDF가 필요합니다." },
         { status: 400 },
       );
     }
@@ -437,8 +437,7 @@ export async function POST(request: NextRequest) {
       `시험지 정보: ${source.title} / ${source.source ?? ""} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
     ].join("\n");
 
-    const [cropRaw, analysisRaw] = await Promise.all([
-      callOpenAi({
+    const cropPromise = callOpenAi({
         apiKey,
         model: cropModel,
         prompt: cropPrompt,
@@ -446,8 +445,8 @@ export async function POST(request: NextRequest) {
         schemaName: "math_exam_visual_bounding_boxes_v1",
         schema: cropSchema,
         maxOutputTokens: 9000,
-      }),
-      callOpenAi({
+      });
+    const analysisPromise = mode === "full" && solutionUrl ? callOpenAi({
         apiKey,
         model: analysisModel,
         prompt: analysisPrompt,
@@ -455,8 +454,8 @@ export async function POST(request: NextRequest) {
         schemaName: "math_exam_content_analysis",
         schema: analysisSchema,
         maxOutputTokens: 6500,
-      }),
-    ]);
+      }) : Promise.resolve(null);
+    const [cropRaw, analysisRaw] = await Promise.all([cropPromise, analysisPromise]);
 
     let cropPayload = parseJson<{ questions: AiCropQuestion[] }>(cropRaw);
     let crops = normalizeAiCrops(cropPayload.questions);
@@ -509,10 +508,8 @@ export async function POST(request: NextRequest) {
       throw new Error(`AI 문항 좌표 중복을 자동으로 막았습니다: ${sample}. 다시 분석해 주세요.`);
     }
 
-    const analysisPayload = parseJson<{ questions: AnalysisQuestion[] }>(analysisRaw);
-    const analysisByNo = new Map(
-      analysisPayload.questions.map((item) => [Number(item.question_no), item]),
-    );
+    const analysisPayload = analysisRaw ? parseJson<{ questions: AnalysisQuestion[] }>(analysisRaw) : { questions: [] as AnalysisQuestion[] };
+    const analysisByNo = new Map(analysisPayload.questions.map((item) => [Number(item.question_no), item]));
 
     await supabase
       .from("source_analysis")
@@ -538,7 +535,7 @@ export async function POST(request: NextRequest) {
         analysis_id: analysis.id,
         question_no: crop.question_no,
         answer: meta?.answer?.trim() || null,
-        status: "APPROVED",
+        status: meta ? "REVIEW" : "WAITING",
         confidence: combinedConfidence,
         page_no: crop.page_no,
         crop_x: crop.crop_x,
@@ -612,9 +609,9 @@ export async function POST(request: NextRequest) {
     const updated = await supabase
       .from("source_analysis")
       .update({
-        status: "REVIEW",
-        progress: 100,
-        current_step: `AI 직접 자르기 완료 · ${rows.length}개 문항 · 재확인 권장 ${reviewIds.length}개`,
+        status: mode === "full" ? "REVIEW" : "WAITING",
+        progress: mode === "full" ? 100 : 45,
+        current_step: mode === "full" ? `빠른 자르기·분석 완료 · ${rows.length}개 문항 · 재확인 권장 ${reviewIds.length}개` : `빠른 자르기 완료 · ${rows.length}개 문항 · 문항 분석 대기`,
         total_questions: rows.length,
         objective_count: objectiveCount,
         subjective_count: subjectiveCount,
@@ -629,24 +626,24 @@ export async function POST(request: NextRequest) {
 
     const totalTokens =
       Number(cropRaw.usage?.total_tokens ?? 0) +
-      Number(analysisRaw.usage?.total_tokens ?? 0);
+      Number(analysisRaw?.usage?.total_tokens ?? 0);
 
     await supabase
       .from("analysis_jobs")
       .update({
         status: "DONE",
-        progress: 100,
+        progress: mode === "full" ? 100 : 45,
         finished_at: finishedAt,
         updated_at: finishedAt,
         logs: [
           ...baseLogs,
           {
             at: finishedAt,
-            message: `${rows.length}개 AI 직접 자르기·분석 완료${
+            message: mode === "full" ? `${rows.length}개 빠른 자르기·분석 완료${
               totalTokens
                 ? ` · ${totalTokens.toLocaleString("ko-KR")} tokens`
                 : ""
-            }`,
+            }` : `${rows.length}개 빠른 자르기 완료 · 문항 분석 대기`,
           },
         ],
       })
@@ -659,8 +656,8 @@ export async function POST(request: NextRequest) {
       reviewPending: reviewIds.length,
       cropValidCount: crops.filter((crop) => crop.confidence >= 0.82).length,
       cropInvalidCount: crops.filter((crop) => crop.confidence < 0.82).length,
-      mode: "AI_VISUAL_BOUNDING_BOX_V1",
-      model: `${cropModel} + ${analysisModel}`,
+      mode: mode === "full" ? "CROP_AND_ANALYSIS" : "FAST_CROP_ONLY",
+      model: mode === "full" ? `${cropModel} + ${analysisModel}` : cropModel,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "AI 분석에 실패했습니다.";
