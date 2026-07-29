@@ -9,10 +9,10 @@ export const dynamic = "force-dynamic";
 type AiCropQuestion = {
   question_no: number;
   page_no: number;
-  column: "left" | "right" | "full";
-  star_x: number;
-  star_y: number;
-  content_bottom: number;
+  crop_x: number;
+  crop_y: number;
+  crop_width: number;
+  crop_height: number;
   confidence: number;
   review_reason: string;
 };
@@ -51,20 +51,20 @@ const cropSchema = {
         required: [
           "question_no",
           "page_no",
-          "column",
-          "star_x",
-          "star_y",
-          "content_bottom",
+          "crop_x",
+          "crop_y",
+          "crop_width",
+          "crop_height",
           "confidence",
           "review_reason",
         ],
         properties: {
           question_no: { type: "integer", minimum: 1, maximum: 200 },
           page_no: { type: "integer", minimum: 1, maximum: 500 },
-          column: { type: "string", enum: ["left", "right", "full"] },
-          star_x: { type: "number", minimum: 0, maximum: 100 },
-          star_y: { type: "number", minimum: 0, maximum: 100 },
-          content_bottom: { type: "number", minimum: 0, maximum: 100 },
+          crop_x: { type: "number", minimum: 0, maximum: 100 },
+          crop_y: { type: "number", minimum: 0, maximum: 100 },
+          crop_width: { type: "number", minimum: 1, maximum: 100 },
+          crop_height: { type: "number", minimum: 1, maximum: 100 },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           review_reason: { type: "string" },
         },
@@ -134,73 +134,34 @@ function clamp(value: number, min: number, max: number) {
 }
 
 /**
- * AI는 ★ 좌표·단·실제 내용 끝점만 반환한다.
- * 최종 crop은 코드가 같은 페이지·같은 단의 다음 ★와 AI 끝점을 함께 사용해 만든다.
+ * AI가 페이지에서 각 문항의 실제 bounding box를 직접 반환한다.
+ * 별표, 홀짝, 고정 단폭, 다음 문항 추정값은 사용하지 않는다.
  */
 function normalizeAiCrops(items: AiCropQuestion[]) {
-  const anchors = new Map<number, AiCropQuestion>();
+  const byQuestion = new Map<number, AiCropQuestion>();
 
   for (const item of items) {
     const questionNo = Math.trunc(Number(item.question_no));
     if (!Number.isFinite(questionNo) || questionNo < 1) continue;
 
-    const column = item.column === "right" || item.column === "full" ? item.column : "left";
-    const starX = clamp(Number(item.star_x), 0, 100);
-    const starY = clamp(Number(item.star_y), 0, 99.5);
-    const contentBottom = clamp(Number(item.content_bottom), starY + 0.5, 100);
+    const x = clamp(Number(item.crop_x), 0, 99);
+    const y = clamp(Number(item.crop_y), 0, 99);
+    const width = clamp(Number(item.crop_width), 1, 100 - x);
+    const height = clamp(Number(item.crop_height), 1, 100 - y);
 
-    anchors.set(questionNo, {
+    byQuestion.set(questionNo, {
       question_no: questionNo,
       page_no: Math.max(1, Math.trunc(Number(item.page_no) || 1)),
-      column,
-      star_x: starX,
-      star_y: starY,
-      content_bottom: contentBottom,
+      crop_x: x,
+      crop_y: y,
+      crop_width: width,
+      crop_height: height,
       confidence: clamp(Number(item.confidence), 0, 1),
       review_reason: String(item.review_reason ?? "").trim(),
     });
   }
 
-  const sorted = [...anchors.values()].sort(
-    (a, b) => a.page_no - b.page_no || a.star_y - b.star_y || a.star_x - b.star_x,
-  );
-
-  return sorted.map((item) => {
-    const sameColumnNext = sorted.find(
-      (candidate) =>
-        candidate.page_no === item.page_no &&
-        candidate.column === item.column &&
-        candidate.star_y > item.star_y + 0.8,
-    );
-
-    const top = clamp(item.star_y - 1.2, 0, 99.5);
-    const aiBottom = clamp(item.content_bottom + 1.1, top + 1, 100);
-    const nextStarLimit = sameColumnNext
-      ? clamp(sameColumnNext.star_y - 1.3, top + 1, 100)
-      : 100;
-    const bottom = Math.min(aiBottom, nextStarLimit);
-
-    const horizontal =
-      item.column === "left"
-        ? { x: 3, width: 46.5 }
-        : item.column === "right"
-          ? { x: 50.5, width: 46.5 }
-          : { x: 3, width: 94 };
-
-    return {
-      question_no: item.question_no,
-      page_no: item.page_no,
-      crop_x: horizontal.x,
-      crop_y: top,
-      crop_width: horizontal.width,
-      crop_height: Math.max(1, bottom - top),
-      confidence: item.confidence,
-      review_reason: item.review_reason,
-      star_anchor: { x: item.star_x, y: item.star_y, column: item.column },
-      content_bottom: item.content_bottom,
-      next_star_y: sameColumnNext?.star_y ?? null,
-    };
-  }).sort((a, b) => a.question_no - b.question_no);
+  return [...byQuestion.values()].sort((a, b) => a.question_no - b.question_no);
 }
 
 function openAiError(status: number, body: string) {
@@ -334,7 +295,7 @@ export async function POST(request: NextRequest) {
     analysisId = analysis.id;
 
     const startedAt = new Date().toISOString();
-    const baseLogs = [{ at: startedAt, message: `AI 자르기 ${cropModel} · 빠른 분석 ${analysisModel}` }];
+    const baseLogs = [{ at: startedAt, message: `AI 직접 영역 판독 ${cropModel} · 빠른 분석 ${analysisModel}` }];
 
     const job = await supabase
       .from("analysis_jobs")
@@ -381,33 +342,24 @@ export async function POST(request: NextRequest) {
       .from("source_analysis")
       .update({
         progress: 15,
-        current_step: "AI 직접 자르기와 문항 분석을 동시에 진행 중",
+        current_step: "AI가 문항별 실제 영역과 내용을 동시에 분석 중",
       })
       .eq("id", analysis.id);
 
     const cropPrompt = [
-      "너는 한국 수학 시험지의 ★ 시작점과 문항 실제 끝점만 판정하는 비전 판독기다.",
-      "첨부된 시험지 PDF에서 검은 별표 문자 ★가 붙은 항목만 실제 등록 문항이다.",
-      "★가 없는 예제·유제·설명·참고문항은 절대로 문항으로 반환하지 않는다.",
-      "각 ★는 해당 문항의 유일하고 확정된 시작 표식이다.",
-      "각 문항마다 ★ 중심의 page_no, star_x, star_y를 페이지 전체 기준 0~100 백분율로 반환한다.",
-      "문항 시작 위치를 문항번호만 보고 추측하지 말고 반드시 실제 ★의 중심 좌표를 사용한다.",
-      "★가 왼쪽 단에 있으면 column=left, 오른쪽 단이면 right, 페이지 전체 폭 문항이면 full이다.",
-      "content_bottom은 현재 문항의 본문·보기·선택지·표·그래프·도형 중 가장 아래 요소의 바로 아래 좌표다.",
-      "중요: crop 사각형은 반환하지 않는다. ★ 좌표와 실제 내용 끝점만 반환한다.",
-      "다음 ★까지 무조건 자르지 않는다. 현재 문항의 본문·보기·선택지·표·그래프·도형이 실제로 끝나는 곳에서 끝낸다.",
-      "같은 단 아래쪽에 다음 ★가 있더라도 현재 문항이 먼저 끝나면 현재 문항 끝 바로 아래에서 crop을 종료한다.",
-      "반대로 현재 문항의 도형이나 선택지가 아래로 길게 이어지면 그것까지 모두 포함한다.",
-      "코드가 같은 페이지·같은 column의 다음 ★를 찾아 현재 문항의 최대 하단 경계로 사용한다.",
-      "따라서 너는 다른 단의 ★를 현재 문항의 다음 ★로 착각하지 않는다.",
-      "같은 높이에 왼쪽 ★와 오른쪽 ★가 있으면 서로 다른 문항이며 각각 left/right로 반환한다.",
-      "문항번호, 본문, 모든 수식, 보기, 선택지, 표, 그래프, 도형을 빠짐없이 포함한다.",
-      "분수의 분자, 근호, 지수처럼 위로 튀어나오는 수식이 잘리지 않도록 위쪽에 최소 안전 여백을 둔다.",
-      "페이지 머리말, 시험 제목, 이름란, 쪽번호, 출판사 문구, 저작권 문구는 포함하지 않는다.",
-      "한 페이지에 보이는 ★를 위에서 아래, 왼쪽 단 다음 오른쪽 단의 실제 문항번호 순으로 확인한다.",
-      "실제 인쇄된 문항번호를 question_no로 사용하며 누락하거나 중복하지 않는다.",
-      "★가 선명하고 끝점도 확실하면 confidence를 높게 준다.",
-      "끝점이 애매하거나 문항이 다음 페이지로 이어지면 confidence를 낮추고 review_reason에 이유를 쓴다.",
+      "너는 한국 수학 시험지에서 각 실제 문항의 사각형 영역을 찾는 비전 판독기다.",
+      "별표 유무와 관계없이 시험지에 인쇄된 실제 문항을 모두 찾는다.",
+      "각 문항마다 page_no, question_no, crop_x, crop_y, crop_width, crop_height를 페이지 전체 기준 0~100 백분율로 직접 반환한다.",
+      "crop 사각형은 문항번호부터 본문, 모든 수식, 보기, 선택지, 표, 그래프, 도형의 마지막 요소까지 포함해야 한다.",
+      "현재 문항 위의 이전 문항 선택지나 아래의 다음 문항 번호·본문은 절대로 포함하지 않는다.",
+      "두 단 편집이면 각 문항이 속한 단 안에서만 가로 범위를 잡고, 다른 단의 문항이나 빈 공간을 포함하지 않는다.",
+      "문항이 한 단 전체 너비를 쓰면 실제 내용 너비만 포함한다. 홀짝 번호로 단을 추측하지 않는다.",
+      "문항의 위쪽은 문항번호와 위로 튀는 분수·지수·근호가 잘리지 않게 약간의 여백만 둔다.",
+      "문항의 아래쪽은 선택지·도형이 끝난 직후까지만 두고 큰 빈 여백을 포함하지 않는다.",
+      "페이지 머리말, 시험 제목, 이름란, 쪽번호, 출판사·저작권 문구는 포함하지 않는다.",
+      "예제·설명·참고문항처럼 번호가 있더라도 실제 시험 문항이 아니면 제외한다.",
+      "문항번호는 실제 인쇄된 번호를 사용하고 누락·중복하지 않는다.",
+      "영역이 명확하면 confidence를 높게, 페이지 경계에 걸리거나 영역이 애매하면 낮게 주고 review_reason에 이유를 쓴다.",
       "확실하면 review_reason은 빈 문자열로 둔다.",
       `시험지 정보: ${source.title} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
     ].join("\n");
@@ -434,7 +386,7 @@ export async function POST(request: NextRequest) {
         model: cropModel,
         prompt: cropPrompt,
         files: [examUrl],
-        schemaName: "math_exam_star_anchor_crop_v2",
+        schemaName: "math_exam_visual_bounding_boxes_v1",
         schema: cropSchema,
         maxOutputTokens: 9000,
       }),
@@ -501,13 +453,16 @@ export async function POST(request: NextRequest) {
           topic: meta?.topic || null,
           difficulty: meta?.difficulty ?? "중",
           summary: meta?.summary || null,
-          crop_engine: "STAR_COLUMN_NEXT_ANCHOR_V2",
+          crop_engine: "AI_VISUAL_BOUNDING_BOX_V1",
           ai_crop: {
             confidence: crop.confidence,
             review_reason: crop.review_reason || null,
-            star_anchor: crop.star_anchor,
-            content_bottom: crop.content_bottom,
-            next_star_y: crop.next_star_y,
+            bounding_box: {
+              x: crop.crop_x,
+              y: crop.crop_y,
+              width: crop.crop_width,
+              height: crop.crop_height,
+            },
           },
         },
       };
@@ -601,7 +556,7 @@ export async function POST(request: NextRequest) {
       reviewPending: reviewIds.length,
       cropValidCount: crops.filter((crop) => crop.confidence >= 0.82).length,
       cropInvalidCount: crops.filter((crop) => crop.confidence < 0.82).length,
-      mode: "STAR_COLUMN_NEXT_ANCHOR_V2",
+      mode: "AI_VISUAL_BOUNDING_BOX_V1",
       model: `${cropModel} + ${analysisModel}`,
     });
   } catch (error) {
