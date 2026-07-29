@@ -62,6 +62,115 @@ type Rect = {
   height: number;
 };
 
+type ViewMode = "single" | "all";
+
+const MIN_CROP_SIZE = 0.8;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
+}
+
+function questionRect(question: Question): Rect | null {
+  if (!hasValidCrop(question)) return null;
+  return {
+    x: Number(question.crop_x ?? 0),
+    y: Number(question.crop_y ?? 0),
+    width: Number(question.crop_width ?? 0),
+    height: Number(question.crop_height ?? 0),
+  };
+}
+
+function trimRectByPixels(canvas: HTMLCanvasElement, rect: Rect): Rect {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return rect;
+
+  const sx = clamp(Math.floor((canvas.width * rect.x) / 100), 0, canvas.width - 1);
+  const sy = clamp(Math.floor((canvas.height * rect.y) / 100), 0, canvas.height - 1);
+  const sw = clamp(Math.ceil((canvas.width * rect.width) / 100), 1, canvas.width - sx);
+  const sh = clamp(Math.ceil((canvas.height * rect.height) / 100), 1, canvas.height - sy);
+  if (sw < 12 || sh < 12) return rect;
+
+  const pixels = context.getImageData(sx, sy, sw, sh).data;
+  const rowInk = new Uint32Array(sh);
+  const colInk = new Uint32Array(sw);
+
+  for (let y = 0; y < sh; y += 1) {
+    for (let x = 0; x < sw; x += 1) {
+      const index = (y * sw + x) * 4;
+      if (pixels[index + 3] < 20) continue;
+      const r = pixels[index];
+      const g = pixels[index + 1];
+      const b = pixels[index + 2];
+      const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+      if (luminance < 244 || chroma > 18) {
+        rowInk[y] += 1;
+        colInk[x] += 1;
+      }
+    }
+  }
+
+  const rowThreshold = Math.max(2, Math.floor(sw * 0.0022));
+  const colThreshold = Math.max(2, Math.floor(sh * 0.0022));
+  const rowWindow = Math.max(2, Math.round(sh * 0.006));
+  const colWindow = Math.max(2, Math.round(sw * 0.006));
+  const hasDenseRowNear = (center: number) => {
+    let total = 0;
+    for (let y = Math.max(0, center - rowWindow); y <= Math.min(sh - 1, center + rowWindow); y += 1) total += rowInk[y];
+    return total >= rowThreshold * Math.max(2, rowWindow);
+  };
+  const hasDenseColNear = (center: number) => {
+    let total = 0;
+    for (let x = Math.max(0, center - colWindow); x <= Math.min(sw - 1, center + colWindow); x += 1) total += colInk[x];
+    return total >= colThreshold * Math.max(2, colWindow);
+  };
+
+  let top = 0;
+  while (top < sh && !hasDenseRowNear(top)) top += 1;
+  let bottom = sh - 1;
+  while (bottom > top && !hasDenseRowNear(bottom)) bottom -= 1;
+  let left = 0;
+  while (left < sw && !hasDenseColNear(left)) left += 1;
+  let right = sw - 1;
+  while (right > left && !hasDenseColNear(right)) right -= 1;
+  if (top >= bottom || left >= right) return rect;
+
+  const marginX = Math.max(8, Math.round(sw * 0.018));
+  const marginTop = Math.max(9, Math.round(sh * 0.018));
+  const marginBottom = Math.max(14, Math.round(sh * 0.028));
+  left = Math.max(0, left - marginX);
+  right = Math.min(sw - 1, right + marginX);
+  top = Math.max(0, top - marginTop);
+  bottom = Math.min(sh - 1, bottom + marginBottom);
+
+  const absoluteX = sx + left;
+  const absoluteY = sy + top;
+  const absoluteRight = sx + right + 1;
+  const absoluteBottom = sy + bottom + 1;
+  return {
+    x: (absoluteX / canvas.width) * 100,
+    y: (absoluteY / canvas.height) * 100,
+    width: ((absoluteRight - absoluteX) / canvas.width) * 100,
+    height: ((absoluteBottom - absoluteY) / canvas.height) * 100,
+  };
+}
+
+function cropCanvasToDataUrl(canvas: HTMLCanvasElement, rect: Rect, quality = 0.9) {
+  const sx = Math.floor((canvas.width * rect.x) / 100);
+  const sy = Math.floor((canvas.height * rect.y) / 100);
+  const sw = Math.max(1, Math.ceil((canvas.width * rect.width) / 100));
+  const sh = Math.max(1, Math.ceil((canvas.height * rect.height) / 100));
+  const output = document.createElement("canvas");
+  output.width = sw;
+  output.height = sh;
+  const context = output.getContext("2d");
+  if (!context) return "";
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, sw, sh);
+  context.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  return output.toDataURL("image/webp", quality);
+}
+
 const statusText: Record<string, string> = {
   uploaded: "업로드 완료",
   PENDING: "분석 대기",
@@ -105,6 +214,11 @@ export default function AnalysisWorkspacePage() {
   const [selection, setSelection] = useState<Rect | null>(null);
   const [draft, setDraft] = useState<Rect | null>(null);
   const [preview, setPreview] = useState("");
+  const [viewMode, setViewMode] = useState<ViewMode>("single");
+  const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
+  const [trimmedRects, setTrimmedRects] = useState<Record<string, Rect>>({});
+  const [thumbnailProgress, setThumbnailProgress] = useState(0);
+  const [trimming, setTrimming] = useState(false);
 
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
@@ -119,11 +233,12 @@ export default function AnalysisWorkspacePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
+  const autoTrimmedRef = useRef(new Set<string>());
 
   const questions = workspace?.questions ?? [];
   const activeQuestion =
     questions.find((item) => item.id === activeQuestionId) ?? questions[0] ?? null;
-
+  const reviewCount = questions.filter((question) => Number(question.confidence ?? 1) < 0.82).length;
 
   const checkAiHealth = useCallback(async () => {
     setAiHealth((current) => ({ ...current, checking: true, message: "AI 연결 확인 중..." }));
@@ -176,6 +291,11 @@ export default function AnalysisWorkspacePage() {
       setWorkspace(nextWorkspace);
       setSelectedId(sourceId);
       setActiveQuestionId(nextWorkspace.questions?.[0]?.id ?? "");
+      setViewMode("single");
+      setThumbnails({});
+      setTrimmedRects({});
+      setThumbnailProgress(0);
+      autoTrimmedRef.current.clear();
     } catch (caught) {
       setWorkspace(null);
       setPdfDoc(null);
@@ -252,19 +372,15 @@ export default function AnalysisWorkspacePage() {
       return;
     }
 
-    if (hasValidCrop(activeQuestion)) {
+    const savedRect = trimmedRects[activeQuestion.id] ?? questionRect(activeQuestion);
+    if (savedRect) {
       setPageNo(Math.max(1, Number(activeQuestion.page_no ?? 1)));
-      setSelection({
-        x: Number(activeQuestion.crop_x ?? 0),
-        y: Number(activeQuestion.crop_y ?? 0),
-        width: Number(activeQuestion.crop_width ?? 0),
-        height: Number(activeQuestion.crop_height ?? 0),
-      });
+      setSelection(savedRect);
     } else {
       setSelection(null);
       setPreview("");
     }
-  }, [activeQuestion]);
+  }, [activeQuestion, trimmedRects]);
 
   const updatePreview = useCallback((rect: Rect | null) => {
     const canvas = canvasRef.current;
@@ -272,26 +388,11 @@ export default function AnalysisWorkspacePage() {
       setPreview("");
       return;
     }
-
-    const sx = Math.floor((canvas.width * rect.x) / 100);
-    const sy = Math.floor((canvas.height * rect.y) / 100);
-    const sw = Math.max(1, Math.ceil((canvas.width * rect.width) / 100));
-    const sh = Math.max(1, Math.ceil((canvas.height * rect.height) / 100));
-
-    const output = document.createElement("canvas");
-    output.width = sw;
-    output.height = sh;
-    const context = output.getContext("2d");
-    if (!context) return;
-
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, sw, sh);
-    context.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-    setPreview(output.toDataURL("image/webp", 0.92));
+    setPreview(cropCanvasToDataUrl(canvas, rect, 0.92));
   }, []);
 
   useEffect(() => {
-    if (!pdfDoc || !canvasRef.current) return;
+    if (!pdfDoc || !canvasRef.current || viewMode !== "single") return;
     let cancelled = false;
 
     void (async () => {
@@ -302,13 +403,22 @@ export default function AnalysisWorkspacePage() {
         const viewport = page.getViewport({ scale: targetWidth / base.width });
         const canvas = canvasRef.current;
         if (!canvas) return;
-        const context = canvas.getContext("2d");
+        const context = canvas.getContext("2d", { willReadFrequently: true });
         if (!context) return;
 
         canvas.width = Math.ceil(viewport.width);
         canvas.height = Math.ceil(viewport.height);
         await page.render({ canvas, canvasContext: context, viewport }).promise;
-        if (!cancelled) updatePreview(selection);
+        if (!cancelled) {
+          let nextRect = selection;
+          if (activeQuestion && activeQuestion.page_no === pageNo && nextRect && !autoTrimmedRef.current.has(activeQuestion.id)) {
+            nextRect = trimRectByPixels(canvas, nextRect);
+            autoTrimmedRef.current.add(activeQuestion.id);
+            setTrimmedRects((current) => ({ ...current, [activeQuestion.id]: nextRect as Rect }));
+            setSelection(nextRect);
+          }
+          updatePreview(nextRect);
+        }
       } catch (caught) {
         if (!cancelled) {
           setError(caught instanceof Error ? caught.message : "PDF 페이지를 표시하지 못했습니다.");
@@ -319,7 +429,65 @@ export default function AnalysisWorkspacePage() {
     return () => {
       cancelled = true;
     };
-  }, [pdfDoc, pageNo, selection, updatePreview]);
+  }, [pdfDoc, pageNo, viewMode, activeQuestion?.id, updatePreview]);
+
+  useEffect(() => {
+    updatePreview(selection);
+  }, [selection, updatePreview]);
+
+  useEffect(() => {
+    if (viewMode !== "all" || !pdfDoc || !questions.length) return;
+    let cancelled = false;
+
+    void (async () => {
+      setThumbnailProgress(0);
+      const pageCache = new Map<number, HTMLCanvasElement>();
+      const nextThumbs: Record<string, string> = {};
+      const nextRects: Record<string, Rect> = {};
+
+      for (let index = 0; index < questions.length; index += 1) {
+        if (cancelled) return;
+        const question = questions[index];
+        const rawRect = trimmedRects[question.id] ?? questionRect(question);
+        const questionPageNo = Math.max(1, Number(question.page_no ?? 1));
+        if (!rawRect) {
+          setThumbnailProgress(index + 1);
+          continue;
+        }
+
+        let pageCanvas = pageCache.get(questionPageNo);
+        if (!pageCanvas) {
+          const page = await pdfDoc.getPage(questionPageNo);
+          const base = page.getViewport({ scale: 1 });
+          const viewport = page.getViewport({ scale: 900 / base.width });
+          pageCanvas = document.createElement("canvas");
+          pageCanvas.width = Math.ceil(viewport.width);
+          pageCanvas.height = Math.ceil(viewport.height);
+          const context = pageCanvas.getContext("2d", { willReadFrequently: true });
+          if (!context) {
+            setThumbnailProgress(index + 1);
+            continue;
+          }
+          await page.render({ canvas: pageCanvas, canvasContext: context, viewport }).promise;
+          pageCache.set(questionPageNo, pageCanvas);
+        }
+
+        const trimmed = trimRectByPixels(pageCanvas, rawRect);
+        nextRects[question.id] = trimmed;
+        nextThumbs[question.id] = cropCanvasToDataUrl(pageCanvas, trimmed, 0.82);
+        setThumbnailProgress(index + 1);
+      }
+
+      if (!cancelled) {
+        setTrimmedRects((current) => ({ ...current, ...nextRects }));
+        setThumbnails(nextThumbs);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [viewMode, pdfDoc, questions]);
 
   function pointerPosition(event: PointerEvent<HTMLDivElement>) {
     const bounds = overlayRef.current?.getBoundingClientRect();
@@ -349,9 +517,35 @@ export default function AnalysisWorkspacePage() {
   }
 
   function handlePointerUp() {
-    if (draft && draft.width >= 1 && draft.height >= 1) setSelection(draft);
+    if (draft && draft.width >= MIN_CROP_SIZE && draft.height >= MIN_CROP_SIZE) {
+      setSelection(draft);
+      if (activeQuestion) {
+        autoTrimmedRef.current.add(activeQuestion.id);
+        setTrimmedRects((current) => ({ ...current, [activeQuestion.id]: draft }));
+      }
+    }
     setDraft(null);
     startRef.current = null;
+  }
+
+  async function autoTrimCurrent() {
+    if (!activeQuestion || !selection || !canvasRef.current) return;
+    setTrimming(true);
+    try {
+      const trimmed = trimRectByPixels(canvasRef.current, selection);
+      autoTrimmedRef.current.add(activeQuestion.id);
+      setTrimmedRects((current) => ({ ...current, [activeQuestion.id]: trimmed }));
+      setSelection(trimmed);
+      setMessage(`${activeQuestion.question_no}번 문항의 흰 여백을 자동 정리했습니다.`);
+    } finally {
+      setTrimming(false);
+    }
+  }
+
+  function openQuestion(question: Question) {
+    setActiveQuestionId(question.id);
+    setViewMode("single");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function startAnalysis() {
@@ -434,7 +628,11 @@ export default function AnalysisWorkspacePage() {
             }
           : current,
       );
+      setThumbnails((current) => ({ ...current, [activeQuestion.id]: preview }));
       setMessage(`${activeQuestion.question_no}번 문항 이미지 저장 완료`);
+      const currentIndex = questions.findIndex((item) => item.id === activeQuestion.id);
+      const nextQuestion = questions[currentIndex + 1];
+      if (nextQuestion) setActiveQuestionId(nextQuestion.id);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "문항 이미지 저장에 실패했습니다.");
     } finally {
@@ -551,6 +749,10 @@ export default function AnalysisWorkspacePage() {
           <p>원본 PDF에서 문항 영역을 확인하고, 잘못 잘린 문항만 다시 지정한 뒤 분석 결과를 검수합니다.</p>
         </div>
         <div className="header-actions">
+          <div className="mode-switch">
+            <button className={viewMode === "single" ? "selected-mode" : ""} onClick={() => setViewMode("single")}>한 문항 보기</button>
+            <button className={viewMode === "all" ? "selected-mode" : ""} onClick={() => setViewMode("all")} disabled={!questions.length}>전체 잘린 결과</button>
+          </div>
           <span className="save-state">{saveState}</span>
           <button className="primary" onClick={() => void startAnalysis()} disabled={!workspace || !!busy}>
             {busy === "analysis" ? "AI 분석 중..." : questions.length ? "전체 재분석" : "AI 분석 시작"}
@@ -609,6 +811,27 @@ export default function AnalysisWorkspacePage() {
             <div className="progress-wrap"><span style={{ width: `${progress}%` }} /></div>
           </section>
 
+          {viewMode === "all" ? (
+            <section className="all-view">
+              <div className="all-summary">
+                <div><b>전체 {questions.length}문항</b><span>AI 재확인 권장 {reviewCount}문항</span></div>
+                <div>{thumbnailProgress < questions.length ? `픽셀 여백 정리 중 ${thumbnailProgress}/${questions.length}` : "전체 미리보기 준비 완료"}</div>
+              </div>
+              <div className="thumbnail-grid">
+                {questions.map((question) => {
+                  const needsReview = Number(question.confidence ?? 1) < 0.82;
+                  return (
+                    <button key={question.id} className={`thumbnail-card ${needsReview ? "needs-review" : ""} ${question.question_image_path ? "saved-card" : ""}`} onClick={() => openQuestion(question)}>
+                      <div className="thumb-head"><b>{question.question_no}번</b><span>{needsReview ? "확인" : question.question_image_path ? "저장" : "자동"}</span></div>
+                      <div className="thumb-image">
+                        {thumbnails[question.id] ? <img src={thumbnails[question.id]} alt={`${question.question_no}번 잘린 결과`} /> : <em>{hasValidCrop(question) ? "이미지 생성 중" : "영역 없음"}</em>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ) : (
           <section className="workspace-grid">
             <aside className="question-list">
               <div className="panel-title"><h2>문항 번호</h2><span>{questions.length}</span></div>
@@ -702,10 +925,24 @@ export default function AnalysisWorkspacePage() {
                       {preview ? <img src={preview} alt={`${activeQuestion.question_no}번 미리보기`} /> : <span>원본에서 문항 영역을 드래그하세요.</span>}
                     </div>
                     <div className="crop-actions">
+                      <button className="trim-button" onClick={() => void autoTrimCurrent()} disabled={trimming || !selection}>
+                        {trimming ? "정리 중..." : "흰 여백 자동 정리"}
+                      </button>
                       <button className="crop-save" onClick={() => void saveCrop()} disabled={busy === "crop" || !selection}>
                         {busy === "crop" ? "저장 중..." : "문항 자르기 저장"}
                       </button>
-                      <button onClick={() => { setSelection(null); setPreview(""); }}>다시 선택</button>
+                      <button className="reset-button" onClick={() => {
+                        setSelection(null);
+                        setPreview("");
+                        if (activeQuestion) {
+                          autoTrimmedRef.current.add(activeQuestion.id);
+                          setTrimmedRects((current) => {
+                            const next = { ...current };
+                            delete next[activeQuestion.id];
+                            return next;
+                          });
+                        }
+                      }}>다시 선택</button>
                     </div>
                   </div>
 
@@ -759,11 +996,12 @@ export default function AnalysisWorkspacePage() {
               )}
             </aside>
           </section>
+          )}
         </>
       )}
 
       <style jsx>{`
-        *{box-sizing:border-box}.analysis-page{min-height:100vh;background:#f3f5f9;padding:20px;font-family:Arial,"Pretendard",sans-serif;color:#202433}.page-header{max-width:1880px;margin:0 auto 14px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px}.back-button{border:0;background:transparent;padding:0 0 8px;color:#5f687a;font-weight:800;cursor:pointer}.page-header small{display:block;color:#566bdc;font-weight:900;letter-spacing:.08em}.page-header h1{margin:5px 0;font-size:30px}.page-header p{margin:0;color:#71798a}.header-actions{display:flex;align-items:center;gap:12px}.save-state{font-size:13px;color:#7a8291}.primary{border:0;background:#5369df;color:#fff;border-radius:11px;padding:13px 20px;font-weight:900}.primary:disabled{opacity:.5}.notice{max-width:1880px;margin:0 auto 12px;padding:12px 15px;border-radius:10px;font-weight:800}.notice.success{background:#eaf8f1;color:#23795a}.notice.error{background:#fff0f0;color:#a83c3c}.source-bar{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:12px 14px;display:flex;align-items:end;gap:10px}.source-bar label{flex:1;font-size:12px;color:#697285;font-weight:800}.source-bar select{display:block;width:100%;height:42px;margin-top:5px;border:1px solid #d8dde7;border-radius:9px;padding:0 11px;background:#fff;font-weight:700}.source-bar button,.source-bar a{height:42px;border:1px solid #d8dde7;background:#fff;border-radius:9px;padding:0 15px;display:inline-flex;align-items:center;color:#3d4658;text-decoration:none;font-weight:800}.ai-health{max-width:1880px;margin:0 auto 12px;border:1px solid #dde2ec;border-radius:13px;padding:11px 14px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:12px}.ai-health>div{display:flex;align-items:center;gap:10px}.ai-health small{display:block;color:#7b8392;font-weight:800}.ai-health strong{display:block;margin-top:2px;font-size:14px}.health-dot{width:11px;height:11px;border-radius:50%;background:#a0a7b4;box-shadow:0 0 0 4px rgba(160,167,180,.15)}.ai-health.ok{border-color:#a9d9c5;background:#f2fbf7}.ai-health.ok .health-dot{background:#35a874;box-shadow:0 0 0 4px rgba(53,168,116,.15)}.ai-health.fail{border-color:#efb4b4;background:#fff6f6}.ai-health.fail .health-dot{background:#df5151;box-shadow:0 0 0 4px rgba(223,81,81,.15)}.ai-health button{height:36px;border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:0 13px;font-weight:900}.ai-health button:disabled{opacity:.55}.empty-panel{max-width:1880px;height:420px;margin:auto;background:#fff;border:1px solid #dde2ec;border-radius:14px;display:grid;place-items:center;color:#737c8d}.status-panel{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:12px 15px;display:grid;grid-template-columns:minmax(260px,1.6fr) repeat(4,minmax(100px,.7fr));gap:10px;position:relative;overflow:hidden}.status-panel div{display:grid;gap:3px}.status-panel small{color:#7b8392}.status-panel strong{font-size:14px}.progress-wrap{position:absolute!important;left:0;right:0;bottom:0;height:4px;background:#e8ebf2}.progress-wrap span{display:block;height:100%;background:#5369df;transition:width .25s}.workspace-grid{max-width:1880px;margin:auto;display:grid;grid-template-columns:205px minmax(650px,1fr) 390px;gap:14px;align-items:start}.question-list,.pdf-panel,.review-panel{background:#fff;border:1px solid #dde2ec;border-radius:14px}.question-list,.review-panel{position:sticky;top:10px;max-height:calc(100vh - 20px);overflow:auto}.question-list{padding:14px}.panel-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.panel-title h2{font-size:17px;margin:0}.panel-title span{font-size:12px;color:#7b8392}.number-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.number-grid button{height:37px;border:1px solid #d9dee8;border-radius:8px;background:#fff;font-weight:900;cursor:pointer}.number-grid button.cropped{background:#eaf8f1;border-color:#a8d7c4;color:#267b5d}.number-grid button.active{background:#5369df;border-color:#5369df;color:#fff}.legend{display:grid;gap:7px;margin-top:14px;color:#747d8d;font-size:12px}.legend span{display:flex;align-items:center;gap:7px}.legend i{width:10px;height:10px;border-radius:50%}.done-dot{background:#62b391}.active-dot{background:#5369df}.pdf-panel{overflow:hidden}.pdf-toolbar{min-height:54px;border-bottom:1px solid #e4e8ef;padding:8px 12px;display:flex;align-items:center;gap:8px}.pdf-toolbar button,.pdf-toolbar a{border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:9px 12px;text-decoration:none;color:#414a5b;font-weight:800}.pdf-toolbar button:disabled{opacity:.45}.pdf-toolbar span{margin-left:auto;color:#5369df;font-weight:900}.canvas-shell{position:relative;width:min(100%,1050px);margin:12px auto;background:#fff;min-height:520px}.canvas-shell canvas{display:block;width:100%;height:auto}.loading{position:absolute;inset:0;display:grid;place-items:center;background:#fff;color:#737c8d;z-index:3}.overlay{position:absolute;inset:0;cursor:crosshair;touch-action:none}.crop-box{position:absolute;pointer-events:none;border:2px solid #e24444;background:rgba(226,68,68,.09)}.crop-box.selected b{position:absolute;left:-2px;top:-25px;background:#e24444;color:#fff;padding:3px 8px;border-radius:6px 6px 0 0}.crop-box.draft{border-color:#5369df;border-style:dashed;background:rgba(83,105,223,.08)}.review-panel{padding:14px}.review-sticky-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:11px;border-bottom:1px solid #e6e9ef}.review-sticky-head small{color:#7b8392}.review-sticky-head h2{margin:2px 0 0;font-size:24px}.question-nav{display:flex;gap:6px}.question-nav button{width:38px;height:36px;border:1px solid #d7dce7;background:#fff;border-radius:8px;font-weight:900}.preview-card{padding:13px 0;border-bottom:1px solid #e6e9ef}.preview-title{display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px}.preview-title span{color:#748092}.preview-image{min-height:190px;max-height:360px;overflow:auto;border:1px dashed #cbd2de;border-radius:10px;background:#fafbfd;display:grid;place-items:center;color:#7a8392}.preview-image img{display:block;max-width:100%}.crop-actions{display:grid;grid-template-columns:1fr auto;gap:7px;margin-top:8px}.crop-actions button{height:40px;border:1px solid #d7dce7;background:#fff;border-radius:9px;font-weight:900}.crop-actions .crop-save{background:#283247;border-color:#283247;color:#fff}.analysis-form{padding-top:13px;display:grid;gap:10px}.form-head{display:flex;justify-content:space-between;align-items:center}.form-head button{border:1px solid #d7dce7;background:#fff;border-radius:8px;padding:8px 10px;font-weight:800}.analysis-form label{display:grid;gap:5px;font-size:12px;color:#687184;font-weight:800}.analysis-form input,.analysis-form select,.analysis-form textarea{width:100%;border:1px solid #d6dce7;border-radius:8px;background:#fff;padding:10px;color:#252b37;font:inherit}.analysis-form textarea{resize:vertical}.two-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px}.confidence-row{display:flex;justify-content:space-between;padding:10px 12px;background:#f6f7fa;border-radius:8px;color:#646d7d}.analysis-save{height:44px;border:0;border-radius:9px;background:#5369df;color:#fff;font-weight:900}.analysis-save:disabled{opacity:.5}.no-question{min-height:400px;display:grid;place-items:center;text-align:center;color:#737c8c;padding:20px}@media(max-width:1450px){.workspace-grid{grid-template-columns:185px minmax(580px,1fr) 350px}.page-header h1{font-size:27px}}@media(max-width:1150px){.workspace-grid{grid-template-columns:180px minmax(0,1fr)}.review-panel{grid-column:1/-1;position:static;max-height:none}.status-panel{grid-template-columns:1fr 1fr 1fr}.question-list{position:sticky}.preview-image{max-height:500px}}@media(max-width:760px){.analysis-page{padding:9px}.page-header{align-items:flex-start;flex-direction:column}.header-actions{width:100%;justify-content:space-between}.source-bar{align-items:stretch;flex-direction:column}.source-bar button,.source-bar a{justify-content:center}.status-panel{grid-template-columns:1fr 1fr}.workspace-grid{grid-template-columns:1fr}.question-list{position:static;max-height:none}.number-grid{grid-template-columns:repeat(8,1fr)}.pdf-toolbar{flex-wrap:wrap}.pdf-toolbar span{width:100%;margin-left:0}.review-panel{grid-column:auto}.canvas-shell{min-height:360px}}
+        *{box-sizing:border-box}.analysis-page{min-height:100vh;background:#f3f5f9;padding:20px;font-family:Arial,"Pretendard",sans-serif;color:#202433}.page-header{max-width:1880px;margin:0 auto 14px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px}.back-button{border:0;background:transparent;padding:0 0 8px;color:#5f687a;font-weight:800;cursor:pointer}.page-header small{display:block;color:#566bdc;font-weight:900;letter-spacing:.08em}.page-header h1{margin:5px 0;font-size:30px}.page-header p{margin:0;color:#71798a}.header-actions{display:flex;align-items:center;gap:12px}.save-state{font-size:13px;color:#7a8291}.primary{border:0;background:#5369df;color:#fff;border-radius:11px;padding:13px 20px;font-weight:900}.primary:disabled{opacity:.5}.notice{max-width:1880px;margin:0 auto 12px;padding:12px 15px;border-radius:10px;font-weight:800}.notice.success{background:#eaf8f1;color:#23795a}.notice.error{background:#fff0f0;color:#a83c3c}.source-bar{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:12px 14px;display:flex;align-items:end;gap:10px}.source-bar label{flex:1;font-size:12px;color:#697285;font-weight:800}.source-bar select{display:block;width:100%;height:42px;margin-top:5px;border:1px solid #d8dde7;border-radius:9px;padding:0 11px;background:#fff;font-weight:700}.source-bar button,.source-bar a{height:42px;border:1px solid #d8dde7;background:#fff;border-radius:9px;padding:0 15px;display:inline-flex;align-items:center;color:#3d4658;text-decoration:none;font-weight:800}.ai-health{max-width:1880px;margin:0 auto 12px;border:1px solid #dde2ec;border-radius:13px;padding:11px 14px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:12px}.ai-health>div{display:flex;align-items:center;gap:10px}.ai-health small{display:block;color:#7b8392;font-weight:800}.ai-health strong{display:block;margin-top:2px;font-size:14px}.health-dot{width:11px;height:11px;border-radius:50%;background:#a0a7b4;box-shadow:0 0 0 4px rgba(160,167,180,.15)}.ai-health.ok{border-color:#a9d9c5;background:#f2fbf7}.ai-health.ok .health-dot{background:#35a874;box-shadow:0 0 0 4px rgba(53,168,116,.15)}.ai-health.fail{border-color:#efb4b4;background:#fff6f6}.ai-health.fail .health-dot{background:#df5151;box-shadow:0 0 0 4px rgba(223,81,81,.15)}.ai-health button{height:36px;border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:0 13px;font-weight:900}.ai-health button:disabled{opacity:.55}.empty-panel{max-width:1880px;height:420px;margin:auto;background:#fff;border:1px solid #dde2ec;border-radius:14px;display:grid;place-items:center;color:#737c8d}.status-panel{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:12px 15px;display:grid;grid-template-columns:minmax(260px,1.6fr) repeat(4,minmax(100px,.7fr));gap:10px;position:relative;overflow:hidden}.status-panel div{display:grid;gap:3px}.status-panel small{color:#7b8392}.status-panel strong{font-size:14px}.progress-wrap{position:absolute!important;left:0;right:0;bottom:0;height:4px;background:#e8ebf2}.progress-wrap span{display:block;height:100%;background:#5369df;transition:width .25s}.workspace-grid{max-width:1880px;margin:auto;display:grid;grid-template-columns:205px minmax(650px,1fr) 390px;gap:14px;align-items:start}.question-list,.pdf-panel,.review-panel{background:#fff;border:1px solid #dde2ec;border-radius:14px}.question-list,.review-panel{position:sticky;top:10px;max-height:calc(100vh - 20px);overflow:auto}.question-list{padding:14px}.panel-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.panel-title h2{font-size:17px;margin:0}.panel-title span{font-size:12px;color:#7b8392}.number-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.number-grid button{height:37px;border:1px solid #d9dee8;border-radius:8px;background:#fff;font-weight:900;cursor:pointer}.number-grid button.cropped{background:#eaf8f1;border-color:#a8d7c4;color:#267b5d}.number-grid button.active{background:#5369df;border-color:#5369df;color:#fff}.legend{display:grid;gap:7px;margin-top:14px;color:#747d8d;font-size:12px}.legend span{display:flex;align-items:center;gap:7px}.legend i{width:10px;height:10px;border-radius:50%}.done-dot{background:#62b391}.active-dot{background:#5369df}.pdf-panel{overflow:hidden}.pdf-toolbar{min-height:54px;border-bottom:1px solid #e4e8ef;padding:8px 12px;display:flex;align-items:center;gap:8px}.pdf-toolbar button,.pdf-toolbar a{border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:9px 12px;text-decoration:none;color:#414a5b;font-weight:800}.pdf-toolbar button:disabled{opacity:.45}.pdf-toolbar span{margin-left:auto;color:#5369df;font-weight:900}.canvas-shell{position:relative;width:min(100%,1050px);margin:12px auto;background:#fff;min-height:520px}.canvas-shell canvas{display:block;width:100%;height:auto}.loading{position:absolute;inset:0;display:grid;place-items:center;background:#fff;color:#737c8d;z-index:3}.overlay{position:absolute;inset:0;cursor:crosshair;touch-action:none}.crop-box{position:absolute;pointer-events:none;border:2px solid #e24444;background:rgba(226,68,68,.09)}.crop-box.selected b{position:absolute;left:-2px;top:-25px;background:#e24444;color:#fff;padding:3px 8px;border-radius:6px 6px 0 0}.crop-box.draft{border-color:#5369df;border-style:dashed;background:rgba(83,105,223,.08)}.review-panel{padding:14px}.review-sticky-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:11px;border-bottom:1px solid #e6e9ef}.review-sticky-head small{color:#7b8392}.review-sticky-head h2{margin:2px 0 0;font-size:24px}.question-nav{display:flex;gap:6px}.question-nav button{width:38px;height:36px;border:1px solid #d7dce7;background:#fff;border-radius:8px;font-weight:900}.preview-card{padding:13px 0;border-bottom:1px solid #e6e9ef}.preview-title{display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px}.preview-title span{color:#748092}.preview-image{min-height:190px;max-height:360px;overflow:auto;border:1px dashed #cbd2de;border-radius:10px;background:#fafbfd;display:grid;place-items:center;color:#7a8392}.preview-image img{display:block;max-width:100%}.crop-actions{display:grid;grid-template-columns:1fr auto;gap:7px;margin-top:8px}.crop-actions button{height:40px;border:1px solid #d7dce7;background:#fff;border-radius:9px;font-weight:900}.crop-actions .crop-save{background:#283247;border-color:#283247;color:#fff}.analysis-form{padding-top:13px;display:grid;gap:10px}.form-head{display:flex;justify-content:space-between;align-items:center}.form-head button{border:1px solid #d7dce7;background:#fff;border-radius:8px;padding:8px 10px;font-weight:800}.analysis-form label{display:grid;gap:5px;font-size:12px;color:#687184;font-weight:800}.analysis-form input,.analysis-form select,.analysis-form textarea{width:100%;border:1px solid #d6dce7;border-radius:8px;background:#fff;padding:10px;color:#252b37;font:inherit}.analysis-form textarea{resize:vertical}.two-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px}.confidence-row{display:flex;justify-content:space-between;padding:10px 12px;background:#f6f7fa;border-radius:8px;color:#646d7d}.analysis-save{height:44px;border:0;border-radius:9px;background:#5369df;color:#fff;font-weight:900}.analysis-save:disabled{opacity:.5}.no-question{min-height:400px;display:grid;place-items:center;text-align:center;color:#737c8c;padding:20px}.mode-switch{display:flex;background:#e9edf7;border-radius:11px;padding:3px}.mode-switch button{border:0;background:transparent;border-radius:8px;padding:8px 12px;font-weight:900;color:#667087}.mode-switch button:disabled{opacity:.45}.mode-switch .selected-mode{background:#fff;color:#4258d7;box-shadow:0 2px 8px rgba(35,49,91,.12)}.all-view{max-width:1880px;margin:auto;background:#fff;border:1px solid #dde2ec;border-radius:14px;padding:18px}.all-summary{display:flex;justify-content:space-between;gap:15px;align-items:center;padding:2px 2px 16px;color:#657087}.all-summary div:first-child{display:flex;gap:18px;align-items:center}.all-summary b{font-size:20px;color:#202433}.thumbnail-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.thumbnail-card{text-align:left;border:1px solid #dfe4ee;background:#fff;border-radius:13px;padding:0;overflow:hidden;cursor:pointer;transition:.16s transform,.16s box-shadow}.thumbnail-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(44,56,95,.12)}.thumbnail-card.needs-review{border:2px solid #efa43d}.thumbnail-card.saved-card .thumb-head span{background:#e8f7f0;color:#23765a}.thumb-head{height:43px;padding:0 12px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #edf0f5}.thumb-head span{font-size:12px;font-weight:900;padding:4px 8px;border-radius:999px;background:#eef1ff;color:#4258d7}.needs-review .thumb-head span{background:#fff1dd;color:#a76100}.thumb-image{height:270px;background:#f8f9fc;display:grid;place-items:center;overflow:auto;padding:8px}.thumb-image img{display:block;max-width:100%;max-height:100%;object-fit:contain}.thumb-image em{font-style:normal;color:#8b94a5}.trim-button{background:#eef1ff!important;border-color:#8ca0f1!important;color:#4258d7}.reset-button{background:#fff}.crop-actions{grid-template-columns:1fr 1fr!important}.crop-actions .reset-button{grid-column:1/-1}@media(max-width:1450px){.workspace-grid{grid-template-columns:185px minmax(580px,1fr) 350px}.page-header h1{font-size:27px}}@media(max-width:1350px){.thumbnail-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:1150px){.workspace-grid{grid-template-columns:180px minmax(0,1fr)}.review-panel{grid-column:1/-1;position:static;max-height:none}.status-panel{grid-template-columns:1fr 1fr 1fr}.question-list{position:sticky}.preview-image{max-height:500px}}@media(max-width:900px){.thumbnail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.analysis-page{padding:9px}.page-header{align-items:flex-start;flex-direction:column}.header-actions{width:100%;justify-content:space-between;flex-wrap:wrap}.source-bar{align-items:stretch;flex-direction:column}.source-bar button,.source-bar a{justify-content:center}.status-panel{grid-template-columns:1fr 1fr}.workspace-grid{grid-template-columns:1fr}.question-list{position:static;max-height:none}.number-grid{grid-template-columns:repeat(8,1fr)}.pdf-toolbar{flex-wrap:wrap}.pdf-toolbar span{width:100%;margin-left:0}.review-panel{grid-column:auto}.canvas-shell{min-height:360px}.thumbnail-grid{grid-template-columns:1fr}.all-summary{align-items:flex-start;flex-direction:column}}
       `}</style>
     </main>
   );
