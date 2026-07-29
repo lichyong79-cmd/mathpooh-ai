@@ -32,9 +32,14 @@ const dnaSchema = {
 } as const;
 
 type OpenAiPayload = {
+  id?: string;
+  status?: string;
+  error?: { message?: string } | null;
+  incomplete_details?: { reason?: string } | null;
   output_text?: string;
   output?: Array<{
     type?: string;
+    status?: string;
     content?: Array<{
       type?: string;
       text?: string;
@@ -50,10 +55,27 @@ function extractOutputText(payload: OpenAiPayload): string {
 
   return (payload.output ?? [])
     .flatMap((item) => item.content ?? [])
-    .map((content) => content.text ?? "")
+    .map((content) => {
+      if (typeof content.text === "string") return content.text;
+      if (typeof content.refusal === "string") return content.refusal;
+      return "";
+    })
     .filter(Boolean)
     .join("\n")
     .trim();
+}
+
+function responseDiagnostic(payload: OpenAiPayload): string {
+  const outputTypes = (payload.output ?? []).map((item) => item.type ?? "unknown").join(",") || "none";
+  const reason = payload.incomplete_details?.reason;
+  const apiError = payload.error?.message;
+  return [
+    `status=${payload.status ?? "unknown"}`,
+    reason ? `incomplete=${reason}` : "",
+    apiError ? `error=${apiError}` : "",
+    `output=${outputTypes}`,
+    payload.id ? `response_id=${payload.id}` : "",
+  ].filter(Boolean).join(" · ");
 }
 
 function parseJsonObject(text: string): Record<string, any> {
@@ -73,7 +95,7 @@ function parseJsonObject(text: string): Record<string, any> {
     if (start >= 0 && end > start) {
       return JSON.parse(cleaned.slice(start, end + 1));
     }
-    throw new Error("AI 분석 결과에서 JSON을 찾을 수 없습니다.");
+    throw new Error(`AI 분석 결과에서 JSON을 찾을 수 없습니다. 응답 앞부분: ${cleaned.slice(0, 240)}`);
   }
 }
 
@@ -82,32 +104,30 @@ async function requestDna(args: {
   model: string;
   prompt: string;
   questionImageUrl: string;
-  solutionUrl?: string;
   structured: boolean;
 }) {
   const content: Array<Record<string, unknown>> = [
     { type: "input_text", text: args.prompt },
     { type: "input_image", image_url: args.questionImageUrl, detail: "high" },
   ];
-  if (args.solutionUrl) content.push({ type: "input_file", file_url: args.solutionUrl });
 
   const body: Record<string, unknown> = {
     model: args.model,
     input: [{ role: "user", content }],
-    max_output_tokens: 2200,
+    reasoning: { effort: "low" },
+    max_output_tokens: 3200,
+    store: false,
   };
 
-  if (args.structured) {
-    body.text = { format: { type: "json_schema", name: "problem_dna", strict: true, schema: dnaSchema } };
-  } else {
-    body.text = { format: { type: "json_object" } };
-  }
+  body.text = args.structured
+    ? { format: { type: "json_schema", name: "problem_dna", strict: true, schema: dnaSchema } }
+    : { format: { type: "json_object" } };
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${args.apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(110_000),
+    signal: AbortSignal.timeout(100_000),
     cache: "no-store",
   });
 
@@ -120,10 +140,15 @@ async function requestDna(args: {
   try {
     payload = JSON.parse(raw) as OpenAiPayload;
   } catch {
-    throw new Error("OpenAI 응답 본문이 완전한 JSON이 아닙니다.");
+    throw new Error(`OpenAI 응답 본문이 완전한 JSON이 아닙니다: ${raw.slice(0, 400)}`);
   }
 
-  return parseJsonObject(extractOutputText(payload));
+  const outputText = extractOutputText(payload);
+  if (!outputText) {
+    throw new Error(`AI 분석 결과가 비어 있습니다. ${responseDiagnostic(payload)}`);
+  }
+
+  return parseJsonObject(outputText);
 }
 
 export async function POST(_: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -133,7 +158,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
   try {
     const { id } = await context.params;
     const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || "gpt-5";
+    const model = process.env.OPENAI_ANALYSIS_MODEL || process.env.OPENAI_MODEL || "gpt-5-mini";
     if (!apiKey) return NextResponse.json({ success: false, message: "OPENAI_API_KEY가 없습니다." }, { status: 500 });
 
     const supabase = createClient();
@@ -149,7 +174,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     if (analysisResult.error || !analysisResult.data) throw analysisResult.error ?? new Error("분석 정보를 찾을 수 없습니다.");
     const sourceResult = await supabase
       .from("source_files")
-      .select("title,grade,subject,solution_pdf_path")
+      .select("title,grade,subject")
       .eq("id", analysisResult.data.source_file_id)
       .single();
     if (sourceResult.error) throw sourceResult.error;
@@ -161,12 +186,6 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     if (signed.error) throw signed.error;
 
     const source = sourceResult.data;
-    let solutionUrl = "";
-    if (source?.solution_pdf_path) {
-      const solutionSigned = await supabase.storage.from("exam-pdf").createSignedUrl(source.solution_pdf_path, 60 * 10);
-      if (!solutionSigned.error) solutionUrl = solutionSigned.data.signedUrl;
-    }
-
     const prompt = `당신은 한국 중고등 수학 문항을 분류하는 MathPooh MPAI 분석기입니다.
 첨부된 한 문항 이미지만 분석하여 Problem DNA를 생성하세요.
 시험지 정보: ${source?.grade ?? "학년 미상"} / ${source?.subject ?? "과목 미상"} / ${source?.title ?? "제목 미상"}
@@ -179,8 +198,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 - 요구능력과 핵심개념은 중복 없이 짧은 배열로 작성합니다.
 - 풀이전략은 정답 자체보다 해결 접근을 1~3문장으로 적습니다.
 - 핵심 한줄(summary)은 이 문항이 무엇을 평가하는지 한 문장으로 적습니다.
-- 해설지 PDF가 함께 제공되면 문항번호에 맞는 정답을 확인하여 answer를 채웁니다.
-- 정답을 확정할 수 없으면 answer는 빈 문자열로 둡니다.
+- 이미지에서 정답을 확정할 수 없으면 answer는 빈 문자열로 둡니다.
 - 보이지 않는 내용을 추측하지 말고 confidence에 반영합니다.
 - 반드시 JSON 객체 하나만 출력합니다.`;
 
@@ -191,16 +209,15 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
         model,
         prompt,
         questionImageUrl: signed.data.signedUrl,
-        solutionUrl,
         structured: true,
       });
     } catch (firstError) {
       dna = await requestDna({
         apiKey,
         model,
-        prompt: `${prompt}\n이전 응답이 비어 있거나 잘려 재시도합니다. 모든 필드를 빠짐없이 완전한 JSON 객체로 출력하세요.`,
+        prompt: `${prompt}
+이전 응답 생성에 실패했습니다. 설명이나 코드블록 없이 모든 필드를 포함한 JSON 객체 하나만 출력하세요.`,
         questionImageUrl: signed.data.signedUrl,
-        solutionUrl,
         structured: false,
       }).catch((secondError) => {
         const first = firstError instanceof Error ? firstError.message : String(firstError);
@@ -225,6 +242,8 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
       core_concepts: Array.isArray(dna.core_concepts) ? dna.core_concepts : [],
       solution_strategy: dna.solution_strategy || null,
       summary: dna.summary || null,
+      analysis_model: model,
+      analyzed_at: new Date().toISOString(),
     };
 
     const confidence = Number(dna.confidence);

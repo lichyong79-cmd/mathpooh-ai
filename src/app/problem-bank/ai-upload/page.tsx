@@ -889,24 +889,96 @@ export default function AnalysisWorkspacePage() {
 
   async function runAutoPipeline() {
     if (!workspace || !pdfDoc || !questions.length) return;
-    setBusy("queue"); setError(""); setMessage("");
+    setBusy("queue");
+    setError("");
+    setMessage("");
     setQueueProgress({ done: 0, total: questions.length });
-    try {
-      for (let index = 0; index < questions.length; index += 1) {
-        let question = questions[index];
-        setActiveQuestionId(question.id);
-        if (!question.question_image_path || !isCanonicalized(question)) question = await materializeQuestion(question);
-        const response = await fetch(`/api/analysis/questions/${question.id}/analyze`, { method: "POST" });
-        const payload = await response.json();
-        if (!response.ok || !payload.success) throw new Error(payload.message || `${question.question_no}번 분석 실패`);
-        setWorkspace((current) => current ? { ...current, questions: current.questions.map((item) => item.id === question.id ? payload.question : item) } : current);
-        setQueueProgress({ done: index + 1, total: questions.length });
+
+    const concurrency = Math.min(3, questions.length);
+    const failures: Array<{ questionNo: number; message: string }> = [];
+    let cursor = 0;
+    let done = 0;
+
+    async function analyzeQueuedQuestion(question: Question) {
+      let target = question;
+      if (!target.question_image_path || !isCanonicalized(target)) {
+        target = await materializeQuestion(target);
       }
-      setMessage("자동 처리 완료 · 정상 문항은 자동등록, 이상 문항은 검토대상으로 보류했습니다.");
+
+      const response = await fetch(`/api/analysis/questions/${target.id}/analyze`, { method: "POST" });
+      const raw = await response.text();
+      let payload: any = null;
+      try {
+        payload = raw ? JSON.parse(raw) : null;
+      } catch {
+        throw new Error(`서버 응답이 JSON이 아닙니다. HTTP ${response.status} · ${raw.slice(0, 240)}`);
+      }
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || `${target.question_no}번 분석 실패`);
+      }
+
+      setWorkspace((current) => current ? {
+        ...current,
+        questions: current.questions.map((item) => item.id === target.id ? payload.question : item),
+      } : current);
+    }
+
+    async function worker() {
+      while (true) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= questions.length) return;
+        const question = questions[index];
+
+        try {
+          await analyzeQueuedQuestion(question);
+        } catch (caught) {
+          const message = caught instanceof Error ? caught.message : "문항 분석 실패";
+          failures.push({ questionNo: Number(question.question_no), message });
+
+          // 한 문항 실패가 전체 큐를 멈추지 않도록 검토대상으로 남긴다.
+          try {
+            const patchResponse = await fetch(`/api/analysis/questions/${question.id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                status: "REVIEW",
+                review_reason: `AI 분석 실패: ${message.slice(0, 500)}`,
+              }),
+            });
+            const patchRaw = await patchResponse.text();
+            const patchPayload = patchRaw ? JSON.parse(patchRaw) : null;
+            if (patchResponse.ok && patchPayload?.success) {
+              setWorkspace((current) => current ? {
+                ...current,
+                questions: current.questions.map((item) => item.id === question.id ? patchPayload.question : item),
+              } : current);
+            }
+          } catch {
+            // 보류 표시 실패는 원래 분석 오류를 가리지 않는다.
+          }
+        } finally {
+          done += 1;
+          setQueueProgress({ done, total: questions.length });
+        }
+      }
+    }
+
+    try {
+      await Promise.all(Array.from({ length: concurrency }, () => worker()));
+      if (failures.length) {
+        const preview = failures.slice(0, 4).map((item) => `${item.questionNo}번`).join(", ");
+        setError(`분석 실패 ${failures.length}문항(${preview}${failures.length > 4 ? " 외" : ""})은 검토대상으로 보류했습니다.`);
+        setMessage(`자동 처리 계속 완료 · 성공 ${questions.length - failures.length} · 보류 ${failures.length}`);
+      } else {
+        setMessage("자동 처리 완료 · 정상 문항은 자동등록, 이상 문항은 검토대상으로 보류했습니다.");
+      }
       setViewMode("review");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "자동 처리 중 오류가 발생했습니다.");
-    } finally { setBusy(""); }
+    } finally {
+      setBusy("");
+    }
   }
 
   function nudgeCrop(kind: "top" | "bottom" | "left" | "right") {
