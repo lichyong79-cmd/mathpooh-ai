@@ -119,7 +119,13 @@ export async function registerQuestions(
   const upsert = await supabase
     .from("problem_bank_questions")
     .upsert(rows, { onConflict: "source_file_id,question_no" });
-  if (upsert.error) throw upsert.error;
+  if (upsert.error) {
+    const err = new Error(`problem_bank_questions 저장 실패: ${upsert.error.message}`) as Error & { code?: string; details?: string; hint?: string };
+    err.code = upsert.error.code;
+    err.details = upsert.error.details;
+    err.hint = upsert.error.hint;
+    throw err;
+  }
 
   return { registered: rows.length, embedded: embeddings.length };
 }

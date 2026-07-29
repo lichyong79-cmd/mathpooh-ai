@@ -84,9 +84,16 @@ export async function POST(request: NextRequest) {
       embedded: result.embedded,
       message: `${result.registered}개 문항을 문제은행에 등록했습니다.`,
     });
-  } catch (error) {
+  } catch (error: any) {
+    console.error("[problem-bank/register]", error);
     return NextResponse.json(
-      { success: false, message: error instanceof Error ? error.message : "문제은행 등록에 실패했습니다." },
+      {
+        success: false,
+        message: error?.message || "문제은행 등록에 실패했습니다.",
+        code: error?.code || null,
+        details: error?.details || null,
+        hint: error?.hint || null,
+      },
       { status: 500 },
     );
   }
