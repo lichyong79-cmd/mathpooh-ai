@@ -45,6 +45,7 @@ type Question = {
   crop_width: number | null;
   crop_height: number | null;
   question_image_path: string | null;
+  review_reason?: string | null;
 };
 
 type Workspace = {
@@ -69,7 +70,9 @@ const statusText: Record<string, string> = {
   RUNNING: "AI 분석 중",
   REVIEW: "검수 필요",
   APPROVED: "검수 완료",
-  AUTO_REGISTERED: "자동 등록",
+  AUTO_REGISTERED: "등록 대기",
+  REGISTERED: "등록 완료",
+  REJECTED: "등록 제외",
   DONE: "분석 완료",
   FAILED: "분석 실패",
   completed: "분석 완료",
@@ -302,7 +305,7 @@ export default function AnalysisWorkspacePage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saveState, setSaveState] = useState("저장됨");
-  const [viewMode, setViewMode] = useState<"single" | "all" | "review">("single");
+  const [viewMode, setViewMode] = useState<"single" | "all" | "registered" | "pending" | "review" | "failed">("single");
   const [queueProgress, setQueueProgress] = useState({ done: 0, total: 0 });
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
   const [thumbnailBusy, setThumbnailBusy] = useState(false);
@@ -837,6 +840,59 @@ export default function AnalysisWorkspacePage() {
   }
 
 
+  async function patchQuestionStatus(question: Question, status: "APPROVED" | "REJECTED" | "REVIEW") {
+    const response = await fetch(`/api/analysis/questions/${question.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) throw new Error(payload.message || "문항 상태 변경에 실패했습니다.");
+    setWorkspace((current) => current ? {
+      ...current,
+      questions: current.questions.map((item) => item.id === question.id ? payload.question : item),
+    } : current);
+    return payload.question as Question;
+  }
+
+  async function approveAndRegister(question: Question) {
+    if (!workspace?.analysis?.id) return;
+    setBusy("review-action");
+    setError("");
+    setMessage("");
+    try {
+      await patchQuestionStatus(question, "APPROVED");
+      const response = await fetch("/api/problem-bank/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysisId: workspace.analysis.id }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.message || "문제은행 등록에 실패했습니다.");
+      await loadWorkspace(workspace.source.id);
+      setViewMode("review");
+      setMessage(`${question.question_no}번을 문제은행에 등록했습니다.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "문제은행 등록에 실패했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function excludeQuestion(question: Question) {
+    setBusy("review-action");
+    setError("");
+    try {
+      await patchQuestionStatus(question, "REJECTED");
+      setMessage(`${question.question_no}번을 등록 제외 처리했습니다.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "등록 제외 처리에 실패했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+
   async function materializeQuestion(question: Question): Promise<Question> {
     if (!workspace?.analysis?.id || !pdfDoc || !hasValidCrop(question)) throw new Error(`${question.question_no}번 자르기 좌표가 없습니다.`);
     const page = await pdfDoc.getPage(Number(question.page_no));
@@ -1054,9 +1110,15 @@ export default function AnalysisWorkspacePage() {
   const analysisStatus = workspace?.analysis?.status ?? workspace?.source.status ?? "uploaded";
   const progress = Math.max(0, Math.min(100, Number(workspace?.analysis?.progress ?? 0)));
   const croppedCount = questions.filter((question) => hasValidCrop(question)).length;
-  const autoCount = questions.filter((question) => question.status === "AUTO_REGISTERED" || question.status === "REGISTERED").length;
-  const reviewQuestions = questions.filter((question) => question.status === "REVIEW" || Number(question.confidence ?? 0) < .86);
-  const visibleQuestions = viewMode === "review" ? reviewQuestions : questions;
+  const registeredQuestions = questions.filter((question) => question.status === "REGISTERED");
+  const pendingQuestions = questions.filter((question) => question.status === "AUTO_REGISTERED" || question.status === "APPROVED");
+  const reviewQuestions = questions.filter((question) => question.status === "REVIEW");
+  const failedQuestions = questions.filter((question) => question.status === "FAILED" || question.status === "REJECTED");
+  const visibleQuestions = viewMode === "registered" ? registeredQuestions
+    : viewMode === "pending" ? pendingQuestions
+    : viewMode === "review" ? reviewQuestions
+    : viewMode === "failed" ? failedQuestions
+    : questions;
 
   return (
     <main className="analysis-page">
@@ -1127,12 +1189,15 @@ export default function AnalysisWorkspacePage() {
           </section>
 
           <section className="pipeline-bar">
-            <div className="mode-buttons">
+            <div className="mode-buttons status-tabs">
               <button className={viewMode === "single" ? "active" : ""} onClick={() => setViewMode("single")}>한 문항 보기</button>
-              <button className={viewMode === "all" ? "active" : ""} onClick={() => setViewMode("all")}>전체 한번에 보기</button>
-              <button className={viewMode === "review" ? "active review" : ""} onClick={() => setViewMode("review")}>검토대상 {reviewQuestions.length}</button>
+              <button className={viewMode === "all" ? "active" : ""} onClick={() => setViewMode("all")}>전체 {questions.length}</button>
+              <button className={viewMode === "registered" ? "active registered" : ""} onClick={() => setViewMode("registered")}>등록완료 {registeredQuestions.length}</button>
+              <button className={viewMode === "pending" ? "active pending" : ""} onClick={() => setViewMode("pending")}>등록대기 {pendingQuestions.length}</button>
+              <button className={viewMode === "review" ? "active review" : ""} onClick={() => setViewMode("review")}>검토보류 {reviewQuestions.length}</button>
+              <button className={viewMode === "failed" ? "active failed" : ""} onClick={() => setViewMode("failed")}>제외/실패 {failedQuestions.length}</button>
             </div>
-            <div className="pipeline-counts"><b>문제은행 등록 {autoCount}</b><b>보류 {reviewQuestions.length}</b></div>
+            <div className="pipeline-counts"><b>등록완료 {registeredQuestions.length}</b><b>보류 {reviewQuestions.length}</b></div>
             <button className="queue-button" onClick={() => void runAutoPipeline()} disabled={!questions.length || !!busy}>
               {busy === "queue" ? `자동 처리 ${queueProgress.done}/${queueProgress.total}` : "자르기 저장 + 문항분석 자동 실행"}
             </button>
@@ -1141,16 +1206,28 @@ export default function AnalysisWorkspacePage() {
           {viewMode !== "single" ? (
             <section className="all-crops-grid">
               {visibleQuestions.map((question) => (
-                <button key={question.id} className={`crop-card ${question.status === "AUTO_REGISTERED" || question.status === "REGISTERED" ? "auto" : "hold"}`} onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>
-                  <div className="crop-thumb">
-                    {thumbnailUrls[question.id] ? <img src={thumbnailUrls[question.id]} alt={`${question.question_no}번 잘린 문항`} /> : <span>{thumbnailBusy ? "미리보기 생성 중..." : "미리보기 없음"}</span>}
-                  </div>
-                  <div className="crop-card-head"><strong>{question.question_no}번</strong><span>{question.status === "REGISTERED" ? "등록완료" : question.status === "AUTO_REGISTERED" ? "등록대기" : question.status === "WAITING" || question.status === "PENDING" ? "분석대기" : "검토보류"}</span></div>
-                  <small>{valueOf(question, "unit") || "단원 분석 전"}</small>
-                  <small>신뢰도 {question.confidence == null ? "-" : `${Math.round(Number(question.confidence) * 100)}%`}</small>
-                </button>
+                <article key={question.id} className={`crop-card ${question.status === "REGISTERED" ? "registered-card" : question.status === "AUTO_REGISTERED" || question.status === "APPROVED" ? "auto" : question.status === "REVIEW" ? "hold" : "failed-card"}`}>
+                  <button className="card-open" onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>
+                    <div className="crop-thumb">
+                      {thumbnailUrls[question.id] ? <img src={thumbnailUrls[question.id]} alt={`${question.question_no}번 잘린 문항`} /> : <span>{thumbnailBusy ? "미리보기 생성 중..." : "미리보기 없음"}</span>}
+                    </div>
+                    <div className="crop-card-head"><strong>{question.question_no}번</strong><span>{statusText[question.status] ?? question.status}</span></div>
+                    <small>{valueOf(question, "unit") || "단원 분석 전"}</small>
+                    <small>신뢰도 {question.confidence == null ? "-" : `${Math.round(Number(question.confidence) * 100)}%`}</small>
+                    {question.review_reason ? <small className="review-reason">{question.review_reason}</small> : null}
+                  </button>
+                  {question.status === "REVIEW" ? <div className="review-card-actions">
+                    <button onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>자르기 수정</button>
+                    <button onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); setTimeout(() => void analyzeOneQuestion(), 0); }}>분석 다시</button>
+                    <button className="register-now" onClick={() => void approveAndRegister(question)} disabled={!!busy}>현재 결과로 등록</button>
+                    <button className="exclude" onClick={() => void excludeQuestion(question)} disabled={!!busy}>등록 제외</button>
+                  </div> : null}
+                  {question.status === "REGISTERED" ? <div className="review-card-actions single-action">
+                    <button className="register-now" onClick={() => router.push("/problem-bank")}>문제은행에서 보기</button>
+                  </div> : null}
+                </article>
               ))}
-              {!visibleQuestions.length ? <div className="all-empty">검토대상 문항이 없습니다.</div> : null}
+              {!visibleQuestions.length ? <div className="all-empty">이 상태의 문항이 없습니다.</div> : null}
             </section>
           ) : null}
 
@@ -1308,7 +1385,7 @@ export default function AnalysisWorkspacePage() {
       )}
 
       <style jsx>{`
-        *{box-sizing:border-box}.analysis-page{min-height:100vh;background:#f3f5f9;padding:20px;font-family:Arial,"Pretendard",sans-serif;color:#202433}.page-header{max-width:1880px;margin:0 auto 14px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px}.back-button{border:0;background:transparent;padding:0 0 8px;color:#5f687a;font-weight:800;cursor:pointer}.page-header small{display:block;color:#566bdc;font-weight:900;letter-spacing:.08em}.page-header h1{margin:5px 0;font-size:30px}.page-header p{margin:0;color:#71798a}.header-actions{display:flex;align-items:center;gap:12px}.save-state{font-size:13px;color:#7a8291}.primary{border:0;background:#5369df;color:#fff;border-radius:11px;padding:13px 20px;font-weight:900}.primary:disabled{opacity:.5}.notice{max-width:1880px;margin:0 auto 12px;padding:12px 15px;border-radius:10px;font-weight:800}.notice.success{background:#eaf8f1;color:#23795a}.notice.error{background:#fff0f0;color:#a83c3c}.source-bar{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:12px 14px;display:flex;align-items:end;gap:10px}.source-bar label{flex:1;font-size:12px;color:#697285;font-weight:800}.source-bar select{display:block;width:100%;height:42px;margin-top:5px;border:1px solid #d8dde7;border-radius:9px;padding:0 11px;background:#fff;font-weight:700}.source-bar button,.source-bar a{height:42px;border:1px solid #d8dde7;background:#fff;border-radius:9px;padding:0 15px;display:inline-flex;align-items:center;color:#3d4658;text-decoration:none;font-weight:800}.ai-health{max-width:1880px;margin:0 auto 12px;border:1px solid #dde2ec;border-radius:13px;padding:11px 14px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:12px}.ai-health>div{display:flex;align-items:center;gap:10px}.ai-health small{display:block;color:#7b8392;font-weight:800}.ai-health strong{display:block;margin-top:2px;font-size:14px}.health-dot{width:11px;height:11px;border-radius:50%;background:#a0a7b4;box-shadow:0 0 0 4px rgba(160,167,180,.15)}.ai-health.ok{border-color:#a9d9c5;background:#f2fbf7}.ai-health.ok .health-dot{background:#35a874;box-shadow:0 0 0 4px rgba(53,168,116,.15)}.ai-health.fail{border-color:#efb4b4;background:#fff6f6}.ai-health.fail .health-dot{background:#df5151;box-shadow:0 0 0 4px rgba(223,81,81,.15)}.ai-health button{height:36px;border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:0 13px;font-weight:900}.ai-health button:disabled{opacity:.55}.empty-panel{max-width:1880px;height:420px;margin:auto;background:#fff;border:1px solid #dde2ec;border-radius:14px;display:grid;place-items:center;color:#737c8d}.status-panel{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:12px 15px;display:grid;grid-template-columns:minmax(260px,1.6fr) repeat(4,minmax(100px,.7fr));gap:10px;position:relative;overflow:hidden}.status-panel div{display:grid;gap:3px}.status-panel small{color:#7b8392}.status-panel strong{font-size:14px}.progress-wrap{position:absolute!important;left:0;right:0;bottom:0;height:4px;background:#e8ebf2}.progress-wrap span{display:block;height:100%;background:#5369df;transition:width .25s}.pipeline-bar{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:10px;display:flex;gap:10px;align-items:center}.mode-buttons{display:flex;gap:6px}.mode-buttons button,.queue-button{height:40px;border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:0 14px;font-weight:900}.mode-buttons button.active{background:#5369df;color:#fff;border-color:#5369df}.mode-buttons button.review.active{background:#d96a2f;border-color:#d96a2f}.pipeline-counts{display:flex;gap:12px;margin-left:auto;color:#586174}.queue-button{background:#283247;color:#fff;border-color:#283247}.all-crops-grid{max-width:1880px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}.crop-card{min-height:260px;text-align:left;border:1px solid #dce1ea;border-radius:12px;background:#fff;padding:10px;display:grid;grid-template-rows:170px auto auto auto;gap:8px;overflow:hidden;cursor:pointer}.crop-thumb{display:grid;place-items:center;overflow:auto;background:#f7f8fb;border:1px solid #e2e6ee;border-radius:9px}.crop-thumb img{display:block;max-width:100%;max-height:100%;object-fit:contain}.crop-thumb span{color:#7b8392;font-size:12px}.crop-card-head{display:flex;justify-content:space-between;align-items:center}.crop-card span{font-size:12px;font-weight:900}.crop-card.auto{border-left:5px solid #42a57a}.crop-card.hold{border-left:5px solid #e07b43}.crop-card small{color:#6d7686}.all-empty{grid-column:1/-1;background:#fff;border:1px solid #dde2ec;border-radius:12px;padding:50px;text-align:center}.quick-adjust{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}.quick-adjust button{height:34px;border:1px solid #d7dce7;background:#fff;border-radius:8px;font-weight:800;font-size:12px}.workspace-grid{max-width:1880px;margin:auto;display:grid;grid-template-columns:205px minmax(650px,1fr) 390px;gap:14px;align-items:start}.question-list,.pdf-panel,.review-panel{background:#fff;border:1px solid #dde2ec;border-radius:14px}.question-list,.review-panel{position:sticky;top:10px;max-height:calc(100vh - 20px);overflow:auto}.question-list{padding:14px}.panel-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.panel-title h2{font-size:17px;margin:0}.panel-title span{font-size:12px;color:#7b8392}.number-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.number-grid button{height:37px;border:1px solid #d9dee8;border-radius:8px;background:#fff;font-weight:900;cursor:pointer}.number-grid button.cropped{background:#eaf8f1;border-color:#a8d7c4;color:#267b5d}.number-grid button.active{background:#5369df;border-color:#5369df;color:#fff}.legend{display:grid;gap:7px;margin-top:14px;color:#747d8d;font-size:12px}.legend span{display:flex;align-items:center;gap:7px}.legend i{width:10px;height:10px;border-radius:50%}.done-dot{background:#62b391}.active-dot{background:#5369df}.pdf-panel{overflow:hidden}.pdf-toolbar{min-height:54px;border-bottom:1px solid #e4e8ef;padding:8px 12px;display:flex;align-items:center;gap:8px}.pdf-toolbar button,.pdf-toolbar a{border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:9px 12px;text-decoration:none;color:#414a5b;font-weight:800}.pdf-toolbar button:disabled{opacity:.45}.pdf-toolbar span{margin-left:auto;color:#5369df;font-weight:900}.canvas-shell{position:relative;width:min(100%,1050px);margin:12px auto;background:#fff;min-height:520px}.canvas-shell canvas{display:block;width:100%;height:auto}.loading{position:absolute;inset:0;display:grid;place-items:center;background:#fff;color:#737c8d;z-index:3}.overlay{position:absolute;inset:0;cursor:crosshair;touch-action:none}.crop-box{position:absolute;pointer-events:none;border:2px solid #e24444;background:rgba(226,68,68,.09)}.crop-box.selected b{position:absolute;left:-2px;top:-25px;background:#e24444;color:#fff;padding:3px 8px;border-radius:6px 6px 0 0}.crop-box.draft{border-color:#5369df;border-style:dashed;background:rgba(83,105,223,.08)}.review-panel{padding:14px}.review-sticky-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:11px;border-bottom:1px solid #e6e9ef}.review-sticky-head small{color:#7b8392}.review-sticky-head h2{margin:2px 0 0;font-size:24px}.question-nav{display:flex;gap:6px}.question-nav button{width:38px;height:36px;border:1px solid #d7dce7;background:#fff;border-radius:8px;font-weight:900}.preview-card{padding:13px 0;border-bottom:1px solid #e6e9ef}.preview-title{display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px}.preview-title span{color:#748092}.preview-image{min-height:190px;max-height:360px;overflow:auto;border:1px dashed #cbd2de;border-radius:10px;background:#fafbfd;display:grid;place-items:center;color:#7a8392}.preview-image img{display:block;max-width:100%}.crop-actions{display:grid;grid-template-columns:1fr auto;gap:7px;margin-top:8px}.crop-actions button{height:40px;border:1px solid #d7dce7;background:#fff;border-radius:9px;font-weight:900}.crop-actions .crop-save{background:#283247;border-color:#283247;color:#fff}.analysis-form{padding-top:13px;display:grid;gap:10px}.form-head{display:flex;justify-content:space-between;align-items:center}.form-head button{border:1px solid #d7dce7;background:#fff;border-radius:8px;padding:8px 10px;font-weight:800}.analysis-form label{display:grid;gap:5px;font-size:12px;color:#687184;font-weight:800}.analysis-form input,.analysis-form select,.analysis-form textarea{width:100%;border:1px solid #d6dce7;border-radius:8px;background:#fff;padding:10px;color:#252b37;font:inherit}.analysis-form textarea{resize:vertical}.two-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px}.confidence-row{display:flex;justify-content:space-between;padding:10px 12px;background:#f6f7fa;border-radius:8px;color:#646d7d}.analysis-save{height:44px;border:0;border-radius:9px;background:#5369df;color:#fff;font-weight:900}.analysis-save:disabled{opacity:.5}.no-question{min-height:400px;display:grid;place-items:center;text-align:center;color:#737c8c;padding:20px}@media(max-width:1450px){.workspace-grid{grid-template-columns:185px minmax(580px,1fr) 350px}.page-header h1{font-size:27px}}@media(max-width:1150px){.workspace-grid{grid-template-columns:180px minmax(0,1fr)}.review-panel{grid-column:1/-1;position:static;max-height:none}.status-panel{grid-template-columns:1fr 1fr 1fr}.question-list{position:sticky}.preview-image{max-height:500px}}@media(max-width:760px){.analysis-page{padding:9px}.page-header{align-items:flex-start;flex-direction:column}.header-actions{width:100%;justify-content:space-between}.source-bar{align-items:stretch;flex-direction:column}.source-bar button,.source-bar a{justify-content:center}.status-panel{grid-template-columns:1fr 1fr}.workspace-grid{grid-template-columns:1fr}.question-list{position:static;max-height:none}.number-grid{grid-template-columns:repeat(8,1fr)}.pdf-toolbar{flex-wrap:wrap}.pdf-toolbar span{width:100%;margin-left:0}.review-panel{grid-column:auto}.canvas-shell{min-height:360px}}
+        *{box-sizing:border-box}.analysis-page{min-height:100vh;background:#f3f5f9;padding:20px;font-family:Arial,"Pretendard",sans-serif;color:#202433}.page-header{max-width:1880px;margin:0 auto 14px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px}.back-button{border:0;background:transparent;padding:0 0 8px;color:#5f687a;font-weight:800;cursor:pointer}.page-header small{display:block;color:#566bdc;font-weight:900;letter-spacing:.08em}.page-header h1{margin:5px 0;font-size:30px}.page-header p{margin:0;color:#71798a}.header-actions{display:flex;align-items:center;gap:12px}.save-state{font-size:13px;color:#7a8291}.primary{border:0;background:#5369df;color:#fff;border-radius:11px;padding:13px 20px;font-weight:900}.primary:disabled{opacity:.5}.notice{max-width:1880px;margin:0 auto 12px;padding:12px 15px;border-radius:10px;font-weight:800}.notice.success{background:#eaf8f1;color:#23795a}.notice.error{background:#fff0f0;color:#a83c3c}.source-bar{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:12px 14px;display:flex;align-items:end;gap:10px}.source-bar label{flex:1;font-size:12px;color:#697285;font-weight:800}.source-bar select{display:block;width:100%;height:42px;margin-top:5px;border:1px solid #d8dde7;border-radius:9px;padding:0 11px;background:#fff;font-weight:700}.source-bar button,.source-bar a{height:42px;border:1px solid #d8dde7;background:#fff;border-radius:9px;padding:0 15px;display:inline-flex;align-items:center;color:#3d4658;text-decoration:none;font-weight:800}.ai-health{max-width:1880px;margin:0 auto 12px;border:1px solid #dde2ec;border-radius:13px;padding:11px 14px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:12px}.ai-health>div{display:flex;align-items:center;gap:10px}.ai-health small{display:block;color:#7b8392;font-weight:800}.ai-health strong{display:block;margin-top:2px;font-size:14px}.health-dot{width:11px;height:11px;border-radius:50%;background:#a0a7b4;box-shadow:0 0 0 4px rgba(160,167,180,.15)}.ai-health.ok{border-color:#a9d9c5;background:#f2fbf7}.ai-health.ok .health-dot{background:#35a874;box-shadow:0 0 0 4px rgba(53,168,116,.15)}.ai-health.fail{border-color:#efb4b4;background:#fff6f6}.ai-health.fail .health-dot{background:#df5151;box-shadow:0 0 0 4px rgba(223,81,81,.15)}.ai-health button{height:36px;border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:0 13px;font-weight:900}.ai-health button:disabled{opacity:.55}.empty-panel{max-width:1880px;height:420px;margin:auto;background:#fff;border:1px solid #dde2ec;border-radius:14px;display:grid;place-items:center;color:#737c8d}.status-panel{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:12px 15px;display:grid;grid-template-columns:minmax(260px,1.6fr) repeat(4,minmax(100px,.7fr));gap:10px;position:relative;overflow:hidden}.status-panel div{display:grid;gap:3px}.status-panel small{color:#7b8392}.status-panel strong{font-size:14px}.progress-wrap{position:absolute!important;left:0;right:0;bottom:0;height:4px;background:#e8ebf2}.progress-wrap span{display:block;height:100%;background:#5369df;transition:width .25s}.pipeline-bar{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:10px;display:flex;gap:10px;align-items:center}.mode-buttons{display:flex;gap:6px}.mode-buttons button,.queue-button{height:40px;border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:0 14px;font-weight:900}.mode-buttons button.active{background:#5369df;color:#fff;border-color:#5369df}.mode-buttons button.review.active{background:#d96a2f;border-color:#d96a2f}.mode-buttons button.registered.active{background:#288b63;border-color:#288b63}.mode-buttons button.pending.active{background:#b88319;border-color:#b88319}.mode-buttons button.failed.active{background:#9b4f5d;border-color:#9b4f5d}.status-tabs{flex-wrap:wrap}.pipeline-counts{display:flex;gap:12px;margin-left:auto;color:#586174}.queue-button{background:#283247;color:#fff;border-color:#283247}.all-crops-grid{max-width:1880px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}.crop-card{min-height:260px;text-align:left;border:1px solid #dce1ea;border-radius:12px;background:#fff;padding:10px;display:grid;gap:8px;overflow:hidden}.card-open{border:0;background:transparent;padding:0;text-align:left;display:grid;grid-template-rows:170px auto auto auto;gap:8px;cursor:pointer;width:100%}.crop-thumb{display:grid;place-items:center;overflow:auto;background:#f7f8fb;border:1px solid #e2e6ee;border-radius:9px}.crop-thumb img{display:block;max-width:100%;max-height:100%;object-fit:contain}.crop-thumb span{color:#7b8392;font-size:12px}.crop-card-head{display:flex;justify-content:space-between;align-items:center}.crop-card span{font-size:12px;font-weight:900}.crop-card.auto{border-left:5px solid #c8942f}.crop-card.registered-card{border-left:5px solid #42a57a}.crop-card.hold{border-left:5px solid #e07b43}.crop-card.failed-card{border-left:5px solid #9b4f5d}.crop-card small{color:#6d7686}.review-reason{display:block;color:#a65332!important;background:#fff4ed;border-radius:7px;padding:7px;line-height:1.4}.review-card-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-top:8px;border-top:1px solid #edf0f4}.review-card-actions button{min-height:34px;border:1px solid #d7dce7;background:#fff;border-radius:8px;font-weight:800;cursor:pointer}.review-card-actions .register-now{background:#283247;border-color:#283247;color:#fff}.review-card-actions .exclude{color:#a34444}.review-card-actions.single-action{grid-template-columns:1fr}.all-empty{grid-column:1/-1;background:#fff;border:1px solid #dde2ec;border-radius:12px;padding:50px;text-align:center}.quick-adjust{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}.quick-adjust button{height:34px;border:1px solid #d7dce7;background:#fff;border-radius:8px;font-weight:800;font-size:12px}.workspace-grid{max-width:1880px;margin:auto;display:grid;grid-template-columns:205px minmax(650px,1fr) 390px;gap:14px;align-items:start}.question-list,.pdf-panel,.review-panel{background:#fff;border:1px solid #dde2ec;border-radius:14px}.question-list,.review-panel{position:sticky;top:10px;max-height:calc(100vh - 20px);overflow:auto}.question-list{padding:14px}.panel-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.panel-title h2{font-size:17px;margin:0}.panel-title span{font-size:12px;color:#7b8392}.number-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.number-grid button{height:37px;border:1px solid #d9dee8;border-radius:8px;background:#fff;font-weight:900;cursor:pointer}.number-grid button.cropped{background:#eaf8f1;border-color:#a8d7c4;color:#267b5d}.number-grid button.active{background:#5369df;border-color:#5369df;color:#fff}.legend{display:grid;gap:7px;margin-top:14px;color:#747d8d;font-size:12px}.legend span{display:flex;align-items:center;gap:7px}.legend i{width:10px;height:10px;border-radius:50%}.done-dot{background:#62b391}.active-dot{background:#5369df}.pdf-panel{overflow:hidden}.pdf-toolbar{min-height:54px;border-bottom:1px solid #e4e8ef;padding:8px 12px;display:flex;align-items:center;gap:8px}.pdf-toolbar button,.pdf-toolbar a{border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:9px 12px;text-decoration:none;color:#414a5b;font-weight:800}.pdf-toolbar button:disabled{opacity:.45}.pdf-toolbar span{margin-left:auto;color:#5369df;font-weight:900}.canvas-shell{position:relative;width:min(100%,1050px);margin:12px auto;background:#fff;min-height:520px}.canvas-shell canvas{display:block;width:100%;height:auto}.loading{position:absolute;inset:0;display:grid;place-items:center;background:#fff;color:#737c8d;z-index:3}.overlay{position:absolute;inset:0;cursor:crosshair;touch-action:none}.crop-box{position:absolute;pointer-events:none;border:2px solid #e24444;background:rgba(226,68,68,.09)}.crop-box.selected b{position:absolute;left:-2px;top:-25px;background:#e24444;color:#fff;padding:3px 8px;border-radius:6px 6px 0 0}.crop-box.draft{border-color:#5369df;border-style:dashed;background:rgba(83,105,223,.08)}.review-panel{padding:14px}.review-sticky-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:11px;border-bottom:1px solid #e6e9ef}.review-sticky-head small{color:#7b8392}.review-sticky-head h2{margin:2px 0 0;font-size:24px}.question-nav{display:flex;gap:6px}.question-nav button{width:38px;height:36px;border:1px solid #d7dce7;background:#fff;border-radius:8px;font-weight:900}.preview-card{padding:13px 0;border-bottom:1px solid #e6e9ef}.preview-title{display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px}.preview-title span{color:#748092}.preview-image{min-height:190px;max-height:360px;overflow:auto;border:1px dashed #cbd2de;border-radius:10px;background:#fafbfd;display:grid;place-items:center;color:#7a8392}.preview-image img{display:block;max-width:100%}.crop-actions{display:grid;grid-template-columns:1fr auto;gap:7px;margin-top:8px}.crop-actions button{height:40px;border:1px solid #d7dce7;background:#fff;border-radius:9px;font-weight:900}.crop-actions .crop-save{background:#283247;border-color:#283247;color:#fff}.analysis-form{padding-top:13px;display:grid;gap:10px}.form-head{display:flex;justify-content:space-between;align-items:center}.form-head button{border:1px solid #d7dce7;background:#fff;border-radius:8px;padding:8px 10px;font-weight:800}.analysis-form label{display:grid;gap:5px;font-size:12px;color:#687184;font-weight:800}.analysis-form input,.analysis-form select,.analysis-form textarea{width:100%;border:1px solid #d6dce7;border-radius:8px;background:#fff;padding:10px;color:#252b37;font:inherit}.analysis-form textarea{resize:vertical}.two-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px}.confidence-row{display:flex;justify-content:space-between;padding:10px 12px;background:#f6f7fa;border-radius:8px;color:#646d7d}.analysis-save{height:44px;border:0;border-radius:9px;background:#5369df;color:#fff;font-weight:900}.analysis-save:disabled{opacity:.5}.no-question{min-height:400px;display:grid;place-items:center;text-align:center;color:#737c8c;padding:20px}@media(max-width:1450px){.workspace-grid{grid-template-columns:185px minmax(580px,1fr) 350px}.page-header h1{font-size:27px}}@media(max-width:1150px){.workspace-grid{grid-template-columns:180px minmax(0,1fr)}.review-panel{grid-column:1/-1;position:static;max-height:none}.status-panel{grid-template-columns:1fr 1fr 1fr}.question-list{position:sticky}.preview-image{max-height:500px}}@media(max-width:760px){.analysis-page{padding:9px}.page-header{align-items:flex-start;flex-direction:column}.header-actions{width:100%;justify-content:space-between}.source-bar{align-items:stretch;flex-direction:column}.source-bar button,.source-bar a{justify-content:center}.status-panel{grid-template-columns:1fr 1fr}.workspace-grid{grid-template-columns:1fr}.question-list{position:static;max-height:none}.number-grid{grid-template-columns:repeat(8,1fr)}.pdf-toolbar{flex-wrap:wrap}.pdf-toolbar span{width:100%;margin-left:0}.review-panel{grid-column:auto}.canvas-shell{min-height:360px}}
       `}</style>
     </main>
   );

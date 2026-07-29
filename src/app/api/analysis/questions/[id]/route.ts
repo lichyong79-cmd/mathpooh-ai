@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
-const STATUSES = ["WAITING", "RUNNING", "REVIEW", "APPROVED", "AUTO_REGISTERED", "REJECTED", "FAILED"];
+const STATUSES = ["WAITING", "RUNNING", "REVIEW", "APPROVED", "AUTO_REGISTERED", "REGISTERED", "REJECTED", "FAILED"];
 
 export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const denied = await requireUser();
@@ -23,6 +23,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     for (const key of ["crop_x", "crop_y", "crop_width", "crop_height"] as const) if (key in body) patch[key] = Number(body[key]);
     if ("answer" in body) patch.answer = typeof body.answer === "string" ? body.answer.trim() || null : null;
     if ("status" in body && STATUSES.includes(String(body.status))) patch.status = body.status;
+    if ("review_reason" in body) patch.review_reason = typeof body.review_reason === "string" ? body.review_reason.trim() || null : null;
     if (["review_result","question_type","subject","unit","topic","difficulty","summary"].some((key) => key in body)) patch.review_result = resultData;
     const supabase = createClient();
     const result = await supabase.from("analysis_questions").update(patch).eq("id", id).select("*").single();
