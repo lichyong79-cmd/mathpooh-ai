@@ -33,12 +33,97 @@ const dnaSchema = {
 
 type OpenAiPayload = {
   output_text?: string;
-  output?: Array<{ content?: Array<{ text?: string }> }>;
+  output?: Array<{
+    type?: string;
+    content?: Array<{
+      type?: string;
+      text?: string;
+      refusal?: string;
+    }>;
+  }>;
 };
 
-function outputText(payload: OpenAiPayload) {
-  if (typeof payload.output_text === "string") return payload.output_text;
-  return (payload.output ?? []).flatMap(item => item.content ?? []).map(content => content.text ?? "").join("\n");
+function extractOutputText(payload: OpenAiPayload): string {
+  if (typeof payload.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+
+  return (payload.output ?? [])
+    .flatMap((item) => item.content ?? [])
+    .map((content) => content.text ?? "")
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function parseJsonObject(text: string): Record<string, any> {
+  const cleaned = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  if (!cleaned) throw new Error("AI 분석 결과가 비어 있습니다.");
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      return JSON.parse(cleaned.slice(start, end + 1));
+    }
+    throw new Error("AI 분석 결과에서 JSON을 찾을 수 없습니다.");
+  }
+}
+
+async function requestDna(args: {
+  apiKey: string;
+  model: string;
+  prompt: string;
+  questionImageUrl: string;
+  solutionUrl?: string;
+  structured: boolean;
+}) {
+  const content: Array<Record<string, unknown>> = [
+    { type: "input_text", text: args.prompt },
+    { type: "input_image", image_url: args.questionImageUrl, detail: "high" },
+  ];
+  if (args.solutionUrl) content.push({ type: "input_file", file_url: args.solutionUrl });
+
+  const body: Record<string, unknown> = {
+    model: args.model,
+    input: [{ role: "user", content }],
+    max_output_tokens: 2200,
+  };
+
+  if (args.structured) {
+    body.text = { format: { type: "json_schema", name: "problem_dna", strict: true, schema: dnaSchema } };
+  } else {
+    body.text = { format: { type: "json_object" } };
+  }
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${args.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(110_000),
+    cache: "no-store",
+  });
+
+  const raw = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenAI 문항 분석 실패 (${response.status}): ${raw.slice(0, 1200)}`);
+  }
+
+  let payload: OpenAiPayload;
+  try {
+    payload = JSON.parse(raw) as OpenAiPayload;
+  } catch {
+    throw new Error("OpenAI 응답 본문이 완전한 JSON이 아닙니다.");
+  }
+
+  return parseJsonObject(extractOutputText(payload));
 }
 
 export async function POST(_: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -62,14 +147,19 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     const question = questionResult.data as any;
     const analysisResult = await supabase.from("source_analysis").select("source_file_id").eq("id", question.analysis_id).single();
     if (analysisResult.error || !analysisResult.data) throw analysisResult.error ?? new Error("분석 정보를 찾을 수 없습니다.");
-    const sourceResult = await supabase.from("source_files").select("title,grade,subject,solution_pdf_path").eq("id", analysisResult.data.source_file_id).single();
+    const sourceResult = await supabase
+      .from("source_files")
+      .select("title,grade,subject,solution_pdf_path")
+      .eq("id", analysisResult.data.source_file_id)
+      .single();
     if (sourceResult.error) throw sourceResult.error;
     if (!question.question_image_path) {
-      return NextResponse.json({ success: false, message: "문항 이미지가 없습니다. 먼저 전체 AI 분석을 실행해 주세요." }, { status: 400 });
+      return NextResponse.json({ success: false, message: "문항 이미지가 없습니다. 먼저 문항 자르기를 저장해 주세요." }, { status: 400 });
     }
 
     const signed = await supabase.storage.from("question-images").createSignedUrl(question.question_image_path, 60 * 10);
     if (signed.error) throw signed.error;
+
     const source = sourceResult.data;
     let solutionUrl = "";
     if (source?.solution_pdf_path) {
@@ -89,54 +179,58 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 - 요구능력과 핵심개념은 중복 없이 짧은 배열로 작성합니다.
 - 풀이전략은 정답 자체보다 해결 접근을 1~3문장으로 적습니다.
 - 핵심 한줄(summary)은 이 문항이 무엇을 평가하는지 한 문장으로 적습니다.
-- 해설지 PDF가 함께 제공되면 문항번호에 맞는 정답과 해설을 확인하여 answer를 채웁니다.
-- 해설지에서 확인할 수 없으면 answer는 빈 문자열로 둡니다.
-- 보이지 않는 내용을 추측하지 말고 confidence에 반영합니다.`;
+- 해설지 PDF가 함께 제공되면 문항번호에 맞는 정답을 확인하여 answer를 채웁니다.
+- 정답을 확정할 수 없으면 answer는 빈 문자열로 둡니다.
+- 보이지 않는 내용을 추측하지 말고 confidence에 반영합니다.
+- 반드시 JSON 객체 하나만 출력합니다.`;
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
+    let dna: Record<string, any>;
+    try {
+      dna = await requestDna({
+        apiKey,
         model,
-        input: [{ role: "user", content: [
-          { type: "input_text", text: prompt },
-          { type: "input_image", image_url: signed.data.signedUrl, detail: "high" },
-          ...(solutionUrl ? [{ type: "input_file", file_url: solutionUrl }] : []),
-        ] }],
-        text: { format: { type: "json_schema", name: "problem_dna", strict: true, schema: dnaSchema } },
-        max_output_tokens: 1800,
-      }),
-      signal: AbortSignal.timeout(110_000),
-      cache: "no-store",
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`OpenAI 문항 분석 실패 (${response.status}): ${body}`);
+        prompt,
+        questionImageUrl: signed.data.signedUrl,
+        solutionUrl,
+        structured: true,
+      });
+    } catch (firstError) {
+      dna = await requestDna({
+        apiKey,
+        model,
+        prompt: `${prompt}\n이전 응답이 비어 있거나 잘려 재시도합니다. 모든 필드를 빠짐없이 완전한 JSON 객체로 출력하세요.`,
+        questionImageUrl: signed.data.signedUrl,
+        solutionUrl,
+        structured: false,
+      }).catch((secondError) => {
+        const first = firstError instanceof Error ? firstError.message : String(firstError);
+        const second = secondError instanceof Error ? secondError.message : String(secondError);
+        throw new Error(`문항 분석 2회 실패: 1차 ${first} / 2차 ${second}`);
+      });
     }
-    const payload = await response.json() as OpenAiPayload;
-    const dna = JSON.parse(outputText(payload).trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
+
     const reviewResult = {
       ...(question.ai_result ?? {}),
       ...(question.review_result ?? {}),
-      question_type: dna.question_type,
+      question_type: dna.question_type ?? "unknown",
       subject: dna.subject || null,
       unit: dna.middle_unit || dna.major_unit || null,
       topic: dna.minor_unit || null,
       major_unit: dna.major_unit || null,
       middle_unit: dna.middle_unit || null,
       minor_unit: dna.minor_unit || null,
-      difficulty: dna.difficulty,
+      difficulty: dna.difficulty || "C",
       thinking_type: dna.thinking_type || null,
-      required_skills: dna.required_skills ?? [],
-      core_concepts: dna.core_concepts ?? [],
+      required_skills: Array.isArray(dna.required_skills) ? dna.required_skills : [],
+      core_concepts: Array.isArray(dna.core_concepts) ? dna.core_concepts : [],
       solution_strategy: dna.solution_strategy || null,
       summary: dna.summary || null,
     };
 
+    const confidence = Number(dna.confidence);
     const patch: Record<string, unknown> = {
       review_result: reviewResult,
-      confidence: Number(dna.confidence),
+      confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
       status: "REVIEW",
       updated_at: new Date().toISOString(),
     };
@@ -144,26 +238,6 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 
     const updated = await supabase.from("analysis_questions").update(patch).eq("id", id).select("*").single();
     if (updated.error) throw updated.error;
-
-    const allQuestions = await supabase
-      .from("analysis_questions")
-      .select("id,status,review_result")
-      .eq("analysis_id", question.analysis_id);
-    if (!allQuestions.error) {
-      const rows = allQuestions.data ?? [];
-      const completed = rows.filter((row: any) => row.review_result && Object.keys(row.review_result).length > 0).length;
-      const total = rows.length;
-      const progress = total > 0 ? 35 + Math.round((completed / total) * 65) : 100;
-      await supabase.from("source_analysis").update({
-        status: completed >= total && total > 0 ? "REVIEW" : "RUNNING",
-        progress,
-        current_step: completed >= total && total > 0
-          ? `문항 자르기·분석 완료 · ${total}개`
-          : `3단계 · 문항별 AI 분석 ${completed}/${total}`,
-        ...(completed >= total && total > 0 ? { finished_at: new Date().toISOString() } : {}),
-        updated_at: new Date().toISOString(),
-      }).eq("id", question.analysis_id);
-    }
 
     return NextResponse.json({ success: true, question: updated.data, dna });
   } catch (error) {

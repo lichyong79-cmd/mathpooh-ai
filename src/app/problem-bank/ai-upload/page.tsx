@@ -196,11 +196,11 @@ export default function AnalysisWorkspacePage() {
         const response = await fetch(workspace.examUrl!, { cache: "no-store" });
         if (!response.ok) throw new Error("시험지 PDF를 불러오지 못했습니다.");
         const bytes = new Uint8Array(await response.arrayBuffer());
-        const pdfDocument = await pdfjs.getDocument({ data: bytes }).promise;
+        const document = await pdfjs.getDocument({ data: bytes }).promise;
 
         if (!cancelled) {
-          setPdfDoc(pdfDocument);
-          setPageCount(pdfDocument.numPages);
+          setPdfDoc(document);
+          setPageCount(document.numPages);
         }
       } catch (caught) {
         if (!cancelled) {
@@ -251,7 +251,7 @@ export default function AnalysisWorkspacePage() {
     const sw = Math.max(1, Math.ceil((canvas.width * rect.width) / 100));
     const sh = Math.max(1, Math.ceil((canvas.height * rect.height) / 100));
 
-    const output = window.document.createElement("canvas");
+    const output = document.createElement("canvas");
     output.width = sw;
     output.height = sh;
     const context = output.getContext("2d");
@@ -327,94 +327,11 @@ export default function AnalysisWorkspacePage() {
     startRef.current = null;
   }
 
-  async function cropQuestionImage(pdfDocument: any, question: Question) {
-    if (!hasValidCrop(question)) {
-      throw new Error(`${question.question_no}번 문항의 자르기 좌표가 없습니다.`);
-    }
-
-    const page = await pdfDocument.getPage(Number(question.page_no));
-    const base = page.getViewport({ scale: 1 });
-    const scale = Math.max(2.2, 2200 / base.width);
-    const viewport = page.getViewport({ scale });
-    const pageCanvas = window.document.createElement("canvas");
-    pageCanvas.width = Math.ceil(viewport.width);
-    pageCanvas.height = Math.ceil(viewport.height);
-    const pageContext = pageCanvas.getContext("2d");
-    if (!pageContext) throw new Error("PDF 페이지 캔버스를 만들 수 없습니다.");
-    await page.render({ canvas: pageCanvas, canvasContext: pageContext, viewport }).promise;
-
-    const x = Math.max(0, Math.floor(pageCanvas.width * Number(question.crop_x) / 100));
-    const y = Math.max(0, Math.floor(pageCanvas.height * Number(question.crop_y) / 100));
-    const width = Math.min(
-      pageCanvas.width - x,
-      Math.max(1, Math.ceil(pageCanvas.width * Number(question.crop_width) / 100)),
-    );
-    const height = Math.min(
-      pageCanvas.height - y,
-      Math.max(1, Math.ceil(pageCanvas.height * Number(question.crop_height) / 100)),
-    );
-
-    const output = window.document.createElement("canvas");
-    output.width = width;
-    output.height = height;
-    const outputContext = output.getContext("2d");
-    if (!outputContext) throw new Error("문항 이미지 캔버스를 만들 수 없습니다.");
-    outputContext.fillStyle = "#ffffff";
-    outputContext.fillRect(0, 0, width, height);
-    outputContext.drawImage(pageCanvas, x, y, width, height, 0, 0, width, height);
-
-    return await new Promise<Blob>((resolve, reject) => {
-      output.toBlob(
-        (blob) => blob ? resolve(blob) : reject(new Error("문항 이미지 생성에 실패했습니다.")),
-        "image/webp",
-        0.94,
-      );
-    });
-  }
-
-  async function uploadQuestionCrop(
-    pdfDocument: any,
-    question: Question,
-    analysisId: string,
-    sourceFileId: string,
-  ) {
-    const blob = await cropQuestionImage(pdfDocument, question);
-    const form = new FormData();
-    form.append("image", blob, `${String(question.question_no).padStart(3, "0")}.webp`);
-    form.append("analysisId", analysisId);
-    form.append("sourceFileId", sourceFileId);
-    form.append("questionId", question.id);
-    form.append("questionNo", String(question.question_no));
-    form.append("pageNo", String(question.page_no));
-    form.append("cropX", String(question.crop_x));
-    form.append("cropY", String(question.crop_y));
-    form.append("cropWidth", String(question.crop_width));
-    form.append("cropHeight", String(question.crop_height));
-
-    const upload = await fetch("/api/problem-bank/materialize", { method: "POST", body: form });
-    const uploadPayload = await upload.json();
-    if (!upload.ok || !uploadPayload.success) {
-      throw new Error(`${question.question_no}번 이미지 저장 실패: ${uploadPayload.message ?? "알 수 없는 오류"}`);
-    }
-  }
-
-  async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T, index: number) => Promise<void>) {
-    let cursor = 0;
-    const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (true) {
-        const index = cursor++;
-        if (index >= items.length) return;
-        await worker(items[index], index);
-      }
-    });
-    await Promise.all(runners);
-  }
-
   async function startAnalysis() {
     if (!workspace) return;
     setBusy("analysis");
     setError("");
-    setMessage("1단계 · AI가 문항 경계를 찾는 중...");
+    setMessage("");
 
     try {
       const response = await fetch("/api/analysis/start", {
@@ -424,78 +341,14 @@ export default function AnalysisWorkspacePage() {
       });
       const payload = await response.json();
       if (!response.ok || !payload.success) {
-        throw new Error(payload.message || "AI 문항 자르기에 실패했습니다.");
+        throw new Error(payload.message || "AI 분석에 실패했습니다.");
       }
 
-      const cropQuestions = (payload.questions ?? []) as Question[];
-      if (!cropQuestions.length || !payload.pdfUrl) {
-        throw new Error("AI가 자른 문항 정보를 받지 못했습니다.");
-      }
-
-      setMessage(`2단계 · ${cropQuestions.length}개 문항 이미지를 만드는 중...`);
-      const pdfjs = await import("pdfjs-dist");
-      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-        "pdfjs-dist/build/pdf.worker.min.mjs",
-        import.meta.url,
-      ).toString();
-      const pdfResponse = await fetch(payload.pdfUrl, { cache: "no-store" });
-      if (!pdfResponse.ok) throw new Error("시험지 PDF를 다시 불러오지 못했습니다.");
-      const bytes = new Uint8Array(await pdfResponse.arrayBuffer());
-      const pdfDocument = await pdfjs.getDocument({ data: bytes }).promise;
-
-      let materialized = 0;
-      let adjustedCount = 0;
-      const verifiedQuestions: Question[] = [];
-      for (const initialQuestion of cropQuestions) {
-        let question = initialQuestion;
-        await uploadQuestionCrop(pdfDocument, question, payload.analysisId, payload.sourceFileId);
-
-        setMessage(`2단계 · ${question.question_no}번 크롭 품질 검수 중...`);
-        const reviewResponse = await fetch(`/api/analysis/questions/${question.id}/review-crop`, { method: "POST" });
-        const reviewPayload = await reviewResponse.json();
-        if (!reviewResponse.ok || !reviewPayload.success) {
-          throw new Error(`${question.question_no}번 크롭 검수 실패: ${reviewPayload.message ?? "알 수 없는 오류"}`);
-        }
-
-        if (reviewPayload.adjusted && reviewPayload.question) {
-          question = reviewPayload.question as Question;
-          await uploadQuestionCrop(pdfDocument, question, payload.analysisId, payload.sourceFileId);
-          adjustedCount += 1;
-        }
-
-        verifiedQuestions.push(question);
-        materialized += 1;
-        setMessage(`2단계 · 문항 이미지 생성·검수 ${materialized}/${cropQuestions.length} · 수정 ${adjustedCount}`);
-      }
-
-      let analyzed = 0;
-      const failures: string[] = [];
-      setMessage(`3단계 · 문항별 AI 분석 0/${verifiedQuestions.length}`);
-      await runWithConcurrency(verifiedQuestions, 3, async (question) => {
-        try {
-          const analyze = await fetch(`/api/analysis/questions/${question.id}/analyze`, { method: "POST" });
-          const analyzePayload = await analyze.json();
-          if (!analyze.ok || !analyzePayload.success) {
-            throw new Error(analyzePayload.message || "분석 실패");
-          }
-        } catch (caught) {
-          failures.push(`${question.question_no}번: ${caught instanceof Error ? caught.message : "분석 실패"}`);
-        } finally {
-          analyzed += 1;
-          setMessage(`3단계 · 문항별 AI 분석 ${analyzed}/${verifiedQuestions.length}`);
-        }
-      });
-
+      setMessage(`AI 분석 완료 · ${payload.questionCount ?? 0}문항`);
       await loadWorkspace(workspace.source.id);
       await loadSources();
-      if (failures.length) {
-        setError(`자르기와 이미지 생성은 완료됐고, ${failures.length}개 문항 분석만 실패했습니다. ${failures.slice(0, 3).join(" / ")}`);
-        setMessage(`완료 · 자르기 ${cropQuestions.length}문항 · 분석 성공 ${cropQuestions.length - failures.length}문항`);
-      } else {
-        setMessage(`한 번에 완료 · ${cropQuestions.length}개 문항 자르기 + 문항별 AI 분석`);
-      }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "AI 문항 자르기·분석에 실패했습니다.");
+      setError(caught instanceof Error ? caught.message : "AI 분석에 실패했습니다.");
     } finally {
       setBusy("");
     }
