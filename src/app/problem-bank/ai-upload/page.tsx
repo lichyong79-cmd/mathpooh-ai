@@ -100,7 +100,7 @@ type CanonicalCrop = {
   canvas: HTMLCanvasElement;
 };
 
-const CROP_ENGINE_VERSION = "single-path-v2";
+const CROP_ENGINE_VERSION = "single-path-v3-top-anchor";
 
 function isCanonicalized(question: Question) {
   return String(question.review_result?.crop_engine_version ?? "") === CROP_ENGINE_VERSION;
@@ -130,13 +130,22 @@ function cropExact(pageCanvas: HTMLCanvasElement, rect: Rect): CanonicalCrop {
  * AI 좌표를 안전하게 넓힌 뒤, 실제 인쇄 내용의 경계를 한 번만 계산한다.
  * 빨간 박스/미리보기/전체 썸네일/저장/자동분석이 모두 이 결과를 사용한다.
  */
-function buildCanonicalCrop(pageCanvas: HTMLCanvasElement, input: Rect): CanonicalCrop {
+function buildCanonicalCrop(
+  pageCanvas: HTMLCanvasElement,
+  input: Rect,
+  options?: { questionNumberY?: number | null },
+): CanonicalCrop {
   const isLeftColumn = input.x + input.width / 2 < 50;
   const columnMin = isLeftColumn ? 0 : 50.35;
   const columnMax = isLeftColumn ? 49.65 : 100;
 
   const expandedLeft = Math.max(columnMin, input.x - AUTO_EXPAND.x);
-  const expandedTop = Math.max(0, input.y - AUTO_EXPAND.top);
+  const anchorY = Number(options?.questionNumberY);
+  // AI가 저장한 실제 문항번호 y가 있으면 그 위 0.85%까지만 탐색한다.
+  // 페이지 최상단의 교재명·페이지번호·가로선이 Content Box에 끌려오는 것을 막는다.
+  const expandedTop = Number.isFinite(anchorY)
+    ? Math.max(0, anchorY - 0.85)
+    : Math.max(0, input.y - AUTO_EXPAND.top);
   const expandedRight = Math.min(columnMax, input.x + input.width + AUTO_EXPAND.x);
   const expandedBottom = Math.min(100, input.y + input.height + AUTO_EXPAND.bottom);
 
@@ -215,9 +224,44 @@ function buildCanonicalCrop(pageCanvas: HTMLCanvasElement, input: Rect): Canonic
   };
 }
 
+function aiBoundingBox(question: Question): { rect: Rect; questionNumberY: number | null } | null {
+  const aiCrop = question.ai_result?.ai_crop as Record<string, unknown> | undefined;
+  const box = aiCrop?.bounding_box as Record<string, unknown> | undefined;
+  if (!box) return null;
+
+  const rect = {
+    x: Number(box.x),
+    y: Number(box.y),
+    width: Number(box.width),
+    height: Number(box.height),
+  };
+  if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) || rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+
+  const questionNumberY = Number(box.question_number_y);
+  return {
+    rect,
+    questionNumberY: Number.isFinite(questionNumberY) ? questionNumberY : null,
+  };
+}
+
+function isManualCrop(question: Question) {
+  return Boolean(question.review_result?.crop_manual);
+}
+
 function resolveQuestionCrop(pageCanvas: HTMLCanvasElement, question: Question): CanonicalCrop {
-  const rect = questionRect(question);
-  return isCanonicalized(question) ? cropExact(pageCanvas, rect) : buildCanonicalCrop(pageCanvas, rect);
+  const currentRect = questionRect(question);
+  // 사람이 직접 저장한 좌표와 현재 엔진으로 확정된 좌표는 그대로 사용한다.
+  if (isManualCrop(question) || isCanonicalized(question)) return cropExact(pageCanvas, currentRect);
+
+  // 자동 재자르기는 이미 후처리된 DB 좌표가 아니라 최초 AI bounding box에서 항상 시작한다.
+  // 그래야 이전 버전에서 헤더가 포함된 잘못된 좌표도 새 엔진으로 복구된다.
+  const aiBox = aiBoundingBox(question);
+  const sourceRect = aiBox?.rect ?? currentRect;
+  return buildCanonicalCrop(pageCanvas, sourceRect, {
+    questionNumberY: aiBox?.questionNumberY ?? null,
+  });
 }
 
 function questionRect(question: Question): Rect {
@@ -639,6 +683,7 @@ export default function AnalysisWorkspacePage() {
       const reviewResult = {
         ...(activeQuestion.review_result ?? {}),
         crop_engine_version: CROP_ENGINE_VERSION,
+        crop_manual: true,
       };
       const patchResponse = await fetch(`/api/analysis/questions/${activeQuestion.id}`, {
         method: "PATCH",
@@ -799,6 +844,7 @@ export default function AnalysisWorkspacePage() {
     const reviewResult = {
       ...(question.review_result ?? {}),
       crop_engine_version: CROP_ENGINE_VERSION,
+      crop_manual: false,
     };
     const patchResponse = await fetch(`/api/analysis/questions/${question.id}`, {
       method: "PATCH",
