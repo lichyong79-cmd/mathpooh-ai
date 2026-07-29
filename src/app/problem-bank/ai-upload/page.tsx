@@ -313,6 +313,8 @@ export default function AnalysisWorkspacePage() {
   });
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pageRenderTaskRef = useRef<any>(null);
+  const selectionRef = useRef<Rect | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -511,6 +513,11 @@ export default function AnalysisWorkspacePage() {
   }, []);
 
   useEffect(() => {
+    selectionRef.current = selection;
+    updatePreview(selection);
+  }, [selection, updatePreview]);
+
+  useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return;
     let cancelled = false;
 
@@ -525,21 +532,40 @@ export default function AnalysisWorkspacePage() {
         const context = canvas.getContext("2d");
         if (!context) return;
 
+        // 같은 화면 canvas에 이전 PDF.js render가 남아 있으면 먼저 취소한다.
+        // selection 변경은 PDF 원본을 다시 렌더링하지 않고 preview만 갱신한다.
+        try {
+          pageRenderTaskRef.current?.cancel?.();
+        } catch {
+          // 이미 완료된 렌더 취소 오류는 무시
+        }
+
         canvas.width = Math.ceil(viewport.width);
         canvas.height = Math.ceil(viewport.height);
-        await page.render({ canvas, canvasContext: context, viewport }).promise;
-        if (!cancelled) updatePreview(selection);
+        const renderTask = page.render({ canvas, canvasContext: context, viewport });
+        pageRenderTaskRef.current = renderTask;
+        await renderTask.promise;
+        if (!cancelled) updatePreview(selectionRef.current);
       } catch (caught) {
-        if (!cancelled) {
+        const name = caught instanceof Error ? caught.name : "";
+        if (!cancelled && name !== "RenderingCancelledException") {
           setError(caught instanceof Error ? caught.message : "PDF 페이지를 표시하지 못했습니다.");
         }
+      } finally {
+        if (pageRenderTaskRef.current) pageRenderTaskRef.current = null;
       }
     })();
 
     return () => {
       cancelled = true;
+      try {
+        pageRenderTaskRef.current?.cancel?.();
+      } catch {
+        // 취소 경쟁 상태 무시
+      }
+      pageRenderTaskRef.current = null;
     };
-  }, [pdfDoc, pageNo, selection, updatePreview]);
+  }, [pdfDoc, pageNo, updatePreview]);
 
   function pointerPosition(event: PointerEvent<HTMLDivElement>) {
     const bounds = overlayRef.current?.getBoundingClientRect();
