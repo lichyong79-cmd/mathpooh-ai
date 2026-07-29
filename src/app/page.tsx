@@ -658,8 +658,8 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
   };
 
   const readAnswersFromPdf = async (source: File | string) => {
-    const pdfjs = await import("pdfjs-dist");
-    pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
     const data = source instanceof File ? await source.arrayBuffer() : await (await fetch(source)).arrayBuffer();
     const pdf = await pdfjs.getDocument({ data }).promise;
     const existing = Array.from({ length: form.questionCount }, (_, i) => form.answers[i] ?? "");

@@ -6,7 +6,7 @@ import { authHeaders, signedStorageUrl } from "@/lib/supabase/rest";
 
 type Rect = { x:number; y:number; w:number; h:number };
 type Region = Rect & { number:number; page:number; answer:string; type:"choice"|"short"; verified:boolean; source:"auto"|"manual" };
-type PdfJs = typeof import("pdfjs-dist");
+type PdfJs = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 
 function emptyRegions(count:number, objectiveCount=21):Region[]{
   return Array.from({length:count},(_,i)=>({number:i+1,page:1,x:0,y:0,w:0,h:0,answer:"",type:i<objectiveCount?"choice":"short",verified:false,source:"auto"}));
@@ -55,8 +55,8 @@ export default function PdfMapperPage(){
         const pdfRes=await fetch(url,{cache:"no-store"});
         if(!pdfRes.ok) throw new Error("등록 시험지를 불러오지 못했습니다.");
         const bytes=new Uint8Array(await pdfRes.arrayBuffer());
-        const pdfjs=await import("pdfjs-dist");
-        pdfjs.GlobalWorkerOptions.workerSrc=new URL("pdfjs-dist/build/pdf.worker.min.mjs",import.meta.url).toString();
+        const pdfjs=await import("pdfjs-dist/legacy/build/pdf.mjs");
+        pdfjs.GlobalWorkerOptions.workerSrc=new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs",import.meta.url).toString();
         pdfjsRef.current=pdfjs;
         const doc=await pdfjs.getDocument({data:bytes}).promise;
         setPdfDoc(doc); setPageCount(doc.numPages);

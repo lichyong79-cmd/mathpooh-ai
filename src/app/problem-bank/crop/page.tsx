@@ -76,9 +76,9 @@ export default function QuestionCropPage() {
         setAnalysisId(result.analysisId);
         setQuestions(result.questions ?? []);
 
-        const pdfjs = await import("pdfjs-dist");
+        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
         pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-          "pdfjs-dist/build/pdf.worker.min.mjs",
+          "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
           import.meta.url,
         ).toString();
         const bytes = new Uint8Array(await (await fetch(result.pdfUrl, { cache: "no-store" })).arrayBuffer());
@@ -234,7 +234,7 @@ export default function QuestionCropPage() {
   return (
     <main className="crop-page">
       <header>
-        <div><small>AI ANALYSIS · CROP REVIEW</small><h1>문항 영역 검수</h1><p>★ 시작점과 AI 끝점으로 잡은 영역을 확인하고, 잘못된 문항만 다시 드래그해 수정하세요.</p></div>
+        <div><small>AI ANALYSIS · CROP REVIEW</small><h1>문항 영역 검수</h1><p>AI가 잡은 영역을 확인하고, 잘못된 문항만 다시 드래그해 수정하세요.</p></div>
         <div className="header-buttons"><button onClick={() => { window.location.href = "/problem-bank/ai-upload"; }}>AI 분석 작업장으로</button><button className="primary" onClick={() => void saveQuestion()} disabled={saving}>{saving ? "저장 중..." : `${activeNo}번 저장`}</button></div>
       </header>
 
