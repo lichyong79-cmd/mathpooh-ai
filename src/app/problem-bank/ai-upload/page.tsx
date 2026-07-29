@@ -100,6 +100,31 @@ type CanonicalCrop = {
   canvas: HTMLCanvasElement;
 };
 
+const CROP_ENGINE_VERSION = "single-path-v2";
+
+function isCanonicalized(question: Question) {
+  return String(question.review_result?.crop_engine_version ?? "") === CROP_ENGINE_VERSION;
+}
+
+function cropExact(pageCanvas: HTMLCanvasElement, rect: Rect): CanonicalCrop {
+  const sx = Math.max(0, Math.floor(pageCanvas.width * rect.x / 100));
+  const sy = Math.max(0, Math.floor(pageCanvas.height * rect.y / 100));
+  const ex = Math.min(pageCanvas.width, Math.ceil(pageCanvas.width * (rect.x + rect.width) / 100));
+  const ey = Math.min(pageCanvas.height, Math.ceil(pageCanvas.height * (rect.y + rect.height) / 100));
+  const sw = Math.max(1, ex - sx);
+  const sh = Math.max(1, ey - sy);
+  const out = document.createElement("canvas");
+  out.width = sw;
+  out.height = sh;
+  const context = out.getContext("2d");
+  if (context) {
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, sw, sh);
+    context.drawImage(pageCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  }
+  return { rect, canvas: out };
+}
+
 /**
  * 유일한 자동 자르기 엔진.
  * AI 좌표를 안전하게 넓힌 뒤, 실제 인쇄 내용의 경계를 한 번만 계산한다.
@@ -188,6 +213,11 @@ function buildCanonicalCrop(pageCanvas: HTMLCanvasElement, input: Rect): Canonic
     },
     canvas: out,
   };
+}
+
+function resolveQuestionCrop(pageCanvas: HTMLCanvasElement, question: Question): CanonicalCrop {
+  const rect = questionRect(question);
+  return isCanonicalized(question) ? cropExact(pageCanvas, rect) : buildCanonicalCrop(pageCanvas, rect);
 }
 
 function questionRect(question: Question): Rect {
@@ -400,7 +430,7 @@ export default function AnalysisWorkspacePage() {
         const context = pageCanvas.getContext("2d");
         if (!context) return;
         await page.render({ canvasContext: context, viewport }).promise;
-        const canonical = buildCanonicalCrop(pageCanvas, questionRect(activeQuestion));
+        const canonical = resolveQuestionCrop(pageCanvas, activeQuestion);
         if (cancelled) return;
         setSelection(canonical.rect);
         setPreview(canonical.canvas.toDataURL("image/webp", 0.92));
@@ -522,7 +552,7 @@ export default function AnalysisWorkspacePage() {
           await page.render({ canvasContext: context, viewport }).promise;
           pageCache.set(targetPage, sourceCanvas);
         }
-        const canonical = buildCanonicalCrop(sourceCanvas, questionRect(question));
+        const canonical = resolveQuestionCrop(sourceCanvas, question);
         next[question.id] = canonical.canvas.toDataURL("image/jpeg", .78);
       }
       setThumbnailUrls(next);
@@ -539,6 +569,14 @@ export default function AnalysisWorkspacePage() {
 
   async function startAnalysis() {
     if (!workspace) return;
+
+    // 문항이 이미 있으면 AI를 다시 호출하지 않는다.
+    // 현재 좌표에 단일 Crop 엔진만 적용하여 같은 결과를 다시 저장한다.
+    if (questions.length > 0) {
+      await recropAllQuestions();
+      return;
+    }
+
     setBusy("analysis");
     setError("");
     setMessage("");
@@ -555,7 +593,7 @@ export default function AnalysisWorkspacePage() {
       }
 
       setThumbnailUrls({});
-      setMessage(`전체 빠른 자르기 완료 · ${payload.questionCount ?? 0}문항 · 이제 자동 분석을 실행하세요.`);
+      setMessage(`전체 빠른 자르기 완료 · ${payload.questionCount ?? 0}문항 · 이제 전체 문항 자르기를 저장하세요.`);
       await loadWorkspace(workspace.source.id);
       await loadSources();
     } catch (caught) {
@@ -598,21 +636,34 @@ export default function AnalysisWorkspacePage() {
         throw new Error(payload.message || "문항 이미지 저장에 실패했습니다.");
       }
 
+      const reviewResult = {
+        ...(activeQuestion.review_result ?? {}),
+        crop_engine_version: CROP_ENGINE_VERSION,
+      };
+      const patchResponse = await fetch(`/api/analysis/questions/${activeQuestion.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          page_no: pageNo,
+          crop_x: selection.x,
+          crop_y: selection.y,
+          crop_width: selection.width,
+          crop_height: selection.height,
+          review_result: reviewResult,
+        }),
+      });
+      const patchPayload = await patchResponse.json();
+      if (!patchResponse.ok || !patchPayload.success) {
+        throw new Error(patchPayload.message || "최종 자르기 좌표 저장에 실패했습니다.");
+      }
+
       setWorkspace((current) =>
         current
           ? {
               ...current,
               questions: current.questions.map((item) =>
                 item.id === activeQuestion.id
-                  ? {
-                      ...item,
-                      page_no: pageNo,
-                      crop_x: selection.x,
-                      crop_y: selection.y,
-                      crop_width: selection.width,
-                      crop_height: selection.height,
-                      question_image_path: payload.path ?? item.question_image_path,
-                    }
+                  ? { ...patchPayload.question, question_image_path: payload.path ?? patchPayload.question.question_image_path }
                   : item,
               ),
             }
@@ -715,7 +766,7 @@ export default function AnalysisWorkspacePage() {
   }
 
 
-  async function materializeQuestion(question: Question) {
+  async function materializeQuestion(question: Question): Promise<Question> {
     if (!workspace?.analysis?.id || !pdfDoc || !hasValidCrop(question)) throw new Error(`${question.question_no}번 자르기 좌표가 없습니다.`);
     const page = await pdfDoc.getPage(Number(question.page_no));
     const base = page.getViewport({ scale: 1 });
@@ -727,11 +778,8 @@ export default function AnalysisWorkspacePage() {
     if (!sourceContext) throw new Error("PDF 캔버스를 만들지 못했습니다.");
     await page.render({ canvasContext: sourceContext, viewport }).promise;
 
-    const canonical = buildCanonicalCrop(sourceCanvas, questionRect(question));
-    const adjustedCropX = canonical.rect.x;
-    const adjustedCropY = canonical.rect.y;
-    const adjustedCropWidth = canonical.rect.width;
-    const adjustedCropHeight = canonical.rect.height;
+    // 미적용 문항만 canonical 계산. 이미 같은 엔진으로 저장된 문항은 정확히 같은 좌표로 다시 저장한다.
+    const canonical = resolveQuestionCrop(sourceCanvas, question);
     const blob = await new Promise<Blob>((resolve, reject) => canonical.canvas.toBlob((value) => value ? resolve(value) : reject(new Error("이미지 변환 실패")), "image/webp", .92));
     const form = new FormData();
     form.append("image", blob, `${String(question.question_no).padStart(3, "0")}.webp`);
@@ -740,13 +788,57 @@ export default function AnalysisWorkspacePage() {
     form.append("questionId", question.id);
     form.append("questionNo", String(question.question_no));
     form.append("pageNo", String(question.page_no));
-    form.append("cropX", String(adjustedCropX));
-    form.append("cropY", String(adjustedCropY));
-    form.append("cropWidth", String(adjustedCropWidth));
-    form.append("cropHeight", String(adjustedCropHeight));
+    form.append("cropX", String(canonical.rect.x));
+    form.append("cropY", String(canonical.rect.y));
+    form.append("cropWidth", String(canonical.rect.width));
+    form.append("cropHeight", String(canonical.rect.height));
     const response = await fetch("/api/problem-bank/materialize", { method: "POST", body: form });
     const payload = await response.json();
     if (!response.ok || !payload.success) throw new Error(payload.message || `${question.question_no}번 이미지 저장 실패`);
+
+    const reviewResult = {
+      ...(question.review_result ?? {}),
+      crop_engine_version: CROP_ENGINE_VERSION,
+    };
+    const patchResponse = await fetch(`/api/analysis/questions/${question.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        page_no: question.page_no,
+        crop_x: canonical.rect.x,
+        crop_y: canonical.rect.y,
+        crop_width: canonical.rect.width,
+        crop_height: canonical.rect.height,
+        review_result: reviewResult,
+      }),
+    });
+    const patchPayload = await patchResponse.json();
+    if (!patchResponse.ok || !patchPayload.success) throw new Error(patchPayload.message || `${question.question_no}번 좌표 저장 실패`);
+    return { ...patchPayload.question, question_image_path: payload.path ?? patchPayload.question.question_image_path } as Question;
+  }
+
+  async function recropAllQuestions() {
+    if (!workspace || !pdfDoc || !questions.length) return;
+    setBusy("recrop");
+    setError("");
+    setMessage("");
+    setQueueProgress({ done: 0, total: questions.length });
+    try {
+      const updated: Question[] = [];
+      for (let index = 0; index < questions.length; index += 1) {
+        const nextQuestion = await materializeQuestion(questions[index]);
+        updated.push(nextQuestion);
+        setQueueProgress({ done: index + 1, total: questions.length });
+      }
+      setWorkspace((current) => current ? { ...current, questions: current.questions.map((item) => updated.find((next) => next.id === item.id) ?? item) } : current);
+      setThumbnailUrls({});
+      setMessage(`전체 문항 자르기 저장 완료 · ${updated.length}문항 · AI 좌표는 다시 호출하지 않았습니다.`);
+      if (viewMode === "all" || viewMode === "review") await buildThumbnails();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "전체 문항 다시 자르기에 실패했습니다.");
+    } finally {
+      setBusy("");
+    }
   }
 
   async function runAutoPipeline() {
@@ -755,9 +847,9 @@ export default function AnalysisWorkspacePage() {
     setQueueProgress({ done: 0, total: questions.length });
     try {
       for (let index = 0; index < questions.length; index += 1) {
-        const question = questions[index];
+        let question = questions[index];
         setActiveQuestionId(question.id);
-        if (!question.question_image_path) await materializeQuestion(question);
+        if (!question.question_image_path || !isCanonicalized(question)) question = await materializeQuestion(question);
         const response = await fetch(`/api/analysis/questions/${question.id}/analyze`, { method: "POST" });
         const payload = await response.json();
         if (!response.ok || !payload.success) throw new Error(payload.message || `${question.question_no}번 분석 실패`);
@@ -806,7 +898,7 @@ export default function AnalysisWorkspacePage() {
         <div className="header-actions">
           <span className="save-state">{saveState}</span>
           <button className="primary" onClick={() => void startAnalysis()} disabled={!workspace || !!busy}>
-            {busy === "analysis" ? "전체 자르기 중..." : questions.length ? "전체 문항 다시 자르기" : "전체 빠른 자르기 시작"}
+            {busy === "analysis" ? "AI 좌표 찾는 중..." : busy === "recrop" ? `전체 저장 ${queueProgress.done}/${queueProgress.total}` : questions.length ? "전체 문항 자르기 저장" : "전체 빠른 자르기 시작"}
           </button>
         </div>
       </header>
