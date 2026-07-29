@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
   if (denied) return denied;
 
   try {
-    const { analysisId } = await request.json() as { analysisId?: string };
+    const { analysisId, questionIds } = await request.json() as { analysisId?: string; questionIds?: string[] };
     if (!analysisId) {
       return NextResponse.json({ success: false, message: "분석 ID가 없습니다." }, { status: 400 });
     }
@@ -44,8 +44,10 @@ export async function POST(request: NextRequest) {
     if (questionQuery.error) throw questionQuery.error;
 
     const questions = questionQuery.data ?? [];
+    const requestedIds = Array.isArray(questionIds) && questionIds.length > 0 ? new Set(questionIds) : null;
     const registerable = questions.filter((item) =>
-      item.status === "APPROVED" || item.status === "AUTO_REGISTERED"
+      (item.status === "APPROVED" || item.status === "AUTO_REGISTERED") &&
+      (!requestedIds || requestedIds.has(item.id))
     );
     if (registerable.length === 0) {
       return NextResponse.json({ success: false, message: "등록할 문항이 없습니다." }, { status: 400 });
