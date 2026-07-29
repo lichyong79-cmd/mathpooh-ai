@@ -6,12 +6,25 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-type AiCropQuestion = {
+type StarMarker = {
   question_no: number;
   page_no: number;
+  star_x: number;
+  star_y: number;
   crop_x: number;
   crop_y: number;
   crop_width: number;
+};
+
+type AiCropEnd = {
+  question_no: number;
+  page_no: number;
+  bottom_y: number;
+  confidence: number;
+  review_reason: string;
+};
+
+type AiCropQuestion = StarMarker & {
   crop_height: number;
   confidence: number;
   review_reason: string;
@@ -51,20 +64,14 @@ const cropSchema = {
         required: [
           "question_no",
           "page_no",
-          "crop_x",
-          "crop_y",
-          "crop_width",
-          "crop_height",
+          "bottom_y",
           "confidence",
           "review_reason",
         ],
         properties: {
           question_no: { type: "integer", minimum: 1, maximum: 200 },
           page_no: { type: "integer", minimum: 1, maximum: 500 },
-          crop_x: { type: "number", minimum: 0, maximum: 100 },
-          crop_y: { type: "number", minimum: 0, maximum: 100 },
-          crop_width: { type: "number", minimum: 0.1, maximum: 100 },
-          crop_height: { type: "number", minimum: 0.1, maximum: 100 },
+          bottom_y: { type: "number", minimum: 0.1, maximum: 100 },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           review_reason: { type: "string" },
         },
@@ -134,34 +141,106 @@ function clamp(value: number, min: number, max: number) {
 }
 
 /**
- * AI가 반환한 최종 사각형을 저장 가능한 범위로만 제한한다.
- * 문항 경계 계산, 단 구분, 다음 문항 추정 같은 자르기 판단은 코드에서 하지 않는다.
+ * 한글에서 넣은 ★의 PDF 텍스트 좌표를 읽는다.
+ * 시작점과 단 너비는 코드가 결정하고 AI는 문항의 마지막 y좌표만 판단한다.
  */
-function normalizeAiCrops(items: AiCropQuestion[]) {
-  const byQuestion = new Map<number, AiCropQuestion>();
+async function detectStarMarkers(pdfUrl: string): Promise<StarMarker[]> {
+  const response = await fetch(pdfUrl, { cache: "no-store" });
+  if (!response.ok) throw new Error("시험지 PDF를 읽지 못했습니다.");
 
-  for (const item of items) {
-    const questionNo = Math.trunc(Number(item.question_no));
-    if (!Number.isFinite(questionNo) || questionNo < 1) continue;
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdf = await pdfjs.getDocument({ data: bytes }).promise;
+  const raw: Array<StarMarker & { parsed: boolean }> = [];
 
-    const x = clamp(Number(item.crop_x), 0, 99.5);
-    const y = clamp(Number(item.crop_y), 0, 99.5);
-    const width = clamp(Number(item.crop_width), 0.5, 100 - x);
-    const height = clamp(Number(item.crop_height), 0.5, 100 - y);
+  for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
+    const page = await pdf.getPage(pageNo);
+    const viewport = page.getViewport({ scale: 1 });
+    const text = await page.getTextContent();
+    const items = text.items.filter((item) => "str" in item) as Array<{
+      str: string;
+      transform: number[];
+      width: number;
+      height: number;
+    }>;
 
-    byQuestion.set(questionNo, {
-      question_no: questionNo,
-      page_no: Math.max(1, Math.trunc(Number(item.page_no) || 1)),
-      crop_x: x,
-      crop_y: y,
-      crop_width: width,
-      crop_height: height,
-      confidence: clamp(Number(item.confidence), 0, 1),
-      review_reason: String(item.review_reason ?? "").trim(),
-    });
+    for (const item of items) {
+      if (!item.str.includes("★")) continue;
+
+      const x = Number(item.transform[4] ?? 0);
+      const baselineY = Number(item.transform[5] ?? 0);
+      const itemHeight = Math.max(Number(item.height ?? 0), Math.abs(Number(item.transform[3] ?? 0)), 1);
+      const starX = clamp((x / viewport.width) * 100, 0, 99);
+      const starY = clamp(((viewport.height - baselineY - itemHeight) / viewport.height) * 100, 0, 99);
+
+      const inlineMatch = item.str.match(/★\s*(\d{1,3})\s*[.)]?/);
+      let questionNo = inlineMatch ? Number(inlineMatch[1]) : 0;
+
+      if (!questionNo) {
+        const nearby = items
+          .filter((candidate) => {
+            const candidateX = Number(candidate.transform[4] ?? 0);
+            const candidateY = Number(candidate.transform[5] ?? 0);
+            return candidateX >= x && candidateX <= x + viewport.width * 0.12 && Math.abs(candidateY - baselineY) <= itemHeight * 1.4;
+          })
+          .sort((a, b) => Number(a.transform[4] ?? 0) - Number(b.transform[4] ?? 0))
+          .map((candidate) => candidate.str)
+          .join(" ");
+        const numberMatch = nearby.match(/(?:★\s*)?(\d{1,3})\s*[.)]/);
+        questionNo = numberMatch ? Number(numberMatch[1]) : 0;
+      }
+
+      const isLeftColumn = starX < 50;
+      const cropX = isLeftColumn ? Math.max(0.8, starX - 1.2) : Math.max(50.2, starX - 1.2);
+      const rightEdge = isLeftColumn ? 49.4 : 99.0;
+      const cropY = Math.max(0, starY - 0.7);
+
+      raw.push({
+        question_no: questionNo,
+        page_no: pageNo,
+        star_x: starX,
+        star_y: starY,
+        crop_x: cropX,
+        crop_y: cropY,
+        crop_width: Math.max(1, rightEdge - cropX),
+        parsed: Boolean(questionNo),
+      });
+    }
   }
 
-  return [...byQuestion.values()].sort((a, b) => a.question_no - b.question_no);
+  if (!raw.length) {
+    throw new Error("시험지에서 ★ 문항 시작표시를 찾지 못했습니다. 한글의 검은 별(★)이 PDF에도 문자로 남아 있는지 확인해 주세요.");
+  }
+
+  raw.sort((a, b) => a.page_no - b.page_no || a.star_x - b.star_x || a.star_y - b.star_y);
+  const used = new Set(raw.filter((item) => item.parsed).map((item) => item.question_no));
+  let nextNo = 1;
+  for (const item of raw) {
+    if (item.question_no) continue;
+    while (used.has(nextNo)) nextNo += 1;
+    item.question_no = nextNo;
+    used.add(nextNo);
+  }
+
+  return raw
+    .map(({ parsed: _parsed, ...item }) => item)
+    .sort((a, b) => a.question_no - b.question_no);
+}
+
+function combineMarkersAndEnds(markers: StarMarker[], ends: AiCropEnd[]) {
+  const endMap = new Map(ends.map((item) => [`${item.page_no}:${item.question_no}`, item]));
+
+  return markers.map<AiCropQuestion>((marker) => {
+    const end = endMap.get(`${marker.page_no}:${marker.question_no}`);
+    const minimumBottom = marker.crop_y + 2;
+    const bottomY = clamp(Number(end?.bottom_y ?? marker.crop_y + 15), minimumBottom, 99.5);
+    return {
+      ...marker,
+      crop_height: bottomY - marker.crop_y,
+      confidence: clamp(Number(end?.confidence ?? 0.35), 0, 1),
+      review_reason: String(end?.review_reason ?? "AI가 문항 끝점을 반환하지 않았습니다.").trim(),
+    };
+  });
 }
 
 function openAiError(status: number, body: string) {
@@ -341,35 +420,41 @@ export async function POST(request: NextRequest) {
     await supabase
       .from("source_analysis")
       .update({
-        progress: 15,
-        current_step: "AI 직접 자르기와 문항 분석을 동시에 진행 중",
+        progress: 12,
+        current_step: "시험지의 ★ 문항 시작표시를 찾는 중",
+      })
+      .eq("id", analysis.id);
+
+    const starMarkers = await detectStarMarkers(examUrl);
+    const markerGuide = starMarkers
+      .map((marker) =>
+        `${marker.question_no}번: page=${marker.page_no}, star=(${marker.star_x.toFixed(2)}, ${marker.star_y.toFixed(2)}), start_y=${marker.crop_y.toFixed(2)}`,
+      )
+      .join("\n");
+
+    await supabase
+      .from("source_analysis")
+      .update({
+        progress: 18,
+        current_step: `★ ${starMarkers.length}개 확인 · AI가 문항 끝점만 판단 중`,
       })
       .eq("id", analysis.id);
 
     const cropPrompt = [
-      "너는 한국 수학 시험지의 문항 이미지를 직접 자르는 비전 판독기다.",
-      "첨부된 시험지 PDF를 페이지 이미지처럼 보고, 실제 문항마다 최종 crop 사각형을 직접 결정한다.",
-      "PDF 텍스트 좌표, 고정 단 너비, 다음 문항 위치 공식 같은 규칙을 사용하지 말고 보이는 인쇄물 자체를 판단한다.",
-      "각 문항에 대해 page_no와 crop_x, crop_y, crop_width, crop_height를 반환한다.",
-      "좌표와 크기는 해당 PDF 페이지 전체를 기준으로 한 0~100 백분율이다.",
-      "crop_x와 crop_y는 사각형의 왼쪽 위, crop_width와 crop_height는 그 지점부터의 폭과 높이다.",
-      "가장 먼저 각 문항의 인쇄된 문항번호 시작점(예: 1., 2., 3.)을 정확히 찾는다.",
-      "crop_y는 반드시 그 문항 자신의 인쇄된 문항번호 바로 위에서 시작한다. 이전 문항의 선택지나 보기에서 시작하면 안 된다.",
-      "crop의 아래쪽은 그 문항의 본문·보기·선택지를 모두 포함한 뒤, 같은 단의 다음 인쇄 문항번호 바로 위에서 끝낸다.",
-      "보기 상자 아래에 배치된 ①~⑤ 선택지는 보기와 같은 문항 소속이다. 선택지를 다음 문항으로 넘기지 않는다.",
-      "특히 세로로 연속된 1번·2번·3번 문항은 각각 '자기 번호부터 자기 선택지 끝까지' 한 덩어리로 자른다.",
-      "문항번호, 본문, 모든 수식, 보기, 선택지, 표, 그래프, 도형을 빠짐없이 포함한다.",
-      "분수의 분자, 근호, 지수처럼 문항번호보다 위로 올라간 수식도 절대 잘리지 않게 포함한다.",
-      "해당 문항과 연결된 도형이 옆이나 아래에 있으면 같은 사각형 안에 포함한다.",
-      "다른 문항의 선택지·번호·본문은 포함하지 않는다.",
-      "페이지 머리말, 시험 제목, 이름란, 쪽번호, 출판사 문구, 저작권 문구, 바닥 장식은 포함하지 않는다.",
-      "1단, 2단, 전체 폭 문항을 화면에 보이는 실제 배치대로 각각 판단한다.",
-      "같은 단에서 연속된 두 문항의 crop은 서로 겹치면 안 된다.",
-      "같은 단에서 앞 문항의 선택지가 끝난 뒤 다음 문항번호가 시작되므로, 그 경계를 눈으로 확인한다.",
-      "문항 사이 여백은 조금 포함해도 되지만, 다음 문항이 들어올 정도로 크게 잡지 않는다.",
-      "문항이 한 페이지를 넘어가면 시작 페이지의 영역을 잡고 confidence를 낮추며 review_reason에 이유를 쓴다.",
-      "확실하면 review_reason은 빈 문자열로 둔다.",
-      "실제 문항번호를 누락하거나 중복하지 말고 번호순으로 반환한다.",
+      "너는 한국 수학 시험지에서 각 문항의 끝점만 찾는 비전 판독기다.",
+      "문항 시작점은 프로그램이 ★ 문자 좌표로 이미 확정했다. 시작점, 문항번호, 단 위치를 다시 추측하지 않는다.",
+      "아래에 제공된 ★ 목록의 각 문항에 대해, 그 문항의 실제 마지막 내용 바로 아래 bottom_y만 반환한다.",
+      "bottom_y는 해당 PDF 페이지 전체 높이를 기준으로 한 0~100 백분율이다.",
+      "문제 본문, 모든 수식, 보기 상자, ①~⑤ 선택지, 표, 그래프, 도형을 빠짐없이 포함한 직후를 끝점으로 잡는다.",
+      "다음 ★나 다음 문항번호까지 통째로 자르지 않는다. 다음 문항의 내용은 절대 포함하지 않는다.",
+      "같은 단 아래에 예제·참고·별표 없는 설명이 있어도 현재 문항 소속이 아니면 포함하지 않는다.",
+      "선택지가 아래에 따로 배치되었거나 연결된 그림이 아래쪽에 있으면 그것까지 포함한다.",
+      "문항의 마지막 줄 아래 여백은 0.3~0.8% 정도만 둔다.",
+      "문항이 다음 페이지로 이어지거나 끝점이 불확실하면 confidence를 낮추고 review_reason에 이유를 쓴다.",
+      "확실하면 review_reason은 빈 문자열이다.",
+      "제공된 ★ 문항을 누락하거나 추가하지 말고 정확히 같은 question_no와 page_no로 반환한다.",
+      "★ 시작 목록:",
+      markerGuide,
       `시험지 정보: ${source.title} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
     ].join("\n");
 
@@ -410,8 +495,8 @@ export async function POST(request: NextRequest) {
       }),
     ]);
 
-    const cropPayload = parseJson<{ questions: AiCropQuestion[] }>(cropRaw);
-    const crops = normalizeAiCrops(cropPayload.questions);
+    const cropPayload = parseJson<{ questions: AiCropEnd[] }>(cropRaw);
+    const crops = combineMarkersAndEnds(starMarkers, cropPayload.questions);
     if (!crops.length) {
       throw new Error("AI가 문항 영역을 찾지 못했습니다.");
     }
@@ -425,7 +510,7 @@ export async function POST(request: NextRequest) {
       .from("source_analysis")
       .update({
         progress: 80,
-        current_step: `AI 직접 자르기 완료 · ${crops.length}개 문항 저장 중`,
+        current_step: `★ 시작점 + AI 끝점 자르기 완료 · ${crops.length}개 문항 저장 중`,
       })
       .eq("id", analysis.id);
 
@@ -462,7 +547,7 @@ export async function POST(request: NextRequest) {
           topic: meta?.topic || null,
           difficulty: meta?.difficulty ?? "중",
           summary: meta?.summary || null,
-          crop_engine: "AI_DIRECT_VISION",
+          crop_engine: "STAR_START_AI_END",
           ai_crop: {
             confidence: crop.confidence,
             review_reason: crop.review_reason || null,
@@ -514,7 +599,7 @@ export async function POST(request: NextRequest) {
       .update({
         status: "REVIEW",
         progress: 100,
-        current_step: `AI 직접 자르기 완료 · ${rows.length}개 문항 · 재확인 권장 ${reviewIds.length}개`,
+        current_step: `★ 시작점 + AI 끝점 자르기 완료 · ${rows.length}개 문항 · 재확인 권장 ${reviewIds.length}개`,
         total_questions: rows.length,
         objective_count: objectiveCount,
         subjective_count: subjectiveCount,
@@ -542,7 +627,7 @@ export async function POST(request: NextRequest) {
           ...baseLogs,
           {
             at: finishedAt,
-            message: `${rows.length}개 AI 직접 자르기·분석 완료${
+            message: `${rows.length}개 ★ 시작점 + AI 끝점 자르기·분석 완료${
               totalTokens
                 ? ` · ${totalTokens.toLocaleString("ko-KR")} tokens`
                 : ""
@@ -559,7 +644,7 @@ export async function POST(request: NextRequest) {
       reviewPending: reviewIds.length,
       cropValidCount: crops.filter((crop) => crop.confidence >= 0.82).length,
       cropInvalidCount: crops.filter((crop) => crop.confidence < 0.82).length,
-      mode: "AI_DIRECT_VISION",
+      mode: "STAR_START_AI_END",
       model: `${cropModel} + ${analysisModel}`,
     });
   } catch (error) {
