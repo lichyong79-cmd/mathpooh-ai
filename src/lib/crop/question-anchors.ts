@@ -197,6 +197,63 @@ function buildLines(items: RawItem[]): Line[] {
   return lines.sort((a, b) => a.top - b.top);
 }
 
+/**
+ * 줄 병합 전에 원본 텍스트 조각에서 문항번호만 찾는다.
+ *
+ * 수식 페이지는 위·아래첨자와 분수 조각의 top 값이 사다리처럼 이어져
+ * buildLines()가 페이지 전체를 한 줄로 합칠 수 있다. 문항번호 검출에는 그 줄을
+ * 사용하지 않고, 하나의 원본 조각 또는 바로 오른쪽의 짧은 조각까지만 결합한다.
+ */
+function findQuestionNumberFragments(items: RawItem[]): Line[] {
+  const ordered = [...items].sort((a, b) => a.top - b.top || a.left - b.left);
+  const found: Line[] = [];
+
+  for (const seed of ordered) {
+    const seedText = seed.text.trim();
+    const seedCanStart = QUESTION_NUMBER.test(seedText) || /^\[?\s*\d{1,3}\s*$/.test(seedText);
+    if (!seedCanStart) continue;
+
+    let text = seed.text;
+    let right = seed.right;
+    let top = seed.top;
+    let bottom = seed.bottom;
+    const heights = [seed.fontHeight];
+    const used = new Set<RawItem>([seed]);
+
+    for (let part = 0; part < 3 && !QUESTION_NUMBER.test(text); part += 1) {
+      const centerY = (top + bottom) / 2;
+      const next = ordered
+        .filter((item) => !used.has(item) && item.left >= right - seed.fontHeight * 0.15)
+        .filter((item) => item.left - right <= seed.fontHeight * 1.15)
+        .filter((item) => {
+          const itemCenterY = (item.top + item.bottom) / 2;
+          return Math.abs(itemCenterY - centerY) <= Math.max(seed.fontHeight, item.fontHeight) * 0.35;
+        })
+        .sort((a, b) => a.left - b.left)[0];
+
+      if (!next) break;
+      used.add(next);
+      text += next.text;
+      right = Math.max(right, next.right);
+      top = Math.min(top, next.top);
+      bottom = Math.max(bottom, next.bottom);
+      heights.push(next.fontHeight);
+    }
+
+    if (!QUESTION_NUMBER.test(text)) continue;
+    found.push({
+      text,
+      left: seed.left,
+      right,
+      top,
+      bottom,
+      fontHeight: median(heights),
+    });
+  }
+
+  return found;
+}
+
 type Candidate = {
   questionNo: number;
   page: number;
@@ -252,6 +309,8 @@ export async function buildDocumentAnchors(
   const perPage: Array<{
     page: number;
     lines: Line[];
+    /** 줄 병합 전 원본 텍스트 조각. 문항번호 앵커는 반드시 여기서 찾는다. */
+    columnItems: RawItem[][];
     /** 단별로 따로 묶은 줄. 2단 편집에서 좌우 단이 한 줄로 합쳐지는 것을 막는다. */
     columnLines: Line[][];
     columns: ColumnBand[];
@@ -263,19 +322,19 @@ export async function buildDocumentAnchors(
     const page = await pdfDoc.getPage(pageNo);
     const { items, width, height } = await readItems(page);
     const columns = detectColumns(items, width, height);
-    const columnLines = columns.map((band) => {
+    const columnItems = columns.map((band) => {
       const leftPx = (band.left / 100) * width;
       const rightPx = (band.right / 100) * width;
-      return buildLines(
-        items.filter((item) => {
-          const center = (item.left + item.right) / 2;
-          return center >= leftPx && center < rightPx;
-        }),
-      );
+      return items.filter((item) => {
+        const center = (item.left + item.right) / 2;
+        return center >= leftPx && center < rightPx;
+      });
     });
+    const columnLines = columnItems.map((column) => buildLines(column));
     perPage.push({
       page: pageNo,
       lines: columnLines.flat(),
+      columnItems,
       columnLines,
       columns,
       width,
@@ -297,15 +356,16 @@ export async function buildDocumentAnchors(
   const candidates: Candidate[] = [];
 
   for (const entry of perPage) {
-    const bodyFont = median(entry.lines.map((line) => line.fontHeight)) || 10;
+    const bodyFont = median(entry.columnItems.flat().map((item) => item.fontHeight)) || 10;
 
     for (const column of entry.columns.keys()) {
       const band = entry.columns[column];
       const bandLeftPx = (band.left / 100) * entry.width;
       const bandWidthPx = ((band.right - band.left) / 100) * entry.width;
-      const inColumn = [...(entry.columnLines[column] ?? [])].sort((a, b) => a.top - b.top);
+      const numberFragments = findQuestionNumberFragments(entry.columnItems[column] ?? [])
+        .sort((a, b) => a.top - b.top);
 
-      for (const line of inColumn) {
+      for (const line of numberFragments) {
         const match = line.text.match(QUESTION_NUMBER);
         if (!match) continue;
 
