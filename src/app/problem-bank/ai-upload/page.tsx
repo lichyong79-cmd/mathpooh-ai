@@ -114,7 +114,7 @@ const CROP_PADDING = {
 const AUTO_EXPAND = {
   x: 3.2,
   top: 4.5,
-  bottom: 8.0,
+  bottom: 13.0,
 } as const;
 
 type CanonicalCrop = {
@@ -122,7 +122,7 @@ type CanonicalCrop = {
   canvas: HTMLCanvasElement;
 };
 
-const CROP_ENGINE_VERSION = "single-path-v5-next-anchor";
+const CROP_ENGINE_VERSION = "single-path-v6-content-bands";
 
 function isCanonicalized(question: Question) {
   return String(question.review_result?.crop_engine_version ?? "") === CROP_ENGINE_VERSION;
@@ -188,15 +188,44 @@ function buildCanonicalCrop(
   regionContext.drawImage(pageCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
 
   const pixels = regionContext.getImageData(0, 0, sw, sh).data;
-  const rowInk = new Uint32Array(sh);
-  const colInk = new Uint32Array(sw);
+  const rawRowInk = new Uint32Array(sh);
+  const rawColInk = new Uint32Array(sw);
 
-  // 검정/회색 인쇄물만 집계. 중앙 구분선은 expanded 영역 밖으로 이미 제외된다.
+  const isInk = (x: number, y: number) => {
+    const i = (y * sw + x) * 4;
+    const lum = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
+    return pixels[i + 3] > 20 && lum < 242;
+  };
+
+  // 먼저 원본 잉크량을 계산하여 페이지 테두리·단 구분선처럼 길게 이어지는 선을 찾는다.
   for (let y = 0; y < sh; y += 1) {
     for (let x = 0; x < sw; x += 1) {
-      const i = (y * sw + x) * 4;
-      const lum = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
-      if (pixels[i + 3] > 20 && lum < 242) {
+      if (isInk(x, y)) {
+        rawRowInk[y] += 1;
+        rawColInk[x] += 1;
+      }
+    }
+  }
+
+  const structuralRows = new Uint8Array(sh);
+  const structuralCols = new Uint8Array(sw);
+  for (let y = 0; y < sh; y += 1) {
+    if (rawRowInk[y] >= sw * 0.72) structuralRows[y] = 1;
+  }
+  for (let x = 0; x < sw; x += 1) {
+    if (rawColInk[x] >= sh * 0.72) structuralCols[x] = 1;
+  }
+
+  const rowInk = new Uint32Array(sh);
+  const colInk = new Uint32Array(sw);
+  for (let y = 0; y < sh; y += 1) {
+    for (let x = 0; x < sw; x += 1) {
+      // 긴 세로/가로선과 그 바로 옆 1px는 글자 영역 판정에서 제외한다.
+      if (
+        structuralRows[y] || structuralRows[Math.max(0, y - 1)] || structuralRows[Math.min(sh - 1, y + 1)] ||
+        structuralCols[x] || structuralCols[Math.max(0, x - 1)] || structuralCols[Math.min(sw - 1, x + 1)]
+      ) continue;
+      if (isInk(x, y)) {
         rowInk[y] += 1;
         colInk[x] += 1;
       }
@@ -212,6 +241,57 @@ function buildCanonicalCrop(
   while (top < sh && !rowHas(top)) top += 1;
   let bottom = sh - 1;
   while (bottom > top && !rowHas(bottom)) bottom -= 1;
+
+  // 잉크 덩어리 사이의 매우 큰 공백을 이용해 이전 문항의 선택지나 페이지 꼬리말을 제거한다.
+  // 일반적인 수식 줄 간격은 유지하고, 영역 높이의 7% 이상인 공백만 경계 후보로 본다.
+  if (top < bottom) {
+    const bands: Array<{ start: number; end: number }> = [];
+    let y = top;
+    const joinGap = Math.max(3, Math.floor(sh * 0.006));
+    while (y <= bottom) {
+      while (y <= bottom && !rowHas(y)) y += 1;
+      if (y > bottom) break;
+      const start = y;
+      let lastInk = y;
+      let gap = 0;
+      while (y <= bottom) {
+        if (rowHas(y)) {
+          lastInk = y;
+          gap = 0;
+        } else {
+          gap += 1;
+          if (gap > joinGap) break;
+        }
+        y += 1;
+      }
+      bands.push({ start, end: lastInk });
+    }
+
+    const hugeGap = Math.max(42, Math.floor(sh * 0.07));
+    if (bands.length >= 2) {
+      // 앞쪽의 짧은 찌꺼기 뒤에 큰 공백이 있으면 실제 문항은 아래쪽 덩어리로 본다.
+      for (let i = 0; i < bands.length - 1; i += 1) {
+        const gap = bands[i + 1].start - bands[i].end - 1;
+        const upperHeight = bands[i].end - bands[0].start + 1;
+        const lowerHeight = bands[bands.length - 1].end - bands[i + 1].start + 1;
+        if (gap >= hugeGap && upperHeight <= sh * 0.22 && lowerHeight > upperHeight * 1.15) {
+          top = bands[i + 1].start;
+        }
+      }
+
+      // 본문 뒤 큰 공백 아래에 작은 슬로건/페이지 문구만 있으면 잘라낸다.
+      for (let i = bands.length - 2; i >= 0; i -= 1) {
+        const gap = bands[i + 1].start - bands[i].end - 1;
+        const trailingHeight = bands[bands.length - 1].end - bands[i + 1].start + 1;
+        const bodyHeight = bands[i].end - top + 1;
+        if (gap >= hugeGap && trailingHeight <= sh * 0.14 && bodyHeight > trailingHeight * 1.8) {
+          bottom = bands[i].end;
+          break;
+        }
+      }
+    }
+  }
+
   let left = 0;
   while (left < sw && !colHas(left)) left += 1;
   let right = sw - 1;
@@ -224,11 +304,15 @@ function buildCanonicalCrop(
   left = Math.max(0, left - CROP_PADDING.left);
   top = Math.max(0, top - CROP_PADDING.top);
 
-  // 실제 문항번호 기준점보다 아래에서 시작하는 현상을 차단한다.
-  // 흐린 인쇄물이나 가는 글씨가 픽셀 임계값에서 누락되어도 번호 행은 반드시 포함한다.
+  // AI 문항번호 기준점은 실제 내용 상단과 가까울 때만 사용한다.
+  // 기준점이 이전 문항 선택지나 큰 빈 공간을 가리키면 픽셀 내용 경계를 우선한다.
   if (Number.isFinite(anchorY)) {
     const anchorPixel = Math.floor((anchorY / 100) * pageCanvas.height) - sy;
-    top = Math.min(top, Math.max(0, anchorPixel - CROP_PADDING.top));
+    const anchorDistance = Math.abs(anchorPixel - top);
+    const anchorTolerance = Math.max(28, Math.floor(sh * 0.10));
+    if (anchorDistance <= anchorTolerance) {
+      top = Math.min(top, Math.max(0, anchorPixel - CROP_PADDING.top));
+    }
   }
 
   right = Math.min(sw - 1, right + CROP_PADDING.right);
