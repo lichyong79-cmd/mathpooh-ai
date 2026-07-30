@@ -122,7 +122,7 @@ type CanonicalCrop = {
   canvas: HTMLCanvasElement;
 };
 
-const CROP_ENGINE_VERSION = "single-path-v4-verified-box";
+const CROP_ENGINE_VERSION = "single-path-v5-next-anchor";
 
 function isCanonicalized(question: Question) {
   return String(question.review_result?.crop_engine_version ?? "") === CROP_ENGINE_VERSION;
@@ -196,7 +196,7 @@ function buildCanonicalCrop(
     for (let x = 0; x < sw; x += 1) {
       const i = (y * sw + x) * 4;
       const lum = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
-      if (pixels[i + 3] > 20 && lum < 225) {
+      if (pixels[i + 3] > 20 && lum < 242) {
         rowInk[y] += 1;
         colInk[x] += 1;
       }
@@ -223,6 +223,14 @@ function buildCanonicalCrop(
 
   left = Math.max(0, left - CROP_PADDING.left);
   top = Math.max(0, top - CROP_PADDING.top);
+
+  // 실제 문항번호 기준점보다 아래에서 시작하는 현상을 차단한다.
+  // 흐린 인쇄물이나 가는 글씨가 픽셀 임계값에서 누락되어도 번호 행은 반드시 포함한다.
+  if (Number.isFinite(anchorY)) {
+    const anchorPixel = Math.floor((anchorY / 100) * pageCanvas.height) - sy;
+    top = Math.min(top, Math.max(0, anchorPixel - CROP_PADDING.top));
+  }
+
   right = Math.min(sw - 1, right + CROP_PADDING.right);
   bottom = Math.min(sh - 1, bottom + CROP_PADDING.bottom);
 

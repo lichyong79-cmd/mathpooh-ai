@@ -131,6 +131,35 @@ function normalizeAiCrops(items: AiCropQuestion[]) {
 }
 
 
+function constrainCropsByNextQuestion(items: AiCropQuestion[]) {
+  const output = items.map((item) => ({ ...item }));
+  const groups = new Map<string, AiCropQuestion[]>();
+
+  for (const item of output) {
+    const centerX = item.crop_x + item.crop_width / 2;
+    const column = centerX < 50 ? "L" : "R";
+    const key = `${item.page_no}:${column}`;
+    const group = groups.get(key) ?? [];
+    group.push(item);
+    groups.set(key, group);
+  }
+
+  for (const group of groups.values()) {
+    group.sort((a, b) => a.question_number_y - b.question_number_y);
+    for (let index = 0; index < group.length - 1; index += 1) {
+      const current = group[index];
+      const next = group[index + 1];
+      const currentBottom = current.crop_y + current.crop_height;
+      const safeBottom = next.question_number_y - 0.55;
+      if (safeBottom > current.crop_y + 2 && currentBottom > safeBottom) {
+        current.crop_height = clamp(safeBottom - current.crop_y, 2, 100 - current.crop_y);
+      }
+    }
+  }
+
+  return output.sort((a, b) => a.question_no - b.question_no);
+}
+
 function intersectionOverUnion(a: AiCropQuestion, b: AiCropQuestion) {
   if (a.page_no !== b.page_no) return 0;
   const left = Math.max(a.crop_x, b.crop_x);
@@ -454,7 +483,7 @@ export async function POST(request: NextRequest) {
     const [cropRaw, analysisRaw] = await Promise.all([cropPromise, analysisPromise]);
 
     let cropPayload = parseJson<{ questions: AiCropQuestion[] }>(cropRaw);
-    let crops = normalizeAiCrops(cropPayload.questions);
+    let crops = constrainCropsByNextQuestion(normalizeAiCrops(cropPayload.questions));
     if (!crops.length) {
       throw new Error("AI가 문항 영역을 찾지 못했습니다.");
     }
@@ -495,7 +524,7 @@ export async function POST(request: NextRequest) {
         maxOutputTokens: 9000,
       });
       cropPayload = parseJson<{ questions: AiCropQuestion[] }>(correctedRaw);
-      crops = normalizeAiCrops(cropPayload.questions);
+      crops = constrainCropsByNextQuestion(normalizeAiCrops(cropPayload.questions));
       duplicateCrops = findDuplicateCrops(crops);
       suspiciousCrops = findSuspiciousCrops(crops);
     }
