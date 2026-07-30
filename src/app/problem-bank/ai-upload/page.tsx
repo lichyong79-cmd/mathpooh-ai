@@ -11,6 +11,11 @@ import {
 } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import {
+  buildDocumentAnchors,
+  type DocumentAnchors,
+  type QuestionAnchor,
+} from "@/lib/crop/question-anchors";
 
 type SourceFile = {
   id: string;
@@ -122,7 +127,15 @@ type CanonicalCrop = {
   canvas: HTMLCanvasElement;
 };
 
-const CROP_ENGINE_VERSION = "single-path-v6-content-bands";
+const CROP_ENGINE_VERSION = "text-anchor-v1";
+
+/** 텍스트 앵커 자르기에서 내용 바깥으로 남길 여백(px, 렌더 캔버스 기준) */
+const ANCHOR_PADDING = {
+  left: 14,
+  top: 10,
+  right: 14,
+  bottom: 14,
+} as const;
 
 function isCanonicalized(question: Question) {
   return String(question.review_result?.crop_engine_version ?? "") === CROP_ENGINE_VERSION;
@@ -148,9 +161,133 @@ function cropExact(pageCanvas: HTMLCanvasElement, rect: Rect): CanonicalCrop {
 }
 
 /**
- * 유일한 자동 자르기 엔진.
+ * 캔버스 안에서 실제 인쇄된 내용의 경계만 찾는다.
+ * 페이지 테두리·단 구분선처럼 길게 이어지는 선은 내용에서 제외한다.
+ */
+function inkBounds(region: HTMLCanvasElement) {
+  const sw = region.width;
+  const sh = region.height;
+  const context = region.getContext("2d", { willReadFrequently: true });
+  if (!context || sw < 2 || sh < 2) return null;
+  const pixels = context.getImageData(0, 0, sw, sh).data;
+
+  const isInk = (x: number, y: number) => {
+    const i = (y * sw + x) * 4;
+    const lum = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
+    return pixels[i + 3] > 20 && lum < 242;
+  };
+
+  const rawRow = new Uint32Array(sh);
+  const rawCol = new Uint32Array(sw);
+  for (let y = 0; y < sh; y += 1) {
+    for (let x = 0; x < sw; x += 1) {
+      if (isInk(x, y)) {
+        rawRow[y] += 1;
+        rawCol[x] += 1;
+      }
+    }
+  }
+
+  const structuralRow = new Uint8Array(sh);
+  const structuralCol = new Uint8Array(sw);
+  for (let y = 0; y < sh; y += 1) if (rawRow[y] >= sw * 0.72) structuralRow[y] = 1;
+  for (let x = 0; x < sw; x += 1) if (rawCol[x] >= sh * 0.72) structuralCol[x] = 1;
+
+  const rowInk = new Uint32Array(sh);
+  const colInk = new Uint32Array(sw);
+  for (let y = 0; y < sh; y += 1) {
+    if (structuralRow[y]) continue;
+    for (let x = 0; x < sw; x += 1) {
+      if (structuralCol[x]) continue;
+      if (isInk(x, y)) {
+        rowInk[y] += 1;
+        colInk[x] += 1;
+      }
+    }
+  }
+
+  const rowMin = Math.max(2, Math.floor(sw * 0.0015));
+  const colMin = Math.max(2, Math.floor(sh * 0.0015));
+
+  let top = 0;
+  while (top < sh && rowInk[top] < rowMin) top += 1;
+  let bottom = sh - 1;
+  while (bottom > top && rowInk[bottom] < rowMin) bottom -= 1;
+  let left = 0;
+  while (left < sw && colInk[left] < colMin) left += 1;
+  let right = sw - 1;
+  while (right > left && colInk[right] < colMin) right -= 1;
+
+  if (top >= sh || left >= sw || bottom <= top || right <= left) return null;
+  return { top, bottom, left, right };
+}
+
+/**
+ * 기본 자르기 엔진 (SOS58).
+ * 위·아래 경계는 PDF에 실제로 인쇄된 문항번호 좌표가 이미 확정한다.
+ * 픽셀 판독은 그 밴드 "안에서" 여백을 줄이는 데만 쓰고, 절대 밖으로 넓히지 않는다.
+ * 따라서 이전 문항 선택지나 다음 문항이 끌려올 수 없다.
+ */
+function buildAnchorCrop(pageCanvas: HTMLCanvasElement, anchor: QuestionAnchor): CanonicalCrop {
+  const topPct = Math.max(0, anchor.topPct - 0.5);
+  const bottomPct = Math.min(100, Math.max(topPct + 1, anchor.bottomPct));
+  const fallbackRect: Rect = {
+    x: anchor.columnLeftPct,
+    y: topPct,
+    width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
+    height: Math.max(1, bottomPct - topPct),
+  };
+
+  const sx = Math.max(0, Math.floor((pageCanvas.width * anchor.columnLeftPct) / 100));
+  const ex = Math.min(pageCanvas.width, Math.ceil((pageCanvas.width * anchor.columnRightPct) / 100));
+  const sy = Math.max(0, Math.floor((pageCanvas.height * topPct) / 100));
+  const ey = Math.min(pageCanvas.height, Math.ceil((pageCanvas.height * bottomPct) / 100));
+  const sw = Math.max(1, ex - sx);
+  const sh = Math.max(1, ey - sy);
+
+  const region = document.createElement("canvas");
+  region.width = sw;
+  region.height = sh;
+  const context = region.getContext("2d", { willReadFrequently: true });
+  if (!context) return cropExact(pageCanvas, fallbackRect);
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, sw, sh);
+  context.drawImage(pageCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+  const bounds = inkBounds(region);
+  if (!bounds) return cropExact(pageCanvas, fallbackRect);
+
+  // 첫 줄에 분수·지수·근호가 있어 문항번호보다 위로 튀면 그것까지 포함한다.
+  const anchorTopPx = Math.max(0, Math.floor((pageCanvas.height * anchor.topPct) / 100) - sy);
+  const top = Math.max(0, Math.min(bounds.top, anchorTopPx) - ANCHOR_PADDING.top);
+  const bottom = Math.min(sh - 1, bounds.bottom + ANCHOR_PADDING.bottom);
+  const left = Math.max(0, bounds.left - ANCHOR_PADDING.left);
+  const right = Math.min(sw - 1, bounds.right + ANCHOR_PADDING.right);
+
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, right - left + 1);
+  out.height = Math.max(1, bottom - top + 1);
+  const outContext = out.getContext("2d");
+  if (!outContext) return cropExact(pageCanvas, fallbackRect);
+  outContext.fillStyle = "#fff";
+  outContext.fillRect(0, 0, out.width, out.height);
+  outContext.drawImage(region, left, top, out.width, out.height, 0, 0, out.width, out.height);
+
+  return {
+    rect: {
+      x: ((sx + left) / pageCanvas.width) * 100,
+      y: ((sy + top) / pageCanvas.height) * 100,
+      width: (out.width / pageCanvas.width) * 100,
+      height: (out.height / pageCanvas.height) * 100,
+    },
+    canvas: out,
+  };
+}
+
+/**
+ * 예비 자르기 엔진 (스캔 PDF 전용).
+ * 텍스트 레이어가 없어 앵커를 못 찾을 때만 쓴다.
  * AI 좌표를 안전하게 넓힌 뒤, 실제 인쇄 내용의 경계를 한 번만 계산한다.
- * 빨간 박스/미리보기/전체 썸네일/저장/자동분석이 모두 이 결과를 사용한다.
  */
 function buildCanonicalCrop(
   pageCanvas: HTMLCanvasElement,
@@ -364,18 +501,34 @@ function isManualCrop(question: Question) {
   return Boolean(question.review_result?.crop_manual);
 }
 
-function resolveQuestionCrop(pageCanvas: HTMLCanvasElement, question: Question): CanonicalCrop {
+function resolveQuestionCrop(
+  pageCanvas: HTMLCanvasElement,
+  question: Question,
+  anchors?: DocumentAnchors | null,
+): CanonicalCrop {
   const currentRect = questionRect(question);
   // 사람이 직접 저장한 좌표와 현재 엔진으로 확정된 좌표는 그대로 사용한다.
   if (isManualCrop(question) || isCanonicalized(question)) return cropExact(pageCanvas, currentRect);
 
-  // 자동 재자르기는 이미 후처리된 DB 좌표가 아니라 최초 AI bounding box에서 항상 시작한다.
-  // 그래야 이전 버전에서 헤더가 포함된 잘못된 좌표도 새 엔진으로 복구된다.
+  // 1순위: PDF 안에 실제로 인쇄된 문항번호 좌표. 오차가 없으므로 항상 이것을 먼저 쓴다.
+  const anchor = anchorFor(question, anchors);
+  if (anchor) return buildAnchorCrop(pageCanvas, anchor);
+
+  // 2순위: 스캔 PDF처럼 텍스트 레이어가 없을 때만 기존 AI bounding box 경로를 쓴다.
   const aiBox = aiBoundingBox(question);
   const sourceRect = aiBox?.rect ?? currentRect;
   return buildCanonicalCrop(pageCanvas, sourceRect, {
     questionNumberY: aiBox?.questionNumberY ?? null,
   });
+}
+
+/** 해당 문항의 텍스트 앵커를 찾는다. 사람이 손댄 문항은 앵커를 쓰지 않는다. */
+function anchorFor(question: Question, anchors?: DocumentAnchors | null): QuestionAnchor | null {
+  if (!anchors?.hasTextLayer) return null;
+  if (isManualCrop(question)) return null;
+  const questionNo = Number(question.question_no);
+  if (!Number.isFinite(questionNo)) return null;
+  return anchors.byQuestionNo.get(questionNo) ?? null;
 }
 
 function questionRect(question: Question): Rect {
@@ -406,6 +559,8 @@ export default function AnalysisWorkspacePage() {
   const [activeQuestionId, setActiveQuestionId] = useState("");
 
   const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const [anchors, setAnchors] = useState<DocumentAnchors | null>(null);
+  const [anchorBusy, setAnchorBusy] = useState(false);
   const [pageNo, setPageNo] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [selection, setSelection] = useState<Rect | null>(null);
@@ -557,6 +712,43 @@ export default function AnalysisWorkspacePage() {
     };
   }, [workspace?.examUrl]);
 
+  // PDF 텍스트 레이어에서 문항번호의 실제 좌표를 한 번만 읽어 캐시한다.
+  // AI 좌표와 달리 오차가 없고, 문항 목록이 바뀔 때만 다시 계산한다.
+  const questionNoKey = useMemo(
+    () => questions.map((item) => item.question_no).join(","),
+    [questions],
+  );
+
+  useEffect(() => {
+    if (!pdfDoc) {
+      setAnchors(null);
+      return;
+    }
+
+    let cancelled = false;
+    setAnchorBusy(true);
+
+    void (async () => {
+      try {
+        const expected = questionNoKey
+          .split(",")
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0);
+        const result = await buildDocumentAnchors(pdfDoc, expected.length ? expected : undefined);
+        if (!cancelled) setAnchors(result);
+      } catch (caught) {
+        console.error("문항 앵커 계산 실패", caught);
+        if (!cancelled) setAnchors(null);
+      } finally {
+        if (!cancelled) setAnchorBusy(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDoc, questionNoKey]);
+
   useEffect(() => {
     if (!activeQuestion) {
       setSelection(null);
@@ -565,14 +757,16 @@ export default function AnalysisWorkspacePage() {
     }
 
     if (hasValidCrop(activeQuestion)) {
-      setPageNo(Math.max(1, Number(activeQuestion.page_no ?? 1)));
+      // 앵커가 있으면 AI가 쪽을 잘못 잡았어도 실제 인쇄된 쪽으로 이동한다.
+      const anchor = anchorFor(activeQuestion, anchors);
+      setPageNo(Math.max(1, anchor?.page ?? Number(activeQuestion.page_no ?? 1)));
       // 화면/저장/썸네일은 모두 canonical effect가 계산한 하나의 좌표를 사용한다.
       setSelection(null);
     } else {
       setSelection(null);
       setPreview("");
     }
-  }, [activeQuestion]);
+  }, [activeQuestion, anchors]);
 
   useEffect(() => {
     if (!pdfDoc || !activeQuestion || !hasValidCrop(activeQuestion)) return;
@@ -580,7 +774,8 @@ export default function AnalysisWorkspacePage() {
 
     void (async () => {
       try {
-        const targetPage = Number(activeQuestion.page_no);
+        const anchor = anchorFor(activeQuestion, anchors);
+        const targetPage = anchor?.page ?? Number(activeQuestion.page_no);
         const page = await pdfDoc.getPage(targetPage);
         const base = page.getViewport({ scale: 1 });
         const viewport = page.getViewport({ scale: Math.max(1.7, 1800 / base.width) });
@@ -590,7 +785,7 @@ export default function AnalysisWorkspacePage() {
         const context = pageCanvas.getContext("2d");
         if (!context) return;
         await page.render({ canvasContext: context, viewport }).promise;
-        const canonical = resolveQuestionCrop(pageCanvas, activeQuestion);
+        const canonical = resolveQuestionCrop(pageCanvas, activeQuestion, anchors);
         if (cancelled) return;
         setSelection(canonical.rect);
         setPreview(canonical.canvas.toDataURL("image/webp", 0.92));
@@ -600,7 +795,7 @@ export default function AnalysisWorkspacePage() {
     })();
 
     return () => { cancelled = true; };
-  }, [pdfDoc, activeQuestion]);
+  }, [pdfDoc, activeQuestion, anchors]);
 
   const updatePreview = useCallback((rect: Rect | null) => {
     const canvas = canvasRef.current;
@@ -722,7 +917,8 @@ export default function AnalysisWorkspacePage() {
       const pageCache = new Map<number, HTMLCanvasElement>();
       for (const question of questions) {
         if (!hasValidCrop(question)) continue;
-        const targetPage = Number(question.page_no);
+        const anchor = anchorFor(question, anchors);
+        const targetPage = anchor?.page ?? Number(question.page_no);
         let sourceCanvas = pageCache.get(targetPage);
         if (!sourceCanvas) {
           const page = await pdfDoc.getPage(targetPage);
@@ -736,14 +932,14 @@ export default function AnalysisWorkspacePage() {
           await page.render({ canvasContext: context, viewport }).promise;
           pageCache.set(targetPage, sourceCanvas);
         }
-        const canonical = resolveQuestionCrop(sourceCanvas, question);
+        const canonical = resolveQuestionCrop(sourceCanvas, question, anchors);
         next[question.id] = canonical.canvas.toDataURL("image/jpeg", .78);
       }
       setThumbnailUrls(next);
     } finally {
       setThumbnailBusy(false);
     }
-  }, [pdfDoc, questions]);
+  }, [pdfDoc, questions, anchors]);
 
   useEffect(() => {
     if ((viewMode === "all" || viewMode === "review") && pdfDoc && questions.length) {
@@ -1037,7 +1233,10 @@ export default function AnalysisWorkspacePage() {
 
   async function materializeQuestion(question: Question): Promise<Question> {
     if (!workspace?.analysis?.id || !pdfDoc || !hasValidCrop(question)) throw new Error(`${question.question_no}번 자르기 좌표가 없습니다.`);
-    const page = await pdfDoc.getPage(Number(question.page_no));
+    // 앵커가 있으면 실제 인쇄된 쪽을 쓴다. AI가 쪽을 잘못 잡은 문항도 여기서 교정된다.
+    const anchor = anchorFor(question, anchors);
+    const targetPageNo = anchor?.page ?? Number(question.page_no);
+    const page = await pdfDoc.getPage(targetPageNo);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: Math.max(1.6, 1800 / base.width) });
     const sourceCanvas = document.createElement("canvas");
@@ -1048,7 +1247,7 @@ export default function AnalysisWorkspacePage() {
     await page.render({ canvasContext: sourceContext, viewport }).promise;
 
     // 미적용 문항만 canonical 계산. 이미 같은 엔진으로 저장된 문항은 정확히 같은 좌표로 다시 저장한다.
-    const canonical = resolveQuestionCrop(sourceCanvas, question);
+    const canonical = resolveQuestionCrop(sourceCanvas, question, anchors);
     const blob = await new Promise<Blob>((resolve, reject) => canonical.canvas.toBlob((value) => value ? resolve(value) : reject(new Error("이미지 변환 실패")), "image/webp", .92));
     const form = new FormData();
     form.append("image", blob, `${String(question.question_no).padStart(3, "0")}.webp`);
@@ -1056,7 +1255,7 @@ export default function AnalysisWorkspacePage() {
     form.append("sourceFileId", workspace.source.id);
     form.append("questionId", question.id);
     form.append("questionNo", String(question.question_no));
-    form.append("pageNo", String(question.page_no));
+    form.append("pageNo", String(targetPageNo));
     form.append("cropX", String(canonical.rect.x));
     form.append("cropY", String(canonical.rect.y));
     form.append("cropWidth", String(canonical.rect.width));
@@ -1074,7 +1273,7 @@ export default function AnalysisWorkspacePage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        page_no: question.page_no,
+        page_no: targetPageNo,
         crop_x: canonical.rect.x,
         crop_y: canonical.rect.y,
         crop_width: canonical.rect.width,
@@ -1316,6 +1515,24 @@ export default function AnalysisWorkspacePage() {
           {aiHealth.checking ? "확인 중..." : "연결 다시 확인"}
         </button>
       </section>
+
+      {pdfDoc ? (
+        <section className={`ai-health ${anchorBusy ? "idle" : anchors?.hasTextLayer ? "ok" : "fail"}`}>
+          <div>
+            <span className="health-dot" />
+            <div>
+              <small>자르기 기준</small>
+              <strong>
+                {anchorBusy
+                  ? "PDF에서 문항번호 좌표를 읽는 중..."
+                  : anchors?.hasTextLayer
+                    ? `PDF 텍스트 좌표 사용 · 문항번호 ${anchors.byQuestionNo.size}개 인식`
+                    : "텍스트 레이어 없음(스캔본) · AI 추정 좌표로 대체"}
+              </strong>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {(busy === "queue" || busy === "one" || busy === "analysis") ? (
         <div className="ai-working-overlay" role="status" aria-live="polite">
