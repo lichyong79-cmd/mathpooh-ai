@@ -19,8 +19,10 @@ export type QuestionAnchor = {
   column: number;
   /** 문항번호 글자 맨 위 (0~100 %) */
   topPct: number;
-  /** 이 문항이 차지할 수 있는 최대 하단 = 같은 단의 다음 문항번호 바로 위 (0~100 %) */
+  /** 이 문항이 차지할 수 있는 최대 하단 (0~100 %) */
   bottomPct: number;
+  /** 같은 단 다음 문항번호 줄의 top. 없으면 null (단의 마지막 문항) */
+  nextTopPct: number | null;
   columnLeftPct: number;
   columnRightPct: number;
   /** 단 끝까지 내려간 문항(= 다음 단/다음 쪽으로 이어질 수 있음) → 검수 표시용 */
@@ -200,7 +202,8 @@ type Candidate = {
   page: number;
   column: number;
   top: number;
-  order: number;
+  left: number;
+  width: number;
 };
 
 /**
@@ -249,6 +252,8 @@ export async function buildDocumentAnchors(
   const perPage: Array<{
     page: number;
     lines: Line[];
+    /** 단별로 따로 묶은 줄. 2단 편집에서 좌우 단이 한 줄로 합쳐지는 것을 막는다. */
+    columnLines: Line[][];
     columns: ColumnBand[];
     width: number;
     height: number;
@@ -257,10 +262,22 @@ export async function buildDocumentAnchors(
   for (let pageNo = 1; pageNo <= pdfDoc.numPages; pageNo += 1) {
     const page = await pdfDoc.getPage(pageNo);
     const { items, width, height } = await readItems(page);
+    const columns = detectColumns(items, width, height);
+    const columnLines = columns.map((band) => {
+      const leftPx = (band.left / 100) * width;
+      const rightPx = (band.right / 100) * width;
+      return buildLines(
+        items.filter((item) => {
+          const center = (item.left + item.right) / 2;
+          return center >= leftPx && center < rightPx;
+        }),
+      );
+    });
     perPage.push({
       page: pageNo,
-      lines: buildLines(items),
-      columns: detectColumns(items, width, height),
+      lines: columnLines.flat(),
+      columnLines,
+      columns,
       width,
       height,
     });
@@ -278,7 +295,6 @@ export async function buildDocumentAnchors(
 
   // 1) 후보 수집
   const candidates: Candidate[] = [];
-  let order = 0;
 
   for (const entry of perPage) {
     const bodyFont = median(entry.lines.map((line) => line.fontHeight)) || 10;
@@ -286,15 +302,8 @@ export async function buildDocumentAnchors(
     for (const column of entry.columns.keys()) {
       const band = entry.columns[column];
       const bandLeftPx = (band.left / 100) * entry.width;
-      const bandRightPx = (band.right / 100) * entry.width;
-      const bandWidthPx = bandRightPx - bandLeftPx;
-
-      const inColumn = entry.lines
-        .filter((line) => {
-          const center = (line.left + line.right) / 2;
-          return center >= bandLeftPx && center < bandRightPx;
-        })
-        .sort((a, b) => a.top - b.top);
+      const bandWidthPx = ((band.right - band.left) / 100) * entry.width;
+      const inColumn = [...(entry.columnLines[column] ?? [])].sort((a, b) => a.top - b.top);
 
       for (const line of inColumn) {
         const match = line.text.match(QUESTION_NUMBER);
@@ -317,19 +326,24 @@ export async function buildDocumentAnchors(
           page: entry.page,
           column,
           top: line.top,
-          order: order,
+          left: line.left,
+          width: entry.width,
         });
       }
-      order += 1;
     }
   }
 
   // 2) 읽는 순서(쪽 → 단 → 위에서 아래)로 정렬한 뒤,
   //    문항번호가 계속 커지는 가장 긴 흐름만 남긴다. (오검출 자동 제거)
-  const reading = candidates.sort(
-    (a, b) => a.page - b.page || a.column - b.column || a.top - b.top,
-  );
-  const kept = longestIncreasing(reading);
+  const sortReading = (list: Candidate[]) =>
+    [...list].sort((a, b) => a.page - b.page || a.column - b.column || a.top - b.top);
+
+  const firstPass = longestIncreasing(sortReading(candidates));
+
+  // 3) 시험지의 문항번호는 항상 같은 x에 정렬되어 있다.
+  //    1차 통과분의 대표 x에서 크게 벗어난 후보는 가짜 번호로 보고 버린다.
+  const aligned = alignByLeftMargin(candidates, firstPass);
+  const kept = longestIncreasing(sortReading(aligned));
 
   // 3) 앵커 확정: 같은 쪽·같은 단의 다음 문항 시작점이 현재 문항의 하한선
   const grouped = new Map<string, Candidate[]>();
@@ -352,9 +366,10 @@ export async function buildDocumentAnchors(
         const next = list[index + 1];
         const isLast = !next;
         const topPct = (item.top / entry.height) * 100;
-        const bottomPct = isLast
+        const nextTopPct = next ? (next.top / entry.height) * 100 : null;
+        const bottomPct = nextTopPct === null
           ? columnBottomPct
-          : Math.max(topPct + 1, (next.top / entry.height) * 100 - 0.25);
+          : Math.max(topPct + 1, nextTopPct - 0.25);
 
         const anchor: QuestionAnchor = {
           questionNo: item.questionNo,
@@ -362,6 +377,7 @@ export async function buildDocumentAnchors(
           column,
           topPct,
           bottomPct,
+          nextTopPct,
           columnLeftPct: band.left,
           columnRightPct: band.right,
           spansColumnEnd: isLast,
@@ -380,6 +396,27 @@ export async function buildDocumentAnchors(
   }
 
   return { hasTextLayer: byQuestionNo.size > 0, pages, byQuestionNo };
+}
+
+/**
+ * 시험지의 문항번호는 단마다 같은 x에 정렬되어 인쇄된다.
+ * 1차로 살아남은 후보들의 대표 x를 구해, 거기서 크게 벗어난 후보를 버린다.
+ * 수식 안의 "2)" 나 본문 중간의 "3." 같은 가짜 번호가 여기서 걸러진다.
+ */
+function alignByLeftMargin(all: Candidate[], trusted: Candidate[]): Candidate[] {
+  if (trusted.length < 2) return all;
+
+  const baseline = new Map<number, number>();
+  for (const column of new Set(trusted.map((item) => item.column))) {
+    const lefts = trusted.filter((item) => item.column === column).map((item) => item.left);
+    if (lefts.length) baseline.set(column, median(lefts));
+  }
+
+  return all.filter((item) => {
+    const base = baseline.get(item.column);
+    if (base === undefined) return true;
+    return Math.abs(item.left - base) <= item.width * 0.02;
+  });
 }
 
 /** 문항번호가 순증가하는 가장 긴 부분수열만 남긴다. (본문 속 "2." 같은 오검출 제거) */

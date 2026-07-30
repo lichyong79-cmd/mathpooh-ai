@@ -160,28 +160,33 @@ function cropExact(pageCanvas: HTMLCanvasElement, rect: Rect): CanonicalCrop {
   return { rect, canvas: out };
 }
 
-/**
- * 캔버스 안에서 실제 인쇄된 내용의 경계만 찾는다.
- * 페이지 테두리·단 구분선처럼 길게 이어지는 선은 내용에서 제외한다.
- */
-function inkBounds(region: HTMLCanvasElement) {
+type InkMask = {
+  sw: number;
+  sh: number;
+  /** 1 = 실제 내용 잉크. 페이지 테두리·단 구분선 같은 긴 직선은 0으로 뺀다. */
+  mask: Uint8Array;
+  rowInk: Uint32Array;
+  rowMin: number;
+};
+
+/** 캔버스를 잉크 마스크로 바꾼다. 이후 상·하·좌·우 판정은 모두 이 마스크로 한다. */
+function buildInkMask(region: HTMLCanvasElement): InkMask | null {
   const sw = region.width;
   const sh = region.height;
   const context = region.getContext("2d", { willReadFrequently: true });
   if (!context || sw < 2 || sh < 2) return null;
   const pixels = context.getImageData(0, 0, sw, sh).data;
 
-  const isInk = (x: number, y: number) => {
-    const i = (y * sw + x) * 4;
-    const lum = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
-    return pixels[i + 3] > 20 && lum < 242;
-  };
-
+  const raw = new Uint8Array(sw * sh);
   const rawRow = new Uint32Array(sh);
   const rawCol = new Uint32Array(sw);
+
   for (let y = 0; y < sh; y += 1) {
     for (let x = 0; x < sw; x += 1) {
-      if (isInk(x, y)) {
+      const i = (y * sw + x) * 4;
+      const lum = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
+      if (pixels[i + 3] > 20 && lum < 242) {
+        raw[y * sw + x] = 1;
         rawRow[y] += 1;
         rawCol[x] += 1;
       }
@@ -193,33 +198,98 @@ function inkBounds(region: HTMLCanvasElement) {
   for (let y = 0; y < sh; y += 1) if (rawRow[y] >= sw * 0.72) structuralRow[y] = 1;
   for (let x = 0; x < sw; x += 1) if (rawCol[x] >= sh * 0.72) structuralCol[x] = 1;
 
+  const mask = new Uint8Array(sw * sh);
   const rowInk = new Uint32Array(sh);
-  const colInk = new Uint32Array(sw);
   for (let y = 0; y < sh; y += 1) {
     if (structuralRow[y]) continue;
     for (let x = 0; x < sw; x += 1) {
       if (structuralCol[x]) continue;
-      if (isInk(x, y)) {
+      if (raw[y * sw + x]) {
+        mask[y * sw + x] = 1;
         rowInk[y] += 1;
-        colInk[x] += 1;
       }
     }
   }
 
-  const rowMin = Math.max(2, Math.floor(sw * 0.0015));
-  const colMin = Math.max(2, Math.floor(sh * 0.0015));
+  return { sw, sh, mask, rowInk, rowMin: Math.max(2, Math.floor(sw * 0.0015)) };
+}
 
-  let top = 0;
-  while (top < sh && rowInk[top] < rowMin) top += 1;
-  let bottom = sh - 1;
-  while (bottom > top && rowInk[bottom] < rowMin) bottom -= 1;
+function rowHasInk(ink: InkMask, y: number) {
+  return y >= 0 && y < ink.sh && ink.rowInk[y] >= ink.rowMin;
+}
+
+/**
+ * 기준 행에서 시작해 잉크가 끊기지 않는 동안 위로 올라가, 그 덩어리의 진짜 상단을 찾는다.
+ *
+ * 분수 분자, 지수, 근호처럼 문항번호 줄에 "붙어 있는" 요소는 행이 이어져 있으므로 포함되고,
+ * 줄 간격만큼 떨어져 있는 이전 문항의 마지막 줄은 공백에서 끊기므로 포함되지 않는다.
+ * 13번처럼 첫 줄에 분수가 있는 문항이 잘리던 원인이 여기였다.
+ */
+function climbToBlockTop(ink: InkMask, startRow: number, joinGap: number) {
+  let seed = -1;
+  for (let y = Math.max(0, startRow - joinGap); y < ink.sh; y += 1) {
+    if (rowHasInk(ink, y)) {
+      seed = y;
+      break;
+    }
+  }
+  if (seed < 0) return null;
+
+  let top = seed;
+  let gap = 0;
+  for (let y = seed - 1; y >= 0; y -= 1) {
+    if (rowHasInk(ink, y)) {
+      top = y;
+      gap = 0;
+    } else {
+      gap += 1;
+      if (gap > joinGap) break;
+    }
+  }
+  return top;
+}
+
+/** 한계 행 이하에서 마지막 잉크 행을 찾는다. 중간 공백은 그냥 통과한다. */
+function lastInkRow(ink: InkMask, limitRow: number) {
+  for (let y = Math.min(limitRow, ink.sh - 1); y >= 0; y -= 1) {
+    if (rowHasInk(ink, y)) return y;
+  }
+  return null;
+}
+
+/** 단의 마지막 문항용. 큰 공백을 만나면 멈춰 꼬리말이 딸려오지 않게 한다. */
+function descendToBlockBottom(ink: InkMask, startRow: number, maxGap: number) {
+  let bottom = startRow;
+  let gap = 0;
+  for (let y = Math.max(0, startRow); y < ink.sh; y += 1) {
+    if (rowHasInk(ink, y)) {
+      bottom = y;
+      gap = 0;
+    } else {
+      gap += 1;
+      if (gap > maxGap) break;
+    }
+  }
+  return bottom;
+}
+
+/** 확정된 행 구간 안에서만 좌우 경계를 계산한다. */
+function columnBoundsInRows(ink: InkMask, top: number, bottom: number) {
+  const colInk = new Uint32Array(ink.sw);
+  for (let y = top; y <= bottom; y += 1) {
+    const base = y * ink.sw;
+    for (let x = 0; x < ink.sw; x += 1) {
+      if (ink.mask[base + x]) colInk[x] += 1;
+    }
+  }
+  const colMin = Math.max(1, Math.floor((bottom - top + 1) * 0.0015));
+
   let left = 0;
-  while (left < sw && colInk[left] < colMin) left += 1;
-  let right = sw - 1;
+  while (left < ink.sw && colInk[left] < colMin) left += 1;
+  let right = ink.sw - 1;
   while (right > left && colInk[right] < colMin) right -= 1;
-
-  if (top >= sh || left >= sw || bottom <= top || right <= left) return null;
-  return { top, bottom, left, right };
+  if (left >= ink.sw || right <= left) return null;
+  return { left, right };
 }
 
 /**
@@ -229,19 +299,26 @@ function inkBounds(region: HTMLCanvasElement) {
  * 따라서 이전 문항 선택지나 다음 문항이 끌려올 수 없다.
  */
 function buildAnchorCrop(pageCanvas: HTMLCanvasElement, anchor: QuestionAnchor): CanonicalCrop {
-  const topPct = Math.max(0, anchor.topPct - 0.5);
-  const bottomPct = Math.min(100, Math.max(topPct + 1, anchor.bottomPct));
+  const pageH = pageCanvas.height;
+
+  // 위쪽을 넉넉히 열어둔다. 실제 시작점은 잉크 연결성으로 다시 좁힌다.
+  const bandTopPct = Math.max(0, anchor.topPct - 2.6);
+  // 다음 문항의 첫 줄이 밴드 안에 들어와야 그 줄의 진짜 상단을 계산할 수 있다.
+  const bandBottomPct = anchor.nextTopPct === null
+    ? Math.min(100, anchor.bottomPct)
+    : Math.min(100, anchor.nextTopPct + 1.8);
+
   const fallbackRect: Rect = {
     x: anchor.columnLeftPct,
-    y: topPct,
+    y: Math.max(0, anchor.topPct - 0.5),
     width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
-    height: Math.max(1, bottomPct - topPct),
+    height: Math.max(1, anchor.bottomPct - anchor.topPct),
   };
 
   const sx = Math.max(0, Math.floor((pageCanvas.width * anchor.columnLeftPct) / 100));
   const ex = Math.min(pageCanvas.width, Math.ceil((pageCanvas.width * anchor.columnRightPct) / 100));
-  const sy = Math.max(0, Math.floor((pageCanvas.height * topPct) / 100));
-  const ey = Math.min(pageCanvas.height, Math.ceil((pageCanvas.height * bottomPct) / 100));
+  const sy = Math.max(0, Math.floor((pageH * bandTopPct) / 100));
+  const ey = Math.min(pageH, Math.ceil((pageH * bandBottomPct) / 100));
   const sw = Math.max(1, ex - sx);
   const sh = Math.max(1, ey - sy);
 
@@ -254,15 +331,37 @@ function buildAnchorCrop(pageCanvas: HTMLCanvasElement, anchor: QuestionAnchor):
   context.fillRect(0, 0, sw, sh);
   context.drawImage(pageCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
 
-  const bounds = inkBounds(region);
-  if (!bounds) return cropExact(pageCanvas, fallbackRect);
+  const ink = buildInkMask(region);
+  if (!ink) return cropExact(pageCanvas, fallbackRect);
 
-  // 첫 줄에 분수·지수·근호가 있어 문항번호보다 위로 튀면 그것까지 포함한다.
-  const anchorTopPx = Math.max(0, Math.floor((pageCanvas.height * anchor.topPct) / 100) - sy);
-  const top = Math.max(0, Math.min(bounds.top, anchorTopPx) - ANCHOR_PADDING.top);
-  const bottom = Math.min(sh - 1, bounds.bottom + ANCHOR_PADDING.bottom);
-  const left = Math.max(0, bounds.left - ANCHOR_PADDING.left);
-  const right = Math.min(sw - 1, bounds.right + ANCHOR_PADDING.right);
+  // 줄 안에서 붙어 있는 요소(분수 분자·지수)와, 줄 간격만큼 떨어진 다른 문항을 가르는 기준.
+  const joinGap = Math.max(3, Math.round(pageH * 0.0022));
+
+  const anchorRow = Math.round((pageH * anchor.topPct) / 100) - sy;
+  const blockTop = climbToBlockTop(ink, anchorRow, joinGap);
+  if (blockTop === null) return cropExact(pageCanvas, fallbackRect);
+
+  let blockBottom: number;
+  if (anchor.nextTopPct === null) {
+    // 단의 마지막 문항: 다음 문항이 없으므로 큰 공백에서 멈춘다.
+    blockBottom = descendToBlockBottom(ink, blockTop, Math.max(24, Math.round(pageH * 0.045)));
+  } else {
+    // 다음 문항의 진짜 시작점 바로 위까지가 이 문항의 영역이다.
+    // 중간 공백은 무시하므로 도형·선택지 앞의 넓은 여백이 있어도 끝까지 살아남는다.
+    const nextRow = Math.round((pageH * anchor.nextTopPct) / 100) - sy;
+    const nextTop = climbToBlockTop(ink, nextRow, joinGap);
+    const limit = nextTop === null ? ink.sh - 1 : Math.max(blockTop, nextTop - 1);
+    blockBottom = lastInkRow(ink, limit) ?? limit;
+  }
+  if (blockBottom < blockTop) blockBottom = blockTop;
+
+  const sides = columnBoundsInRows(ink, blockTop, blockBottom);
+  if (!sides) return cropExact(pageCanvas, fallbackRect);
+
+  const top = Math.max(0, blockTop - ANCHOR_PADDING.top);
+  const bottom = Math.min(sh - 1, blockBottom + ANCHOR_PADDING.bottom);
+  const left = Math.max(0, sides.left - ANCHOR_PADDING.left);
+  const right = Math.min(sw - 1, sides.right + ANCHOR_PADDING.right);
 
   const out = document.createElement("canvas");
   out.width = Math.max(1, right - left + 1);
@@ -1286,6 +1385,69 @@ export default function AnalysisWorkspacePage() {
     return { ...patchPayload.question, question_image_path: payload.path ?? patchPayload.question.question_image_path } as Question;
   }
 
+  /**
+   * AI가 일부 문항만 찾아냈을 때, PDF 텍스트에서 읽어낸 문항번호로 빠진 문항을 채운다.
+   * AI를 다시 호출하지 않으므로 비용이 들지 않고 결과도 매번 같다.
+   */
+  async function fillMissingQuestionsFromPdf() {
+    if (!workspace?.analysis?.id || !pdfDoc) return;
+
+    setBusy("fill");
+    setError("");
+    setMessage("");
+
+    try {
+      // 기존 문항 목록에 얽매이지 않도록 expected 없이 전체를 다시 훑는다.
+      const scanned = await buildDocumentAnchors(pdfDoc);
+      if (!scanned.hasTextLayer || scanned.byQuestionNo.size === 0) {
+        throw new Error("이 PDF에는 텍스트 레이어가 없어 문항번호를 읽을 수 없습니다. 스캔본이면 먼저 OCR로 텍스트를 입혀 주세요.");
+      }
+
+      const existing = new Set(questions.map((item) => Number(item.question_no)));
+      const missing = [...scanned.byQuestionNo.values()]
+        .filter((anchor) => !existing.has(anchor.questionNo))
+        .sort((a, b) => a.questionNo - b.questionNo);
+
+      if (!missing.length) {
+        setMessage(`PDF에서 문항번호 ${scanned.byQuestionNo.size}개를 찾았고, 빠진 문항은 없습니다.`);
+        return;
+      }
+
+      setQueueProgress({ done: 0, total: missing.length });
+
+      for (let index = 0; index < missing.length; index += 1) {
+        const anchor = missing[index];
+        const response = await fetch("/api/analysis/questions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            analysisId: workspace.analysis.id,
+            questionNo: anchor.questionNo,
+            pageNo: anchor.page,
+            x: anchor.columnLeftPct,
+            y: Math.max(0, anchor.topPct - 0.5),
+            width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
+            height: Math.max(1, anchor.bottomPct - anchor.topPct),
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.message || `${anchor.questionNo}번 추가 실패`);
+        }
+        setQueueProgress({ done: index + 1, total: missing.length });
+      }
+
+      const added = missing.map((anchor) => anchor.questionNo).join(", ");
+      setMessage(`PDF에서 ${missing.length}개 문항을 채웠습니다 (${added}). 이어서 '전체 문항 자르기 저장'을 실행하세요.`);
+      await loadWorkspace(workspace.source.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "문항 목록을 채우지 못했습니다.");
+    } finally {
+      setBusy("");
+      setQueueProgress({ done: 0, total: 0 });
+    }
+  }
+
   async function recropAllQuestions() {
     if (!workspace || !pdfDoc || !questions.length) return;
     setBusy("recrop");
@@ -1474,6 +1636,15 @@ export default function AnalysisWorkspacePage() {
         </div>
         <div className="header-actions">
           <span className="save-state">{saveState}</span>
+          {anchors?.hasTextLayer ? (
+            <button
+              onClick={() => void fillMissingQuestionsFromPdf()}
+              disabled={!workspace?.analysis?.id || !!busy}
+              title="AI가 놓친 문항을 PDF 문항번호에서 찾아 채웁니다."
+            >
+              {busy === "fill" ? `문항 채우는 중 ${queueProgress.done}/${queueProgress.total}` : "PDF에서 빠진 문항 채우기"}
+            </button>
+          ) : null}
           <button className="primary" onClick={() => void startAnalysis()} disabled={!workspace || !!busy}>
             {busy === "analysis" ? "AI 좌표 찾는 중..." : busy === "recrop" ? `전체 저장 ${queueProgress.done}/${queueProgress.total}` : questions.length ? "전체 문항 자르기 저장" : "전체 빠른 자르기 시작"}
           </button>
