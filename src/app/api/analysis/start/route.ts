@@ -169,6 +169,42 @@ function findDuplicateCrops(items: AiCropQuestion[]) {
   return duplicates;
 }
 
+
+function findSuspiciousCrops(items: AiCropQuestion[]) {
+  const issues: Array<{ question: number; page: number; reason: string }> = [];
+  const sorted = [...items].sort((a, b) => a.question_no - b.question_no);
+  const seenPages = new Map<number, AiCropQuestion[]>();
+
+  for (const item of sorted) {
+    const list = seenPages.get(item.page_no) ?? [];
+    list.push(item);
+    seenPages.set(item.page_no, list);
+
+    if (item.crop_height < 9) issues.push({ question: item.question_no, page: item.page_no, reason: `높이가 너무 짧음(${item.crop_height.toFixed(1)}%)` });
+    if (item.crop_width < 18) issues.push({ question: item.question_no, page: item.page_no, reason: `너비가 너무 좁음(${item.crop_width.toFixed(1)}%)` });
+    if (item.crop_y > 86 && item.crop_height < 12) issues.push({ question: item.question_no, page: item.page_no, reason: "페이지 하단 문구/꼬리말 가능성" });
+    if (Math.abs(item.question_number_y - item.crop_y) > 3.5) issues.push({ question: item.question_no, page: item.page_no, reason: "문항번호 기준점과 자르기 시작점 불일치" });
+  }
+
+  for (const [page, pageItems] of seenPages) {
+    const byColumn = [...pageItems].sort((a, b) => a.crop_x - b.crop_x || a.question_number_y - b.question_number_y);
+    for (let i = 1; i < byColumn.length; i += 1) {
+      const prev = byColumn[i - 1];
+      const cur = byColumn[i];
+      const sameColumn = Math.abs((prev.crop_x + prev.crop_width / 2) - (cur.crop_x + cur.crop_width / 2)) < 18;
+      if (sameColumn && cur.question_number_y < prev.question_number_y - 0.5) {
+        issues.push({ question: cur.question_no, page, reason: "같은 단에서 문항번호 순서가 위아래 배치와 맞지 않음" });
+      }
+    }
+  }
+
+  const numbers = sorted.map((x) => x.question_no);
+  for (let i = 1; i < numbers.length; i += 1) {
+    if (numbers[i] === numbers[i - 1]) issues.push({ question: numbers[i], page: sorted[i].page_no, reason: "문항번호 중복" });
+  }
+  return issues;
+}
+
 function openAiError(status: number, body: string) {
   let message = body;
   try {
@@ -367,6 +403,10 @@ export async function POST(request: NextRequest) {
       "문항의 아래쪽은 선택지·도형이 끝난 직후까지만 두고 큰 빈 여백을 포함하지 않는다.",
       "페이지 머리말, 시험 제목, 이름란, 쪽번호, 출판사·저작권 문구는 포함하지 않는다.",
       "예제·설명·참고문항처럼 번호가 있더라도 실제 시험 문항이 아니면 제외한다.",
+      "문항번호는 절대로 1,2,3처럼 순서대로 임의 부여하지 말고, 사각형 안에서 실제로 읽히는 인쇄 번호만 사용한다.",
+      "반환하는 각 사각형의 왼쪽 위 부근에는 question_no와 동일한 인쇄 문항번호가 실제로 보여야 한다. 번호가 보이지 않는 본문 조각, 수식 조각, 선택지 조각, 페이지 꼬리말은 문항이 아니다.",
+      "한 문항을 위·아래 조각으로 나누지 않는다. 문제 본문이 여러 줄이면 마지막 선택지나 도형까지 하나의 사각형으로 묶는다.",
+      "페이지 하단의 출판사 문구, 슬로건, 가로선, 쪽번호를 문항으로 세지 않는다.",
       "문항번호는 실제 인쇄된 번호를 사용하고 누락·중복하지 않는다.",
       "같은 페이지의 서로 다른 문항에 동일하거나 거의 동일한 사각형 좌표를 절대로 반환하지 않는다. 각 문항은 반드시 자기 문항번호가 보이는 고유 영역이어야 한다.",
       "반환 전 같은 페이지의 모든 사각형을 서로 비교하여, 한 문항 영역이 다른 문항 영역과 대부분 겹치면 좌표를 다시 찾는다.",
@@ -422,24 +462,27 @@ export async function POST(request: NextRequest) {
     // 같은 페이지의 여러 문항이 첫 문항 좌표를 공유하는 잘못된 결과는 저장하지 않는다.
     // 중복이 감지되면 시험지 비전을 한 번 더 호출해 좌표만 바로잡는다.
     let duplicateCrops = findDuplicateCrops(crops);
-    if (duplicateCrops.length) {
+    let suspiciousCrops = findSuspiciousCrops(crops);
+    if (duplicateCrops.length || suspiciousCrops.length) {
       await supabase
         .from("source_analysis")
         .update({
           progress: 55,
-          current_step: `중복 문항 영역 ${duplicateCrops.length}건 감지 · 좌표 재판독 중`,
+          current_step: `잘못된 문항 영역 ${duplicateCrops.length + suspiciousCrops.length}건 감지 · 좌표 재판독 중`,
         })
         .eq("id", analysis.id);
 
       const correctionPrompt = [
         cropPrompt,
         "",
-        "이전 판독에서 아래 문항들이 같은 페이지의 동일한 첫 문항 영역을 공유하는 오류가 발생했다.",
-        JSON.stringify(duplicateCrops),
+        "이전 판독에 아래와 같은 중복 또는 비정상 문항 영역 오류가 발생했다.",
+        JSON.stringify({ duplicates: duplicateCrops, suspicious: suspiciousCrops }),
         "시험지 전체를 다시 직접 보고 모든 문항의 사각형을 새로 산출하라.",
         "이전 좌표를 복사하거나 재사용하지 말고, 각 question_no가 실제로 보이는 서로 다른 고유 영역만 반환하라.",
         "문항 위/왼쪽의 별표(★)나 장식은 제외하고 실제 문항번호부터 시작하라.",
         "각 문항의 question_number_y를 실제 인쇄된 번호 글자의 맨 위로 다시 측정하라.",
+        "반환 직전 각 사각형을 눈으로 다시 확인하여 왼쪽 위에 해당 question_no가 실제로 보이는지 검증하라.",
+        "번호가 보이지 않는 수식 일부, 본문 일부, 선택지 일부, 하단 슬로건/가로선은 삭제하라.",
       ].join("\n");
 
       const correctedRaw = await callOpenAi({
@@ -454,14 +497,16 @@ export async function POST(request: NextRequest) {
       cropPayload = parseJson<{ questions: AiCropQuestion[] }>(correctedRaw);
       crops = normalizeAiCrops(cropPayload.questions);
       duplicateCrops = findDuplicateCrops(crops);
+      suspiciousCrops = findSuspiciousCrops(crops);
     }
 
-    if (duplicateCrops.length) {
+    if (duplicateCrops.length || suspiciousCrops.length) {
       const sample = duplicateCrops
         .slice(0, 6)
         .map((item) => `${item.page}쪽 ${item.first}번/${item.second}번`)
         .join(", ");
-      throw new Error(`AI 문항 좌표 중복을 자동으로 막았습니다: ${sample}. 다시 분석해 주세요.`);
+      const suspiciousSample = suspiciousCrops.slice(0, 6).map((item) => `${item.page}쪽 ${item.question}번(${item.reason})`).join(", ");
+      throw new Error(`AI 문항 좌표 오류를 자동으로 막았습니다: ${[sample, suspiciousSample].filter(Boolean).join(" / ")}. 다시 분석해 주세요.`);
     }
 
     const analysisPayload = analysisRaw ? parseJson<{ questions: AnalysisQuestion[] }>(analysisRaw) : { questions: [] as AnalysisQuestion[] };
@@ -502,9 +547,6 @@ export async function POST(request: NextRequest) {
         review_reason: cropNeedsReview
           ? crop.review_reason || "AI가 자른 문항 영역을 확인해 주세요."
           : null,
-        analysis_version: meta ? PROBLEM_DNA_VERSION : "legacy-v1",
-        dna_valid: Boolean(validation?.valid),
-        dna_validation_errors: validation?.errors ?? [],
         ai_result: {
           question_type: legacy?.question_type ?? "unknown",
           subject: legacy?.subject || source.subject || null,
@@ -574,7 +616,6 @@ export async function POST(request: NextRequest) {
         total_questions: rows.length,
         objective_count: objectiveCount,
         subjective_count: subjectiveCount,
-        analysis_version: mode === "full" ? PROBLEM_DNA_VERSION : "legacy-v1",
         finished_at: finishedAt,
         updated_at: finishedAt,
       })

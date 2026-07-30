@@ -122,7 +122,7 @@ type CanonicalCrop = {
   canvas: HTMLCanvasElement;
 };
 
-const CROP_ENGINE_VERSION = "single-path-v3-top-anchor";
+const CROP_ENGINE_VERSION = "single-path-v4-verified-box";
 
 function isCanonicalized(question: Question) {
   return String(question.review_result?.crop_engine_version ?? "") === CROP_ENGINE_VERSION;

@@ -227,9 +227,6 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 
     const patch: Record<string, unknown> = {
       ai_result: aiResult,
-      analysis_version: PROBLEM_DNA_VERSION,
-      dna_valid: validation.valid,
-      dna_validation_errors: validation.errors,
       confidence: normalizedConfidence,
       status: autoPass ? "AUTO_REGISTERED" : "REVIEW",
       review_reason: autoPass ? null : (dna.summary?.review_reasons?.join(" · ") || validation.errors.join(" · ") || "자동 판정 기준을 통과하지 못해 검토대상으로 보류되었습니다."),
