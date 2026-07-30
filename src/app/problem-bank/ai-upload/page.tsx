@@ -343,8 +343,9 @@ function buildAnchorCrop(pageCanvas: HTMLCanvasElement, anchor: QuestionAnchor):
 
   let blockBottom: number;
   if (anchor.nextTopPct === null) {
-    // 단의 마지막 문항: 다음 문항이 없으므로 큰 공백에서 멈춘다.
-    blockBottom = descendToBlockBottom(ink, blockTop, Math.max(24, Math.round(pageH * 0.045)));
+    // 단의 마지막 문항도 footerTop으로 제한된 안전 밴드 안에서는 마지막 잉크까지 포함한다.
+    // 본문과 선택지 사이의 큰 공백을 종료점으로 쓰면 선택지가 떨어진 2번·6번이 잘린다.
+    blockBottom = lastInkRow(ink, ink.sh - 1) ?? blockTop;
   } else {
     // 다음 문항의 진짜 시작점 바로 위까지가 이 문항의 영역이다.
     // 중간 공백은 무시하므로 도형·선택지 앞의 넓은 여백이 있어도 끝까지 살아남는다.
