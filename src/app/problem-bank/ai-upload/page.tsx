@@ -127,7 +127,7 @@ type CanonicalCrop = {
   canvas: HTMLCanvasElement;
 };
 
-const CROP_ENGINE_VERSION = "text-anchor-v1";
+const CROP_ENGINE_VERSION = "text-anchor-v2";
 
 /** 텍스트 앵커 자르기에서 내용 바깥으로 남길 여백(px, 렌더 캔버스 기준) */
 const ANCHOR_PADDING = {
