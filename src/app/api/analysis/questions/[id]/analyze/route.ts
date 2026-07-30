@@ -1,35 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
+import { PROBLEM_DNA_VERSION, legacyFieldsFromDNA, problemDnaQuestionSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
-const dnaSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "question_type", "subject", "major_unit", "middle_unit", "minor_unit",
-    "difficulty", "thinking_type", "required_skills", "core_concepts",
-    "solution_strategy", "summary", "confidence", "answer",
-  ],
-  properties: {
-    question_type: { type: "string", enum: ["objective", "subjective", "unknown"] },
-    subject: { type: "string" },
-    major_unit: { type: "string" },
-    middle_unit: { type: "string" },
-    minor_unit: { type: "string" },
-    difficulty: { type: "string", enum: ["A", "B", "C", "D", "E"] },
-    thinking_type: { type: "string" },
-    required_skills: { type: "array", items: { type: "string" }, maxItems: 8 },
-    core_concepts: { type: "array", items: { type: "string" }, maxItems: 8 },
-    solution_strategy: { type: "string" },
-    summary: { type: "string" },
-    confidence: { type: "number", minimum: 0, maximum: 1 },
-    answer: { type: "string" },
-  },
-} as const;
+const dnaSchema = problemDnaQuestionSchema;
 
 type OpenAiPayload = {
   id?: string;
@@ -115,12 +93,12 @@ async function requestDna(args: {
     model: args.model,
     input: [{ role: "user", content }],
     reasoning: { effort: "low" },
-    max_output_tokens: 3200,
+    max_output_tokens: 12000,
     store: false,
   };
 
   body.text = args.structured
-    ? { format: { type: "json_schema", name: "problem_dna", strict: true, schema: dnaSchema } }
+    ? { format: { type: "json_schema", name: "problem_dna_v2", strict: true, schema: dnaSchema } }
     : { format: { type: "json_object" } };
 
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -186,81 +164,75 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     if (signed.error) throw signed.error;
 
     const source = sourceResult.data;
-    const prompt = `당신은 한국 중고등 수학 문항을 분류하는 MathPooh MPAI 분석기입니다.
-첨부된 한 문항 이미지만 분석하여 Problem DNA를 생성하세요.
+    const prompt = `당신은 한국 중고등 수학 문항을 교육적으로 분석하는 MathPooh Problem DNA 엔진입니다.
+첨부된 한 문항 이미지만 분석하여 ${PROBLEM_DNA_VERSION} JSON을 생성하세요.
 시험지 정보: ${source?.grade ?? "학년 미상"} / ${source?.subject ?? "과목 미상"} / ${source?.title ?? "제목 미상"}
 문항 번호: ${question.question_no}
 
-분류 원칙:
-- 난이도는 A(기초)~E(최상) 중 하나입니다.
-- 대단원/중단원/소단원은 한국 수학 교육과정에서 자연스럽고 구체적으로 작성합니다.
-- 사고유형은 계산, 개념이해, 조건해석, 식변형, 그래프해석, 추론, 경우분류, 증명 등에서 가장 핵심인 것을 작성합니다.
-- 요구능력과 핵심개념은 중복 없이 짧은 배열로 작성합니다.
-- 풀이전략은 정답 자체보다 해결 접근을 1~3문장으로 적습니다.
-- 핵심 한줄(summary)은 이 문항이 무엇을 평가하는지 한 문장으로 적습니다.
-- 이미지에서 정답을 확정할 수 없으면 answer는 빈 문자열로 둡니다.
-- 보이지 않는 내용을 추측하지 말고 confidence에 반영합니다.
-- 반드시 JSON 객체 하나만 출력합니다.`;
+원칙:
+- schema_version은 반드시 ${PROBLEM_DNA_VERSION}, question_no는 ${question.question_no}입니다.
+- basic은 과목·학년·교육과정·대/중/소단원·세부주제·문항형식을 분류합니다.
+- concept는 핵심/보조/선수/연결개념, 공식·정리, 개념순서, 직접·변형·역방향·유도·결합 적용을 기록합니다.
+- thinking은 첫 진입점, 풀이단계, 요구사고, 표현전환, 핵심발상, 결정적 단계, 검산법을 기록합니다.
+- calculation과 difficulty의 점수는 0~100이며, estimated_minutes는 숙련된 해당 학년 학생 기준입니다.
+- expected_errors와 traps는 실제 문항 근거가 있는 항목만 기록합니다.
+- 모든 EvidenceTag는 tag, 구체적 evidence, confidence를 포함합니다.
+- educational_value에는 대표성, 교육가치, 변형가능성, 재출제가능성, 내신/모의/수능 적합도와 훈련목표를 기록합니다.
+- 이미지에 정답이 없으면 answer는 빈 문자열입니다. 보이지 않는 내용을 추측하지 않습니다.
+- 불확실하면 summary.review_required=true로 두고 review_reasons를 씁니다.
+- 설명이나 코드블록 없이 JSON 객체 하나만 출력합니다.`;
 
-    let dna: Record<string, any>;
+    let dna: ProblemDNA;
     try {
       dna = await requestDna({
-        apiKey,
-        model,
-        prompt,
-        questionImageUrl: signed.data.signedUrl,
-        structured: true,
-      });
+        apiKey, model, prompt, questionImageUrl: signed.data.signedUrl, structured: true,
+      }) as unknown as ProblemDNA;
     } catch (firstError) {
       dna = await requestDna({
-        apiKey,
-        model,
+        apiKey, model,
         prompt: `${prompt}
-이전 응답 생성에 실패했습니다. 설명이나 코드블록 없이 모든 필드를 포함한 JSON 객체 하나만 출력하세요.`,
-        questionImageUrl: signed.data.signedUrl,
-        structured: false,
-      }).catch((secondError) => {
+이전 응답 생성에 실패했습니다. 모든 필드를 포함한 JSON 객체 하나만 출력하세요.`,
+        questionImageUrl: signed.data.signedUrl, structured: false,
+      }).then((value) => value as unknown as ProblemDNA).catch((secondError) => {
         const first = firstError instanceof Error ? firstError.message : String(firstError);
         const second = secondError instanceof Error ? secondError.message : String(secondError);
         throw new Error(`문항 분석 2회 실패: 1차 ${first} / 2차 ${second}`);
       });
     }
 
-    const reviewResult = {
+    const validation = validateProblemDNA(dna);
+    const legacy = validation.valid && validation.dna ? legacyFieldsFromDNA(validation.dna) : {
+      question_type: "unknown", subject: source?.subject ?? "", unit: "", topic: "", difficulty: "중", summary: "",
+    };
+    const aiResult = {
       ...(question.ai_result ?? {}),
-      ...(question.review_result ?? {}),
-      question_type: dna.question_type ?? "unknown",
-      subject: dna.subject || null,
-      unit: dna.middle_unit || dna.major_unit || null,
-      topic: dna.minor_unit || null,
-      major_unit: dna.major_unit || null,
-      middle_unit: dna.middle_unit || null,
-      minor_unit: dna.minor_unit || null,
-      difficulty: dna.difficulty || "C",
-      thinking_type: dna.thinking_type || null,
-      required_skills: Array.isArray(dna.required_skills) ? dna.required_skills : [],
-      core_concepts: Array.isArray(dna.core_concepts) ? dna.core_concepts : [],
-      solution_strategy: dna.solution_strategy || null,
-      summary: dna.summary || null,
+      ...legacy,
+      problem_dna: dna,
+      analysis_version: PROBLEM_DNA_VERSION,
       analysis_model: model,
       analyzed_at: new Date().toISOString(),
     };
 
-    const confidence = Number(dna.confidence);
+    const confidence = Number(dna.summary?.ai_confidence);
     const normalizedConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
     const finalAnswer = typeof dna.answer === "string" ? dna.answer.trim() : String(question.answer ?? "").trim();
     const autoPass =
       normalizedConfidence >= 0.86 &&
       Boolean(finalAnswer) &&
-      Boolean(String(reviewResult.unit ?? "").trim()) &&
-      Boolean(String(reviewResult.topic ?? "").trim()) &&
-      String(reviewResult.question_type ?? "unknown") !== "unknown";
+      validation.valid &&
+      !dna.summary.review_required &&
+      Boolean(String(legacy.unit ?? "").trim()) &&
+      Boolean(String(legacy.topic ?? "").trim()) &&
+      String(legacy.question_type ?? "unknown") !== "unknown";
 
     const patch: Record<string, unknown> = {
-      review_result: reviewResult,
+      ai_result: aiResult,
+      analysis_version: PROBLEM_DNA_VERSION,
+      dna_valid: validation.valid,
+      dna_validation_errors: validation.errors,
       confidence: normalizedConfidence,
       status: autoPass ? "AUTO_REGISTERED" : "REVIEW",
-      review_reason: autoPass ? null : "자동 판정 기준을 통과하지 못해 검토대상으로 보류되었습니다.",
+      review_reason: autoPass ? null : (dna.summary?.review_reasons?.join(" · ") || validation.errors.join(" · ") || "자동 판정 기준을 통과하지 못해 검토대상으로 보류되었습니다."),
       updated_at: new Date().toISOString(),
     };
     if (finalAnswer) patch.answer = finalAnswer;

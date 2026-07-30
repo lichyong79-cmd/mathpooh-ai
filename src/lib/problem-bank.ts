@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { PROBLEM_DNA_VERSION, collectProblemDnaTags, problemDnaEmbeddingText, type ProblemDNA } from "@/lib/problem-dna";
 
 type AnalysisQuestion = {
   id: string;
@@ -30,9 +31,14 @@ function text(value: unknown) {
 }
 
 function finalResult(question: AnalysisQuestion) {
-  return question.review_result && Object.keys(question.review_result).length > 0
-    ? question.review_result
-    : question.ai_result ?? {};
+  const ai = question.ai_result ?? {};
+  const review = question.review_result ?? {};
+  return { ...ai, ...review };
+}
+
+function problemDna(result: Record<string, unknown>) {
+  const value = result.problem_dna;
+  return value && typeof value === "object" ? value as ProblemDNA : null;
 }
 
 async function createEmbeddings(inputs: string[]) {
@@ -70,6 +76,8 @@ export async function registerQuestions(
 
   const embeddingTexts = questions.map((question) => {
     const result = finalResult(question);
+    const dna = problemDna(result);
+    if (dna?.schema_version === PROBLEM_DNA_VERSION) return problemDnaEmbeddingText(dna);
     return [
       `과목: ${text(result.subject) || text(source.subject)}`,
       `단원: ${text(result.unit)}`,
@@ -84,6 +92,7 @@ export async function registerQuestions(
   const now = new Date().toISOString();
   const rows = questions.map((question, index) => {
     const result = finalResult(question);
+    const dna = problemDna(result);
     return {
       source_file_id: source.id,
       analysis_question_id: question.id,
@@ -108,6 +117,9 @@ export async function registerQuestions(
       crop_width: question.crop_width ?? null,
       crop_height: question.crop_height ?? null,
       question_image_path: question.question_image_path ?? null,
+      problem_dna: dna,
+      analysis_version: dna?.schema_version ?? "legacy-v1",
+      dna_tags: dna ? collectProblemDnaTags(dna) : [],
       embedding_text: embeddingTexts[index],
       embedding: embeddings[index] ?? null,
       status: "ACTIVE",

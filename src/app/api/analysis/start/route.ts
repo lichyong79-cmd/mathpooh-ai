@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
+import { PROBLEM_DNA_VERSION, legacyFieldsFromDNA, problemDnaBatchSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -18,17 +19,7 @@ type AiCropQuestion = {
   review_reason: string;
 };
 
-type AnalysisQuestion = {
-  question_no: number;
-  answer: string;
-  question_type: "objective" | "subjective" | "unknown";
-  subject: string;
-  unit: string;
-  topic: string;
-  difficulty: "하" | "중" | "상" | "최상";
-  confidence: number;
-  summary: string;
-};
+type AnalysisQuestion = ProblemDNA;
 
 type OpenAiPayload = {
   id?: string;
@@ -76,44 +67,7 @@ const cropSchema = {
   },
 } as const;
 
-const analysisSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["questions"],
-  properties: {
-    questions: {
-      type: "array",
-      minItems: 1,
-      maxItems: 200,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: [
-          "question_no",
-          "answer",
-          "question_type",
-          "subject",
-          "unit",
-          "topic",
-          "difficulty",
-          "confidence",
-          "summary",
-        ],
-        properties: {
-          question_no: { type: "integer", minimum: 1, maximum: 200 },
-          answer: { type: "string" },
-          question_type: { type: "string", enum: ["objective", "subjective", "unknown"] },
-          subject: { type: "string" },
-          unit: { type: "string" },
-          topic: { type: "string" },
-          difficulty: { type: "string", enum: ["하", "중", "상", "최상"] },
-          confidence: { type: "number", minimum: 0, maximum: 1 },
-          summary: { type: "string" },
-        },
-      },
-    },
-  },
-} as const;
+const analysisSchema = problemDnaBatchSchema;
 
 function outputText(payload: OpenAiPayload) {
   if (typeof payload.output_text === "string") return payload.output_text;
@@ -236,7 +190,7 @@ async function callOpenAi(args: {
   prompt: string;
   files: string[];
   schemaName: string;
-  schema: typeof cropSchema | typeof analysisSchema;
+  schema: object;
   maxOutputTokens: number;
 }) {
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -422,18 +376,20 @@ export async function POST(request: NextRequest) {
     ].join("\n");
 
     const analysisPrompt = [
-      "너는 한국 중·고등 수학 문항 분석 전문가다.",
-      "첫 번째 PDF는 시험지, 두 번째 PDF는 해설지다.",
-      "문항 자르기나 좌표는 판단하지 않고 문항번호별 내용만 분석한다.",
-      "시험지에 실제 존재하는 모든 문항을 번호순으로 분석한다.",
-      "정답은 해설지의 정답표와 해당 해설을 교차 확인한다. 확인이 어려우면 빈 문자열로 둔다.",
-      "객관식은 objective, 단답형·서술형은 subjective로 분류한다.",
-      "unit은 교육과정 단원명으로 구체적으로 쓴다.",
-      "topic은 핵심 개념·발상·유형이 드러나도록 12~30자로 쓴다.",
-      "difficulty는 하·중·상·최상 중 하나다.",
-      "summary는 25자 안팎의 매우 짧은 한 문장으로 작성한다.",
-      "설명이나 풀이를 길게 쓰지 말고 분류 결과만 간결하게 반환한다.",
-      "문항번호를 누락하거나 중복하지 않는다.",
+      "너는 한국 중·고등 수학 문항을 교육적으로 분석하는 Problem DNA 엔진이다.",
+      "첫 번째 PDF는 시험지, 두 번째 PDF는 해설지다. 문항 좌표는 판단하지 않고 실제 문항별 DNA만 만든다.",
+      `모든 문항의 schema_version은 반드시 ${PROBLEM_DNA_VERSION}로 쓴다.`,
+      "정답은 정답표와 해설을 교차 확인하고, 확인되지 않으면 빈 문자열로 둔다.",
+      "basic은 과목·학년·교육과정·대/중/소단원·세부주제·문항형식을 객관적으로 분류한다.",
+      "concept는 핵심/보조/선수/연결 개념, 공식·정리, 개념 적용 순서와 직접·변형·역방향·유도·결합 적용을 기록한다.",
+      "thinking은 첫 진입점, 풀이 단계, 요구 사고, 표현 전환, 핵심 발상, 결정적 단계, 검산 방법을 기록한다.",
+      "calculation과 difficulty의 모든 점수는 0~100이다. estimated_minutes는 숙련된 해당 학년 학생 기준이다.",
+      "expected_errors는 개념결손·개념혼동·조건누락·조건오독·식설정·부호·계산·경우누락·범위누락·그래프해석·도형오개념·성급한일반화·검증부족·시간압박 중 실제 가능성이 있는 것만 쓴다.",
+      "traps는 불필요조건·숨은조건·정의역/치역·중근·부호변화·경계값·예외값·오해도형·익숙한유형착각·공식기계대입·계산으로핵심은폐 중 실제 근거가 있는 것만 쓴다.",
+      "모든 EvidenceTag의 evidence는 문제 또는 해설에서 그렇게 판단한 구체적 근거를 한 문장으로 쓴다.",
+      "educational_value는 대표성·교육가치·변형가능성·재출제가능성·내신/모의고사/수능 적합도와 훈련목표, 선수·후속·유사문항 특징, 변형지점을 기록한다.",
+      "summary는 교사가 바로 이해할 수 있도록 짧고 구체적으로 작성한다. 불확실한 필드가 있으면 review_required=true와 이유를 남긴다.",
+      "빈 배열은 허용하지만 근거 없는 태그를 억지로 채우지 않는다. 문항번호를 누락하거나 중복하지 않는다.",
       `시험지 정보: ${source.title} / ${source.source ?? ""} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
     ].join("\n");
 
@@ -451,9 +407,9 @@ export async function POST(request: NextRequest) {
         model: analysisModel,
         prompt: analysisPrompt,
         files: [examUrl, solutionUrl],
-        schemaName: "math_exam_content_analysis",
+        schemaName: "math_problem_dna_v2",
         schema: analysisSchema,
-        maxOutputTokens: 6500,
+        maxOutputTokens: 24000,
       }) : Promise.resolve(null);
     const [cropRaw, analysisRaw] = await Promise.all([cropPromise, analysisPromise]);
 
@@ -509,7 +465,8 @@ export async function POST(request: NextRequest) {
     }
 
     const analysisPayload = analysisRaw ? parseJson<{ questions: AnalysisQuestion[] }>(analysisRaw) : { questions: [] as AnalysisQuestion[] };
-    const analysisByNo = new Map(analysisPayload.questions.map((item) => [Number(item.question_no), item]));
+    const validatedAnalysis = analysisPayload.questions.map((item) => ({ item, validation: validateProblemDNA(item) }));
+    const analysisByNo = new Map(validatedAnalysis.map(({ item, validation }) => [Number(item.question_no), { item, validation }]));
 
     await supabase
       .from("source_analysis")
@@ -522,11 +479,11 @@ export async function POST(request: NextRequest) {
     await supabase.from("analysis_questions").delete().eq("analysis_id", analysis.id);
 
     const rows = crops.map((crop) => {
-      const meta = analysisByNo.get(crop.question_no);
-      const combinedConfidence = Math.min(
-        crop.confidence,
-        Number(meta?.confidence ?? 0.55),
-      );
+      const analyzed = analysisByNo.get(crop.question_no);
+      const meta = analyzed?.item;
+      const validation = analyzed?.validation;
+      const legacy = meta ? legacyFieldsFromDNA(meta) : null;
+      const combinedConfidence = Math.min(crop.confidence, Number(meta?.summary.ai_confidence ?? 0.55));
 
       const cropNeedsReview =
         crop.confidence < 0.82 || Boolean(crop.review_reason.trim());
@@ -535,7 +492,7 @@ export async function POST(request: NextRequest) {
         analysis_id: analysis.id,
         question_no: crop.question_no,
         answer: meta?.answer?.trim() || null,
-        status: meta ? "REVIEW" : "WAITING",
+        status: meta && validation?.valid && !meta.summary.review_required ? "AUTO_REGISTERED" : meta ? "REVIEW" : "WAITING",
         confidence: combinedConfidence,
         page_no: crop.page_no,
         crop_x: crop.crop_x,
@@ -545,13 +502,18 @@ export async function POST(request: NextRequest) {
         review_reason: cropNeedsReview
           ? crop.review_reason || "AI가 자른 문항 영역을 확인해 주세요."
           : null,
+        analysis_version: meta ? PROBLEM_DNA_VERSION : "legacy-v1",
+        dna_valid: Boolean(validation?.valid),
+        dna_validation_errors: validation?.errors ?? [],
         ai_result: {
-          question_type: meta?.question_type ?? "unknown",
-          subject: meta?.subject || source.subject || null,
-          unit: meta?.unit || null,
-          topic: meta?.topic || null,
-          difficulty: meta?.difficulty ?? "중",
-          summary: meta?.summary || null,
+          question_type: legacy?.question_type ?? "unknown",
+          subject: legacy?.subject || source.subject || null,
+          unit: legacy?.unit || null,
+          topic: legacy?.topic || null,
+          difficulty: legacy?.difficulty ?? "중",
+          summary: legacy?.summary || null,
+          problem_dna: meta ?? null,
+          analysis_version: meta ? PROBLEM_DNA_VERSION : "legacy-v1",
           crop_engine: "AI_VISUAL_BOUNDING_BOX_V1",
           ai_crop: {
             confidence: crop.confidence,
@@ -585,7 +547,8 @@ export async function POST(request: NextRequest) {
           !String(question.answer ?? "").trim() ||
           !String(result.unit ?? "").trim() ||
           !String(result.topic ?? "").trim() ||
-          String(result.question_type ?? "unknown") === "unknown"
+          String(result.question_type ?? "unknown") === "unknown" ||
+          !Boolean((result.problem_dna as Record<string, unknown> | undefined)?.schema_version)
         );
       })
       .map((question) => question.id);
@@ -598,12 +561,8 @@ export async function POST(request: NextRequest) {
       if (reviewUpdate.error) throw reviewUpdate.error;
     }
 
-    const objectiveCount = analysisPayload.questions.filter(
-      (question) => question.question_type === "objective",
-    ).length;
-    const subjectiveCount = analysisPayload.questions.filter(
-      (question) => question.question_type === "subjective",
-    ).length;
+    const objectiveCount = analysisPayload.questions.filter((question) => question.basic.question_format === "objective").length;
+    const subjectiveCount = analysisPayload.questions.filter((question) => question.basic.question_format === "short_answer" || question.basic.question_format === "essay").length;
 
     const finishedAt = new Date().toISOString();
     const updated = await supabase
@@ -615,6 +574,7 @@ export async function POST(request: NextRequest) {
         total_questions: rows.length,
         objective_count: objectiveCount,
         subjective_count: subjectiveCount,
+        analysis_version: mode === "full" ? PROBLEM_DNA_VERSION : "legacy-v1",
         finished_at: finishedAt,
         updated_at: finishedAt,
       })
