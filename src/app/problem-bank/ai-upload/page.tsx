@@ -106,7 +106,7 @@ function displayQuestionStatus(question: Question) {
 
 const CROP_PADDING = {
   left: 18,
-  top: 8,
+  top: 16,
   right: 18,
   bottom: 20,
 } as const;
@@ -122,7 +122,7 @@ type CanonicalCrop = {
   canvas: HTMLCanvasElement;
 };
 
-const CROP_ENGINE_VERSION = "single-path-v7-anchor-aware-full-content";
+const CROP_ENGINE_VERSION = "single-path-v6-content-bands";
 
 function isCanonicalized(question: Question) {
   return String(question.review_result?.crop_engine_version ?? "") === CROP_ENGINE_VERSION;
@@ -163,18 +163,13 @@ function buildCanonicalCrop(
 
   const expandedLeft = Math.max(columnMin, input.x - AUTO_EXPAND.x);
   const anchorY = Number(options?.questionNumberY);
-  // 문항번호 좌표가 약간 아래로 잡혀도 첫 줄 전체를 복구할 수 있도록 위쪽을 충분히 탐색한다.
-  // 최종 경계는 픽셀 내용으로 다시 줄이므로 헤더 여백은 결과에 남기지 않는다.
+  // AI가 저장한 실제 문항번호 y가 있으면 그 위 0.85%까지만 탐색한다.
+  // 페이지 최상단의 교재명·페이지번호·가로선이 Content Box에 끌려오는 것을 막는다.
   const expandedTop = Number.isFinite(anchorY)
-    ? Math.max(0, Math.min(input.y - 0.5, anchorY - 2.2))
+    ? Math.max(0, anchorY - 0.85)
     : Math.max(0, input.y - AUTO_EXPAND.top);
   const expandedRight = Math.min(columnMax, input.x + input.width + AUTO_EXPAND.x);
-  // 장문·대형 도형 문항에서 AI 박스의 하단이 짧게 끝나는 경우가 있으므로
-  // 최소 20%p 아래까지 탐색한 뒤 실제 잉크 경계로 다시 줄인다.
-  const expandedBottom = Math.min(100, Math.max(
-    input.y + input.height + AUTO_EXPAND.bottom,
-    input.y + input.height + 20,
-  ));
+  const expandedBottom = Math.min(100, input.y + input.height + AUTO_EXPAND.bottom);
 
   const sx = Math.max(0, Math.floor(pageCanvas.width * expandedLeft / 100));
   const sy = Math.max(0, Math.floor(pageCanvas.height * expandedTop / 100));
@@ -279,16 +274,7 @@ function buildCanonicalCrop(
         const gap = bands[i + 1].start - bands[i].end - 1;
         const upperHeight = bands[i].end - bands[0].start + 1;
         const lowerHeight = bands[bands.length - 1].end - bands[i + 1].start + 1;
-        const anchorPixel = Number.isFinite(anchorY)
-          ? Math.floor((anchorY / 100) * pageCanvas.height) - sy
-          : null;
-        const anchorBelongsToLowerBand = anchorPixel == null || anchorPixel >= bands[i + 1].start - Math.max(12, Math.floor(sh * 0.015));
-        if (
-          gap >= hugeGap &&
-          upperHeight <= sh * 0.22 &&
-          lowerHeight > upperHeight * 1.15 &&
-          anchorBelongsToLowerBand
-        ) {
+        if (gap >= hugeGap && upperHeight <= sh * 0.22 && lowerHeight > upperHeight * 1.15) {
           top = bands[i + 1].start;
         }
       }
@@ -318,8 +304,16 @@ function buildCanonicalCrop(
   left = Math.max(0, left - CROP_PADDING.left);
   top = Math.max(0, top - CROP_PADDING.top);
 
-  // 문항번호 좌표는 탐색 범위와 잘못된 상단 찌꺼기 판정에만 사용한다.
-  // 최종 상단은 실제 잉크 경계를 그대로 사용해 모든 문항에 같은 빈 여백이 생기지 않게 한다.
+  // AI 문항번호 기준점은 실제 내용 상단과 가까울 때만 사용한다.
+  // 기준점이 이전 문항 선택지나 큰 빈 공간을 가리키면 픽셀 내용 경계를 우선한다.
+  if (Number.isFinite(anchorY)) {
+    const anchorPixel = Math.floor((anchorY / 100) * pageCanvas.height) - sy;
+    const anchorDistance = Math.abs(anchorPixel - top);
+    const anchorTolerance = Math.max(28, Math.floor(sh * 0.10));
+    if (anchorDistance <= anchorTolerance) {
+      top = Math.min(top, Math.max(0, anchorPixel - CROP_PADDING.top));
+    }
+  }
 
   right = Math.min(sw - 1, right + CROP_PADDING.right);
   bottom = Math.min(sh - 1, bottom + CROP_PADDING.bottom);
