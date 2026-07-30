@@ -811,13 +811,8 @@ export default function AnalysisWorkspacePage() {
     };
   }, [workspace?.examUrl]);
 
-  // PDF 텍스트 레이어에서 문항번호의 실제 좌표를 한 번만 읽어 캐시한다.
-  // AI 좌표와 달리 오차가 없고, 문항 목록이 바뀔 때만 다시 계산한다.
-  const questionNoKey = useMemo(
-    () => questions.map((item) => item.question_no).join(","),
-    [questions],
-  );
-
+  // PDF 텍스트 레이어에서 실제 문항번호 전체를 한 번 읽어 캐시한다.
+  // AI가 먼저 찾은 문항 목록으로 제한하면 AI가 놓친 번호를 PDF에서도 영원히 찾지 못한다.
   useEffect(() => {
     if (!pdfDoc) {
       setAnchors(null);
@@ -829,11 +824,7 @@ export default function AnalysisWorkspacePage() {
 
     void (async () => {
       try {
-        const expected = questionNoKey
-          .split(",")
-          .map((value) => Number(value))
-          .filter((value) => Number.isFinite(value) && value > 0);
-        const result = await buildDocumentAnchors(pdfDoc, expected.length ? expected : undefined);
+        const result = await buildDocumentAnchors(pdfDoc);
         if (!cancelled) setAnchors(result);
       } catch (caught) {
         console.error("문항 앵커 계산 실패", caught);
@@ -846,7 +837,7 @@ export default function AnalysisWorkspacePage() {
     return () => {
       cancelled = true;
     };
-  }, [pdfDoc, questionNoKey]);
+  }, [pdfDoc]);
 
   useEffect(() => {
     if (!activeQuestion) {
