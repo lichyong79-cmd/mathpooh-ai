@@ -40,7 +40,7 @@ const emptyDraft: Draft = {
   subject: "",
   unit: "",
   topic: "",
-  difficulty: "C",
+  difficulty: "2",
   question_type: "unknown",
   answer: "",
   summary: "",
@@ -62,6 +62,11 @@ function confidencePercent(value: number | null) {
   if (value == null || !Number.isFinite(Number(value))) return "-";
   const number = Number(value);
   return `${Math.round(number <= 1 ? number * 100 : number)}%`;
+}
+
+function normalizeDifficulty(value: unknown) {
+  const raw = String(value ?? "").trim();
+  return ({ A: "1", B: "2", C: "3", D: "4", E: "5", 하: "1", 중: "2", 상: "4", 최상: "5" } as Record<string, string>)[raw] ?? (/^[1-5]$/.test(raw) ? raw : "2");
 }
 
 export default function ProblemBankPage() {
@@ -106,7 +111,7 @@ export default function ProblemBankPage() {
         { headers: { ...(await authHeaders()) }, cache: "no-store" },
       );
       if (!response.ok) throw new Error(await response.text());
-      const rows = (await response.json()) as Problem[];
+      const rows = ((await response.json()) as Problem[]).map((item) => ({ ...item, difficulty: normalizeDifficulty(item.difficulty) }));
       setItems(rows);
       setSelectedId((current) => rows.some((item) => item.id === current) ? current : rows[0]?.id ?? "");
     } catch (reason) {
@@ -297,7 +302,7 @@ export default function ProblemBankPage() {
                 <label><span>과목</span><input value={draft.subject} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} /></label>
                 <label><span>단원</span><input value={draft.unit} onChange={(event) => setDraft({ ...draft, unit: event.target.value })} /></label>
                 <label><span>유형</span><input value={draft.topic} onChange={(event) => setDraft({ ...draft, topic: event.target.value })} /></label>
-                <label><span>난이도</span><select value={draft.difficulty} onChange={(event) => setDraft({ ...draft, difficulty: event.target.value })}><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option></select></label>
+                <label><span>난이도</span><select value={draft.difficulty} onChange={(event) => setDraft({ ...draft, difficulty: event.target.value })}><option value="1">1단계 · 개념 확인</option><option value="2">2단계 · 기본 유형</option><option value="3">3단계 · 응용 유형</option><option value="4">4단계 · 준킬러</option><option value="5">5단계 · 최상위·킬러</option></select></label>
                 <label><span>문항 형식</span><select value={draft.question_type} onChange={(event) => setDraft({ ...draft, question_type: event.target.value })}><option value="multiple_choice">객관식</option><option value="short_answer">단답형</option><option value="essay">서술형</option><option value="unknown">미분류</option></select></label>
                 <label><span>정답</span><input value={draft.answer} onChange={(event) => setDraft({ ...draft, answer: event.target.value })} /></label>
                 <label><span>출처</span><input value={draft.source_name} onChange={(event) => setDraft({ ...draft, source_name: event.target.value })} /></label>
@@ -318,7 +323,7 @@ export default function ProblemBankPage() {
         .bank-header{max-width:1920px;min-height:104px;margin-bottom:12px;padding:18px 22px;border-radius:18px;background:linear-gradient(120deg,var(--navy),#293d64);box-shadow:0 12px 30px rgba(24,36,61,.16);align-items:center}
         .bank-header p{color:#f3c86e;margin:0 0 4px}.bank-header h1{color:#fff;font-size:30px;letter-spacing:-.04em}.bank-header span{color:#bfc9dc}.back-button{border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:#fff}.refresh-button{border-color:#e9c46c;background:#e9c46c;color:#2d281d;padding:12px 18px}
         .filter-bar{max-width:1920px;margin-bottom:12px;padding:11px;border-radius:14px;box-shadow:0 5px 18px rgba(32,45,72,.06)}.filter-bar input,.filter-bar select{height:42px;border-color:#d9dfea;background:#fbfcfe;font-size:13px;font-weight:700}.filter-bar input:focus,.filter-bar select:focus{outline:3px solid rgba(201,154,59,.16);border-color:var(--gold)}
-        .bank-layout{max-width:1920px;grid-template-columns:390px minmax(0,1fr);gap:12px}.problem-list,.problem-detail{border-radius:16px;border-color:#dce2eb;box-shadow:0 8px 26px rgba(31,45,71,.07)}.problem-list{max-height:calc(100vh - 184px);background:#f8fafc}.list-head,.problem-row{grid-template-columns:58px minmax(0,1fr) 42px}.list-head{padding:12px 13px;background:var(--navy);color:#dbe2ef;border:0}.problem-row{padding:12px 13px;background:#fff;border-bottom-color:#e9edf3;min-height:76px}.problem-row:hover{background:#fffaf0}.problem-row.selected{background:var(--gold-soft);box-shadow:inset 5px 0 0 var(--gold)}.problem-row strong{font-size:15px;color:var(--navy)}.problem-row b{font-size:13px;color:#253654}.problem-row small{font-size:10px;color:#8a94a5}.problem-row>span{padding:0;background:transparent}.difficulty-chip{display:grid!important;place-items:center;width:31px;height:31px;border-radius:50%!important;font-size:12px!important;color:#fff!important;background:#748097!important}.difficulty-A{background:#37815f!important}.difficulty-B{background:#5571ba!important}.difficulty-C{background:#c18b32!important}.difficulty-D{background:#cf6f45!important}.difficulty-E{background:#a34d5a!important}
+        .bank-layout{max-width:1920px;grid-template-columns:390px minmax(0,1fr);gap:12px}.problem-list,.problem-detail{border-radius:16px;border-color:#dce2eb;box-shadow:0 8px 26px rgba(31,45,71,.07)}.problem-list{max-height:calc(100vh - 184px);background:#f8fafc}.list-head,.problem-row{grid-template-columns:58px minmax(0,1fr) 42px}.list-head{padding:12px 13px;background:var(--navy);color:#dbe2ef;border:0}.problem-row{padding:12px 13px;background:#fff;border-bottom-color:#e9edf3;min-height:76px}.problem-row:hover{background:#fffaf0}.problem-row.selected{background:var(--gold-soft);box-shadow:inset 5px 0 0 var(--gold)}.problem-row strong{font-size:15px;color:var(--navy)}.problem-row b{font-size:13px;color:#253654}.problem-row small{font-size:10px;color:#8a94a5}.problem-row>span{padding:0;background:transparent}.difficulty-chip{display:grid!important;place-items:center;width:31px;height:31px;border-radius:50%!important;font-size:12px!important;color:#fff!important;background:#748097!important}.difficulty-1{background:#37815f!important}.difficulty-2{background:#5571ba!important}.difficulty-3{background:#c18b32!important}.difficulty-4{background:#cf6f45!important}.difficulty-5{background:#a34d5a!important}
         .problem-detail{grid-template-columns:minmax(500px,1.22fr) minmax(430px,.78fr);min-height:calc(100vh - 184px);background:#fff}.pdf-panel{background:#edf0f4;border-right-color:#dce1e9}.pdf-head,.edit-head{min-height:64px;background:#fff;padding:11px 16px}.pdf-head strong{font-size:14px;color:var(--navy)}.asset-tabs{padding:3px;border-radius:10px;background:#eef1f6}.asset-tabs button{border:0;background:transparent;color:#667289}.asset-tabs button.active{background:var(--navy);color:#fff;box-shadow:0 3px 9px rgba(24,36,61,.2)}.question-viewer{height:calc(100vh - 248px);min-height:580px;padding:30px;background:radial-gradient(circle at 50% 20%,#f6f7f9,#e4e8ed);align-items:flex-start}.question-viewer img{border-radius:4px;box-shadow:0 18px 45px rgba(31,42,63,.22)}
         .edit-panel{max-height:calc(100vh - 184px);background:#f8f9fc}.edit-head{position:sticky;top:0;z-index:4;background:var(--navy);border:0}.edit-head strong{color:#fff;font-size:15px}.edit-head span{color:#bec8da}.edit-head code{color:#ffe5a6;background:rgba(255,255,255,.1)}.detail-tabs{position:sticky;top:64px;z-index:3;padding:10px 14px;background:#fff;border-bottom:1px solid var(--line)}.detail-tabs button{flex:1;border:0;background:#eef1f6;padding:9px}.detail-tabs button.active{background:var(--gold);color:#fff}.edit-grid{gap:10px;padding:14px}.edit-grid label{padding:10px;border:1px solid #e1e6ee;border-radius:11px;background:#fff;gap:5px}.edit-grid label span{font-size:10px;color:#768197}.edit-grid input,.edit-grid select,.edit-grid textarea{border:0;border-radius:0;padding:0;background:transparent;font-size:13px}.edit-grid input,.edit-grid select{height:29px}.edit-grid input:focus,.edit-grid select:focus,.edit-grid textarea:focus{outline:none}.dna-panel{padding:14px;background:#f5f7fa}.edit-actions{padding:11px 14px}.save-button{border-color:var(--navy);background:var(--navy)}.delete-button{background:#fff8f8}.notice{max-width:1920px}
         @media(max-width:1400px){.bank-layout{grid-template-columns:340px minmax(0,1fr)}.problem-detail{grid-template-columns:minmax(450px,1fr) minmax(390px,.85fr)}}

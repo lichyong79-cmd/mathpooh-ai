@@ -233,7 +233,8 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 - thinking.process는 조건읽기→조건번역→정보선별→관계발견→식세우기→구조변환→경우분류→계산→검증 중 실제 단계를 순서대로 기록하고 thinking_types에는 요구된 사고유형을 근거와 함께 기록합니다.
 - solution은 대표/최단/정석/대안 풀이와 계산/개념/도형/대수/함수적 접근, 실제 풀이전략을 구분합니다.
 - abilities에는 개념이해, 조건해석, 표현전환, 관계추론, 식구성, 계산정확성/지속력, 경우분류, 그래프해석, 공간도형인식, 논리전개, 검산, 시간관리 중 실제 요구 능력을 기록합니다.
-- difficulty는 A~E 최종난이도와 개념/조건해석/발상/계산/풀이길이/함정/시간/개념결합수/사고단계수를 분석합니다. 점수는 0~100입니다.
+- difficulty.final_grade는 반드시 정수 1~5 중 하나입니다. 1=개념 확인, 2=기본 유형, 3=응용 유형, 4=준킬러, 5=최상위·킬러입니다.
+- 먼저 개념/조건해석/발상/계산/풀이길이/함정/시간부담/개념결합수/사고단계수를 독립적으로 평가한 뒤 최종 단계를 판정합니다. 무조건 중간 단계로 몰아넣지 말고 문항 근거를 reasons에 기록합니다. 세부 점수는 0~100입니다.
 - errors와 traps는 실제 문항 근거가 있는 항목만 기록합니다.
 - 모든 EvidenceTag는 tag, 구체적 evidence, confidence를 포함합니다.
 - educational_value에는 대표성, 교육가치, 변형가능성, 재출제가능성, 내신/모의/수능 적합도와 훈련목표를 기록합니다.
@@ -267,7 +268,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
         .filter((value) => /공식|해설|정답.*(?:불일치|충돌)|(?:불일치|충돌).*정답/.test(value)),
     ].filter(Boolean);
     const legacy = validation.valid && validation.dna ? legacyFieldsFromDNA(validation.dna) : {
-      question_type: "unknown", subject: source?.subject ?? "", unit: "", topic: "", difficulty: "중", summary: "",
+      question_type: "unknown", subject: source?.subject ?? "", unit: "", topic: "", difficulty: "2", summary: "",
     };
     const aiResult = {
       ...(question.ai_result ?? {}),

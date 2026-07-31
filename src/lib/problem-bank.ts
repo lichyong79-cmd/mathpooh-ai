@@ -103,7 +103,7 @@ export async function registerQuestions(
       subject: text(result.subject) || text(source.subject),
       unit: text(result.unit),
       topic: text(result.topic),
-      difficulty: text(result.difficulty) || "중",
+      difficulty: text(result.difficulty) || "2",
       question_type: text(result.question_type) || "unknown",
       answer: question.answer ?? "",
       summary: text(result.summary),

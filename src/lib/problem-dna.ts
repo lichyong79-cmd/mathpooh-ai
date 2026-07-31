@@ -1,4 +1,4 @@
-export const PROBLEM_DNA_VERSION = "problem-dna-v3.0" as const;
+export const PROBLEM_DNA_VERSION = "problem-dna-v3.1" as const;
 
 export type EvidenceTag = { tag: string; evidence: string; confidence: number };
 export type ThinkingStep = { stage: string; action: string; evidence: string };
@@ -40,7 +40,7 @@ export type ProblemDNA = {
   };
   abilities: EvidenceTag[];
   difficulty: {
-    final_grade: "A" | "B" | "C" | "D" | "E";
+    final_grade: 1 | 2 | 3 | 4 | 5;
     concept: number; condition_interpretation: number; insight: number; calculation: number;
     solution_length: "짧음" | "중간" | "김";
     trap_strength: number; time_burden: number; concept_count: number; thinking_step_count: number;
@@ -115,7 +115,7 @@ export const problemDnaQuestionSchema = {
     difficulty: {
       type: "object", additionalProperties: false,
       required: ["final_grade", "concept", "condition_interpretation", "insight", "calculation", "solution_length", "trap_strength", "time_burden", "concept_count", "thinking_step_count", "estimated_minutes", "reasons"],
-      properties: { final_grade: { type: "string", enum: ["A", "B", "C", "D", "E"] }, concept: score, condition_interpretation: score, insight: score, calculation: score, solution_length: { type: "string", enum: ["짧음", "중간", "김"] }, trap_strength: score, time_burden: score, concept_count: { type: "integer", minimum: 0, maximum: 20 }, thinking_step_count: { type: "integer", minimum: 0, maximum: 30 }, estimated_minutes: { type: "number", minimum: 0, maximum: 120 }, reasons: evidenceArray(8) },
+      properties: { final_grade: { type: "integer", minimum: 1, maximum: 5 }, concept: score, condition_interpretation: score, insight: score, calculation: score, solution_length: { type: "string", enum: ["짧음", "중간", "김"] }, trap_strength: score, time_burden: score, concept_count: { type: "integer", minimum: 0, maximum: 20 }, thinking_step_count: { type: "integer", minimum: 0, maximum: 30 }, estimated_minutes: { type: "number", minimum: 0, maximum: 120 }, reasons: evidenceArray(8) },
     },
     errors: evidenceArray(14), traps: evidenceArray(12),
     educational_value: {
@@ -144,6 +144,8 @@ export function validateProblemDNA(value: unknown): { valid: boolean; errors: st
   for (const key of ["abilities", "errors", "traps"]) if (!Array.isArray(value[key])) errors.push(`${key}가 배열이 아닙니다.`);
   const confidence = isRecord(value.summary) ? Number(value.summary.ai_confidence) : NaN;
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) errors.push("ai_confidence가 0~1 범위가 아닙니다.");
+  const finalGrade = isRecord(value.difficulty) ? Number(value.difficulty.final_grade) : NaN;
+  if (!Number.isInteger(finalGrade) || finalGrade < 1 || finalGrade > 5) errors.push("최종 난이도가 1~5단계가 아닙니다.");
   return errors.length ? { valid: false, errors } : { valid: true, errors: [], dna: value as unknown as ProblemDNA };
 }
 
