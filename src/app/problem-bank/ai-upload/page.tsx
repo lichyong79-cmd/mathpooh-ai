@@ -1090,6 +1090,44 @@ export default function AnalysisWorkspacePage() {
     setWorkspace((current) => current ? { ...current, analysis: payload.analysis } : current);
   }
 
+  async function resetStage(stage: "recognition" | "crop" | "analysis") {
+    if (!workspace?.analysis?.id) return;
+    const warning = stage === "recognition"
+      ? "문제인식 결과를 전부 취소하면 미등록 문항과 자르기·분석 결과가 모두 삭제됩니다."
+      : stage === "crop"
+        ? "자르기 결과를 전부 취소하면 미등록 문항의 자동·수동 자르기와 분석 결과가 삭제됩니다."
+        : "문항분석 결과를 전부 취소하면 미등록 문항이 분석 대기 상태로 돌아갑니다.";
+    if (!window.confirm(`${warning}\n계속할까요?`)) return;
+
+    setBusy(`reset-${stage}`);
+    setError("");
+    setMessage("");
+    try {
+      const sourceId = workspace.source.id;
+      const response = await fetch(`/api/analysis/${workspace.analysis.id}/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.message || "전체 취소에 실패했습니다.");
+
+      await loadWorkspace(sourceId);
+      setWorkflowStep(stage === "recognition" ? 1 : stage === "crop" ? 2 : 3);
+      setViewMode(stage === "recognition" ? "single" : "all");
+      if (stage === "recognition") setActiveQuestionId("");
+      setThumbnailUrls({});
+      setPreview("");
+      setSelection(null);
+      const preserved = Number(payload.preservedRegisteredCount ?? 0);
+      setMessage(`${stage === "recognition" ? "문제인식" : stage === "crop" ? "자르기" : "문항분석"} 전체 취소 완료${preserved ? ` · 문제은행 등록 ${preserved}문항은 보존` : ""}`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "전체 취소에 실패했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function startAnalysis(forceRecognition = false) {
     if (!workspace) return;
     if (
@@ -1829,6 +1867,7 @@ export default function AnalysisWorkspacePage() {
               <div className="workflow-buttons">
                 <button onClick={() => void startAnalysis(true)} disabled={!workspace || !!busy}>{questions.length ? "AI 문제인식 다시 하기" : "AI 문제인식 시작"}</button>
                 {anchors?.hasTextLayer && questions.length ? <button onClick={() => void fillMissingQuestionsFromPdf()} disabled={!!busy}>빠진 문항 채우기</button> : null}
+                <button className="cancel-all" onClick={() => void resetStage("recognition")} disabled={!questions.length || !!busy}>문제인식 전체 취소</button>
                 <button
                   className="pass"
                   onClick={() => void passRecognitionStep()}
@@ -1847,6 +1886,7 @@ export default function AnalysisWorkspacePage() {
                   {!pdfDoc ? "PDF 불러오는 중..." : anchorBusy ? "자르기 기준 준비 중..." : busy === "recrop" ? `보정 중 ${queueProgress.done}/${queueProgress.total}` : "전체 보정 자르기"}
                 </button>
                 <button onClick={() => setViewMode("single")} disabled={!questions.length}>수동 자르기 화면</button>
+                <button className="cancel-all" onClick={() => void resetStage("crop")} disabled={!questions.length || !!busy}>자르기 전체 취소</button>
                 <button className="pass" onClick={() => void passCropStep()} disabled={!questions.length || !!busy}>자르기 전체 통과 →</button>
               </div>
               {busy === "recrop" ? (
@@ -1864,6 +1904,7 @@ export default function AnalysisWorkspacePage() {
                 <button onClick={() => void runAutoPipeline()} disabled={!analysisNeededQuestions.length || savedCropCount !== questions.length || !!busy}>
                   {analysisNeededQuestions.length ? `재분석 필요 ${analysisNeededQuestions.length}문항 분석` : "분석 완료"}
                 </button>
+                <button className="cancel-all" onClick={() => void resetStage("analysis")} disabled={!questions.length || !!busy}>분석 전체 취소</button>
                 <button onClick={() => setViewMode("pending")}>문제은행 대기 {pendingQuestions.length}</button>
                 <button className="review-button" onClick={() => setViewMode("review")}>보류 확인 {reviewQuestions.length}</button>
               </div>
@@ -2198,6 +2239,7 @@ export default function AnalysisWorkspacePage() {
         .workflow-action{margin-top:11px;border-radius:12px;background:#f7f8fb;padding:13px 15px;display:flex;align-items:center;justify-content:space-between;gap:18px}
         .workflow-action>div:first-child{display:grid;gap:4px}.workflow-action span{font-size:13px;color:#6f7889}.workflow-buttons{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
         .workflow-buttons button{height:40px;border:1px solid #d5dbe6;background:#fff;border-radius:9px;padding:0 14px;font-weight:900}.workflow-buttons button.pass{background:#5268e8;border-color:#5268e8;color:#fff}.workflow-buttons button.review-button{background:#d96a2f;border-color:#d96a2f;color:#fff}.workflow-buttons button:disabled{opacity:.45}
+        .workflow-buttons button.cancel-all{border-color:#e0a7a7;background:#fff5f5;color:#ad3f3f}
         section.workspace-grid.recognition-mode{grid-template-columns:205px minmax(760px,1fr)}
         section.workspace-grid.recognition-mode .review-panel{display:none}
         section.workspace-grid.recognition-mode .overlay{cursor:default}
