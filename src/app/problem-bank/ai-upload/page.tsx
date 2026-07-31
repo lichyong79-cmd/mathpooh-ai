@@ -1575,15 +1575,15 @@ export default function AnalysisWorkspacePage() {
   async function recropAllQuestions() {
     if (!workspace || !questions.length) {
       setError("자르기할 문항이 없습니다.");
-      return;
+      return false;
     }
     if (!pdfDoc) {
       setError("시험지 PDF를 불러오는 중입니다. PDF 로딩이 끝난 뒤 다시 눌러 주세요.");
-      return;
+      return false;
     }
     if (anchorBusy) {
       setError("PDF 문항번호 좌표를 읽는 중입니다. 자르기 기준 준비가 끝난 뒤 다시 눌러 주세요.");
-      return;
+      return false;
     }
     setBusy("recrop");
     setError("");
@@ -1606,15 +1606,17 @@ export default function AnalysisWorkspacePage() {
         setQueueProgress({ done: index + 1, total: questions.length });
       }
       setMessage(`전체 문항 보정 자르기 완료 · ${updated.length}문항 · 수동 저장 문항은 유지했습니다.`);
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "전체 문항 다시 자르기에 실패했습니다.");
+      return false;
     } finally {
       setBusy("");
     }
   }
 
   async function runAutoPipeline() {
-    if (!workspace || !pdfDoc || !questions.length) return;
+    if (!workspace || !pdfDoc || !questions.length) return false;
     const analysisTargets = questions.filter((question) =>
       !isBankRegistered(question) &&
       !["AUTO_REGISTERED", "APPROVED", "REGISTERED", "REJECTED"].includes(question.status)
@@ -1622,7 +1624,7 @@ export default function AnalysisWorkspacePage() {
     if (!analysisTargets.length) {
       setMessage("재분석이 필요한 문항이 없습니다. 이미 분석을 통과한 문항은 그대로 유지했습니다.");
       setViewMode("pending");
-      return;
+      return true;
     }
     setBusy("queue");
     setError("");
@@ -1711,8 +1713,10 @@ export default function AnalysisWorkspacePage() {
         setMessage("AI 문항분석 완료 · 자동 통과 문항은 문제은행 대기, 검토 필요 문항은 보류로 분류했습니다.");
       }
       setViewMode("review");
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "자동 처리 중 오류가 발생했습니다.");
+      return false;
     } finally {
       setBusy("");
     }
@@ -1747,9 +1751,11 @@ export default function AnalysisWorkspacePage() {
       return;
     }
     try {
+      const cropped = await recropAllQuestions();
+      if (!cropped) return;
       await saveWorkflowStep(2, "2단계 · AI 자르기 검수");
       setViewMode("all");
-      setMessage(`${questions.length}문항 문제 인식 통과 · 이제 전체 자르기 후 잘못된 문항만 수동 수정하세요.`);
+      setMessage(`${questions.length}문항 문제 인식 통과 · 전체 자르기 자동 완료 · 잘못된 문항만 수동 수정하세요.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "문제 인식 통과 처리에 실패했습니다.");
     }
@@ -1764,7 +1770,8 @@ export default function AnalysisWorkspacePage() {
     try {
       await saveWorkflowStep(3, "3단계 · AI 문항분석 대기");
       setViewMode("all");
-      setMessage(`전체 ${questions.length}문항 자르기 통과 · 이제 AI 문항분석을 실행하세요.`);
+      const analyzed = await runAutoPipeline();
+      if (!analyzed) return;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "자르기 통과 처리에 실패했습니다.");
     }
