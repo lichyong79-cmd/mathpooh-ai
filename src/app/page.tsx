@@ -1112,7 +1112,14 @@ function ProblemsPage({ onOpenAnalysis }: { onOpenAnalysis: (sourceFileId: strin
   };
 
   const removeSource = async (item: SourceFile) => {
-    if (!window.confirm(`${item.title} 시험지 세트를 삭제할까요?\n연결된 AI 분석 결과와 문제은행 문항도 함께 삭제됩니다.`)) return;
+    const confirmation = window.prompt(
+      `시험지 삭제는 되돌릴 수 없습니다.\n\n삭제할 시험지명:\n${item.title}\n\n계속하려면 시험지명을 똑같이 입력하세요.\n문제은행 등록 문항이 있으면 삭제가 자동 차단됩니다.`,
+      "",
+    );
+    if (confirmation !== item.title) {
+      if (confirmation !== null) setErrorMessage("시험지명이 일치하지 않아 삭제하지 않았습니다.");
+      return;
+    }
     setDeletingId(item.id);
     setMessage("");
     setErrorMessage("");

@@ -27,6 +27,7 @@ type SourceFile = {
   subject: string | null;
   status: string;
   error_message: string | null;
+  workflow_label?: string;
 };
 
 type Analysis = {
@@ -841,13 +842,43 @@ export default function AnalysisWorkspacePage() {
   }, []);
 
   const loadSources = useCallback(async () => {
-    const result = await supabase
-      .from("source_files")
-      .select("id,created_at,title,source,grade,subject,status,error_message")
-      .order("created_at", { ascending: false });
+    const [sourceResult, analysisResult, questionResult, bankResult] = await Promise.all([
+      supabase.from("source_files").select("id,created_at,title,source,grade,subject,status,error_message").order("created_at", { ascending: false }),
+      supabase.from("source_analysis").select("id,source_file_id,status,current_step"),
+      supabase.from("analysis_questions").select("analysis_id,status,question_image_path,review_result"),
+      supabase.from("problem_bank_questions").select("source_file_id"),
+    ]);
+    if (sourceResult.error) throw sourceResult.error;
+    if (analysisResult.error) throw analysisResult.error;
+    if (questionResult.error) throw questionResult.error;
+    if (bankResult.error) throw bankResult.error;
 
-    if (result.error) throw result.error;
-    const rows = (result.data ?? []) as SourceFile[];
+    const analysesBySource = new Map((analysisResult.data ?? []).map((row: any) => [String(row.source_file_id), row]));
+    const questionsByAnalysis = new Map<string, any[]>();
+    for (const question of questionResult.data ?? []) {
+      const key = String((question as any).analysis_id);
+      questionsByAnalysis.set(key, [...(questionsByAnalysis.get(key) ?? []), question]);
+    }
+    const bankCounts = new Map<string, number>();
+    for (const row of bankResult.data ?? []) {
+      const key = String((row as any).source_file_id);
+      bankCounts.set(key, (bankCounts.get(key) ?? 0) + 1);
+    }
+
+    const rows = ((sourceResult.data ?? []) as SourceFile[]).map((source) => {
+      const analysis: any = analysesBySource.get(source.id);
+      const linkedQuestions = analysis ? questionsByAnalysis.get(String(analysis.id)) ?? [] : [];
+      const bankCount = bankCounts.get(source.id) ?? 0;
+      const pending = linkedQuestions.filter((item) => ["AUTO_REGISTERED", "APPROVED"].includes(String(item.status))).length;
+      const review = linkedQuestions.filter((item) => String(item.status) === "REVIEW").length;
+      const cropped = linkedQuestions.filter((item) => Boolean(item.question_image_path)).length;
+      let workflowLabel = "미분석";
+      if (bankCount > 0) workflowLabel = `문제은행 등록완료 ${bankCount}문항`;
+      else if (pending > 0 || review > 0 || String(analysis?.current_step ?? "").includes("3단계")) workflowLabel = `3단계 분석 · 대기 ${pending} · 보류 ${review}`;
+      else if (cropped > 0 || String(analysis?.current_step ?? "").includes("2단계")) workflowLabel = `2단계 자르기 ${cropped}/${linkedQuestions.length}`;
+      else if (linkedQuestions.length > 0) workflowLabel = `1단계 문항인식 ${linkedQuestions.length}문항`;
+      return { ...source, workflow_label: workflowLabel };
+    });
     setSources(rows);
     return rows;
   }, [supabase]);
@@ -2142,7 +2173,7 @@ export default function AnalysisWorkspacePage() {
             {sources.length === 0 ? <option value="">등록된 시험지가 없습니다.</option> : null}
             {sources.map((source) => (
               <option key={source.id} value={source.id}>
-                {source.title} · {source.grade || "학년 미정"} · {source.subject || "과목 미정"}
+                [{source.workflow_label || "상태 확인 중"}] {source.title} · {source.grade || "학년 미정"} · {source.subject || "과목 미정"}
               </option>
             ))}
           </select>

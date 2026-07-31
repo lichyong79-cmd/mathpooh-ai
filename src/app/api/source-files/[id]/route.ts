@@ -114,6 +114,16 @@ export async function DELETE(_request: NextRequest, context: { params: Promise<{
       `problem_bank_questions?source_file_id=eq.${encodedId}&select=question_image_path`,
     );
 
+    // 문제은행에 등록된 시험지는 AI 등록 화면의 일반 삭제로 지울 수 없다.
+    // 작업 실수 한 번으로 운영 중인 문항 전체가 사라지는 것을 서버에서 최종 차단한다.
+    if (bankImageRows.length > 0) {
+      return NextResponse.json({
+        success: false,
+        code: "BANK_REGISTERED_SOURCE_PROTECTED",
+        message: `문제은행에 ${bankImageRows.length}문항이 등록된 시험지라 삭제할 수 없습니다. 문제은행 문항을 먼저 정리한 뒤 삭제해 주세요.`,
+      }, { status: 409, headers: { "Cache-Control": "no-store, max-age=0" } });
+    }
+
     // FK/캐스케이드 설정이 과거 DB에 빠져 있어도 잔존 데이터가 없도록 자식부터 명시적으로 삭제한다.
     const deletedBank = await restDelete(url, headers, `problem_bank_questions?source_file_id=eq.${encodedId}`);
     steps.push({ name: "problem_bank_questions", count: deletedBank.length });
