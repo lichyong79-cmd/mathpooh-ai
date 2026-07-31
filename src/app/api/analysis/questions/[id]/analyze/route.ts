@@ -119,15 +119,15 @@ async function requestDna(args: {
   model: string;
   prompt: string;
   questionImageUrl: string;
-  solutionPdfUrl?: string | null;
+  solutionImageUrl?: string | null;
   structured: boolean;
 }) {
   const content: Array<Record<string, unknown>> = [
     { type: "input_text", text: args.prompt },
     { type: "input_image", image_url: args.questionImageUrl, detail: "high" },
   ];
-  if (args.solutionPdfUrl) {
-    content.push({ type: "input_file", file_url: args.solutionPdfUrl });
+  if (args.solutionImageUrl) {
+    content.push({ type: "input_image", image_url: args.solutionImageUrl, detail: "high" });
   }
 
   const body: Record<string, unknown> = {
@@ -205,14 +205,15 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     if (signed.error) throw signed.error;
 
     const source = sourceResult.data;
-    let solutionPdfUrl: string | null = null;
-    if (source?.solution_pdf_path) {
-      const solutionSigned = await supabase.storage.from("exam-pdf").createSignedUrl(source.solution_pdf_path, 60 * 10);
+    const solutionImagePath = String(question.ai_result?.official_solution_image_path ?? "").trim();
+    let solutionImageUrl: string | null = null;
+    if (solutionImagePath) {
+      const solutionSigned = await supabase.storage.from("question-images").createSignedUrl(solutionImagePath, 60 * 10);
       if (solutionSigned.error) throw solutionSigned.error;
-      solutionPdfUrl = solutionSigned.data.signedUrl;
+      solutionImageUrl = solutionSigned.data.signedUrl;
     }
     const prompt = `당신은 한국 중고등 수학 문항을 직접 풀고 교육적으로 분류하는 MathPooh Problem DNA 엔진입니다.
-첫 번째 첨부는 분석할 한 문항 이미지입니다.${solutionPdfUrl ? " 두 번째 첨부는 이 시험지의 공식 해설 PDF입니다." : " 공식 해설 PDF는 첨부되지 않았습니다."}
+첫 번째 첨부는 분석할 한 문항 이미지입니다.${solutionImageUrl ? " 두 번째 첨부는 같은 문항번호의 공식 해설 이미지만 잘라낸 것입니다." : " 해당 문항의 공식 해설 이미지는 첨부되지 않았습니다."}
 문항 이미지와 공식 해설을 함께 확인하여 ${PROBLEM_DNA_VERSION} JSON을 생성하세요.
 시험지 정보: ${source?.grade ?? "학년 미상"} / ${source?.subject ?? "과목 미상"} / ${source?.title ?? "제목 미상"}
 문항 번호: ${question.question_no}
@@ -243,14 +244,14 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     let dna: ProblemDNA;
     try {
       dna = await requestDna({
-        apiKey, model, prompt, questionImageUrl: signed.data.signedUrl, solutionPdfUrl, structured: true,
+        apiKey, model, prompt, questionImageUrl: signed.data.signedUrl, solutionImageUrl, structured: true,
       }) as unknown as ProblemDNA;
     } catch (firstError) {
       dna = await requestDna({
         apiKey, model,
         prompt: `${prompt}
 이전 응답 생성에 실패했습니다. 모든 필드를 포함한 JSON 객체 하나만 출력하세요.`,
-        questionImageUrl: signed.data.signedUrl, solutionPdfUrl, structured: false,
+        questionImageUrl: signed.data.signedUrl, solutionImageUrl, structured: false,
       }).then((value) => value as unknown as ProblemDNA).catch((secondError) => {
         const first = firstError instanceof Error ? firstError.message : String(firstError);
         const second = secondError instanceof Error ? secondError.message : String(secondError);
@@ -276,10 +277,10 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
       analysis_model: model,
       analyzed_at: new Date().toISOString(),
       official_solution: {
-        connected: Boolean(solutionPdfUrl),
+        connected: Boolean(solutionImageUrl),
         source_path: source?.solution_pdf_path ?? null,
         question_no: question.question_no,
-        verification: !solutionPdfUrl
+        verification: !solutionImageUrl
           ? "official_pdf_missing"
           : officialSolutionIssues.length || !dna.official_solution?.matched_question || !dna.official_solution?.answer_matches
             ? "official_pdf_review_required"
@@ -303,9 +304,9 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
       ...(!finalAnswer ? ["AI가 정답을 확정하지 못했습니다."] : []),
       ...(normalizedConfidence < 0.82 ? [`AI 신뢰도 ${Math.round(normalizedConfidence * 100)}%로 자동 통과 기준 82% 미만입니다.`] : []),
       ...(classificationMissing ? [`필수 문항분류가 비어 있습니다: ${missingClassification.join(", ")}`] : []),
-      ...(!solutionPdfUrl ? ["공식 해설 PDF가 연결되지 않아 정답·풀이 교차 검증이 필요합니다."] : []),
-      ...(solutionPdfUrl && !dna.official_solution?.matched_question ? ["공식 해설에서 동일 문항번호를 확인하지 못했습니다."] : []),
-      ...(solutionPdfUrl && !dna.official_solution?.answer_matches ? ["AI 풀이 정답과 공식 정답의 일치 확인이 필요합니다."] : []),
+      ...(!solutionImageUrl ? ["해당 문항의 공식 해설 이미지가 연결되지 않아 정답·풀이 교차 검증이 필요합니다."] : []),
+      ...(solutionImageUrl && !dna.official_solution?.matched_question ? ["공식 해설 이미지에서 동일 문항번호를 확인하지 못했습니다."] : []),
+      ...(solutionImageUrl && !dna.official_solution?.answer_matches ? ["AI 풀이 정답과 공식 정답의 일치 확인이 필요합니다."] : []),
     ].map((value) => String(value).trim()).filter(Boolean);
     const uniqueReviewReasons = [...new Set(reviewReasons)];
     const autoPass =
@@ -314,7 +315,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
       validation.valid &&
       !dna.summary.review_required &&
       !classificationMissing &&
-      Boolean(solutionPdfUrl) &&
+      Boolean(solutionImageUrl) &&
       Boolean(dna.official_solution?.matched_question) &&
       Boolean(dna.official_solution?.answer_matches);
 

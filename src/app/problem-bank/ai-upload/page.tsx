@@ -783,11 +783,15 @@ export default function AnalysisWorkspacePage() {
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [anchors, setAnchors] = useState<DocumentAnchors | null>(null);
   const [anchorBusy, setAnchorBusy] = useState(false);
+  const [solutionPdfDoc, setSolutionPdfDoc] = useState<any>(null);
+  const [solutionAnchors, setSolutionAnchors] = useState<DocumentAnchors | null>(null);
+  const [solutionAnchorBusy, setSolutionAnchorBusy] = useState(false);
   const [pageNo, setPageNo] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [selection, setSelection] = useState<Rect | null>(null);
   const [draft, setDraft] = useState<Rect | null>(null);
   const [preview, setPreview] = useState("");
+  const [solutionPreviewUrl, setSolutionPreviewUrl] = useState("");
 
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
@@ -811,6 +815,7 @@ export default function AnalysisWorkspacePage() {
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
   const questions = workspace?.questions ?? [];
+  const questionNumberKey = questions.map((question) => Number(question.question_no)).join(",");
   const activeQuestion =
     questions.find((item) => item.id === activeQuestionId) ?? questions[0] ?? null;
 
@@ -943,6 +948,37 @@ export default function AnalysisWorkspacePage() {
     };
   }, [workspace?.examUrl]);
 
+  useEffect(() => {
+    if (!workspace?.solutionUrl) {
+      setSolutionPdfDoc(null);
+      setSolutionAnchors(null);
+      return;
+    }
+    let cancelled = false;
+    setSolutionAnchorBusy(true);
+    void (async () => {
+      try {
+        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
+        const response = await fetch(workspace.solutionUrl!, { cache: "no-store" });
+        if (!response.ok) throw new Error("공식 해설 PDF를 불러오지 못했습니다.");
+        const document = await pdfjs.getDocument({ data: new Uint8Array(await response.arrayBuffer()) }).promise;
+        const expected = questions.map((question) => Number(question.question_no));
+        const found = await buildDocumentAnchors(document, expected.length ? expected : undefined);
+        if (!cancelled) {
+          setSolutionPdfDoc(document);
+          setSolutionAnchors(found);
+        }
+      } catch (caught) {
+        console.error("공식 해설 문항번호 인식 실패", caught);
+        if (!cancelled) { setSolutionPdfDoc(null); setSolutionAnchors(null); }
+      } finally {
+        if (!cancelled) setSolutionAnchorBusy(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [workspace?.solutionUrl, questionNumberKey]);
+
   // 현재 인식된 문항번호를 기준으로 PDF의 실제 인쇄 위치를 다시 찾는다.
   // 본문의 각주 번호가 문항번호 후보로 섞여 정상 앵커가 탈락하는 것을 막는다.
   useEffect(() => {
@@ -993,6 +1029,17 @@ export default function AnalysisWorkspacePage() {
       setPreview("");
     }
   }, [activeQuestion, anchors]);
+
+  useEffect(() => {
+    const path = String(activeQuestion?.ai_result?.official_solution_image_path ?? "").trim();
+    if (!activeQuestion || !path) { setSolutionPreviewUrl(""); return; }
+    let cancelled = false;
+    void fetch(`/api/analysis/questions/${activeQuestion.id}/solution-image`, { cache: "no-store" })
+      .then((response) => response.json().then((payload) => ({ response, payload })))
+      .then(({ response, payload }) => { if (!cancelled) setSolutionPreviewUrl(response.ok && payload.success ? String(payload.imageUrl ?? "") : ""); })
+      .catch(() => { if (!cancelled) setSolutionPreviewUrl(""); });
+    return () => { cancelled = true; };
+  }, [activeQuestion]);
 
   useEffect(() => {
     if (!pdfDoc || !activeQuestion || !hasValidCrop(activeQuestion)) return;
@@ -1436,6 +1483,7 @@ export default function AnalysisWorkspacePage() {
     setMessage("");
 
     try {
+      await materializeOfficialSolution(targetQuestion);
       const response = await fetch(`/api/analysis/questions/${targetQuestion.id}/analyze`, {
         method: "POST",
       });
@@ -1460,6 +1508,42 @@ export default function AnalysisWorkspacePage() {
     } finally {
       setBusy("");
     }
+  }
+
+  async function materializeOfficialSolution(question: Question): Promise<boolean> {
+    if (!workspace?.analysis?.id || !solutionPdfDoc || !solutionAnchors?.hasTextLayer) return false;
+    const anchor = solutionAnchors.byQuestionNo.get(Number(question.question_no));
+    if (!anchor) return false;
+
+    const page = await solutionPdfDoc.getPage(anchor.page);
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: Math.max(1.7, 1800 / base.width) });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const context = canvas.getContext("2d");
+    if (!context) return false;
+    await page.render({ canvasContext: context, viewport }).promise;
+
+    const rect: Rect = {
+      x: Math.max(0, anchor.columnLeftPct),
+      y: Math.max(0, anchor.topPct - 2.2),
+      width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
+      height: Math.max(1, Math.min(100, anchor.bottomPct) - Math.max(0, anchor.topPct - 2.2)),
+    };
+    const cropped = cropExact(canvas, rect).canvas;
+    const blob = await new Promise<Blob>((resolve, reject) => cropped.toBlob((value) => value ? resolve(value) : reject(new Error("해설 이미지 변환 실패")), "image/webp", .92));
+    const form = new FormData();
+    form.append("image", blob, `solution-${String(question.question_no).padStart(3, "0")}.webp`);
+    form.append("analysisId", workspace.analysis.id);
+    form.append("sourceFileId", workspace.source.id);
+    form.append("questionId", question.id);
+    form.append("questionNo", String(question.question_no));
+    form.append("pageNo", String(anchor.page));
+    const response = await fetch("/api/problem-bank/materialize-solution", { method: "POST", body: form });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) throw new Error(payload.message || `${question.question_no}번 공식 해설 저장 실패`);
+    return true;
   }
 
 
@@ -1745,6 +1829,7 @@ export default function AnalysisWorkspacePage() {
       if (!target.question_image_path || !isCanonicalized(target)) {
         target = await materializeQuestion(target);
       }
+      await materializeOfficialSolution(target);
 
       const response = await fetch(`/api/analysis/questions/${target.id}/analyze`, { method: "POST" });
       const raw = await response.text();
@@ -2326,6 +2411,7 @@ export default function AnalysisWorkspacePage() {
                       {officialSolutionOf(activeQuestion).solutionSteps.length ? (
                         <details>
                           <summary>공식 해설 기반 핵심 풀이 보기</summary>
+                          {solutionPreviewUrl ? <img className="solution-preview-image" src={solutionPreviewUrl} alt={`${activeQuestion.question_no}번 공식 해설`} /> : null}
                           <ol>{officialSolutionOf(activeQuestion).solutionSteps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol>
                         </details>
                       ) : <small className="solution-empty">분석 후 핵심 풀이가 여기에 표시됩니다.</small>}
@@ -2413,6 +2499,7 @@ export default function AnalysisWorkspacePage() {
         .official-solution-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.official-solution-head>div{display:grid;gap:2px}.official-solution-head small{color:#758091;font-size:11px}.official-solution-head strong{font-size:14px}.official-solution-head a{padding:7px 9px;border:1px solid currentColor;border-radius:7px;font-size:12px;font-weight:900;text-decoration:none}
         .official-solution-panel p{margin:0;color:#535e70;font-size:12px;line-height:1.55}.official-solution-panel details{padding-top:7px;border-top:1px solid rgba(80,90,110,.16)}.official-solution-panel summary{cursor:pointer;font-size:12px;font-weight:900}.official-solution-panel ol{margin:9px 0 0;padding-left:20px;color:#3f4858;font-size:12px;line-height:1.55}.solution-empty{color:#7d8695}
         .official-answer{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.72);font-size:12px}.official-answer strong{font-size:17px;color:#24345c}
+        .solution-preview-image{display:block;width:100%;max-height:420px;object-fit:contain;margin:9px 0;border:1px solid #dce1e9;border-radius:8px;background:#fff}
         .dna-card{display:grid;gap:7px;padding:12px;border:1px solid #d7dcec;border-radius:12px;background:#f9faff}.dna-card-title{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:8px;border-bottom:1px solid #e0e4ef}.dna-card-title>div{display:grid;gap:2px}.dna-card-title small{color:#65708a;font-size:10px}.dna-card-title strong{font-size:14px}.dna-card-title em{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:#5268e8;color:#fff;font-size:20px;font-style:normal;font-weight:950}
         .dna-card details{border:1px solid #e0e4ee;border-radius:8px;background:#fff;overflow:hidden}.dna-card summary{cursor:pointer;padding:9px 10px;color:#30394c;font-size:12px;font-weight:950}.dna-section{display:grid;gap:7px;padding:0 10px 10px}.dna-line{display:grid;gap:2px}.dna-line b{color:#727c91;font-size:10px}.dna-line span{color:#303847;font-size:12px;line-height:1.45}.dna-score-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}.dna-score-grid span{display:flex;justify-content:space-between;padding:6px;border-radius:6px;background:#eef1f8;color:#667084;font-size:10px}.dna-score-grid b{color:#24304a;font-size:11px}.dna-final{display:grid;gap:5px;padding:10px;border-radius:8px;background:#e9edff;color:#35446f;font-size:11px;line-height:1.45}.dna-final>b{color:#1f2f64;font-size:12px}
         @media(max-width:1300px){section.all-crops-grid.crop-three-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
