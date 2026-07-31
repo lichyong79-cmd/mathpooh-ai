@@ -311,9 +311,9 @@ function buildAnchorCrop(pageCanvas: HTMLCanvasElement, anchor: QuestionAnchor):
 
   const fallbackRect: Rect = {
     x: anchor.columnLeftPct,
-    y: Math.max(0, anchor.topPct - 0.5),
+    y: Math.max(0, anchor.topPct - 1.5),
     width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
-    height: Math.max(1, anchor.bottomPct - anchor.topPct),
+    height: Math.max(1, anchor.bottomPct - Math.max(0, anchor.topPct - 1.5)),
   };
 
   const sx = Math.max(0, Math.floor((pageCanvas.width * anchor.columnLeftPct) / 100));
@@ -648,7 +648,7 @@ function recognitionDisplayRect(question: Question, anchors?: DocumentAnchors | 
 
   // 인식 화면은 AI의 임시 crop 좌표가 아니라 PDF에서 찾은 실제 문항번호 위치를 표시한다.
   // 같은 단의 다음 문항번호 직전까지를 해당 문항 영역으로 보여준다.
-  const top = Math.max(0, anchor.topPct - 0.35);
+  const top = Math.max(0, anchor.topPct - 1.5);
   const bottom = Math.min(100, anchor.bottomPct);
   return {
     x: Math.max(0, anchor.columnLeftPct + 0.15),
@@ -1506,9 +1506,9 @@ export default function AnalysisWorkspacePage() {
             questionNo: anchor.questionNo,
             pageNo: anchor.page,
             x: anchor.columnLeftPct,
-            y: Math.max(0, anchor.topPct - 0.5),
+            y: Math.max(0, anchor.topPct - 1.5),
             width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
-            height: Math.max(1, anchor.bottomPct - anchor.topPct),
+            height: Math.max(1, anchor.bottomPct - Math.max(0, anchor.topPct - 1.5)),
           }),
         });
         const payload = await response.json();
