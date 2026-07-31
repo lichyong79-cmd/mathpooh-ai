@@ -221,23 +221,29 @@ export default function ProblemBankPage() {
     }
   };
 
-  const remove = async () => {
-    if (!selected || !window.confirm(`${selected.question_no}번 문항을 문제은행에서 삭제할까요?`)) return;
-    const config = getSupabaseConfig();
-    if (!config) return setError("Supabase 환경변수를 확인해 주세요.");
+  const remove = async (scope: "question" | "source") => {
+    if (!selected) return;
+    const sourceTitle = selected.title.replace(/\s+\d+번$/, "");
+    const expected = scope === "source" ? sourceTitle : selected.title;
+    const warning = scope === "source"
+      ? `이 시험지의 문제은행 문항을 전부 삭제합니다.\n원본·Crop·해설은 보존되고 AI 분석 3단계로 돌아갑니다.\n\n삭제하려면 시험지명을 정확히 입력하세요:\n${expected}`
+      : `${selected.question_no}번을 문제은행에서 삭제합니다.\n원본·Crop·해설은 보존되고 AI 분석 3단계로 돌아갑니다.\n\n삭제하려면 문항명을 정확히 입력하세요:\n${expected}`;
+    const confirmation = window.prompt(warning);
+    if (confirmation === null) return;
+    if (confirmation.trim() !== expected) return setError("삭제 확인 문구가 일치하지 않아 취소했습니다.");
     setDeleting(true);
     setMessage("");
     setError("");
     try {
-      const response = await fetch(`${config.url}/rest/v1/problem_bank_questions?id=eq.${selected.id}`, {
+      const response = await fetch(`/api/problem-bank/questions/${selected.id}`, {
         method: "DELETE",
-        headers: { ...(await authHeaders()) },
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, confirmation }),
       });
-      if (!response.ok) throw new Error(await response.text());
-      const remaining = items.filter((item) => item.id !== selected.id);
-      setItems(remaining);
-      setSelectedId(remaining[0]?.id ?? "");
-      setMessage("문항을 삭제했습니다.");
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.message || "삭제에 실패했습니다.");
+      await loadProblems();
+      setMessage(payload.message);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "삭제에 실패했습니다.");
     } finally {
@@ -309,7 +315,7 @@ export default function ProblemBankPage() {
                 <label className="wide"><span>문항 요약</span><textarea rows={4} value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label>
                 <label><span>상태</span><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as Draft["status"] })}><option value="ACTIVE">사용</option><option value="HOLD">보류</option><option value="ARCHIVED">보관</option></select></label>
               </div> : <div className="dna-panel">{selected.problem_dna ? <ProblemDnaCard dna={selected.problem_dna} questionNo={selected.question_no} /> : <div className="no-dna">Problem DNA가 없습니다. AI 분석관리에서 재분석해 주세요.</div>}</div>}
-              <div className="edit-actions"><button type="button" className="delete-button" onClick={() => void remove()} disabled={deleting || saving}>{deleting ? "삭제 중" : "삭제"}</button><button type="submit" className="save-button" disabled={saving || deleting}>{saving ? "저장 중" : "수정 저장"}</button></div>
+              <div className="edit-actions"><button type="button" className="delete-button" onClick={() => void remove("question")} disabled={deleting || saving}>{deleting ? "삭제 중" : "이 문항 삭제"}</button><button type="button" className="delete-source-button" onClick={() => void remove("source")} disabled={deleting || saving}>시험지 전체 삭제</button><button type="submit" className="save-button" disabled={saving || deleting}>{saving ? "저장 중" : "수정 저장"}</button></div>
             </form>
           </>}
         </section>
@@ -325,7 +331,7 @@ export default function ProblemBankPage() {
         .filter-bar{max-width:1920px;margin-bottom:12px;padding:11px;border-radius:14px;box-shadow:0 5px 18px rgba(32,45,72,.06)}.filter-bar input,.filter-bar select{height:42px;border-color:#d9dfea;background:#fbfcfe;font-size:13px;font-weight:700}.filter-bar input:focus,.filter-bar select:focus{outline:3px solid rgba(201,154,59,.16);border-color:var(--gold)}
         .bank-layout{max-width:1920px;grid-template-columns:390px minmax(0,1fr);gap:12px}.problem-list,.problem-detail{border-radius:16px;border-color:#dce2eb;box-shadow:0 8px 26px rgba(31,45,71,.07)}.problem-list{max-height:calc(100vh - 184px);background:#f8fafc}.list-head,.problem-row{grid-template-columns:58px minmax(0,1fr) 42px}.list-head{padding:12px 13px;background:var(--navy);color:#dbe2ef;border:0}.problem-row{padding:12px 13px;background:#fff;border-bottom-color:#e9edf3;min-height:76px}.problem-row:hover{background:#fffaf0}.problem-row.selected{background:var(--gold-soft);box-shadow:inset 5px 0 0 var(--gold)}.problem-row strong{font-size:15px;color:var(--navy)}.problem-row b{font-size:13px;color:#253654}.problem-row small{font-size:10px;color:#8a94a5}.problem-row>span{padding:0;background:transparent}.difficulty-chip{display:grid!important;place-items:center;width:31px;height:31px;border-radius:50%!important;font-size:12px!important;color:#fff!important;background:#748097!important}.difficulty-1{background:#37815f!important}.difficulty-2{background:#5571ba!important}.difficulty-3{background:#c18b32!important}.difficulty-4{background:#cf6f45!important}.difficulty-5{background:#a34d5a!important}
         .problem-detail{grid-template-columns:minmax(500px,1.22fr) minmax(430px,.78fr);min-height:calc(100vh - 184px);background:#fff}.pdf-panel{background:#edf0f4;border-right-color:#dce1e9}.pdf-head,.edit-head{min-height:64px;background:#fff;padding:11px 16px}.pdf-head strong{font-size:14px;color:var(--navy)}.asset-tabs{padding:3px;border-radius:10px;background:#eef1f6}.asset-tabs button{border:0;background:transparent;color:#667289}.asset-tabs button.active{background:var(--navy);color:#fff;box-shadow:0 3px 9px rgba(24,36,61,.2)}.question-viewer{height:calc(100vh - 248px);min-height:580px;padding:30px;background:radial-gradient(circle at 50% 20%,#f6f7f9,#e4e8ed);align-items:flex-start}.question-viewer img{border-radius:4px;box-shadow:0 18px 45px rgba(31,42,63,.22)}
-        .edit-panel{max-height:calc(100vh - 184px);background:#f8f9fc}.edit-head{position:sticky;top:0;z-index:4;background:var(--navy);border:0}.edit-head strong{color:#fff;font-size:15px}.edit-head span{color:#bec8da}.edit-head code{color:#ffe5a6;background:rgba(255,255,255,.1)}.detail-tabs{position:sticky;top:64px;z-index:3;padding:10px 14px;background:#fff;border-bottom:1px solid var(--line)}.detail-tabs button{flex:1;border:0;background:#eef1f6;padding:9px}.detail-tabs button.active{background:var(--gold);color:#fff}.edit-grid{gap:10px;padding:14px}.edit-grid label{padding:10px;border:1px solid #e1e6ee;border-radius:11px;background:#fff;gap:5px}.edit-grid label span{font-size:10px;color:#768197}.edit-grid input,.edit-grid select,.edit-grid textarea{border:0;border-radius:0;padding:0;background:transparent;font-size:13px}.edit-grid input,.edit-grid select{height:29px}.edit-grid input:focus,.edit-grid select:focus,.edit-grid textarea:focus{outline:none}.dna-panel{padding:14px;background:#f5f7fa}.edit-actions{padding:11px 14px}.save-button{border-color:var(--navy);background:var(--navy)}.delete-button{background:#fff8f8}.notice{max-width:1920px}
+        .edit-panel{max-height:calc(100vh - 184px);background:#f8f9fc}.edit-head{position:sticky;top:0;z-index:4;background:var(--navy);border:0}.edit-head strong{color:#fff;font-size:15px}.edit-head span{color:#bec8da}.edit-head code{color:#ffe5a6;background:rgba(255,255,255,.1)}.detail-tabs{position:sticky;top:64px;z-index:3;padding:10px 14px;background:#fff;border-bottom:1px solid var(--line)}.detail-tabs button{flex:1;border:0;background:#eef1f6;padding:9px}.detail-tabs button.active{background:var(--gold);color:#fff}.edit-grid{gap:10px;padding:14px}.edit-grid label{padding:10px;border:1px solid #e1e6ee;border-radius:11px;background:#fff;gap:5px}.edit-grid label span{font-size:10px;color:#768197}.edit-grid input,.edit-grid select,.edit-grid textarea{border:0;border-radius:0;padding:0;background:transparent;font-size:13px}.edit-grid input,.edit-grid select{height:29px}.edit-grid input:focus,.edit-grid select:focus,.edit-grid textarea:focus{outline:none}.dna-panel{padding:14px;background:#f5f7fa}.edit-actions{padding:11px 14px;flex-wrap:wrap}.save-button{border-color:var(--navy);background:var(--navy)}.delete-button{background:#fff8f8}.delete-source-button{border:1px solid #b84451;background:#b84451;color:#fff}.notice{max-width:1920px}
         @media(max-width:1400px){.bank-layout{grid-template-columns:340px minmax(0,1fr)}.problem-detail{grid-template-columns:minmax(450px,1fr) minmax(390px,.85fr)}}
       `}</style>
     </main>
