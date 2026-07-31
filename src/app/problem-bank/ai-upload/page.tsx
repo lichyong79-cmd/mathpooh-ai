@@ -1073,6 +1073,12 @@ export default function AnalysisWorkspacePage() {
 
   async function startAnalysis(forceRecognition = false) {
     if (!workspace) return;
+    if (
+      forceRecognition &&
+      questions.length > 0 &&
+      workflowStep > 1 &&
+      !window.confirm("문제인식을 다시 하면 기존 자르기와 문항분석 결과가 초기화됩니다. 1단계부터 다시 진행할까요?")
+    ) return;
 
     // 문항이 이미 있으면 AI를 다시 호출하지 않는다.
     // 현재 좌표에 단일 Crop 엔진만 적용하여 같은 결과를 다시 저장한다.
@@ -1174,6 +1180,8 @@ export default function AnalysisWorkspacePage() {
           crop_y: targetRect.y,
           crop_width: targetRect.width,
           crop_height: targetRect.height,
+          status: "WAITING",
+          review_reason: "자르기가 수정되어 AI 문항 재분석이 필요합니다.",
           review_result: reviewResult,
         }),
       });
@@ -1427,6 +1435,10 @@ export default function AnalysisWorkspacePage() {
         crop_y: canonical.rect.y,
         crop_width: canonical.rect.width,
         crop_height: canonical.rect.height,
+        ...(forceCorrection ? {
+          status: "WAITING",
+          review_reason: "2단계 자르기 보정 후 AI 문항 재분석이 필요합니다.",
+        } : {}),
         review_result: reviewResult,
       }),
     });
@@ -1490,6 +1502,8 @@ export default function AnalysisWorkspacePage() {
       const added = missing.map((anchor) => anchor.questionNo).join(", ");
       setMessage(`PDF에서 ${missing.length}개 문항을 채웠습니다 (${added}). 이어서 '전체 문항 자르기 저장'을 실행하세요.`);
       await loadWorkspace(workspace.source.id);
+      await saveWorkflowStep(1, "1단계 · AI 문제인식 수정");
+      setViewMode("single");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "문항 목록을 채우지 못했습니다.");
     } finally {
@@ -1518,6 +1532,11 @@ export default function AnalysisWorkspacePage() {
     try {
       const updated: Question[] = [];
       for (let index = 0; index < questions.length; index += 1) {
+        if (isManualCrop(questions[index])) {
+          updated.push(questions[index]);
+          setQueueProgress({ done: index + 1, total: questions.length });
+          continue;
+        }
         const nextQuestion = await materializeQuestion(questions[index], true);
         updated.push(nextQuestion);
         setWorkspace((current) => current ? {
@@ -1536,12 +1555,21 @@ export default function AnalysisWorkspacePage() {
 
   async function runAutoPipeline() {
     if (!workspace || !pdfDoc || !questions.length) return;
+    const analysisTargets = questions.filter((question) =>
+      !isBankRegistered(question) &&
+      !["AUTO_REGISTERED", "APPROVED", "REGISTERED", "REJECTED"].includes(question.status)
+    );
+    if (!analysisTargets.length) {
+      setMessage("재분석이 필요한 문항이 없습니다. 이미 분석을 통과한 문항은 그대로 유지했습니다.");
+      setViewMode("pending");
+      return;
+    }
     setBusy("queue");
     setError("");
     setMessage("");
-    setQueueProgress({ done: 0, total: questions.length });
+    setQueueProgress({ done: 0, total: analysisTargets.length });
 
-    const concurrency = Math.min(3, questions.length);
+    const concurrency = Math.min(6, analysisTargets.length);
     const failures: Array<{ questionNo: number; message: string }> = [];
     let cursor = 0;
     let done = 0;
@@ -1574,8 +1602,8 @@ export default function AnalysisWorkspacePage() {
       while (true) {
         const index = cursor;
         cursor += 1;
-        if (index >= questions.length) return;
-        const question = questions[index];
+        if (index >= analysisTargets.length) return;
+        const question = analysisTargets[index];
 
         try {
           await analyzeQueuedQuestion(question);
@@ -1606,7 +1634,7 @@ export default function AnalysisWorkspacePage() {
           }
         } finally {
           done += 1;
-          setQueueProgress({ done, total: questions.length });
+          setQueueProgress({ done, total: analysisTargets.length });
         }
       }
     }
@@ -1685,6 +1713,10 @@ export default function AnalysisWorkspacePage() {
   );
   const reviewQuestions = questions.filter((question) => question.status === "REVIEW");
   const failedQuestions = questions.filter((question) => question.status === "FAILED" || question.status === "REJECTED");
+  const analysisNeededQuestions = questions.filter((question) =>
+    !isBankRegistered(question) &&
+    !["AUTO_REGISTERED", "APPROVED", "REGISTERED", "REJECTED"].includes(question.status)
+  );
   const visibleQuestions = viewMode === "registered" ? registeredQuestions
     : viewMode === "pending" ? pendingQuestions
     : viewMode === "review" ? reviewQuestions
@@ -1765,7 +1797,9 @@ export default function AnalysisWorkspacePage() {
             <div className="workflow-action">
               <div><strong>3단계 · AI 문항분석</strong><span>자동 통과는 문제은행 대기, 확인이 필요한 문항만 보류로 분류합니다.</span></div>
               <div className="workflow-buttons">
-                <button onClick={() => void runAutoPipeline()} disabled={!questions.length || savedCropCount !== questions.length || !!busy}>{pendingQuestions.length || reviewQuestions.length ? "전체 다시 분석" : "전체 AI 분석 시작"}</button>
+                <button onClick={() => void runAutoPipeline()} disabled={!analysisNeededQuestions.length || savedCropCount !== questions.length || !!busy}>
+                  {analysisNeededQuestions.length ? `재분석 필요 ${analysisNeededQuestions.length}문항 분석` : "분석 완료"}
+                </button>
                 <button onClick={() => setViewMode("pending")}>문제은행 대기 {pendingQuestions.length}</button>
                 <button className="review-button" onClick={() => setViewMode("review")}>보류 확인 {reviewQuestions.length}</button>
               </div>
@@ -1868,7 +1902,7 @@ export default function AnalysisWorkspacePage() {
             </div>
             <div className="pipeline-counts"><b>등록완료 {registeredQuestions.length}</b><b>보류 {reviewQuestions.length}</b></div>
             <button className="queue-button" onClick={() => void runAutoPipeline()} disabled={!questions.length || savedCropCount !== questions.length || !!busy}>
-              {busy === "queue" ? `AI 분석 ${queueProgress.done}/${queueProgress.total}` : "전체 AI 문항분석"}
+              {busy === "queue" ? `AI 분석 ${queueProgress.done}/${queueProgress.total}` : `필요 문항 분석 ${analysisNeededQuestions.length}`}
             </button>
           </section> : null}
 
