@@ -127,7 +127,7 @@ type CanonicalCrop = {
   canvas: HTMLCanvasElement;
 };
 
-const CROP_ENGINE_VERSION = "text-anchor-v2";
+const CROP_ENGINE_VERSION = "text-anchor-v3";
 
 /** 텍스트 앵커 자르기에서 내용 바깥으로 남길 여백(px, 렌더 캔버스 기준) */
 const ANCHOR_PADDING = {
@@ -305,7 +305,7 @@ function buildAnchorCrop(pageCanvas: HTMLCanvasElement, anchor: QuestionAnchor):
   const bandTopPct = Math.max(0, anchor.topPct - 2.6);
   // 다음 문항의 첫 줄이 밴드 안에 들어와야 그 줄의 진짜 상단을 계산할 수 있다.
   const bandBottomPct = anchor.nextTopPct === null
-    ? Math.min(100, anchor.bottomPct)
+    ? Math.min(100, Math.max(anchor.bottomPct, 96.5))
     : Math.min(100, anchor.nextTopPct + 1.8);
 
   const fallbackRect: Rect = {
