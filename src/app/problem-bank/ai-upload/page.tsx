@@ -671,6 +671,7 @@ export default function AnalysisWorkspacePage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [saveState, setSaveState] = useState("저장됨");
+  const [workflowStep, setWorkflowStep] = useState<1 | 2 | 3>(1);
   const [viewMode, setViewMode] = useState<"single" | "all" | "registered" | "pending" | "review" | "failed">("single");
   const [queueProgress, setQueueProgress] = useState({ done: 0, total: 0 });
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
@@ -743,6 +744,14 @@ export default function AnalysisWorkspacePage() {
       setWorkspace(nextWorkspace);
       setSelectedId(sourceId);
       setActiveQuestionId(nextWorkspace.questions?.[0]?.id ?? "");
+      const savedStep = String(nextWorkspace.analysis?.current_step ?? "");
+      if (savedStep.includes("3단계") || nextWorkspace.questions?.some((item) => item.status === "AUTO_REGISTERED" || item.status === "REVIEW" || item.status === "APPROVED")) {
+        setWorkflowStep(3);
+      } else if (savedStep.includes("2단계") || nextWorkspace.questions?.length) {
+        setWorkflowStep(2);
+      } else {
+        setWorkflowStep(1);
+      }
     } catch (caught) {
       setWorkspace(null);
       setPdfDoc(null);
@@ -1038,12 +1047,25 @@ export default function AnalysisWorkspacePage() {
     }
   }, [viewMode, pdfDoc, questions.length, buildThumbnails]);
 
-  async function startAnalysis() {
+  async function saveWorkflowStep(step: 1 | 2 | 3, label: string) {
+    setWorkflowStep(step);
+    if (!workspace?.analysis?.id) return;
+    const response = await fetch(`/api/analysis/${workspace.analysis.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_step: label }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) throw new Error(payload.message || "단계 저장에 실패했습니다.");
+    setWorkspace((current) => current ? { ...current, analysis: payload.analysis } : current);
+  }
+
+  async function startAnalysis(forceRecognition = false) {
     if (!workspace) return;
 
     // 문항이 이미 있으면 AI를 다시 호출하지 않는다.
     // 현재 좌표에 단일 Crop 엔진만 적용하여 같은 결과를 다시 저장한다.
-    if (questions.length > 0) {
+    if (questions.length > 0 && !forceRecognition) {
       await recropAllQuestions();
       return;
     }
@@ -1064,9 +1086,11 @@ export default function AnalysisWorkspacePage() {
       }
 
       setThumbnailUrls({});
-      setMessage(`전체 빠른 자르기 완료 · ${payload.questionCount ?? 0}문항 · 이제 전체 문항 자르기를 저장하세요.`);
       await loadWorkspace(workspace.source.id);
       await loadSources();
+      setWorkflowStep(1);
+      setViewMode("all");
+      setMessage(`AI 문제 인식 완료 · ${payload.questionCount ?? 0}문항 · 문항 수를 확인한 뒤 1단계를 통과하세요.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "AI 분석에 실패했습니다.");
     } finally {
@@ -1204,14 +1228,14 @@ export default function AnalysisWorkspacePage() {
     }
   }
 
-  async function analyzeOneQuestion() {
-    if (!activeQuestion) return;
+  async function analyzeOneQuestion(targetQuestion: Question | null = activeQuestion) {
+    if (!targetQuestion) return;
     setBusy("one");
     setError("");
     setMessage("");
 
     try {
-      const response = await fetch(`/api/analysis/questions/${activeQuestion.id}/analyze`, {
+      const response = await fetch(`/api/analysis/questions/${targetQuestion.id}/analyze`, {
         method: "POST",
       });
       const payload = await response.json();
@@ -1224,12 +1248,12 @@ export default function AnalysisWorkspacePage() {
           ? {
               ...current,
               questions: current.questions.map((item) =>
-                item.id === activeQuestion.id ? payload.question : item,
+                item.id === targetQuestion.id ? payload.question : item,
               ),
             }
           : current,
       );
-      setMessage(`${activeQuestion.question_no}번 문항 재분석 완료`);
+      setMessage(`${targetQuestion.question_no}번 문항 재분석 완료`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "문항 분석에 실패했습니다.");
     } finally {
@@ -1284,25 +1308,16 @@ export default function AnalysisWorkspacePage() {
     }
   }
 
-  async function approveAndRegister(question: Question) {
-    if (!workspace?.analysis?.id) return;
+  async function approveForPending(question: Question) {
     setBusy("review-action");
     setError("");
     setMessage("");
     try {
       await patchQuestionStatus(question, "APPROVED");
-      const response = await fetch("/api/problem-bank/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ analysisId: workspace.analysis.id, questionIds: [question.id] }),
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload.success) throw new Error(apiErrorMessage(payload, "문제은행 등록에 실패했습니다.", response.status));
-      await loadWorkspace(workspace.source.id);
       setViewMode("review");
-      setMessage(`${question.question_no}번을 문제은행에 등록했습니다.`);
+      setMessage(`${question.question_no}번 검수 완료 · 문제은행 대기로 이동했습니다.`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "문제은행 등록에 실패했습니다.");
+      setError(caught instanceof Error ? caught.message : "검수 완료 처리에 실패했습니다.");
     } finally {
       setBusy("");
     }
@@ -1543,40 +1558,14 @@ export default function AnalysisWorkspacePage() {
 
     try {
       await Promise.all(Array.from({ length: concurrency }, () => worker()));
-
-      // 분석 기준을 통과한 문항을 한 번에 문제은행으로 넘긴다.
-      // 임베딩도 묶어서 생성하므로 문항별 등록보다 빠르고, upsert라 재실행해도 중복되지 않는다.
-      let registered = 0;
-      const analysisId = workspace.analysis?.id;
-      if (analysisId) {
-        const registerResponse = await fetch("/api/problem-bank/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ analysisId }),
-        });
-        const registerRaw = await registerResponse.text();
-        let registerPayload: any = null;
-        try {
-          registerPayload = registerRaw ? JSON.parse(registerRaw) : null;
-        } catch {
-          throw new Error(`문제은행 등록 응답이 JSON이 아닙니다. HTTP ${registerResponse.status}`);
-        }
-
-        // 자동등록 대상이 0개인 경우는 오류가 아니라 전부 검토대상인 정상 상황이다.
-        if (registerResponse.ok && registerPayload?.success) {
-          registered = Number(registerPayload.registered ?? 0);
-          await loadWorkspace(selectedId);
-        } else if (registerResponse.status !== 400 || !String(registerPayload?.message ?? "").includes("등록할 문항이 없습니다")) {
-          throw new Error(apiErrorMessage(registerPayload, "문제은행 자동등록에 실패했습니다.", registerResponse.status));
-        }
-      }
-
+      await saveWorkflowStep(3, "3단계 · AI 문항분석 완료");
+      await loadWorkspace(selectedId);
       if (failures.length) {
         const preview = failures.slice(0, 4).map((item) => `${item.questionNo}번`).join(", ");
         setError(`분석 실패 ${failures.length}문항(${preview}${failures.length > 4 ? " 외" : ""})은 검토대상으로 보류했습니다.`);
-        setMessage(`자동 처리 완료 · 문제은행 등록 ${registered} · 검토보류 ${failures.length}`);
+        setMessage(`AI 문항분석 완료 · 자동 통과 문항은 문제은행 대기 · 실패 ${failures.length}문항은 보류`);
       } else {
-        setMessage(`자동 처리 완료 · 문제은행 등록 ${registered}문항 · 나머지는 검토대상으로 보류했습니다.`);
+        setMessage("AI 문항분석 완료 · 자동 통과 문항은 문제은행 대기, 검토 필요 문항은 보류로 분류했습니다.");
       }
       setViewMode("review");
     } catch (caught) {
@@ -1602,9 +1591,39 @@ export default function AnalysisWorkspacePage() {
     if (next) setActiveQuestionId(next.id);
   }
 
+  async function passRecognitionStep() {
+    if (!questions.length) {
+      setError("인식된 문항이 없습니다. 먼저 AI 문제인식을 실행해 주세요.");
+      return;
+    }
+    try {
+      await saveWorkflowStep(2, "2단계 · AI 자르기 검수");
+      setViewMode("all");
+      setMessage(`${questions.length}문항 문제 인식 통과 · 이제 전체 자르기 후 잘못된 문항만 수동 수정하세요.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "문제 인식 통과 처리에 실패했습니다.");
+    }
+  }
+
+  async function passCropStep() {
+    const unsaved = questions.filter((question) => !question.question_image_path);
+    if (unsaved.length) {
+      setError(`자르기 저장이 안 된 문항이 ${unsaved.length}개 있습니다. 전체 문항 자르기 저장을 먼저 실행해 주세요.`);
+      return;
+    }
+    try {
+      await saveWorkflowStep(3, "3단계 · AI 문항분석 대기");
+      setViewMode("all");
+      setMessage(`전체 ${questions.length}문항 자르기 통과 · 이제 AI 문항분석을 실행하세요.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "자르기 통과 처리에 실패했습니다.");
+    }
+  }
+
   const analysisStatus = workspace?.analysis?.status ?? workspace?.source.status ?? "uploaded";
   const progress = Math.max(0, Math.min(100, Number(workspace?.analysis?.progress ?? 0)));
   const croppedCount = questions.filter((question) => hasValidCrop(question)).length;
+  const savedCropCount = questions.filter((question) => Boolean(question.question_image_path)).length;
   const registeredQuestions = questions.filter((question) => isBankRegistered(question));
   const pendingQuestions = questions.filter((question) =>
     !isBankRegistered(question) && (question.status === "AUTO_REGISTERED" || question.status === "APPROVED")
@@ -1623,28 +1642,69 @@ export default function AnalysisWorkspacePage() {
         <div>
           <button className="back-button" onClick={() => router.push("/problem-bank")}>← 문제은행</button>
           <small>AI ANALYSIS WORKSPACE</small>
-          <h1>AI 문항 분석 · 자르기 검수</h1>
-          <p>원본 PDF에서 문항 영역을 확인하고, 잘못 잘린 문항만 다시 지정한 뒤 분석 결과를 검수합니다.</p>
+          <h1>AI 문제은행 분석 작업장</h1>
+          <p>문제 인식 → 자르기 검수 → 문항 분석 순서로 처리합니다.</p>
         </div>
         <div className="header-actions">
           <span className="save-state">{saveState}</span>
-          {anchors?.hasTextLayer ? (
-            <button
-              onClick={() => void fillMissingQuestionsFromPdf()}
-              disabled={!workspace?.analysis?.id || !!busy}
-              title="AI가 놓친 문항을 PDF 문항번호에서 찾아 채웁니다."
-            >
-              {busy === "fill" ? `문항 채우는 중 ${queueProgress.done}/${queueProgress.total}` : "PDF에서 빠진 문항 채우기"}
-            </button>
-          ) : null}
-          <button className="primary" onClick={() => void startAnalysis()} disabled={!workspace || !!busy}>
-            {busy === "analysis" ? "AI 좌표 찾는 중..." : busy === "recrop" ? `전체 저장 ${queueProgress.done}/${queueProgress.total}` : questions.length ? "전체 문항 자르기 저장" : "전체 빠른 자르기 시작"}
-          </button>
         </div>
       </header>
 
       {message ? <div className="notice success">{message}</div> : null}
       {error ? <div className="notice error">{error}</div> : null}
+
+      {workspace ? (
+        <section className="workflow-panel">
+          <div className="workflow-steps">
+            {([
+              { no: 1 as const, title: "AI 문제인식", detail: `${questions.length}문항 인식` },
+              { no: 2 as const, title: "AI 자르기", detail: `${savedCropCount}/${questions.length} 저장` },
+              { no: 3 as const, title: "AI 문항분석", detail: `대기 ${pendingQuestions.length} · 보류 ${reviewQuestions.length}` },
+            ]).map((step) => (
+              <button
+                key={step.no}
+                className={`${workflowStep === step.no ? "active" : ""} ${workflowStep > step.no ? "done" : ""}`}
+                onClick={() => {
+                  if (step.no <= workflowStep) setWorkflowStep(step.no);
+                }}
+                disabled={step.no > workflowStep}
+              >
+                <b>{step.no}</b>
+                <span><strong>{step.title}</strong><small>{step.detail}</small></span>
+              </button>
+            ))}
+          </div>
+
+          {workflowStep === 1 ? (
+            <div className="workflow-action">
+              <div><strong>1단계 · 시험지 문항 확인</strong><span>AI가 찾은 문항 수와 번호를 확인하고 누락 문항을 채웁니다.</span></div>
+              <div className="workflow-buttons">
+                <button onClick={() => void startAnalysis(true)} disabled={!workspace || !!busy}>{questions.length ? "AI 문제인식 다시 하기" : "AI 문제인식 시작"}</button>
+                {anchors?.hasTextLayer && questions.length ? <button onClick={() => void fillMissingQuestionsFromPdf()} disabled={!!busy}>빠진 문항 채우기</button> : null}
+                <button className="pass" onClick={() => void passRecognitionStep()} disabled={!questions.length || !!busy}>문제 인식 통과 →</button>
+              </div>
+            </div>
+          ) : workflowStep === 2 ? (
+            <div className="workflow-action">
+              <div><strong>2단계 · 전체 자르기 검수</strong><span>전체를 먼저 저장한 뒤 잘못 잘린 문항만 수동으로 수정합니다.</span></div>
+              <div className="workflow-buttons">
+                <button onClick={() => void recropAllQuestions()} disabled={!questions.length || !!busy}>전체 다시 자르기</button>
+                <button onClick={() => setViewMode("single")} disabled={!questions.length}>수동 자르기 화면</button>
+                <button className="pass" onClick={() => void passCropStep()} disabled={!questions.length || !!busy}>자르기 전체 통과 →</button>
+              </div>
+            </div>
+          ) : (
+            <div className="workflow-action">
+              <div><strong>3단계 · AI 문항분석</strong><span>자동 통과는 문제은행 대기, 확인이 필요한 문항만 보류로 분류합니다.</span></div>
+              <div className="workflow-buttons">
+                <button onClick={() => void runAutoPipeline()} disabled={!questions.length || savedCropCount !== questions.length || !!busy}>{pendingQuestions.length || reviewQuestions.length ? "전체 다시 분석" : "전체 AI 분석 시작"}</button>
+                <button onClick={() => setViewMode("pending")}>문제은행 대기 {pendingQuestions.length}</button>
+                <button className="review-button" onClick={() => setViewMode("review")}>보류 확인 {reviewQuestions.length}</button>
+              </div>
+            </div>
+          )}
+        </section>
+      ) : null}
 
       <section className="source-bar">
         <label>
@@ -1707,7 +1767,7 @@ export default function AnalysisWorkspacePage() {
               <>
                 <div className="ai-progress-label"><b>{queueProgress.done} / {queueProgress.total}</b><span>문항 처리</span></div>
                 <div className="ai-progress-track"><i style={{ width: `${queueProgress.total ? Math.round(queueProgress.done / queueProgress.total * 100) : 0}%` }} /></div>
-                <small>자르기 저장 → AI 분석 → 자동 판정 → 문제은행 등록</small>
+                <small>AI 분석 → 자동 판정 → 문제은행 대기 또는 보류</small>
               </>
             ) : <div className="ai-pulse-row"><i /><i /><i /></div>}
           </div>
@@ -1729,7 +1789,7 @@ export default function AnalysisWorkspacePage() {
             <div className="progress-wrap"><span style={{ width: `${progress}%` }} /></div>
           </section>
 
-          <section className="pipeline-bar">
+          {workflowStep === 3 ? <section className="pipeline-bar">
             <div className="mode-buttons status-tabs">
               <button className={viewMode === "single" ? "active" : ""} onClick={() => setViewMode("single")}>한 문항 보기</button>
               <button className={viewMode === "all" ? "active" : ""} onClick={() => setViewMode("all")}>전체 {questions.length}</button>
@@ -1739,10 +1799,10 @@ export default function AnalysisWorkspacePage() {
               <button className={viewMode === "failed" ? "active failed" : ""} onClick={() => setViewMode("failed")}>제외/실패 {failedQuestions.length}</button>
             </div>
             <div className="pipeline-counts"><b>등록완료 {registeredQuestions.length}</b><b>보류 {reviewQuestions.length}</b></div>
-            <button className="queue-button" onClick={() => void runAutoPipeline()} disabled={!questions.length || !!busy}>
-              {busy === "queue" ? `자동 처리 ${queueProgress.done}/${queueProgress.total}` : "자르기 저장 + 문항분석 자동 실행"}
+            <button className="queue-button" onClick={() => void runAutoPipeline()} disabled={!questions.length || savedCropCount !== questions.length || !!busy}>
+              {busy === "queue" ? `AI 분석 ${queueProgress.done}/${queueProgress.total}` : "전체 AI 문항분석"}
             </button>
-          </section>
+          </section> : null}
 
           {viewMode === "pending" && pendingQuestions.length ? (
             <section className="pending-toolbar">
@@ -1774,8 +1834,8 @@ export default function AnalysisWorkspacePage() {
                   </div> : null}
                   {question.status === "REVIEW" ? <div className="review-card-actions">
                     <button onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>자르기 수정</button>
-                    <button onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); setTimeout(() => void analyzeOneQuestion(), 0); }}>분석 다시</button>
-                    <button className="register-now" onClick={() => void approveAndRegister(question)} disabled={!!busy}>현재 결과로 등록</button>
+                    <button onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); void analyzeOneQuestion(question); }}>분석 다시</button>
+                    <button className="register-now" onClick={() => void approveForPending(question)} disabled={!!busy}>수정 완료 · 대기로</button>
                     <button className="exclude" onClick={() => void excludeQuestion(question)} disabled={!!busy}>등록 제외</button>
                   </div> : null}
                   {isBankRegistered(question) ? <div className="review-card-actions single-action">
@@ -1941,6 +2001,16 @@ export default function AnalysisWorkspacePage() {
       )}
 
       <style jsx>{`
+        .workflow-panel{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dce1eb;border-radius:16px;padding:14px}
+        .workflow-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+        .workflow-steps>button{min-height:76px;border:1px solid #dce1eb;background:#f8f9fc;border-radius:12px;padding:12px;text-align:left;display:flex;align-items:center;gap:11px;cursor:pointer}
+        .workflow-steps>button>b{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:#e3e7ef;color:#566071}
+        .workflow-steps>button span{display:grid;gap:4px}.workflow-steps>button strong{font-size:16px}.workflow-steps>button small{color:#778092}
+        .workflow-steps>button.active{border-color:#5268e8;background:#eef1ff}.workflow-steps>button.active>b{background:#5268e8;color:#fff}.workflow-steps>button.done>b{background:#2f9b72;color:#fff}
+        .workflow-steps>button:disabled{cursor:not-allowed;opacity:.48}
+        .workflow-action{margin-top:11px;border-radius:12px;background:#f7f8fb;padding:13px 15px;display:flex;align-items:center;justify-content:space-between;gap:18px}
+        .workflow-action>div:first-child{display:grid;gap:4px}.workflow-action span{font-size:13px;color:#6f7889}.workflow-buttons{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+        .workflow-buttons button{height:40px;border:1px solid #d5dbe6;background:#fff;border-radius:9px;padding:0 14px;font-weight:900}.workflow-buttons button.pass{background:#5268e8;border-color:#5268e8;color:#fff}.workflow-buttons button.review-button{background:#d96a2f;border-color:#d96a2f;color:#fff}.workflow-buttons button:disabled{opacity:.45}
         *{box-sizing:border-box}.analysis-page{min-height:100vh;background:#f3f5f9;padding:20px;font-family:Arial,"Pretendard",sans-serif;color:#202433}.page-header{max-width:1880px;margin:0 auto 14px;display:flex;justify-content:space-between;align-items:flex-end;gap:20px}.back-button{border:0;background:transparent;padding:0 0 8px;color:#5f687a;font-weight:800;cursor:pointer}.page-header small{display:block;color:#566bdc;font-weight:900;letter-spacing:.08em}.page-header h1{margin:5px 0;font-size:30px}.page-header p{margin:0;color:#71798a}.header-actions{display:flex;align-items:center;gap:12px}.save-state{font-size:13px;color:#7a8291}.primary{border:0;background:#5369df;color:#fff;border-radius:11px;padding:13px 20px;font-weight:900}.primary:disabled{opacity:.5}.notice{max-width:1880px;margin:0 auto 12px;padding:12px 15px;border-radius:10px;font-weight:800}.notice.success{background:#eaf8f1;color:#23795a}.notice.error{background:#fff0f0;color:#a83c3c}.source-bar{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:12px 14px;display:flex;align-items:end;gap:10px}.source-bar label{flex:1;font-size:12px;color:#697285;font-weight:800}.source-bar select{display:block;width:100%;height:42px;margin-top:5px;border:1px solid #d8dde7;border-radius:9px;padding:0 11px;background:#fff;font-weight:700}.source-bar button,.source-bar a{height:42px;border:1px solid #d8dde7;background:#fff;border-radius:9px;padding:0 15px;display:inline-flex;align-items:center;color:#3d4658;text-decoration:none;font-weight:800}.ai-health{max-width:1880px;margin:0 auto 12px;border:1px solid #dde2ec;border-radius:13px;padding:11px 14px;background:#fff;display:flex;align-items:center;justify-content:space-between;gap:12px}.ai-health>div{display:flex;align-items:center;gap:10px}.ai-health small{display:block;color:#7b8392;font-weight:800}.ai-health strong{display:block;margin-top:2px;font-size:14px}.health-dot{width:11px;height:11px;border-radius:50%;background:#a0a7b4;box-shadow:0 0 0 4px rgba(160,167,180,.15)}.ai-health.ok{border-color:#a9d9c5;background:#f2fbf7}.ai-health.ok .health-dot{background:#35a874;box-shadow:0 0 0 4px rgba(53,168,116,.15)}.ai-health.fail{border-color:#efb4b4;background:#fff6f6}.ai-health.fail .health-dot{background:#df5151;box-shadow:0 0 0 4px rgba(223,81,81,.15)}.ai-health button{height:36px;border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:0 13px;font-weight:900}.ai-health button:disabled{opacity:.55}.empty-panel{max-width:1880px;height:420px;margin:auto;background:#fff;border:1px solid #dde2ec;border-radius:14px;display:grid;place-items:center;color:#737c8d}.status-panel{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:12px 15px;display:grid;grid-template-columns:minmax(260px,1.6fr) repeat(4,minmax(100px,.7fr));gap:10px;position:relative;overflow:hidden}.status-panel div{display:grid;gap:3px}.status-panel small{color:#7b8392}.status-panel strong{font-size:14px}.progress-wrap{position:absolute!important;left:0;right:0;bottom:0;height:4px;background:#e8ebf2}.progress-wrap span{display:block;height:100%;background:#5369df;transition:width .25s}.pipeline-bar{max-width:1880px;margin:0 auto 12px;background:#fff;border:1px solid #dde2ec;border-radius:13px;padding:10px;display:flex;gap:10px;align-items:center}.mode-buttons{display:flex;gap:6px}.mode-buttons button,.queue-button{height:40px;border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:0 14px;font-weight:900}.mode-buttons button.active{background:#5369df;color:#fff;border-color:#5369df}.mode-buttons button.review.active{background:#d96a2f;border-color:#d96a2f}.mode-buttons button.registered.active{background:#288b63;border-color:#288b63}.mode-buttons button.pending.active{background:#b88319;border-color:#b88319}.mode-buttons button.failed.active{background:#9b4f5d;border-color:#9b4f5d}.status-tabs{flex-wrap:wrap}.pipeline-counts{display:flex;gap:12px;margin-left:auto;color:#586174}.queue-button{background:#283247;color:#fff;border-color:#283247}.pending-toolbar{max-width:1880px;margin:0 auto 12px;background:#fff8e8;border:1px solid #e6c778;border-radius:13px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:18px}.pending-toolbar div{display:grid;gap:4px}.pending-toolbar strong{font-size:17px;color:#7d5510}.pending-toolbar span{font-size:13px;color:#746746}.pending-toolbar button{border:0;background:#a96f0d;color:#fff;border-radius:10px;padding:12px 18px;font-weight:900;white-space:nowrap}.pending-toolbar button:disabled{opacity:.55}.all-crops-grid{max-width:1880px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}.all-crops-grid.review-large-grid{grid-template-columns:repeat(3,440px);gap:16px;justify-content:start;overflow-x:auto;padding-bottom:10px}.review-large-grid .crop-card{width:440px;min-width:440px;max-width:440px;min-height:590px;padding:14px;grid-template-rows:1fr auto}.review-large-grid .card-open{grid-template-rows:360px auto auto auto;gap:10px}.review-large-grid .crop-thumb{height:360px;min-height:360px;max-height:360px;background:#fff}.review-large-grid .crop-thumb img{max-height:none;width:100%;object-fit:contain}.review-large-grid .crop-card-head strong{font-size:22px}.review-large-grid .crop-card-head span{font-size:15px}.review-large-grid .crop-card small{font-size:15px;line-height:1.5}.review-large-grid .review-reason{font-size:14px!important;padding:11px}.review-large-grid .review-card-actions button{min-height:48px;font-size:16px}.crop-card{min-height:260px;text-align:left;border:1px solid #dce1ea;border-radius:12px;background:#fff;padding:10px;display:grid;gap:8px;overflow:hidden}.card-open{border:0;background:transparent;padding:0;text-align:left;display:grid;grid-template-rows:170px auto auto auto;gap:8px;cursor:pointer;width:100%}.crop-thumb{display:grid;place-items:center;overflow:auto;background:#f7f8fb;border:1px solid #e2e6ee;border-radius:9px}.crop-thumb img{display:block;max-width:100%;max-height:100%;object-fit:contain}.crop-thumb span{color:#7b8392;font-size:12px}.crop-card-head{display:flex;justify-content:space-between;align-items:center}.crop-card span{font-size:12px;font-weight:900}.crop-card.auto{border-left:5px solid #c8942f}.crop-card.registered-card{border-left:5px solid #42a57a}.crop-card.hold{border-left:5px solid #e07b43}.crop-card.failed-card{border-left:5px solid #9b4f5d}.crop-card small{color:#6d7686}.review-reason{display:block;color:#a65332!important;background:#fff4ed;border-radius:7px;padding:7px;line-height:1.4}.review-card-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-top:8px;border-top:1px solid #edf0f4}.review-card-actions button{min-height:34px;border:1px solid #d7dce7;background:#fff;border-radius:8px;font-weight:800;cursor:pointer}.review-card-actions .register-now{background:#283247;border-color:#283247;color:#fff}.review-card-actions .exclude{color:#a34444}.review-card-actions.single-action{grid-template-columns:1fr}.pending-actions{margin-top:auto}.pending-actions .register-now{min-height:42px}.all-empty{grid-column:1/-1;background:#fff;border:1px solid #dde2ec;border-radius:12px;padding:50px;text-align:center}.quick-adjust{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}.quick-adjust button{height:34px;border:1px solid #d7dce7;background:#fff;border-radius:8px;font-weight:800;font-size:12px}.workspace-grid{max-width:1880px;margin:auto;display:grid;grid-template-columns:205px minmax(650px,1fr) 390px;gap:14px;align-items:start}.question-list,.pdf-panel,.review-panel{background:#fff;border:1px solid #dde2ec;border-radius:14px}.question-list,.review-panel{position:sticky;top:10px;max-height:calc(100vh - 20px);overflow:auto}.question-list{padding:14px}.panel-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.panel-title h2{font-size:17px;margin:0}.panel-title span{font-size:12px;color:#7b8392}.number-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}.number-grid button{height:37px;border:1px solid #d9dee8;border-radius:8px;background:#fff;font-weight:900;cursor:pointer}.number-grid button.cropped{background:#eaf8f1;border-color:#a8d7c4;color:#267b5d}.number-grid button.active{background:#5369df;border-color:#5369df;color:#fff}.legend{display:grid;gap:7px;margin-top:14px;color:#747d8d;font-size:12px}.legend span{display:flex;align-items:center;gap:7px}.legend i{width:10px;height:10px;border-radius:50%}.done-dot{background:#62b391}.active-dot{background:#5369df}.pdf-panel{overflow:hidden}.pdf-toolbar{min-height:54px;border-bottom:1px solid #e4e8ef;padding:8px 12px;display:flex;align-items:center;gap:8px}.pdf-toolbar button,.pdf-toolbar a{border:1px solid #d7dce7;background:#fff;border-radius:9px;padding:9px 12px;text-decoration:none;color:#414a5b;font-weight:800}.pdf-toolbar button:disabled{opacity:.45}.pdf-toolbar span{margin-left:auto;color:#5369df;font-weight:900}.canvas-shell{position:relative;width:min(100%,1050px);margin:12px auto;background:#fff;min-height:520px}.canvas-shell canvas{display:block;width:100%;height:auto}.loading{position:absolute;inset:0;display:grid;place-items:center;background:#fff;color:#737c8d;z-index:3}.overlay{position:absolute;inset:0;cursor:crosshair;touch-action:none}.crop-box{position:absolute;pointer-events:none;border:2px solid #e24444;background:rgba(226,68,68,.09)}.crop-box.selected b{position:absolute;left:-2px;top:-25px;background:#e24444;color:#fff;padding:3px 8px;border-radius:6px 6px 0 0}.crop-box.draft{border-color:#5369df;border-style:dashed;background:rgba(83,105,223,.08)}.review-panel{padding:14px}.review-sticky-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:11px;border-bottom:1px solid #e6e9ef}.review-sticky-head small{color:#7b8392}.review-sticky-head h2{margin:2px 0 0;font-size:24px}.question-nav{display:flex;gap:6px}.question-nav button{width:38px;height:36px;border:1px solid #d7dce7;background:#fff;border-radius:8px;font-weight:900}.preview-card{padding:13px 0;border-bottom:1px solid #e6e9ef}.preview-title{display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px}.preview-title span{color:#748092}.preview-image{min-height:190px;max-height:360px;overflow:auto;border:1px dashed #cbd2de;border-radius:10px;background:#fafbfd;display:grid;place-items:center;color:#7a8392}.preview-image img{display:block;max-width:100%}.crop-actions{display:grid;grid-template-columns:1fr auto;gap:7px;margin-top:8px}.crop-actions button{height:40px;border:1px solid #d7dce7;background:#fff;border-radius:9px;font-weight:900}.crop-actions .crop-save{background:#283247;border-color:#283247;color:#fff}.analysis-form{padding-top:13px;display:grid;gap:10px}.form-head{display:flex;justify-content:space-between;align-items:center}.form-head button{border:1px solid #d7dce7;background:#fff;border-radius:8px;padding:8px 10px;font-weight:800}.analysis-form label{display:grid;gap:5px;font-size:12px;color:#687184;font-weight:800}.analysis-form input,.analysis-form select,.analysis-form textarea{width:100%;border:1px solid #d6dce7;border-radius:8px;background:#fff;padding:10px;color:#252b37;font:inherit}.analysis-form textarea{resize:vertical}.two-columns{display:grid;grid-template-columns:1fr 1fr;gap:8px}.confidence-row{display:flex;justify-content:space-between;padding:10px 12px;background:#f6f7fa;border-radius:8px;color:#646d7d}.analysis-save{height:44px;border:0;border-radius:9px;background:#5369df;color:#fff;font-weight:900}.analysis-save:disabled{opacity:.5}.no-question{min-height:400px;display:grid;place-items:center;text-align:center;color:#737c8c;padding:20px}.ai-working-overlay{position:fixed;inset:0;z-index:9999;background:rgba(18,24,38,.62);backdrop-filter:blur(3px);display:grid;place-items:center;padding:24px}.ai-working-card{width:min(620px,92vw);background:#fff;border-radius:24px;padding:36px 42px;text-align:center;box-shadow:0 28px 80px rgba(0,0,0,.28)}.ai-working-card h2{margin:18px 0 8px;font-size:28px}.ai-working-card p{margin:0 0 24px;color:#6c7484;font-size:16px}.ai-orbit{width:86px;height:86px;margin:auto;border-radius:50%;display:grid;place-items:center;background:conic-gradient(#5369df,#7c8df0,#5369df);animation:ai-spin 1.2s linear infinite}.ai-orbit:before{content:"";position:absolute;width:68px;height:68px;border-radius:50%;background:#fff}.ai-orbit span{position:relative;z-index:1;font-size:22px;font-weight:1000;color:#5369df;animation:ai-spin-reverse 1.2s linear infinite}.ai-progress-label{display:flex;justify-content:center;align-items:baseline;gap:9px;margin-bottom:10px}.ai-progress-label b{font-size:28px;color:#283247}.ai-progress-label span{color:#747d8d}.ai-progress-track{height:14px;border-radius:999px;background:#e8ebf3;overflow:hidden}.ai-progress-track i{display:block;height:100%;background:linear-gradient(90deg,#5369df,#8b9af2);transition:width .25s}.ai-working-card small{display:block;margin-top:13px;color:#6d7686}.ai-pulse-row{display:flex;justify-content:center;gap:9px}.ai-pulse-row i{width:12px;height:12px;border-radius:50%;background:#5369df;animation:ai-pulse .9s infinite alternate}.ai-pulse-row i:nth-child(2){animation-delay:.2s}.ai-pulse-row i:nth-child(3){animation-delay:.4s}@keyframes ai-spin{to{transform:rotate(360deg)}}@keyframes ai-spin-reverse{to{transform:rotate(-360deg)}}@keyframes ai-pulse{to{transform:translateY(-9px);opacity:.35}}@media(max-width:1450px){.workspace-grid{grid-template-columns:185px minmax(580px,1fr) 350px}.page-header h1{font-size:27px}}@media(max-width:1150px){.workspace-grid{grid-template-columns:180px minmax(0,1fr)}.review-panel{grid-column:1/-1;position:static;max-height:none}.status-panel{grid-template-columns:1fr 1fr 1fr}.question-list{position:sticky}.preview-image{max-height:500px}}@media(max-width:760px){.pending-toolbar{align-items:stretch;flex-direction:column}.pending-toolbar button{width:100%}.all-crops-grid.review-large-grid{grid-template-columns:repeat(3,440px)}.review-large-grid .card-open{grid-template-rows:360px auto auto auto}.analysis-page{padding:9px}.page-header{align-items:flex-start;flex-direction:column}.header-actions{width:100%;justify-content:space-between}.source-bar{align-items:stretch;flex-direction:column}.source-bar button,.source-bar a{justify-content:center}.status-panel{grid-template-columns:1fr 1fr}.workspace-grid{grid-template-columns:1fr}.question-list{position:static;max-height:none}.number-grid{grid-template-columns:repeat(8,1fr)}.pdf-toolbar{flex-wrap:wrap}.pdf-toolbar span{width:100%;margin-left:0}.review-panel{grid-column:auto}.canvas-shell{min-height:360px}}
       `}</style>
     </main>
