@@ -1799,6 +1799,24 @@ export default function AnalysisWorkspacePage() {
   const missingRecognitionAnchors = anchors?.hasTextLayer
     ? questions.filter((question) => !anchors.byQuestionNo.has(Number(question.question_no)))
     : [];
+  const busyInfo: Record<string, { title: string; detail: string }> = {
+    load: { title: "분석 화면을 불러오는 중", detail: "시험지와 기존 작업 내용을 준비하고 있습니다." },
+    pdf: { title: "시험지를 불러오는 중", detail: "PDF 화면과 문항 좌표를 준비하고 있습니다." },
+    analysis: { title: "AI 문제인식 작동 중", detail: "AI가 시험지의 문항 위치와 번호를 찾고 있습니다." },
+    fill: { title: "빠진 문항을 채우는 중", detail: "PDF에서 누락된 문항번호를 찾아 추가하고 있습니다." },
+    recrop: { title: "전체 자르기 처리 중", detail: "인식 좌표를 보정하고 문항 이미지를 순서대로 저장하고 있습니다." },
+    crop: { title: "수동 자르기 저장 중", detail: "저장이 완료될 때까지 화면을 조작하지 마세요." },
+    queue: { title: "AI 문항분석 작동 중", detail: "각 문항을 분석하고 문제은행 대기 또는 보류로 분류하고 있습니다." },
+    one: { title: "AI 선택 문항 재분석 중", detail: "선택한 문항의 분석 결과를 다시 만들고 있습니다." },
+    save: { title: "분석 결과 저장 중", detail: "수정한 문항 정보를 안전하게 저장하고 있습니다." },
+    "register-pending": { title: "문제은행 저장 중", detail: "선택한 문항을 문제은행에 등록하고 있습니다." },
+    "review-action": { title: "문항 상태 처리 중", detail: "검수 결과를 저장하고 있습니다." },
+    "reset-recognition": { title: "문제인식 전체 취소 중", detail: "문제인식과 이후 단계의 작업 결과를 초기화하고 있습니다." },
+    "reset-crop": { title: "자르기 전체 취소 중", detail: "자르기 이미지와 이후 분석 결과를 초기화하고 있습니다." },
+    "reset-analysis": { title: "문항분석 전체 취소 중", detail: "문항을 분석 대기 상태로 되돌리고 있습니다." },
+  };
+  const currentBusyInfo = busy ? busyInfo[busy] ?? { title: "처리 중", detail: "작업이 끝날 때까지 잠시 기다려 주세요." } : null;
+  const showQueueProgress = ["queue", "recrop", "fill"].includes(busy) && queueProgress.total > 0;
 
   function moveToAdminPage(target: string) {
     if (!target || target === "analysis") return;
@@ -1974,17 +1992,17 @@ export default function AnalysisWorkspacePage() {
         </section>
       ) : null}
 
-      {(busy === "queue" || busy === "one" || busy === "analysis" || busy === "crop") ? (
+      {currentBusyInfo ? (
         <div className="ai-working-overlay" role="status" aria-live="polite">
           <div className="ai-working-card">
-            <div className="ai-orbit"><span>AI</span></div>
-            <h2>{busy === "queue" ? "AI가 문항을 분석하고 있습니다" : busy === "one" ? "AI가 선택 문항을 다시 분석하고 있습니다" : busy === "crop" ? "수동 자르기를 저장하고 있습니다" : "AI가 시험지의 문항 위치를 찾고 있습니다"}</h2>
-            <p>{busy === "crop" ? "저장이 완료될 때까지 다른 문항을 누르지 마세요." : "화면을 닫지 말고 잠시 기다려 주세요."}</p>
-            {busy === "queue" ? (
+            <div className="ai-orbit"><span>{["analysis", "queue", "one"].includes(busy) ? "AI" : "···"}</span></div>
+            <h2>{currentBusyInfo.title}</h2>
+            <p>{currentBusyInfo.detail}<br />화면을 닫거나 조작하지 말고 잠시 기다려 주세요.</p>
+            {showQueueProgress ? (
               <>
                 <div className="ai-progress-label"><b>{queueProgress.done} / {queueProgress.total}</b><span>문항 처리</span></div>
                 <div className="ai-progress-track"><i style={{ width: `${queueProgress.total ? Math.round(queueProgress.done / queueProgress.total * 100) : 0}%` }} /></div>
-                <small>AI 분석 → 자동 판정 → 문제은행 대기 또는 보류</small>
+                <small>{busy === "queue" ? "AI 분석 → 자동 판정 → 문제은행 대기 또는 보류" : "문항을 순서대로 안전하게 처리하고 있습니다."}</small>
               </>
             ) : <div className="ai-pulse-row"><i /><i /><i /></div>}
           </div>

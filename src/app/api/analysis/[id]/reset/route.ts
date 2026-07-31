@@ -6,13 +6,13 @@ export const runtime = "nodejs";
 type ResetStage = "recognition" | "crop" | "analysis";
 
 function cropOnlyReview(value: unknown) {
-  if (!value || typeof value !== "object") return null;
+  if (!value || typeof value !== "object") return {};
   const source = value as Record<string, unknown>;
   const kept: Record<string, unknown> = {};
   for (const key of ["crop_engine_version", "crop_manual", "crop_saved_at"]) {
     if (key in source) kept[key] = source[key];
   }
-  return Object.keys(kept).length ? kept : null;
+  return kept;
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
           crop_height: null,
           answer: null,
           confidence: null,
-          review_result: null,
+          review_result: {},
           review_reason: null,
           status: "WAITING",
           updated_at: new Date().toISOString(),
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         : "3단계 · AI 문항분석 대기";
     const analysisPatch = await supabase.from("source_analysis").update({
       current_step: currentStep,
-      status: stage === "recognition" ? "PENDING" : "WAITING",
+      status: "WAITING",
       progress: 0,
       total_questions: stage === "recognition" ? 0 : editable.length,
       updated_at: new Date().toISOString(),
@@ -102,9 +102,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       preservedRegisteredCount: (found.data ?? []).length - editable.length,
     });
   } catch (error) {
+    const detail = error && typeof error === "object" && "message" in error
+      ? String((error as { message?: unknown }).message ?? "")
+      : "";
     return NextResponse.json({
       success: false,
-      message: error instanceof Error ? error.message : "전체 취소에 실패했습니다.",
+      message: error instanceof Error ? error.message : detail || "전체 취소에 실패했습니다.",
     }, { status: 500 });
   }
 }
