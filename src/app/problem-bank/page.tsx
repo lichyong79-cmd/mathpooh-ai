@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
 import { authHeaders } from "@/lib/supabase/rest";
+import { ProblemDnaCard } from "@/components/problem-dna-card";
+import type { ProblemDNA } from "@/lib/problem-dna";
 
 type Problem = {
   id: string;
@@ -26,6 +28,8 @@ type Problem = {
   updated_at: string;
   question_image_path: string | null;
   page_no: number | null;
+  problem_dna: ProblemDNA | null;
+  analysis_version: string | null;
 };
 
 type Draft = Pick<Problem, "title" | "grade" | "subject" | "unit" | "topic" | "difficulty" | "question_type" | "answer" | "summary" | "source_name" | "status">;
@@ -36,7 +40,7 @@ const emptyDraft: Draft = {
   subject: "",
   unit: "",
   topic: "",
-  difficulty: "중",
+  difficulty: "C",
   question_type: "unknown",
   answer: "",
   summary: "",
@@ -52,6 +56,12 @@ function formatDate(value: string) {
 
 function escapeLike(value: string) {
   return value.replace(/[,%()]/g, " ").trim();
+}
+
+function confidencePercent(value: number | null) {
+  if (value == null || !Number.isFinite(Number(value))) return "-";
+  const number = Number(value);
+  return `${Math.round(number <= 1 ? number * 100 : number)}%`;
 }
 
 export default function ProblemBankPage() {
@@ -70,6 +80,10 @@ export default function ProblemBankPage() {
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
+  const [solutionImageUrl, setSolutionImageUrl] = useState<string | null>(null);
+  const [solutionImageLoading, setSolutionImageLoading] = useState(false);
+  const [assetMode, setAssetMode] = useState<"question" | "solution">("question");
+  const [detailTab, setDetailTab] = useState<"basic" | "dna">("basic");
 
   const loadProblems = useCallback(async () => {
     const config = getSupabaseConfig();
@@ -85,7 +99,7 @@ export default function ProblemBankPage() {
       const fields = [
         "id", "source_file_id", "analysis_question_id", "question_no", "problem_code", "title",
         "grade", "subject", "unit", "topic", "difficulty", "question_type", "answer", "summary",
-        "source_name", "confidence", "status", "created_at", "updated_at", "question_image_path", "page_no",
+        "source_name", "confidence", "status", "created_at", "updated_at", "question_image_path", "page_no", "problem_dna", "analysis_version",
       ].join(",");
       const response = await fetch(
         `${config.url}/rest/v1/problem_bank_questions?select=${fields}&order=created_at.desc`,
@@ -110,6 +124,7 @@ export default function ProblemBankPage() {
     if (!selected) {
       setDraft(emptyDraft);
       setImageUrl(null);
+      setSolutionImageUrl(null);
       return;
     }
 
@@ -129,6 +144,10 @@ export default function ProblemBankPage() {
 
     setImageUrl(null);
     setImageLoading(true);
+    setSolutionImageUrl(null);
+    setSolutionImageLoading(true);
+    setAssetMode("question");
+    setDetailTab("basic");
     void (async () => {
       try {
         const response = await fetch(`/api/problem-bank/questions/${selected.id}/image`, { cache: "no-store" });
@@ -140,6 +159,14 @@ export default function ProblemBankPage() {
       } finally {
         setImageLoading(false);
       }
+    })();
+    void (async () => {
+      try {
+        const response = await fetch(`/api/problem-bank/questions/${selected.id}/solution-image`, { cache: "no-store" });
+        const result = await response.json() as { success?: boolean; imageUrl?: string };
+        setSolutionImageUrl(response.ok && result.success ? result.imageUrl ?? null : null);
+      } catch { setSolutionImageUrl(null); }
+      finally { setSolutionImageLoading(false); }
     })();
   }, [selected]);
 
@@ -254,28 +281,29 @@ export default function ProblemBankPage() {
             <div className="pdf-panel">
               <div className="pdf-head">
                 <div><strong>{selected.title}</strong><span>{selected.source_name || "출처 미입력"} · {formatDate(selected.created_at)}</span></div>
-
+                <div className="asset-tabs"><button type="button" className={assetMode === "question" ? "active" : ""} onClick={() => setAssetMode("question")}>문제</button><button type="button" className={assetMode === "solution" ? "active" : ""} onClick={() => setAssetMode("solution")}>공식 해설</button></div>
               </div>
               <div className="question-viewer">
-                {imageLoading ? <span>문항 이미지를 불러오는 중입니다.</span> : imageUrl ? <img src={imageUrl} alt={`${selected.question_no}번 문항`} /> : <div className="no-image"><b>개별 문항 이미지가 없습니다.</b><span>AI 분석관리에서 문항 박스를 검수한 뒤 등록해 주세요.</span></div>}
+                {assetMode === "question" ? (imageLoading ? <span>문항 이미지를 불러오는 중입니다.</span> : imageUrl ? <img src={imageUrl} alt={`${selected.question_no}번 문항`} /> : <div className="no-image"><b>개별 문항 이미지가 없습니다.</b><span>AI 분석관리에서 문항 박스를 검수한 뒤 등록해 주세요.</span></div>) : (solutionImageLoading ? <span>공식 해설 이미지를 불러오는 중입니다.</span> : solutionImageUrl ? <img src={solutionImageUrl} alt={`${selected.question_no}번 공식 해설`} /> : <div className="no-image"><b>문항별 공식 해설 이미지가 없습니다.</b><span>AI 분석관리에서 해당 문항을 재분석해 주세요.</span></div>)}
               </div>
             </div>
 
             <form className="edit-panel" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-              <div className="edit-head"><div><strong>{selected.question_no}번 분석 정보</strong><span>신뢰도 {selected.confidence == null ? "-" : `${Math.round(Number(selected.confidence))}%`}</span></div><code>{selected.problem_code}</code></div>
-              <div className="edit-grid">
+              <div className="edit-head"><div><strong>{selected.question_no}번 분석 정보</strong><span>신뢰도 {confidencePercent(selected.confidence)} · {selected.analysis_version || "legacy"}</span></div><code>{selected.problem_code}</code></div>
+              <div className="detail-tabs"><button type="button" className={detailTab === "basic" ? "active" : ""} onClick={() => setDetailTab("basic")}>기본정보 수정</button><button type="button" className={detailTab === "dna" ? "active" : ""} onClick={() => setDetailTab("dna")}>Problem DNA</button></div>
+              {detailTab === "basic" ? <div className="edit-grid">
                 <label className="wide"><span>문항명</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
                 <label><span>학년</span><input value={draft.grade} onChange={(event) => setDraft({ ...draft, grade: event.target.value })} /></label>
                 <label><span>과목</span><input value={draft.subject} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} /></label>
                 <label><span>단원</span><input value={draft.unit} onChange={(event) => setDraft({ ...draft, unit: event.target.value })} /></label>
                 <label><span>유형</span><input value={draft.topic} onChange={(event) => setDraft({ ...draft, topic: event.target.value })} /></label>
-                <label><span>난이도</span><select value={draft.difficulty} onChange={(event) => setDraft({ ...draft, difficulty: event.target.value })}><option>하</option><option>중</option><option>상</option><option>최상</option></select></label>
-                <label><span>문항 형식</span><select value={draft.question_type} onChange={(event) => setDraft({ ...draft, question_type: event.target.value })}><option value="objective">객관식</option><option value="subjective">단답형</option><option value="unknown">미분류</option></select></label>
+                <label><span>난이도</span><select value={draft.difficulty} onChange={(event) => setDraft({ ...draft, difficulty: event.target.value })}><option>A</option><option>B</option><option>C</option><option>D</option><option>E</option></select></label>
+                <label><span>문항 형식</span><select value={draft.question_type} onChange={(event) => setDraft({ ...draft, question_type: event.target.value })}><option value="multiple_choice">객관식</option><option value="short_answer">단답형</option><option value="essay">서술형</option><option value="unknown">미분류</option></select></label>
                 <label><span>정답</span><input value={draft.answer} onChange={(event) => setDraft({ ...draft, answer: event.target.value })} /></label>
                 <label><span>출처</span><input value={draft.source_name} onChange={(event) => setDraft({ ...draft, source_name: event.target.value })} /></label>
                 <label className="wide"><span>문항 요약</span><textarea rows={4} value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label>
                 <label><span>상태</span><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as Draft["status"] })}><option value="ACTIVE">사용</option><option value="HOLD">보류</option><option value="ARCHIVED">보관</option></select></label>
-              </div>
+              </div> : <div className="dna-panel">{selected.problem_dna ? <ProblemDnaCard dna={selected.problem_dna} questionNo={selected.question_no} /> : <div className="no-dna">Problem DNA가 없습니다. AI 분석관리에서 재분석해 주세요.</div>}</div>}
               <div className="edit-actions"><button type="button" className="delete-button" onClick={() => void remove()} disabled={deleting || saving}>{deleting ? "삭제 중" : "삭제"}</button><button type="submit" className="save-button" disabled={saving || deleting}>{saving ? "저장 중" : "수정 저장"}</button></div>
             </form>
           </>}
@@ -283,7 +311,7 @@ export default function ProblemBankPage() {
       </section>
 
       <style jsx>{`
-        .bank-page{min-height:100vh;background:#f4f6fa;color:#263657;padding:24px;font-family:Arial,"Noto Sans KR",sans-serif}.bank-header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;max-width:1800px;margin:0 auto 18px}.bank-header p{margin:8px 0 2px;color:#5368e8;font-size:12px;font-weight:900;letter-spacing:.08em}.bank-header h1{margin:0;font-size:32px}.bank-header span{display:block;margin-top:6px;color:#7b8497;font-size:13px}.back-button,.refresh-button{border:1px solid #d9deea;background:#fff;border-radius:11px;padding:10px 13px;font-weight:800;color:#44506d;cursor:pointer}.filter-bar{max-width:1800px;margin:0 auto 14px;display:grid;grid-template-columns:minmax(280px,1.5fr) repeat(4,minmax(130px,.55fr));gap:10px;padding:14px;background:#fff;border:1px solid #e0e4ed;border-radius:15px}.filter-bar input,.filter-bar select{height:44px;border:1px solid #d8deea;border-radius:10px;background:#fff;padding:0 12px;font:inherit;color:#334163}.notice{max-width:1800px;margin:0 auto 12px;padding:12px 14px;border-radius:11px;font-size:13px;font-weight:800}.notice.success{background:#eaf8f1;color:#17805b}.notice.error{background:#fff0f1;color:#b84451}.bank-layout{max-width:1800px;margin:0 auto;display:grid;grid-template-columns:minmax(440px,.72fr) minmax(760px,1.28fr);gap:14px}.problem-list,.problem-detail{background:#fff;border:1px solid #e0e4ed;border-radius:16px;overflow:hidden;min-width:0}.problem-list{max-height:calc(100vh - 190px);overflow:auto}.list-head,.problem-row{display:grid;grid-template-columns:105px minmax(220px,1fr) 70px;gap:12px;align-items:center}.list-head{position:sticky;top:0;z-index:2;padding:13px 16px;background:#f7f8fb;color:#7b8497;font-size:12px;font-weight:900;border-bottom:1px solid #e5e8ef}.problem-row{width:100%;padding:14px 16px;border:0;border-bottom:1px solid #edf0f5;background:#fff;text-align:left;color:inherit;cursor:pointer}.problem-row:hover{background:#f8f9ff}.problem-row.selected{background:#eef2ff;box-shadow:inset 4px 0 0 #5368e8}.problem-row div{display:flex;flex-direction:column;gap:4px;min-width:0}.problem-row strong{font-size:15px}.problem-row b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.problem-row small{color:#8a92a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.problem-row>span{justify-self:start;padding:5px 8px;border-radius:999px;background:#f0f2f7;font-size:12px;font-weight:900}.problem-detail{display:grid;grid-template-columns:minmax(420px,1.15fr) minmax(360px,.85fr);min-height:720px}.pdf-panel{min-width:0;border-right:1px solid #e2e6ee}.pdf-head,.edit-head{min-height:68px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 16px;border-bottom:1px solid #e4e7ee}.pdf-head>div:first-child,.edit-head>div{display:flex;flex-direction:column;gap:4px}.pdf-head span,.edit-head span{font-size:12px;color:#7b8497}.question-viewer{height:calc(100vh - 280px);min-height:650px;background:#eef1f5;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:28px;color:#7b8497;font-weight:800}.question-viewer img{display:block;max-width:100%;height:auto;background:#fff;box-shadow:0 8px 28px rgba(32,45,74,.12)}.no-image{min-height:520px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}.no-image span{font-size:13px;font-weight:600}.edit-panel{min-width:0;background:#fbfcff;display:flex;flex-direction:column}.edit-head code{font-size:11px;color:#5368e8;background:#eef2ff;padding:7px 9px;border-radius:8px;max-width:180px;overflow:hidden;text-overflow:ellipsis}.edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px;padding:16px;overflow:auto}.edit-grid label{display:flex;flex-direction:column;gap:6px}.edit-grid label.wide{grid-column:1/-1}.edit-grid label span{font-size:12px;font-weight:900;color:#6d778b}.edit-grid input,.edit-grid select,.edit-grid textarea{width:100%;border:1px solid #d8deea;border-radius:10px;background:#fff;padding:0 11px;color:#263657;font:inherit;font-weight:700;box-sizing:border-box}.edit-grid input,.edit-grid select{height:42px}.edit-grid textarea{padding:11px;resize:vertical;line-height:1.5}.edit-actions{margin-top:auto;display:flex;justify-content:flex-end;gap:9px;padding:14px 16px;border-top:1px solid #e4e7ee;background:#fff}.edit-actions button{min-width:110px;height:42px;border-radius:10px;font-weight:900;cursor:pointer}.delete-button{border:1px solid #edc8cc;background:#fff;color:#b84451}.save-button{border:1px solid #5368e8;background:#5368e8;color:#fff}.edit-actions button:disabled{opacity:.5;cursor:not-allowed}.empty{padding:70px 20px;text-align:center;color:#8a92a3}.empty.large{grid-column:1/-1;display:grid;place-items:center;min-height:600px}@media(max-width:1250px){.bank-layout{grid-template-columns:390px minmax(0,1fr)}.problem-detail{grid-template-columns:1fr}.pdf-panel{border-right:0;border-bottom:1px solid #e2e6ee}.question-viewer{height:600px;min-height:0}}@media(max-width:900px){.bank-page{padding:12px}.filter-bar{grid-template-columns:1fr 1fr}.filter-bar input{grid-column:1/-1}.bank-layout{grid-template-columns:1fr}.problem-list{max-height:440px}.bank-header{align-items:stretch;flex-direction:column}.refresh-button{align-self:flex-start}}@media(max-width:560px){.filter-bar{grid-template-columns:1fr}.filter-bar input{grid-column:auto}.list-head,.problem-row{grid-template-columns:80px minmax(150px,1fr) 55px}.edit-grid{grid-template-columns:1fr}.edit-grid label.wide{grid-column:auto}.pdf-head{align-items:flex-start;flex-direction:column}.question-viewer{height:500px}}
+        .bank-page{min-height:100vh;background:#f4f6fa;color:#263657;padding:24px;font-family:Arial,"Noto Sans KR",sans-serif}.bank-header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;max-width:1800px;margin:0 auto 18px}.bank-header p{margin:8px 0 2px;color:#5368e8;font-size:12px;font-weight:900;letter-spacing:.08em}.bank-header h1{margin:0;font-size:32px}.bank-header span{display:block;margin-top:6px;color:#7b8497;font-size:13px}.back-button,.refresh-button{border:1px solid #d9deea;background:#fff;border-radius:11px;padding:10px 13px;font-weight:800;color:#44506d;cursor:pointer}.filter-bar{max-width:1800px;margin:0 auto 14px;display:grid;grid-template-columns:minmax(280px,1.5fr) repeat(4,minmax(130px,.55fr));gap:10px;padding:14px;background:#fff;border:1px solid #e0e4ed;border-radius:15px}.filter-bar input,.filter-bar select{height:44px;border:1px solid #d8deea;border-radius:10px;background:#fff;padding:0 12px;font:inherit;color:#334163}.notice{max-width:1800px;margin:0 auto 12px;padding:12px 14px;border-radius:11px;font-size:13px;font-weight:800}.notice.success{background:#eaf8f1;color:#17805b}.notice.error{background:#fff0f1;color:#b84451}.bank-layout{max-width:1800px;margin:0 auto;display:grid;grid-template-columns:minmax(440px,.72fr) minmax(760px,1.28fr);gap:14px}.problem-list,.problem-detail{background:#fff;border:1px solid #e0e4ed;border-radius:16px;overflow:hidden;min-width:0}.problem-list{max-height:calc(100vh - 190px);overflow:auto}.list-head,.problem-row{display:grid;grid-template-columns:105px minmax(220px,1fr) 70px;gap:12px;align-items:center}.list-head{position:sticky;top:0;z-index:2;padding:13px 16px;background:#f7f8fb;color:#7b8497;font-size:12px;font-weight:900;border-bottom:1px solid #e5e8ef}.problem-row{width:100%;padding:14px 16px;border:0;border-bottom:1px solid #edf0f5;background:#fff;text-align:left;color:inherit;cursor:pointer}.problem-row:hover{background:#f8f9ff}.problem-row.selected{background:#eef2ff;box-shadow:inset 4px 0 0 #5368e8}.problem-row div{display:flex;flex-direction:column;gap:4px;min-width:0}.problem-row strong{font-size:15px}.problem-row b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.problem-row small{color:#8a92a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.problem-row>span{justify-self:start;padding:5px 8px;border-radius:999px;background:#f0f2f7;font-size:12px;font-weight:900}.problem-detail{display:grid;grid-template-columns:minmax(420px,1.15fr) minmax(360px,.85fr);min-height:720px}.pdf-panel{min-width:0;border-right:1px solid #e2e6ee}.pdf-head,.edit-head{min-height:68px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 16px;border-bottom:1px solid #e4e7ee}.pdf-head>div:first-child,.edit-head>div{display:flex;flex-direction:column;gap:4px}.pdf-head span,.edit-head span{font-size:12px;color:#7b8497}.asset-tabs,.detail-tabs{display:flex;gap:6px}.asset-tabs button,.detail-tabs button{border:1px solid #d7ddea;background:#fff;color:#64708a;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:900;cursor:pointer}.asset-tabs button.active,.detail-tabs button.active{border-color:#5368e8;background:#5368e8;color:#fff}.detail-tabs{padding:10px 16px 0}.question-viewer{height:calc(100vh - 280px);min-height:650px;background:#eef1f5;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:28px;color:#7b8497;font-weight:800}.question-viewer img{display:block;max-width:100%;height:auto;background:#fff;box-shadow:0 8px 28px rgba(32,45,74,.12)}.no-image{min-height:520px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center}.no-image span{font-size:13px;font-weight:600}.edit-panel{min-width:0;background:#fbfcff;display:flex;flex-direction:column;max-height:calc(100vh - 190px);overflow:auto}.edit-head code{font-size:11px;color:#5368e8;background:#eef2ff;padding:7px 9px;border-radius:8px;max-width:180px;overflow:hidden;text-overflow:ellipsis}.edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px;padding:16px}.edit-grid label{display:flex;flex-direction:column;gap:6px}.edit-grid label.wide{grid-column:1/-1}.edit-grid label span{font-size:12px;font-weight:900;color:#6d778b}.edit-grid input,.edit-grid select,.edit-grid textarea{width:100%;border:1px solid #d8deea;border-radius:10px;background:#fff;padding:0 11px;color:#263657;font:inherit;font-weight:700;box-sizing:border-box}.edit-grid input,.edit-grid select{height:42px}.edit-grid textarea{padding:11px;resize:vertical;line-height:1.5}.dna-panel{padding:14px 16px}.no-dna{padding:60px 20px;text-align:center;color:#8a92a3}.edit-actions{margin-top:auto;display:flex;justify-content:flex-end;gap:9px;padding:14px 16px;border-top:1px solid #e4e7ee;background:#fff;position:sticky;bottom:0}.edit-actions button{min-width:110px;height:42px;border-radius:10px;font-weight:900;cursor:pointer}.delete-button{border:1px solid #edc8cc;background:#fff;color:#b84451}.save-button{border:1px solid #5368e8;background:#5368e8;color:#fff}.edit-actions button:disabled{opacity:.5;cursor:not-allowed}.empty{padding:70px 20px;text-align:center;color:#8a92a3}.empty.large{grid-column:1/-1;display:grid;place-items:center;min-height:600px}@media(max-width:1250px){.bank-layout{grid-template-columns:390px minmax(0,1fr)}.problem-detail{grid-template-columns:1fr}.pdf-panel{border-right:0;border-bottom:1px solid #e2e6ee}.question-viewer{height:600px;min-height:0}.edit-panel{max-height:none}}@media(max-width:900px){.bank-page{padding:12px}.filter-bar{grid-template-columns:1fr 1fr}.filter-bar input{grid-column:1/-1}.bank-layout{grid-template-columns:1fr}.problem-list{max-height:440px}.bank-header{align-items:stretch;flex-direction:column}.refresh-button{align-self:flex-start}}@media(max-width:560px){.filter-bar{grid-template-columns:1fr}.filter-bar input{grid-column:auto}.list-head,.problem-row{grid-template-columns:80px minmax(150px,1fr) 55px}.edit-grid{grid-template-columns:1fr}.edit-grid label.wide{grid-column:auto}.pdf-head{align-items:flex-start;flex-direction:column}.question-viewer{height:500px}}
       `}</style>
     </main>
   );
