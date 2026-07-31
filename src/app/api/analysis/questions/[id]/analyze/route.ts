@@ -252,6 +252,9 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     }
 
     const validation = validateProblemDNA(dna);
+    const officialSolutionIssues = (Array.isArray(dna.summary?.review_reasons) ? dna.summary.review_reasons : [])
+      .map((value) => String(value).trim())
+      .filter((value) => /공식|해설|정답.*(?:불일치|충돌)|(?:불일치|충돌).*정답/.test(value));
     const legacy = validation.valid && validation.dna ? legacyFieldsFromDNA(validation.dna) : {
       question_type: "unknown", subject: source?.subject ?? "", unit: "", topic: "", difficulty: "중", summary: "",
     };
@@ -266,7 +269,12 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
         connected: Boolean(solutionPdfUrl),
         source_path: source?.solution_pdf_path ?? null,
         question_no: question.question_no,
-        verification: solutionPdfUrl ? "official_pdf_cross_checked" : "official_pdf_missing",
+        verification: !solutionPdfUrl
+          ? "official_pdf_missing"
+          : officialSolutionIssues.length
+            ? "official_pdf_review_required"
+            : "official_pdf_cross_checked",
+        issues: officialSolutionIssues,
       },
     };
 

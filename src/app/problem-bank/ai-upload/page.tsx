@@ -124,6 +124,36 @@ function valueOf(question: Question, key: string) {
   return "";
 }
 
+function officialSolutionOf(question: Question): {
+  tone: "verified" | "review" | "missing";
+  label: string;
+  detail: string;
+  solutionSteps: string[];
+  issues: string[];
+} {
+  const raw = question.ai_result?.official_solution;
+  const solution = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const verification = String(solution.verification ?? "");
+  const connected = solution.connected === true;
+  const dna = question.ai_result?.problem_dna && typeof question.ai_result.problem_dna === "object"
+    ? question.ai_result.problem_dna as Record<string, any>
+    : null;
+  const solutionSteps: string[] = Array.isArray(dna?.thinking?.solution_steps)
+    ? dna.thinking.solution_steps.map((value: unknown) => String(value).trim()).filter(Boolean)
+    : [];
+  const issues: string[] = Array.isArray(solution.issues)
+    ? solution.issues.map((value) => String(value).trim()).filter(Boolean)
+    : [];
+
+  if (!connected || verification === "official_pdf_missing") {
+    return { tone: "missing", label: "공식 해설 미연결", detail: "해설 PDF가 분석에 전달되지 않았습니다.", solutionSteps, issues };
+  }
+  if (verification === "official_pdf_review_required") {
+    return { tone: "review", label: "공식 해설 확인 필요", detail: issues.join(" · ") || "해설 탐색 또는 정답 교차검증 결과를 확인해 주세요.", solutionSteps, issues };
+  }
+  return { tone: "verified", label: "공식 해설 교차검증 완료", detail: "같은 문항번호의 공식 해설을 분석에 함께 사용했습니다.", solutionSteps, issues };
+}
+
 function isBankRegistered(question: Question) {
   return String(question.review_result?.bank_status ?? "") === "REGISTERED";
 }
@@ -2085,6 +2115,7 @@ export default function AnalysisWorkspacePage() {
                     <div className="crop-card-head"><strong>{question.question_no}번</strong><span>{displayQuestionStatus(question)}</span></div>
                     <small>{valueOf(question, "unit") || "단원 분석 전"}</small>
                     <small>신뢰도 {question.confidence == null ? "-" : `${Math.round(Number(question.confidence) * 100)}%`}</small>
+                    <small className={`solution-badge ${officialSolutionOf(question).tone}`}>{officialSolutionOf(question).label}</small>
                     {question.review_reason ? <small className="review-reason">{question.review_reason}</small> : null}
                   </button>
                   {(!isBankRegistered(question) && (question.status === "AUTO_REGISTERED" || question.status === "APPROVED")) ? <div className="review-card-actions single-action pending-actions">
@@ -2230,6 +2261,23 @@ export default function AnalysisWorkspacePage() {
                       </button>
                     </div>
 
+                    <section className={`official-solution-panel ${officialSolutionOf(activeQuestion).tone}`}>
+                      <div className="official-solution-head">
+                        <div>
+                          <small>공식 해설 검증</small>
+                          <strong>{officialSolutionOf(activeQuestion).label}</strong>
+                        </div>
+                        {workspace.solutionUrl ? <a href={workspace.solutionUrl} target="_blank" rel="noreferrer">원본 해설지 보기</a> : null}
+                      </div>
+                      <p>{officialSolutionOf(activeQuestion).detail}</p>
+                      {officialSolutionOf(activeQuestion).solutionSteps.length ? (
+                        <details>
+                          <summary>공식 해설 기반 핵심 풀이 보기</summary>
+                          <ol>{officialSolutionOf(activeQuestion).solutionSteps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol>
+                        </details>
+                      ) : <small className="solution-empty">분석 후 핵심 풀이가 여기에 표시됩니다.</small>}
+                    </section>
+
                     <div className="two-columns">
                       <label>페이지<input name="page_no" type="number" min="1" defaultValue={activeQuestion.page_no ?? pageNo} /></label>
                       <label>정답<input name="answer" defaultValue={activeQuestion.answer ?? ""} /></label>
@@ -2306,6 +2354,12 @@ export default function AnalysisWorkspacePage() {
         .workflow-action .crop-live-progress{flex:1 0 100%;display:grid;grid-template-columns:auto minmax(240px,1fr) auto;align-items:center;gap:10px;padding:11px 13px;border-radius:10px;background:#eaf0ff;color:#364dbb}
         .crop-live-progress>span{height:12px;overflow:hidden;border-radius:999px;background:#d4dcf7}.crop-live-progress>span i{display:block;height:100%;background:#5268e8;transition:width .2s}.crop-live-progress small{font-weight:800;color:#65708c}
         .workflow-action:has(.crop-live-progress){flex-wrap:wrap}
+        .solution-badge{display:inline-flex!important;width:max-content;padding:5px 8px;border-radius:999px;font-weight:900!important}
+        .solution-badge.verified{background:#e4f7ee;color:#187653}.solution-badge.review{background:#fff0df;color:#a65316}.solution-badge.missing{background:#fdeaea;color:#ad3434}
+        .official-solution-panel{display:grid;gap:9px;padding:12px;border:1px solid;border-radius:11px}
+        .official-solution-panel.verified{border-color:#9ed8bd;background:#f0fbf6}.official-solution-panel.review{border-color:#efc18f;background:#fff8ed}.official-solution-panel.missing{border-color:#edb2b2;background:#fff5f5}
+        .official-solution-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.official-solution-head>div{display:grid;gap:2px}.official-solution-head small{color:#758091;font-size:11px}.official-solution-head strong{font-size:14px}.official-solution-head a{padding:7px 9px;border:1px solid currentColor;border-radius:7px;font-size:12px;font-weight:900;text-decoration:none}
+        .official-solution-panel p{margin:0;color:#535e70;font-size:12px;line-height:1.55}.official-solution-panel details{padding-top:7px;border-top:1px solid rgba(80,90,110,.16)}.official-solution-panel summary{cursor:pointer;font-size:12px;font-weight:900}.official-solution-panel ol{margin:9px 0 0;padding-left:20px;color:#3f4858;font-size:12px;line-height:1.55}.solution-empty{color:#7d8695}
         @media(max-width:1300px){section.all-crops-grid.crop-three-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
         @media(max-width:760px){section.workspace-grid.recognition-mode{grid-template-columns:1fr}section.all-crops-grid.crop-three-grid{grid-template-columns:1fr}}
       `}</style>
