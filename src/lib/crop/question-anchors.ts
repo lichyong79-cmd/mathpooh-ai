@@ -36,10 +36,23 @@ export type PageAnchors = {
   anchors: QuestionAnchor[];
 };
 
+/** 검출이 어긋났을 때 화면에서 바로 원인을 볼 수 있게 하는 진단 정보 */
+export type AnchorDiagnostics = {
+  pageCount: number;
+  columnsPerPage: number[];
+  /** 필터를 통과한 후보 개수 */
+  candidateCount: number;
+  /** 최종 확정된 문항번호 */
+  detected: number[];
+  /** 후보였다가 순서/정렬 검사에서 탈락한 번호 */
+  rejected: number[];
+};
+
 export type DocumentAnchors = {
   hasTextLayer: boolean;
   pages: Map<number, PageAnchors>;
   byQuestionNo: Map<number, QuestionAnchor>;
+  diagnostics: AnchorDiagnostics;
 };
 
 type RawItem = {
@@ -204,6 +217,27 @@ function buildLines(items: RawItem[]): Line[] {
  * buildLines()가 페이지 전체를 한 줄로 합칠 수 있다. 문항번호 검출에는 그 줄을
  * 사용하지 않고, 하나의 원본 조각 또는 바로 오른쪽의 짧은 조각까지만 결합한다.
  */
+/**
+ * 같은 줄(기준선)에서 이 조각보다 왼쪽에 다른 글자가 있는지 본다.
+ *
+ * 시험지에서 문항번호는 항상 그 줄의 첫 글자다. 반대로 선택지의 숫자는
+ * 앞에 ①②③ 같은 기호가 붙어 있어 결코 첫 글자가 될 수 없다.
+ * 이 한 가지 규칙으로 선택지 숫자가 문항번호로 오인되는 것을 막는다.
+ */
+function hasNeighbourOnLeft(ordered: RawItem[], seed: RawItem): boolean {
+  const seedCenter = (seed.top + seed.bottom) / 2;
+  for (const other of ordered) {
+    if (other === seed) continue;
+    if (other.left >= seed.left) continue;
+    // 겹쳐 있으면 같은 글자 조각으로 보고 넘어간다.
+    if (other.right > seed.left + seed.fontHeight * 0.15) continue;
+    const otherCenter = (other.top + other.bottom) / 2;
+    const tolerance = Math.max(seed.fontHeight, other.fontHeight) * 0.45;
+    if (Math.abs(otherCenter - seedCenter) <= tolerance) return true;
+  }
+  return false;
+}
+
 function findQuestionNumberFragments(items: RawItem[]): Line[] {
   const ordered = [...items].sort((a, b) => a.top - b.top || a.left - b.left);
   const found: Line[] = [];
@@ -212,6 +246,10 @@ function findQuestionNumberFragments(items: RawItem[]): Line[] {
     const seedText = seed.text.trim();
     const seedCanStart = QUESTION_NUMBER.test(seedText) || /^\[?\s*\d{1,3}\s*$/.test(seedText);
     if (!seedCanStart) continue;
+
+    // 문항번호는 그 줄에서 가장 왼쪽에 있는 글자다.
+    // 선택지 "① 3" 의 "3", "② 74" 의 "74" 처럼 왼쪽에 기호가 있는 숫자는 여기서 걸러진다.
+    if (hasNeighbourOnLeft(ordered, seed)) continue;
 
     let text = seed.text;
     let right = seed.right;
@@ -342,10 +380,18 @@ export async function buildDocumentAnchors(
     });
   }
 
+  const diagnostics: AnchorDiagnostics = {
+    pageCount: perPage.length,
+    columnsPerPage: perPage.map((entry) => entry.columns.length),
+    candidateCount: 0,
+    detected: [],
+    rejected: [],
+  };
+
   const totalLines = perPage.reduce((sum, entry) => sum + entry.lines.length, 0);
   if (totalLines < perPage.length * 3) {
     // 텍스트 레이어가 사실상 없음 = 스캔 PDF → 기존 AI 좌표 경로를 그대로 쓴다.
-    return { hasTextLayer: false, pages, byQuestionNo };
+    return { hasTextLayer: false, pages, byQuestionNo, diagnostics };
   }
 
   const footerTopRatio = detectFooterTop(
@@ -405,6 +451,13 @@ export async function buildDocumentAnchors(
   const aligned = alignByLeftMargin(candidates, firstPass);
   const kept = longestIncreasing(sortReading(aligned));
 
+  diagnostics.candidateCount = candidates.length;
+  diagnostics.detected = kept.map((item) => item.questionNo);
+  const keptSet = new Set(kept);
+  diagnostics.rejected = [
+    ...new Set(candidates.filter((item) => !keptSet.has(item)).map((item) => item.questionNo)),
+  ].sort((a, b) => a - b);
+
   // 3) 앵커 확정: 같은 쪽·같은 단의 다음 문항 시작점이 현재 문항의 하한선
   const grouped = new Map<string, Candidate[]>();
   for (const item of kept) {
@@ -455,7 +508,7 @@ export async function buildDocumentAnchors(
     });
   }
 
-  return { hasTextLayer: byQuestionNo.size > 0, pages, byQuestionNo };
+  return { hasTextLayer: byQuestionNo.size > 0, pages, byQuestionNo, diagnostics };
 }
 
 /**
