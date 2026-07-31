@@ -22,12 +22,18 @@ function registrationMissing(item: any) {
       ["교육과정", dna.basic?.curriculum], ["대단원", dna.basic?.major_unit],
       ["중단원", dna.basic?.middle_unit], ["소단원", dna.basic?.minor_unit],
       ["세부주제", dna.basic?.detailed_topic], ["문항형식", dna.basic?.question_format],
-      ["난이도", dna.difficulty?.overall_level], ["문항요약", dna.summary?.one_line],
+      ["난이도", dna.difficulty?.final_grade], ["문항요약", dna.summary?.one_line],
     ];
     const missing = required.filter(([, value]) => !String(value ?? "").trim() || value === "unknown").map(([label]) => label);
     if (!validation.valid) missing.push("Problem DNA 검증");
     if (!Array.isArray(dna.basic?.problem_types) || !dna.basic.problem_types.length) missing.push("문항유형");
     if (!Array.isArray(dna.concept?.core_concepts) || !dna.concept.core_concepts.length) missing.push("핵심개념");
+    if (!Array.isArray(dna.thinking?.process) || !dna.thinking.process.length) missing.push("사고과정");
+    if (!Array.isArray(dna.solution?.representative_solution) || !dna.solution.representative_solution.length) missing.push("대표풀이");
+    if (!Array.isArray(dna.abilities) || !dna.abilities.length) missing.push("요구능력");
+    if (!Array.isArray(dna.educational_value?.training_objectives) || !dna.educational_value.training_objectives.length) missing.push("훈련목적");
+    if (!dna.official_solution?.matched_question) missing.push("공식 해설 문항확인");
+    if (!dna.official_solution?.answer_matches) missing.push("공식 정답 교차검증");
     return [...new Set(missing)];
   }
 

@@ -117,8 +117,7 @@ function valueOf(question: Question, key: string) {
   if (key === "unit") return String(dna.basic?.minor_unit ?? dna.basic?.middle_unit ?? dna.basic?.major_unit ?? "");
   if (key === "topic") return String(dna.basic?.detailed_topic ?? "");
   if (key === "difficulty") {
-    const level = String(dna.difficulty?.overall_level ?? "");
-    return level === "중하" ? "중" : level === "중상" ? "상" : level;
+    return String(dna.difficulty?.final_grade ?? dna.difficulty?.overall_level ?? "");
   }
   if (key === "summary") return String(dna.summary?.one_line ?? "");
   return "";
@@ -130,6 +129,8 @@ function officialSolutionOf(question: Question): {
   detail: string;
   solutionSteps: string[];
   issues: string[];
+  officialAnswer: string;
+  evidence: string;
 } {
   const raw = question.ai_result?.official_solution;
   const solution = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
@@ -138,20 +139,24 @@ function officialSolutionOf(question: Question): {
   const dna = question.ai_result?.problem_dna && typeof question.ai_result.problem_dna === "object"
     ? question.ai_result.problem_dna as Record<string, any>
     : null;
-  const solutionSteps: string[] = Array.isArray(dna?.thinking?.solution_steps)
-    ? dna.thinking.solution_steps.map((value: unknown) => String(value).trim()).filter(Boolean)
+  const solutionSteps: string[] = Array.isArray(dna?.solution?.representative_solution)
+    ? dna.solution.representative_solution.map((value: unknown) => String(value).trim()).filter(Boolean)
+    : Array.isArray(dna?.thinking?.solution_steps)
+      ? dna.thinking.solution_steps.map((value: unknown) => String(value).trim()).filter(Boolean)
     : [];
   const issues: string[] = Array.isArray(solution.issues)
     ? solution.issues.map((value) => String(value).trim()).filter(Boolean)
     : [];
+  const officialAnswer = String(solution.official_answer ?? "").trim();
+  const evidence = String(solution.evidence_summary ?? "").trim();
 
   if (!connected || verification === "official_pdf_missing") {
-    return { tone: "missing", label: "공식 해설 미연결", detail: "해설 PDF가 분석에 전달되지 않았습니다.", solutionSteps, issues };
+    return { tone: "missing", label: "공식 해설 미연결", detail: "해설 PDF가 분석에 전달되지 않았습니다.", solutionSteps, issues, officialAnswer, evidence };
   }
   if (verification === "official_pdf_review_required") {
-    return { tone: "review", label: "공식 해설 확인 필요", detail: issues.join(" · ") || "해설 탐색 또는 정답 교차검증 결과를 확인해 주세요.", solutionSteps, issues };
+    return { tone: "review", label: "공식 해설 확인 필요", detail: issues.join(" · ") || "해설 탐색 또는 정답 교차검증 결과를 확인해 주세요.", solutionSteps, issues, officialAnswer, evidence };
   }
-  return { tone: "verified", label: "공식 해설 교차검증 완료", detail: "같은 문항번호의 공식 해설을 분석에 함께 사용했습니다.", solutionSteps, issues };
+  return { tone: "verified", label: "공식 해설 교차검증 완료", detail: "같은 문항번호의 공식 해설을 분석에 함께 사용했습니다.", solutionSteps, issues, officialAnswer, evidence };
 }
 
 function isBankRegistered(question: Question) {
@@ -160,6 +165,52 @@ function isBankRegistered(question: Question) {
 
 function displayQuestionStatus(question: Question) {
   return isBankRegistered(question) ? "등록 완료" : (statusText[question.status] ?? question.status);
+}
+
+function dnaLabels(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  return values.map((value) => typeof value === "object" && value ? String((value as any).tag ?? "") : String(value ?? "")).map((value) => value.trim()).filter(Boolean);
+}
+
+function DnaLine({ label, values }: { label: string; values: unknown }) {
+  const items = dnaLabels(values);
+  if (!items.length) return null;
+  return <div className="dna-line"><b>{label}</b><span>{items.join(" · ")}</span></div>;
+}
+
+function ProblemDnaCard({ question }: { question: Question }) {
+  const raw = question.ai_result?.problem_dna;
+  if (!raw || typeof raw !== "object") return null;
+  const dna = raw as Record<string, any>;
+  const basic = dna.basic ?? {};
+  const concept = dna.concept ?? {};
+  const thinking = dna.thinking ?? {};
+  const solution = dna.solution ?? {};
+  const difficulty = dna.difficulty ?? {};
+  const value = dna.educational_value ?? {};
+  const summary = dna.summary ?? {};
+  const process = Array.isArray(thinking.process) ? thinking.process.map((step: any) => `${step.stage}: ${step.action}`).filter(Boolean) : [];
+
+  return <section className="dna-card">
+    <div className="dna-card-title"><div><small>Problem DNA v3.0</small><strong>{question.question_no}번 문항분석 카드</strong></div><em>{difficulty.final_grade || "-"}</em></div>
+    <details open><summary>문항분류</summary><div className="dna-section">
+      <div className="dna-line"><b>분류</b><span>{[basic.subject, basic.grade, basic.curriculum, basic.major_unit, basic.middle_unit, basic.minor_unit, basic.detailed_topic].filter(Boolean).join(" / ")}</span></div>
+      <DnaLine label="문항유형" values={[basic.question_format, ...(basic.problem_types ?? []), ...(basic.presentation_types ?? [])]} />
+    </div></details>
+    <details><summary>개념 DNA</summary><div className="dna-section">
+      <DnaLine label="핵심" values={concept.core_concepts} /><DnaLine label="보조" values={concept.supporting_concepts} /><DnaLine label="선수" values={concept.prerequisite_concepts} /><DnaLine label="연결" values={concept.linked_concepts} />
+      <DnaLine label="공식·정리" values={[...(concept.formulas ?? []), ...(concept.theorems ?? [])]} /><DnaLine label="적용방식" values={concept.application_methods} />
+    </div></details>
+    <details><summary>사고 DNA</summary><div className="dna-section"><DnaLine label="과정" values={process} /><DnaLine label="사고유형" values={thinking.thinking_types} /><div className="dna-line"><b>핵심발상</b><span>{thinking.key_insight}</span></div></div></details>
+    <details><summary>풀이 DNA</summary><div className="dna-section"><DnaLine label="주요전략" values={solution.strategies} /><DnaLine label="대표풀이" values={solution.representative_solution} /><DnaLine label="최단풀이" values={solution.shortest_solution} /><DnaLine label="대안풀이" values={solution.alternative_solutions} /></div></details>
+    <details><summary>난이도·요구능력 DNA</summary><div className="dna-section">
+      <div className="dna-score-grid"><span>최종 <b>{difficulty.final_grade}</b></span><span>개념 <b>{difficulty.concept}</b></span><span>해석 <b>{difficulty.condition_interpretation}</b></span><span>발상 <b>{difficulty.insight}</b></span><span>계산 <b>{difficulty.calculation}</b></span><span>시간 <b>{difficulty.time_burden}</b></span></div>
+      <DnaLine label="요구능력" values={dna.abilities} /><DnaLine label="난이도근거" values={difficulty.reasons} />
+    </div></details>
+    <details><summary>오답·함정 DNA</summary><div className="dna-section"><DnaLine label="예상오류" values={dna.errors} /><DnaLine label="함정요소" values={dna.traps} /><div className="dna-line"><b>지도포인트</b><span>{summary.teaching_point}</span></div></div></details>
+    <details><summary>활용 DNA</summary><div className="dna-section"><DnaLine label="훈련목적" values={value.training_objectives} /><DnaLine label="추천수준" values={value.recommended_student_levels} /><DnaLine label="유사문항" values={value.similar_question_features} /><DnaLine label="변형포인트" values={value.mutation_points} /></div></details>
+    <div className="dna-final"><b>{summary.one_line}</b><span>진입점: {summary.first_entry_point}</span><span>막힘: {summary.common_sticking_point}</span><span>결정점: {summary.decisive_solving_point}</span></div>
+  </section>;
 }
 
 
@@ -2270,6 +2321,8 @@ export default function AnalysisWorkspacePage() {
                         {workspace.solutionUrl ? <a href={workspace.solutionUrl} target="_blank" rel="noreferrer">원본 해설지 보기</a> : null}
                       </div>
                       <p>{officialSolutionOf(activeQuestion).detail}</p>
+                      {officialSolutionOf(activeQuestion).officialAnswer ? <div className="official-answer"><b>공식 정답</b><strong>{officialSolutionOf(activeQuestion).officialAnswer}</strong></div> : null}
+                      {officialSolutionOf(activeQuestion).evidence ? <p><b>확인 근거:</b> {officialSolutionOf(activeQuestion).evidence}</p> : null}
                       {officialSolutionOf(activeQuestion).solutionSteps.length ? (
                         <details>
                           <summary>공식 해설 기반 핵심 풀이 보기</summary>
@@ -2277,6 +2330,8 @@ export default function AnalysisWorkspacePage() {
                         </details>
                       ) : <small className="solution-empty">분석 후 핵심 풀이가 여기에 표시됩니다.</small>}
                     </section>
+
+                    <ProblemDnaCard question={activeQuestion} />
 
                     <div className="two-columns">
                       <label>페이지<input name="page_no" type="number" min="1" defaultValue={activeQuestion.page_no ?? pageNo} /></label>
@@ -2296,11 +2351,8 @@ export default function AnalysisWorkspacePage() {
                     <label>단원<input name="unit" defaultValue={valueOf(activeQuestion, "unit")} /></label>
                     <label>세부 유형<input name="topic" defaultValue={valueOf(activeQuestion, "topic")} /></label>
                     <label>난이도
-                      <select name="difficulty" defaultValue={valueOf(activeQuestion, "difficulty") || "중"}>
-                        <option value="하">하</option>
-                        <option value="중">중</option>
-                        <option value="상">상</option>
-                        <option value="최상">최상</option>
+                      <select name="difficulty" defaultValue={valueOf(activeQuestion, "difficulty") || "C"}>
+                        <option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option><option value="E">E</option>
                       </select>
                     </label>
                     <label>AI 요약<textarea name="summary" rows={4} defaultValue={valueOf(activeQuestion, "summary")} /></label>
@@ -2360,6 +2412,9 @@ export default function AnalysisWorkspacePage() {
         .official-solution-panel.verified{border-color:#9ed8bd;background:#f0fbf6}.official-solution-panel.review{border-color:#efc18f;background:#fff8ed}.official-solution-panel.missing{border-color:#edb2b2;background:#fff5f5}
         .official-solution-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.official-solution-head>div{display:grid;gap:2px}.official-solution-head small{color:#758091;font-size:11px}.official-solution-head strong{font-size:14px}.official-solution-head a{padding:7px 9px;border:1px solid currentColor;border-radius:7px;font-size:12px;font-weight:900;text-decoration:none}
         .official-solution-panel p{margin:0;color:#535e70;font-size:12px;line-height:1.55}.official-solution-panel details{padding-top:7px;border-top:1px solid rgba(80,90,110,.16)}.official-solution-panel summary{cursor:pointer;font-size:12px;font-weight:900}.official-solution-panel ol{margin:9px 0 0;padding-left:20px;color:#3f4858;font-size:12px;line-height:1.55}.solution-empty{color:#7d8695}
+        .official-answer{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,.72);font-size:12px}.official-answer strong{font-size:17px;color:#24345c}
+        .dna-card{display:grid;gap:7px;padding:12px;border:1px solid #d7dcec;border-radius:12px;background:#f9faff}.dna-card-title{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:8px;border-bottom:1px solid #e0e4ef}.dna-card-title>div{display:grid;gap:2px}.dna-card-title small{color:#65708a;font-size:10px}.dna-card-title strong{font-size:14px}.dna-card-title em{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:#5268e8;color:#fff;font-size:20px;font-style:normal;font-weight:950}
+        .dna-card details{border:1px solid #e0e4ee;border-radius:8px;background:#fff;overflow:hidden}.dna-card summary{cursor:pointer;padding:9px 10px;color:#30394c;font-size:12px;font-weight:950}.dna-section{display:grid;gap:7px;padding:0 10px 10px}.dna-line{display:grid;gap:2px}.dna-line b{color:#727c91;font-size:10px}.dna-line span{color:#303847;font-size:12px;line-height:1.45}.dna-score-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}.dna-score-grid span{display:flex;justify-content:space-between;padding:6px;border-radius:6px;background:#eef1f8;color:#667084;font-size:10px}.dna-score-grid b{color:#24304a;font-size:11px}.dna-final{display:grid;gap:5px;padding:10px;border-radius:8px;background:#e9edff;color:#35446f;font-size:11px;line-height:1.45}.dna-final>b{color:#1f2f64;font-size:12px}
         @media(max-width:1300px){section.all-crops-grid.crop-three-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
         @media(max-width:760px){section.workspace-grid.recognition-mode{grid-template-columns:1fr}section.all-crops-grid.crop-three-grid{grid-template-columns:1fr}}
       `}</style>

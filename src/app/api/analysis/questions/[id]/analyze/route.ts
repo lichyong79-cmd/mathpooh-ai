@@ -99,7 +99,7 @@ function missingDnaClassification(dna: ProblemDNA) {
     ["소단원", dna.basic?.minor_unit],
     ["세부주제", dna.basic?.detailed_topic],
     ["문항형식", dna.basic?.question_format],
-    ["난이도", dna.difficulty?.overall_level],
+    ["난이도", dna.difficulty?.final_grade],
     ["문항요약", dna.summary?.one_line],
   ];
   const missing = fields
@@ -107,6 +107,10 @@ function missingDnaClassification(dna: ProblemDNA) {
     .map(([label]) => label);
   if (!Array.isArray(dna.basic?.problem_types) || dna.basic.problem_types.length === 0) missing.push("문항유형");
   if (!Array.isArray(dna.concept?.core_concepts) || dna.concept.core_concepts.length === 0) missing.push("핵심개념");
+  if (!Array.isArray(dna.thinking?.process) || dna.thinking.process.length === 0) missing.push("사고과정");
+  if (!Array.isArray(dna.solution?.representative_solution) || dna.solution.representative_solution.length === 0) missing.push("대표풀이");
+  if (!Array.isArray(dna.abilities) || dna.abilities.length === 0) missing.push("요구능력");
+  if (!Array.isArray(dna.educational_value?.training_objectives) || dna.educational_value.training_objectives.length === 0) missing.push("훈련목적");
   return missing;
 }
 
@@ -217,16 +221,19 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 - schema_version은 반드시 ${PROBLEM_DNA_VERSION}, question_no는 ${question.question_no}입니다.
 - 먼저 문항을 끝까지 직접 풀어 정답을 산출한 뒤 나머지 분석을 수행합니다.
 - 공식 해설 PDF가 있으면 반드시 그 안에서 ${question.question_no}번의 정답과 풀이를 찾아 직접 푼 결과와 교차 검증합니다. 다른 문항의 해설을 사용하면 안 됩니다.
-- thinking.solution_steps와 intention.expected_solution_path에는 공식 해설의 핵심 풀이 흐름을 짧게 재구성해 기록합니다. 원문을 길게 복사하지 않습니다.
+- official_solution에 답지 존재 여부, 동일 문항 탐색 성공 여부, 공식 정답, AI 정답 일치 여부와 근거를 반드시 기록합니다.
+- solution.representative_solution과 standard_solution에는 공식 해설의 핵심 풀이 흐름을 짧게 재구성해 기록합니다. 원문을 길게 복사하지 않습니다.
 - 공식 해설에서 ${question.question_no}번을 찾지 못하거나 직접 푼 정답과 공식 정답이 충돌하면 summary.review_required=true로 하고 review_reasons에 그 사실을 기록합니다.
 - 객관식 answer는 선지 번호 1~5 중 하나만, 단답형은 최종 답만 간결하게 기록합니다.
 - 문항 일부가 잘렸거나 글자가 불명확해서 정답을 확정할 수 없을 때만 answer를 빈 문자열로 두고 review_required=true로 설정합니다.
 - 풀이가 가능하지만 단순히 정답표가 이미지에 없다는 이유로 answer를 비우지 않습니다.
-- basic은 과목·학년·교육과정·대/중/소단원·세부주제·문항형식을 분류합니다.
-- concept는 핵심/보조/선수/연결개념, 공식·정리, 개념순서, 직접·변형·역방향·유도·결합 적용을 기록합니다.
-- thinking은 첫 진입점, 풀이단계, 요구사고, 표현전환, 핵심발상, 결정적 단계, 검산법을 기록합니다.
-- calculation과 difficulty의 점수는 0~100이며, estimated_minutes는 숙련된 해당 학년 학생 기준입니다.
-- expected_errors와 traps는 실제 문항 근거가 있는 항목만 기록합니다.
+- basic은 과목·학년·교육과정·대/중/소단원·세부주제·객관식/단답형/서술형·단일/복합개념·출제형태를 분류합니다.
+- concept는 핵심/보조/선수/연결개념, 공식, 정리, 개념 연결순서, 직접/변형/역이용/조건유도/개념결합 적용을 기록합니다.
+- thinking.process는 조건읽기→조건번역→정보선별→관계발견→식세우기→구조변환→경우분류→계산→검증 중 실제 단계를 순서대로 기록하고 thinking_types에는 요구된 사고유형을 근거와 함께 기록합니다.
+- solution은 대표/최단/정석/대안 풀이와 계산/개념/도형/대수/함수적 접근, 실제 풀이전략을 구분합니다.
+- abilities에는 개념이해, 조건해석, 표현전환, 관계추론, 식구성, 계산정확성/지속력, 경우분류, 그래프해석, 공간도형인식, 논리전개, 검산, 시간관리 중 실제 요구 능력을 기록합니다.
+- difficulty는 A~E 최종난이도와 개념/조건해석/발상/계산/풀이길이/함정/시간/개념결합수/사고단계수를 분석합니다. 점수는 0~100입니다.
+- errors와 traps는 실제 문항 근거가 있는 항목만 기록합니다.
 - 모든 EvidenceTag는 tag, 구체적 evidence, confidence를 포함합니다.
 - educational_value에는 대표성, 교육가치, 변형가능성, 재출제가능성, 내신/모의/수능 적합도와 훈련목표를 기록합니다.
 - ai_confidence는 정답 산출과 분류 결과를 함께 고려합니다. 정답이 불확실하면 0.82 미만으로 설정합니다.
@@ -252,9 +259,12 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     }
 
     const validation = validateProblemDNA(dna);
-    const officialSolutionIssues = (Array.isArray(dna.summary?.review_reasons) ? dna.summary.review_reasons : [])
-      .map((value) => String(value).trim())
-      .filter((value) => /공식|해설|정답.*(?:불일치|충돌)|(?:불일치|충돌).*정답/.test(value));
+    const officialSolutionIssues = [
+      String(dna.official_solution?.review_reason ?? "").trim(),
+      ...(Array.isArray(dna.summary?.review_reasons) ? dna.summary.review_reasons : [])
+        .map((value) => String(value).trim())
+        .filter((value) => /공식|해설|정답.*(?:불일치|충돌)|(?:불일치|충돌).*정답/.test(value)),
+    ].filter(Boolean);
     const legacy = validation.valid && validation.dna ? legacyFieldsFromDNA(validation.dna) : {
       question_type: "unknown", subject: source?.subject ?? "", unit: "", topic: "", difficulty: "중", summary: "",
     };
@@ -271,10 +281,14 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
         question_no: question.question_no,
         verification: !solutionPdfUrl
           ? "official_pdf_missing"
-          : officialSolutionIssues.length
+          : officialSolutionIssues.length || !dna.official_solution?.matched_question || !dna.official_solution?.answer_matches
             ? "official_pdf_review_required"
             : "official_pdf_cross_checked",
         issues: officialSolutionIssues,
+        official_answer: dna.official_solution?.official_answer ?? "",
+        matched_question: dna.official_solution?.matched_question ?? false,
+        answer_matches: dna.official_solution?.answer_matches ?? false,
+        evidence_summary: dna.official_solution?.evidence_summary ?? "",
       },
     };
 
@@ -290,6 +304,8 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
       ...(normalizedConfidence < 0.82 ? [`AI 신뢰도 ${Math.round(normalizedConfidence * 100)}%로 자동 통과 기준 82% 미만입니다.`] : []),
       ...(classificationMissing ? [`필수 문항분류가 비어 있습니다: ${missingClassification.join(", ")}`] : []),
       ...(!solutionPdfUrl ? ["공식 해설 PDF가 연결되지 않아 정답·풀이 교차 검증이 필요합니다."] : []),
+      ...(solutionPdfUrl && !dna.official_solution?.matched_question ? ["공식 해설에서 동일 문항번호를 확인하지 못했습니다."] : []),
+      ...(solutionPdfUrl && !dna.official_solution?.answer_matches ? ["AI 풀이 정답과 공식 정답의 일치 확인이 필요합니다."] : []),
     ].map((value) => String(value).trim()).filter(Boolean);
     const uniqueReviewReasons = [...new Set(reviewReasons)];
     const autoPass =
@@ -298,7 +314,9 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
       validation.valid &&
       !dna.summary.review_required &&
       !classificationMissing &&
-      Boolean(solutionPdfUrl);
+      Boolean(solutionPdfUrl) &&
+      Boolean(dna.official_solution?.matched_question) &&
+      Boolean(dna.official_solution?.answer_matches);
 
     const patch: Record<string, unknown> = {
       ai_result: aiResult,
