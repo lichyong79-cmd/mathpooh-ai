@@ -643,17 +643,17 @@ function questionRect(question: Question): Rect {
 function recognitionDisplayRect(question: Question, anchors?: DocumentAnchors | null): Rect {
   const rect = questionRect(question);
   const anchor = anchorFor(question, anchors);
-  const centerX = rect.x + rect.width / 2;
-  if (centerX < 50) return rect;
+  if (!anchor || anchor.page !== Number(question.page_no)) return rect;
 
-  // 오른쪽 단은 AI x좌표가 문항번호보다 안쪽으로 들어오는 경우가 많다.
-  // 인식 화면과 후속 자르기의 안전 범위를 단 시작점까지 넓혀 왼쪽 잘림을 막는다.
-  const safeLeft = Math.min(rect.x, anchor?.columnLeftPct ?? 50.35);
-  const safeRight = Math.max(rect.x + rect.width, anchor?.columnRightPct ?? 99.5);
+  // 인식 화면은 AI의 임시 crop 좌표가 아니라 PDF에서 찾은 실제 문항번호 위치를 표시한다.
+  // 같은 단의 다음 문항번호 직전까지를 해당 문항 영역으로 보여준다.
+  const top = Math.max(0, anchor.topPct - 0.35);
+  const bottom = Math.min(100, anchor.bottomPct);
   return {
-    ...rect,
-    x: safeLeft,
-    width: Math.max(1, Math.min(100, safeRight) - safeLeft),
+    x: Math.max(0, anchor.columnLeftPct + 0.15),
+    y: top,
+    width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct - 0.3),
+    height: Math.max(1, bottom - top),
   };
 }
 
