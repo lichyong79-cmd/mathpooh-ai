@@ -640,6 +640,23 @@ function questionRect(question: Question): Rect {
   };
 }
 
+function recognitionDisplayRect(question: Question, anchors?: DocumentAnchors | null): Rect {
+  const rect = questionRect(question);
+  const anchor = anchorFor(question, anchors);
+  const centerX = rect.x + rect.width / 2;
+  if (centerX < 50) return rect;
+
+  // 오른쪽 단은 AI x좌표가 문항번호보다 안쪽으로 들어오는 경우가 많다.
+  // 인식 화면과 후속 자르기의 안전 범위를 단 시작점까지 넓혀 왼쪽 잘림을 막는다.
+  const safeLeft = Math.min(rect.x, anchor?.columnLeftPct ?? 50.35);
+  const safeRight = Math.max(rect.x + rect.width, anchor?.columnRightPct ?? 99.5);
+  return {
+    ...rect,
+    x: safeLeft,
+    width: Math.max(1, Math.min(100, safeRight) - safeLeft),
+  };
+}
+
 function hasValidCrop(question: Question | null) {
   if (!question) return false;
   return (
@@ -1993,7 +2010,7 @@ export default function AnalysisWorkspacePage() {
                     {workflowStep === 1 ? questions
                       .filter((question) => Number(question.page_no) === pageNo && hasValidCrop(question))
                       .map((question) => {
-                        const rect = questionRect(question);
+                        const rect = recognitionDisplayRect(question, anchors);
                         return (
                           <div
                             key={question.id}
