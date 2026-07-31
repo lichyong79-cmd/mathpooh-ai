@@ -1863,7 +1863,7 @@ export default function AnalysisWorkspacePage() {
         <div className="ai-working-overlay" role="status" aria-live="polite">
           <div className="ai-working-card">
             <div className="ai-orbit"><span>AI</span></div>
-            <h2>{busy === "queue" ? "AI가 문항을 분석하고 있습니다" : busy === "one" ? "AI가 선택 문항을 다시 분석하고 있습니다" : busy === "crop" ? "수동 자르기를 저장하고 있습니다" : busy === "recrop" ? "전체 문항을 자르고 있습니다" : "AI가 시험지의 문항 위치를 찾고 있습니다"}</h2>
+            <h2>{busy === "queue" ? "AI가 문항을 분석하고 있습니다" : busy === "one" ? "AI가 선택 문항을 다시 분석하고 있습니다" : busy === "crop" ? "수동 자르기를 저장하고 있습니다" : "AI가 시험지의 문항 위치를 찾고 있습니다"}</h2>
             <p>{busy === "crop" ? "저장이 완료될 때까지 다른 문항을 누르지 마세요." : "화면을 닫지 말고 잠시 기다려 주세요."}</p>
             {busy === "queue" ? (
               <>
