@@ -99,6 +99,29 @@
   font-weight: 800;
 }
 
+.source-label-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.source-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.source-status-badge.registered { background: #dff7ea; color: #16734e; }
+.source-status-badge.analysis { background: #eee7ff; color: #6841b7; }
+.source-status-badge.crop { background: #e5efff; color: #315db4; }
+.source-status-badge.recognition { background: #fff0dc; color: #a65a17; }
+.source-status-badge.idle { background: #edf0f4; color: #687181; }
+
 .source-bar select {
   display: block;
   width: 100%;
@@ -110,6 +133,12 @@
   background: #fff;
   font-weight: 700;
 }
+
+.source-bar select.source-status-select.registered { border-color: #6fc59c; background: #effbf5; color: #146b49; }
+.source-bar select.source-status-select.analysis { border-color: #a98ce0; background: #f7f3ff; color: #603ca7; }
+.source-bar select.source-status-select.crop { border-color: #83a7e8; background: #f1f6ff; color: #2f58a2; }
+.source-bar select.source-status-select.recognition { border-color: #e5aa6f; background: #fff8ef; color: #96531a; }
+.source-bar select.source-status-select.idle { border-color: #d8dde7; background: #fff; color: #454e5d; }
 
 .source-bar button,
 .source-bar a,

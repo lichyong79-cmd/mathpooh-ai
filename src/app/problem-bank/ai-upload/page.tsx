@@ -168,6 +168,14 @@ function displayQuestionStatus(question: Question) {
   return isBankRegistered(question) ? "등록 완료" : (statusText[question.status] ?? question.status);
 }
 
+function sourceWorkflowTone(label = "") {
+  if (label.includes("문제은행 등록완료")) return "registered";
+  if (label.includes("3단계")) return "analysis";
+  if (label.includes("2단계")) return "crop";
+  if (label.includes("1단계")) return "recognition";
+  return "idle";
+}
+
 function dnaLabels(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
   return values.map((value) => typeof value === "object" && value ? String((value as any).tag ?? "") : String(value ?? "")).map((value) => value.trim()).filter(Boolean);
@@ -816,6 +824,7 @@ export default function AnalysisWorkspacePage() {
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
   const questions = workspace?.questions ?? [];
+  const selectedSource = sources.find((source) => source.id === selectedId) ?? null;
   const questionNumberKey = questions.map((question) => Number(question.question_no)).join(",");
   const activeQuestion =
     questions.find((item) => item.id === activeQuestionId) ?? questions[0] ?? null;
@@ -2164,8 +2173,12 @@ export default function AnalysisWorkspacePage() {
 
       <section className="source-bar">
         <label>
-          분석할 시험지
+          <span className="source-label-head">
+            분석할 시험지
+            {selectedSource ? <b className={`source-status-badge ${sourceWorkflowTone(selectedSource.workflow_label)}`}>{selectedSource.workflow_label}</b> : null}
+          </span>
           <select
+            className={`source-status-select ${sourceWorkflowTone(selectedSource?.workflow_label)}`}
             value={selectedId}
             onChange={(event) => void loadWorkspace(event.target.value)}
             disabled={busy === "load"}
