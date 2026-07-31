@@ -133,7 +133,7 @@ const CROP_ENGINE_VERSION = "text-anchor-v2";
 /** 텍스트 앵커 자르기에서 내용 바깥으로 남길 여백(px, 렌더 캔버스 기준) */
 const ANCHOR_PADDING = {
   left: 14,
-  top: 10,
+  top: 30,
   right: 14,
   bottom: 14,
 } as const;
@@ -311,9 +311,9 @@ function buildAnchorCrop(pageCanvas: HTMLCanvasElement, anchor: QuestionAnchor):
 
   const fallbackRect: Rect = {
     x: anchor.columnLeftPct,
-    y: Math.max(0, anchor.topPct - 1.5),
+    y: Math.max(0, anchor.topPct - 2.6),
     width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
-    height: Math.max(1, anchor.bottomPct - Math.max(0, anchor.topPct - 1.5)),
+    height: Math.max(1, anchor.bottomPct - Math.max(0, anchor.topPct - 2.6)),
   };
 
   const sx = Math.max(0, Math.floor((pageCanvas.width * anchor.columnLeftPct) / 100));
@@ -648,7 +648,7 @@ function recognitionDisplayRect(question: Question, anchors?: DocumentAnchors | 
 
   // 인식 화면은 AI의 임시 crop 좌표가 아니라 PDF에서 찾은 실제 문항번호 위치를 표시한다.
   // 같은 단의 다음 문항번호 직전까지를 해당 문항 영역으로 보여준다.
-  const top = Math.max(0, anchor.topPct - 1.5);
+  const top = Math.max(0, anchor.topPct - 2.6);
   const bottom = Math.min(100, anchor.bottomPct);
   return {
     x: Math.max(0, anchor.columnLeftPct + 0.15),
@@ -853,7 +853,10 @@ export default function AnalysisWorkspacePage() {
     void (async () => {
       try {
         const expectedNumbers = questions.map((question) => Number(question.question_no));
-        const result = await buildDocumentAnchors(pdfDoc, expectedNumbers);
+        const result = await buildDocumentAnchors(
+          pdfDoc,
+          expectedNumbers.length ? expectedNumbers : undefined,
+        );
         if (!cancelled) setAnchors(result);
       } catch (caught) {
         console.error("문항 앵커 계산 실패", caught);
@@ -1544,9 +1547,9 @@ export default function AnalysisWorkspacePage() {
             questionNo: anchor.questionNo,
             pageNo: anchor.page,
             x: anchor.columnLeftPct,
-            y: Math.max(0, anchor.topPct - 1.5),
+            y: Math.max(0, anchor.topPct - 2.6),
             width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
-            height: Math.max(1, anchor.bottomPct - Math.max(0, anchor.topPct - 1.5)),
+            height: Math.max(1, anchor.bottomPct - Math.max(0, anchor.topPct - 2.6)),
           }),
         });
         const payload = await response.json();
