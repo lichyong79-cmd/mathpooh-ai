@@ -89,6 +89,27 @@ function normalizeAnswer(value: unknown, format: unknown) {
   return raw.replace(/^(?:정답|답)\s*[:：]\s*/i, "");
 }
 
+function missingDnaClassification(dna: ProblemDNA) {
+  const fields: Array<[string, unknown]> = [
+    ["과목", dna.basic?.subject],
+    ["학년", dna.basic?.grade],
+    ["교육과정", dna.basic?.curriculum],
+    ["대단원", dna.basic?.major_unit],
+    ["중단원", dna.basic?.middle_unit],
+    ["소단원", dna.basic?.minor_unit],
+    ["세부주제", dna.basic?.detailed_topic],
+    ["문항형식", dna.basic?.question_format],
+    ["난이도", dna.difficulty?.overall_level],
+    ["문항요약", dna.summary?.one_line],
+  ];
+  const missing = fields
+    .filter(([, value]) => !String(value ?? "").trim() || value === "unknown")
+    .map(([label]) => label);
+  if (!Array.isArray(dna.basic?.problem_types) || dna.basic.problem_types.length === 0) missing.push("문항유형");
+  if (!Array.isArray(dna.concept?.core_concepts) || dna.concept.core_concepts.length === 0) missing.push("핵심개념");
+  return missing;
+}
+
 async function requestDna(args: {
   apiKey: string;
   model: string;
@@ -232,14 +253,14 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     const confidence = Number(dna.summary?.ai_confidence);
     const normalizedConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
     const finalAnswer = normalizeAnswer(dna.answer, dna.basic?.question_format) || String(question.answer ?? "").trim();
-    const classificationMissing = [legacy.subject, legacy.unit, legacy.topic]
-      .some((value) => !String(value ?? "").trim()) || String(legacy.question_type ?? "unknown") === "unknown";
+    const missingClassification = missingDnaClassification(dna);
+    const classificationMissing = missingClassification.length > 0;
     const reviewReasons = [
       ...validation.errors,
       ...(Array.isArray(dna.summary?.review_reasons) ? dna.summary.review_reasons : []),
       ...(!finalAnswer ? ["AI가 정답을 확정하지 못했습니다."] : []),
       ...(normalizedConfidence < 0.82 ? [`AI 신뢰도 ${Math.round(normalizedConfidence * 100)}%로 자동 통과 기준 82% 미만입니다.`] : []),
-      ...(classificationMissing ? ["과목·단원·세부주제·문항형식 중 필수 분류가 비어 있습니다."] : []),
+      ...(classificationMissing ? [`필수 문항분류가 비어 있습니다: ${missingClassification.join(", ")}`] : []),
     ].map((value) => String(value).trim()).filter(Boolean);
     const uniqueReviewReasons = [...new Set(reviewReasons)];
     const autoPass =

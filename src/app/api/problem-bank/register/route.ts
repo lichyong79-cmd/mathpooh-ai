@@ -2,10 +2,42 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { registerQuestions } from "@/lib/problem-bank";
 import { requireUser } from "@/lib/supabase/auth";
+import { PROBLEM_DNA_VERSION, validateProblemDNA } from "@/lib/problem-dna";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
+
+function text(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function registrationMissing(item: any) {
+  const result = { ...(item.ai_result ?? {}), ...(item.review_result ?? {}) } as Record<string, any>;
+  const dna = result.problem_dna;
+  if (dna?.schema_version === PROBLEM_DNA_VERSION) {
+    const validation = validateProblemDNA(dna);
+    const required: Array<[string, unknown]> = [
+      ["정답", item.answer], ["과목", dna.basic?.subject], ["학년", dna.basic?.grade],
+      ["교육과정", dna.basic?.curriculum], ["대단원", dna.basic?.major_unit],
+      ["중단원", dna.basic?.middle_unit], ["소단원", dna.basic?.minor_unit],
+      ["세부주제", dna.basic?.detailed_topic], ["문항형식", dna.basic?.question_format],
+      ["난이도", dna.difficulty?.overall_level], ["문항요약", dna.summary?.one_line],
+    ];
+    const missing = required.filter(([, value]) => !String(value ?? "").trim() || value === "unknown").map(([label]) => label);
+    if (!validation.valid) missing.push("Problem DNA 검증");
+    if (!Array.isArray(dna.basic?.problem_types) || !dna.basic.problem_types.length) missing.push("문항유형");
+    if (!Array.isArray(dna.concept?.core_concepts) || !dna.concept.core_concepts.length) missing.push("핵심개념");
+    return [...new Set(missing)];
+  }
+
+  const required: Array<[string, unknown]> = [
+    ["정답", item.answer], ["과목", result.subject], ["단원", result.unit],
+    ["세부유형", result.topic], ["문항형식", result.question_type],
+    ["난이도", result.difficulty], ["문항요약", result.summary],
+  ];
+  return required.filter(([, value]) => !text(value) || value === "unknown").map(([label]) => label);
+}
 
 export async function POST(request: NextRequest) {
   const denied = await requireUser();
@@ -45,12 +77,28 @@ export async function POST(request: NextRequest) {
 
     const questions = questionQuery.data ?? [];
     const requestedIds = Array.isArray(questionIds) && questionIds.length > 0 ? new Set(questionIds) : null;
-    const registerable = questions.filter((item) =>
+    const candidates = questions.filter((item) =>
       (item.status === "APPROVED" || item.status === "AUTO_REGISTERED") &&
       (!requestedIds || requestedIds.has(item.id))
     );
+    const rejected = candidates
+      .map((item) => ({ item, missing: registrationMissing(item) }))
+      .filter((entry) => entry.missing.length > 0);
+    const rejectedIds = new Set(rejected.map((entry) => entry.item.id));
+    const registerable = candidates.filter((item) => !rejectedIds.has(item.id));
+
+    for (const entry of rejected) {
+      const reason = `문제은행 등록 차단 · 필수 분류 누락: ${entry.missing.join(", ")}`;
+      const blocked = await supabase.from("analysis_questions").update({
+        status: "REVIEW",
+        review_reason: reason,
+        updated_at: new Date().toISOString(),
+      }).eq("id", entry.item.id);
+      if (blocked.error) throw blocked.error;
+    }
     if (registerable.length === 0) {
-      return NextResponse.json({ success: false, message: "등록할 문항이 없습니다." }, { status: 400 });
+      const detail = rejected.length ? ` 필수 분류가 비어 있는 ${rejected.length}문항은 보류로 이동했습니다.` : "";
+      return NextResponse.json({ success: false, message: `등록할 문항이 없습니다.${detail}` }, { status: 400 });
     }
 
     const result = await registerQuestions(supabase, sourceQuery.data, registerable);
@@ -95,7 +143,8 @@ export async function POST(request: NextRequest) {
       success: true,
       registered: result.registered,
       embedded: result.embedded,
-      message: `${result.registered}개 문항을 문제은행에 등록했습니다.`,
+      blocked: rejected.length,
+      message: `${result.registered}개 문항을 문제은행에 등록했습니다.${rejected.length ? ` 분류 누락 ${rejected.length}문항은 보류했습니다.` : ""}`,
     });
   } catch (error: any) {
     console.error("[problem-bank/register]", error);

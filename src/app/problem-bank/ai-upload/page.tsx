@@ -98,7 +98,30 @@ function apiErrorMessage(payload: any, fallback: string, status?: number) {
 function valueOf(question: Question, key: string) {
   const review = question.review_result ?? {};
   const ai = question.ai_result ?? {};
-  return String(review[key] ?? ai[key] ?? "");
+  const direct = review[key] ?? ai[key];
+  if (direct !== undefined && direct !== null && String(direct).trim()) {
+    if (key === "question_type" && direct === "objective") return "multiple_choice";
+    if (key === "question_type" && direct === "subjective") return "short_answer";
+    return String(direct);
+  }
+
+  const dna = ai.problem_dna && typeof ai.problem_dna === "object"
+    ? ai.problem_dna as Record<string, any>
+    : null;
+  if (!dna) return "";
+  if (key === "question_type") {
+    const format = String(dna.basic?.question_format ?? "unknown");
+    return format === "objective" ? "multiple_choice" : format;
+  }
+  if (key === "subject") return String(dna.basic?.subject ?? "");
+  if (key === "unit") return String(dna.basic?.minor_unit ?? dna.basic?.middle_unit ?? dna.basic?.major_unit ?? "");
+  if (key === "topic") return String(dna.basic?.detailed_topic ?? "");
+  if (key === "difficulty") {
+    const level = String(dna.difficulty?.overall_level ?? "");
+    return level === "중하" ? "중" : level === "중상" ? "상" : level;
+  }
+  if (key === "summary") return String(dna.summary?.one_line ?? "");
+  return "";
 }
 
 function isBankRegistered(question: Question) {
