@@ -986,6 +986,7 @@ export default function AnalysisWorkspacePage() {
   }
 
   function handlePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (busy) return;
     const point = pointerPosition(event);
     startRef.current = point;
     setDraft({ x: point.x, y: point.y, width: 0, height: 0 });
@@ -1004,7 +1005,17 @@ export default function AnalysisWorkspacePage() {
   }
 
   function handlePointerUp() {
-    if (draft && draft.width >= 1 && draft.height >= 1) setSelection(draft);
+    const completedRect = draft;
+    const targetQuestion = activeQuestion;
+    if (completedRect && completedRect.width >= 1 && completedRect.height >= 1 && targetQuestion) {
+      setSelection(completedRect);
+      void saveCrop(completedRect, targetQuestion);
+    }
+    setDraft(null);
+    startRef.current = null;
+  }
+
+  function handlePointerCancel() {
     setDraft(null);
     startRef.current = null;
   }
@@ -1098,8 +1109,11 @@ export default function AnalysisWorkspacePage() {
     }
   }
 
-  async function saveCrop() {
-    if (!workspace?.analysis?.id || !activeQuestion || !selection || !preview) {
+  async function saveCrop(rectOverride?: Rect, questionOverride?: Question) {
+    const targetQuestion = questionOverride ?? activeQuestion;
+    const targetRect = rectOverride ?? selection;
+    const canvas = canvasRef.current;
+    if (!workspace?.analysis?.id || !targetQuestion || !targetRect || !canvas) {
       setError("시험지에서 문항 영역을 먼저 드래그해 주세요.");
       return;
     }
@@ -1109,18 +1123,32 @@ export default function AnalysisWorkspacePage() {
     setMessage("");
 
     try {
-      const blob = await (await fetch(preview)).blob();
+      const sx = Math.max(0, Math.floor((canvas.width * targetRect.x) / 100));
+      const sy = Math.max(0, Math.floor((canvas.height * targetRect.y) / 100));
+      const sw = Math.max(1, Math.min(canvas.width - sx, Math.ceil((canvas.width * targetRect.width) / 100)));
+      const sh = Math.max(1, Math.min(canvas.height - sy, Math.ceil((canvas.height * targetRect.height) / 100)));
+      const output = document.createElement("canvas");
+      output.width = sw;
+      output.height = sh;
+      const outputContext = output.getContext("2d");
+      if (!outputContext) throw new Error("자르기 이미지를 만들지 못했습니다.");
+      outputContext.fillStyle = "#fff";
+      outputContext.fillRect(0, 0, sw, sh);
+      outputContext.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        output.toBlob((value) => value ? resolve(value) : reject(new Error("자르기 이미지 변환에 실패했습니다.")), "image/webp", .92);
+      });
       const form = new FormData();
-      form.append("image", blob, `${String(activeQuestion.question_no).padStart(3, "0")}.webp`);
+      form.append("image", blob, `${String(targetQuestion.question_no).padStart(3, "0")}.webp`);
       form.append("analysisId", workspace.analysis.id);
       form.append("sourceFileId", workspace.source.id);
-      form.append("questionId", activeQuestion.id);
-      form.append("questionNo", String(activeQuestion.question_no));
+      form.append("questionId", targetQuestion.id);
+      form.append("questionNo", String(targetQuestion.question_no));
       form.append("pageNo", String(pageNo));
-      form.append("cropX", String(selection.x));
-      form.append("cropY", String(selection.y));
-      form.append("cropWidth", String(selection.width));
-      form.append("cropHeight", String(selection.height));
+      form.append("cropX", String(targetRect.x));
+      form.append("cropY", String(targetRect.y));
+      form.append("cropWidth", String(targetRect.width));
+      form.append("cropHeight", String(targetRect.height));
 
       const response = await fetch("/api/problem-bank/materialize", {
         method: "POST",
@@ -1132,19 +1160,19 @@ export default function AnalysisWorkspacePage() {
       }
 
       const reviewResult = {
-        ...(activeQuestion.review_result ?? {}),
+        ...(targetQuestion.review_result ?? {}),
         crop_engine_version: CROP_ENGINE_VERSION,
         crop_manual: true,
       };
-      const patchResponse = await fetch(`/api/analysis/questions/${activeQuestion.id}`, {
+      const patchResponse = await fetch(`/api/analysis/questions/${targetQuestion.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           page_no: pageNo,
-          crop_x: selection.x,
-          crop_y: selection.y,
-          crop_width: selection.width,
-          crop_height: selection.height,
+          crop_x: targetRect.x,
+          crop_y: targetRect.y,
+          crop_width: targetRect.width,
+          crop_height: targetRect.height,
           review_result: reviewResult,
         }),
       });
@@ -1158,14 +1186,14 @@ export default function AnalysisWorkspacePage() {
           ? {
               ...current,
               questions: current.questions.map((item) =>
-                item.id === activeQuestion.id
+                item.id === targetQuestion.id
                   ? { ...patchPayload.question, question_image_path: payload.path ?? patchPayload.question.question_image_path }
                   : item,
               ),
             }
           : current,
       );
-      setMessage(`${activeQuestion.question_no}번 문항 이미지 저장 완료`);
+      setMessage(`${targetQuestion.question_no}번 수동 자르기 자동 저장 완료`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "문항 이미지 저장에 실패했습니다.");
     } finally {
@@ -1456,7 +1484,18 @@ export default function AnalysisWorkspacePage() {
   }
 
   async function recropAllQuestions() {
-    if (!workspace || !pdfDoc || !questions.length) return;
+    if (!workspace || !questions.length) {
+      setError("자르기할 문항이 없습니다.");
+      return;
+    }
+    if (!pdfDoc) {
+      setError("시험지 PDF를 불러오는 중입니다. PDF 로딩이 끝난 뒤 다시 눌러 주세요.");
+      return;
+    }
+    if (anchorBusy) {
+      setError("PDF 문항번호 좌표를 읽는 중입니다. 자르기 기준 준비가 끝난 뒤 다시 눌러 주세요.");
+      return;
+    }
     setBusy("recrop");
     setError("");
     setMessage("");
@@ -1688,7 +1727,9 @@ export default function AnalysisWorkspacePage() {
             <div className="workflow-action">
               <div><strong>2단계 · 전체 자르기 검수</strong><span>전체를 먼저 저장한 뒤 잘못 잘린 문항만 수동으로 수정합니다.</span></div>
               <div className="workflow-buttons">
-                <button onClick={() => void recropAllQuestions()} disabled={!questions.length || !!busy}>전체 다시 자르기</button>
+                <button onClick={() => void recropAllQuestions()} disabled={!questions.length || !pdfDoc || anchorBusy || !!busy}>
+                  {!pdfDoc ? "PDF 불러오는 중..." : anchorBusy ? "자르기 기준 준비 중..." : "전체 다시 자르기"}
+                </button>
                 <button onClick={() => setViewMode("single")} disabled={!questions.length}>수동 자르기 화면</button>
                 <button className="pass" onClick={() => void passCropStep()} disabled={!questions.length || !!busy}>자르기 전체 통과 →</button>
               </div>
@@ -1757,12 +1798,12 @@ export default function AnalysisWorkspacePage() {
         </section>
       ) : null}
 
-      {(busy === "queue" || busy === "one" || busy === "analysis") ? (
+      {(busy === "queue" || busy === "one" || busy === "analysis" || busy === "crop" || busy === "recrop") ? (
         <div className="ai-working-overlay" role="status" aria-live="polite">
           <div className="ai-working-card">
             <div className="ai-orbit"><span>AI</span></div>
-            <h2>{busy === "queue" ? "AI가 문항을 분석하고 있습니다" : busy === "one" ? "AI가 선택 문항을 다시 분석하고 있습니다" : "AI가 시험지의 문항 위치를 찾고 있습니다"}</h2>
-            <p>화면을 닫지 말고 잠시 기다려 주세요.</p>
+            <h2>{busy === "queue" ? "AI가 문항을 분석하고 있습니다" : busy === "one" ? "AI가 선택 문항을 다시 분석하고 있습니다" : busy === "crop" ? "수동 자르기를 저장하고 있습니다" : busy === "recrop" ? "전체 문항을 자르고 있습니다" : "AI가 시험지의 문항 위치를 찾고 있습니다"}</h2>
+            <p>{busy === "crop" ? "저장이 완료될 때까지 다른 문항을 누르지 마세요." : "화면을 닫지 말고 잠시 기다려 주세요."}</p>
             {busy === "queue" ? (
               <>
                 <div className="ai-progress-label"><b>{queueProgress.done} / {queueProgress.total}</b><span>문항 처리</span></div>
@@ -1886,7 +1927,7 @@ export default function AnalysisWorkspacePage() {
                     onPointerDown={handlePointerDown}
                     onPointerMove={handlePointerMove}
                     onPointerUp={handlePointerUp}
-                    onPointerCancel={handlePointerUp}
+                    onPointerCancel={handlePointerCancel}
                   >
                     {selection ? (
                       <div
@@ -1939,10 +1980,8 @@ export default function AnalysisWorkspacePage() {
                     <div className="preview-image">
                       {preview ? <img src={preview} alt={`${activeQuestion.question_no}번 미리보기`} /> : <span>원본에서 문항 영역을 드래그하세요.</span>}
                     </div>
-                    <div className="crop-actions">
-                      <button className="crop-save" onClick={() => void saveCrop()} disabled={busy === "crop" || !selection}>
-                        {busy === "crop" ? "저장 중..." : "문항 자르기 저장"}
-                      </button>
+                    <div className="crop-actions auto-save-actions">
+                      <span>영역을 드래그하면 자동 저장됩니다.</span>
                       <button onClick={() => { setSelection(null); setPreview(""); }}>다시 선택</button>
                     </div>
                   </div>
