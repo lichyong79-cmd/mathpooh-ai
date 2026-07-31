@@ -1226,7 +1226,8 @@ export default function AnalysisWorkspacePage() {
   }, [pdfDoc, questions, anchors]);
 
   useEffect(() => {
-    if ((viewMode === "all" || viewMode === "review") && pdfDoc && questions.length) {
+    // 전체/등록대기/등록완료/검토보류/실패 등 카드형 화면은 모두 문항 미리보기가 필요하다.
+    if (viewMode !== "single" && pdfDoc && questions.length) {
       void buildThumbnails();
     }
   }, [viewMode, pdfDoc, questions.length, buildThumbnails]);
@@ -2254,6 +2255,9 @@ export default function AnalysisWorkspacePage() {
                     <small className={`solution-badge ${officialSolutionOf(question).tone}`}>{officialSolutionOf(question).label}</small>
                     {question.review_reason ? <small className="review-reason">{question.review_reason}</small> : null}
                   </button>
+                  <div className="review-card-actions single-action solution-open-action">
+                    <button onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>공식 해설·DNA 확인</button>
+                  </div>
                   {(!isBankRegistered(question) && (question.status === "AUTO_REGISTERED" || question.status === "APPROVED")) ? <div className="review-card-actions single-action pending-actions">
                     <button className="register-now" onClick={() => void registerPendingQuestions([question])} disabled={!!busy}>이 문항 문제은행 등록</button>
                   </div> : null}
@@ -2375,6 +2379,21 @@ export default function AnalysisWorkspacePage() {
                     </div>
                   </div>
 
+                  <section className={`official-solution-panel prominent ${officialSolutionOf(activeQuestion).tone}`}>
+                    <div className="official-solution-head">
+                      <div>
+                        <small>{activeQuestion.question_no}번 공식 해설 확인</small>
+                        <strong>{officialSolutionOf(activeQuestion).label}</strong>
+                      </div>
+                      {workspace.solutionUrl ? <a href={workspace.solutionUrl} target="_blank" rel="noreferrer">전체 원본 해설지</a> : null}
+                    </div>
+                    <p>{officialSolutionOf(activeQuestion).detail}</p>
+                    {officialSolutionOf(activeQuestion).officialAnswer ? <div className="official-answer"><b>공식 정답</b><strong>{officialSolutionOf(activeQuestion).officialAnswer}</strong></div> : null}
+                    {officialSolutionOf(activeQuestion).evidence ? <p><b>확인 근거:</b> {officialSolutionOf(activeQuestion).evidence}</p> : null}
+                    {solutionPreviewUrl ? <details open><summary>{activeQuestion.question_no}번 잘린 공식 해설 이미지</summary><img className="solution-preview-image" src={solutionPreviewUrl} alt={`${activeQuestion.question_no}번 공식 해설`} /></details> : <small className="solution-empty">이 문항을 재분석하면 문항별 공식 해설 이미지가 표시됩니다.</small>}
+                    {officialSolutionOf(activeQuestion).solutionSteps.length ? <details><summary>AI가 정리한 핵심 풀이</summary><ol>{officialSolutionOf(activeQuestion).solutionSteps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol></details> : null}
+                  </section>
+
                   <div className="preview-card">
                     <div className="preview-title">
                       <strong>잘린 문항 미리보기</strong>
@@ -2396,26 +2415,6 @@ export default function AnalysisWorkspacePage() {
                         {busy === "one" ? "재분석 중..." : "이 문항 재분석"}
                       </button>
                     </div>
-
-                    <section className={`official-solution-panel ${officialSolutionOf(activeQuestion).tone}`}>
-                      <div className="official-solution-head">
-                        <div>
-                          <small>공식 해설 검증</small>
-                          <strong>{officialSolutionOf(activeQuestion).label}</strong>
-                        </div>
-                        {workspace.solutionUrl ? <a href={workspace.solutionUrl} target="_blank" rel="noreferrer">원본 해설지 보기</a> : null}
-                      </div>
-                      <p>{officialSolutionOf(activeQuestion).detail}</p>
-                      {officialSolutionOf(activeQuestion).officialAnswer ? <div className="official-answer"><b>공식 정답</b><strong>{officialSolutionOf(activeQuestion).officialAnswer}</strong></div> : null}
-                      {officialSolutionOf(activeQuestion).evidence ? <p><b>확인 근거:</b> {officialSolutionOf(activeQuestion).evidence}</p> : null}
-                      {officialSolutionOf(activeQuestion).solutionSteps.length ? (
-                        <details>
-                          <summary>공식 해설 기반 핵심 풀이 보기</summary>
-                          {solutionPreviewUrl ? <img className="solution-preview-image" src={solutionPreviewUrl} alt={`${activeQuestion.question_no}번 공식 해설`} /> : null}
-                          <ol>{officialSolutionOf(activeQuestion).solutionSteps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol>
-                        </details>
-                      ) : <small className="solution-empty">분석 후 핵심 풀이가 여기에 표시됩니다.</small>}
-                    </section>
 
                     <ProblemDnaCard question={activeQuestion} />
 
@@ -2494,7 +2493,9 @@ export default function AnalysisWorkspacePage() {
         .workflow-action:has(.crop-live-progress){flex-wrap:wrap}
         .solution-badge{display:inline-flex!important;width:max-content;padding:5px 8px;border-radius:999px;font-weight:900!important}
         .solution-badge.verified{background:#e4f7ee;color:#187653}.solution-badge.review{background:#fff0df;color:#a65316}.solution-badge.missing{background:#fdeaea;color:#ad3434}
+        .solution-open-action button{background:#eef1ff!important;border-color:#98a5ef!important;color:#3348b2!important;font-weight:950!important}
         .official-solution-panel{display:grid;gap:9px;padding:12px;border:1px solid;border-radius:11px}
+        .official-solution-panel.prominent{margin-top:12px;border-width:2px;box-shadow:0 5px 16px rgba(33,49,93,.08)}
         .official-solution-panel.verified{border-color:#9ed8bd;background:#f0fbf6}.official-solution-panel.review{border-color:#efc18f;background:#fff8ed}.official-solution-panel.missing{border-color:#edb2b2;background:#fff5f5}
         .official-solution-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.official-solution-head>div{display:grid;gap:2px}.official-solution-head small{color:#758091;font-size:11px}.official-solution-head strong{font-size:14px}.official-solution-head a{padding:7px 9px;border:1px solid currentColor;border-radius:7px;font-size:12px;font-weight:900;text-decoration:none}
         .official-solution-panel p{margin:0;color:#535e70;font-size:12px;line-height:1.55}.official-solution-panel details{padding-top:7px;border-top:1px solid rgba(80,90,110,.16)}.official-solution-panel summary{cursor:pointer;font-size:12px;font-weight:900}.official-solution-panel ol{margin:9px 0 0;padding-left:20px;color:#3f4858;font-size:12px;line-height:1.55}.solution-empty{color:#7d8695}
