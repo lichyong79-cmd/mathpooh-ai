@@ -374,9 +374,9 @@ export async function buildDocumentAnchors(
         if (expected && !expected.has(questionNo)) continue;
 
         // 문항번호는 단의 왼쪽 가장자리에서 시작한다. (본문 중간의 "3."은 여기서 걸러짐)
-        if (line.left - bandLeftPx > bandWidthPx * 0.14) continue;
+        if (line.left - bandLeftPx > bandWidthPx * (expected ? 0.22 : 0.14)) continue;
         // 쪽번호/제목처럼 본문과 크기가 크게 다른 줄은 제외
-        if (line.fontHeight < bodyFont * 0.75 || line.fontHeight > bodyFont * 2.1) continue;
+        if (line.fontHeight < bodyFont * (expected ? 0.5 : 0.75) || line.fontHeight > bodyFont * (expected ? 3 : 2.1)) continue;
         // 머리말/꼬리말 영역 제외
         const topRatio = line.top / entry.height;
         if (topRatio < 0.03 || topRatio > footerTopRatio) continue;
@@ -402,7 +402,9 @@ export async function buildDocumentAnchors(
 
   // 3) 시험지의 문항번호는 항상 같은 x에 정렬되어 있다.
   //    1차 통과분의 대표 x에서 크게 벗어난 후보는 가짜 번호로 보고 버린다.
-  const aligned = alignByLeftMargin(candidates, firstPass);
+  // 기대 문항번호가 명확한 분석 화면에서는 각 문항의 실제 후보를 우선한다.
+  // 수식 글꼴 차이로 문항번호 x좌표가 조금 흔들려도 정상 문항을 버리지 않는다.
+  const aligned = expected ? candidates : alignByLeftMargin(candidates, firstPass);
   const kept = longestIncreasing(sortReading(aligned));
 
   // 3) 앵커 확정: 같은 쪽·같은 단의 다음 문항 시작점이 현재 문항의 하한선

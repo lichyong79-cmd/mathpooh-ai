@@ -839,8 +839,8 @@ export default function AnalysisWorkspacePage() {
     };
   }, [workspace?.examUrl]);
 
-  // PDF 텍스트 레이어에서 실제 문항번호 전체를 한 번 읽어 캐시한다.
-  // AI가 먼저 찾은 문항 목록으로 제한하면 AI가 놓친 번호를 PDF에서도 영원히 찾지 못한다.
+  // 현재 인식된 문항번호를 기준으로 PDF의 실제 인쇄 위치를 다시 찾는다.
+  // 본문의 각주 번호가 문항번호 후보로 섞여 정상 앵커가 탈락하는 것을 막는다.
   useEffect(() => {
     if (!pdfDoc) {
       setAnchors(null);
@@ -852,7 +852,8 @@ export default function AnalysisWorkspacePage() {
 
     void (async () => {
       try {
-        const result = await buildDocumentAnchors(pdfDoc);
+        const expectedNumbers = questions.map((question) => Number(question.question_no));
+        const result = await buildDocumentAnchors(pdfDoc, expectedNumbers);
         if (!cancelled) setAnchors(result);
       } catch (caught) {
         console.error("문항 앵커 계산 실패", caught);
@@ -865,7 +866,7 @@ export default function AnalysisWorkspacePage() {
     return () => {
       cancelled = true;
     };
-  }, [pdfDoc]);
+  }, [pdfDoc, questions]);
 
   useEffect(() => {
     if (!activeQuestion) {
@@ -1697,6 +1698,13 @@ export default function AnalysisWorkspacePage() {
       setError("인식된 문항이 없습니다. 먼저 AI 문제인식을 실행해 주세요.");
       return;
     }
+    const missingAnchors = anchors?.hasTextLayer
+      ? questions.filter((question) => !anchors.byQuestionNo.has(Number(question.question_no)))
+      : [];
+    if (missingAnchors.length) {
+      setError(`문항 위치 ${missingAnchors.length}개가 아직 정확히 잡히지 않았습니다. 문제 인식을 다시 해주세요.`);
+      return;
+    }
     try {
       await saveWorkflowStep(2, "2단계 · AI 자르기 검수");
       setViewMode("all");
@@ -1740,6 +1748,9 @@ export default function AnalysisWorkspacePage() {
     : viewMode === "review" ? reviewQuestions
     : viewMode === "failed" ? failedQuestions
     : questions;
+  const missingRecognitionAnchors = anchors?.hasTextLayer
+    ? questions.filter((question) => !anchors.byQuestionNo.has(Number(question.question_no)))
+    : [];
 
   function moveToAdminPage(target: string) {
     if (!target || target === "analysis") return;
@@ -1818,7 +1829,14 @@ export default function AnalysisWorkspacePage() {
               <div className="workflow-buttons">
                 <button onClick={() => void startAnalysis(true)} disabled={!workspace || !!busy}>{questions.length ? "AI 문제인식 다시 하기" : "AI 문제인식 시작"}</button>
                 {anchors?.hasTextLayer && questions.length ? <button onClick={() => void fillMissingQuestionsFromPdf()} disabled={!!busy}>빠진 문항 채우기</button> : null}
-                <button className="pass" onClick={() => void passRecognitionStep()} disabled={!questions.length || !!busy}>문제 인식 통과 →</button>
+                <button
+                  className="pass"
+                  onClick={() => void passRecognitionStep()}
+                  disabled={!questions.length || anchorBusy || !!busy || missingRecognitionAnchors.length > 0}
+                  title={missingRecognitionAnchors.length ? `위치 미확정 ${missingRecognitionAnchors.length}문항` : ""}
+                >
+                  {missingRecognitionAnchors.length ? `위치 미확정 ${missingRecognitionAnchors.length}문항` : "문제 인식 통과 →"}
+                </button>
               </div>
             </div>
           ) : workflowStep === 2 ? (
