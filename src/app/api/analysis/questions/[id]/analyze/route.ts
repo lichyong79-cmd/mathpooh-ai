@@ -77,6 +77,18 @@ function parseJsonObject(text: string): Record<string, any> {
   }
 }
 
+function normalizeAnswer(value: unknown, format: unknown) {
+  const raw = typeof value === "string" ? value.trim() : String(value ?? "").trim();
+  if (!raw) return "";
+  if (format === "objective") {
+    const circled: Record<string, string> = { "①": "1", "②": "2", "③": "3", "④": "4", "⑤": "5" };
+    if (circled[raw]) return circled[raw];
+    const match = raw.match(/(?:정답|답|선지)?\s*[:：]?\s*([1-5])/);
+    return match?.[1] ?? raw;
+  }
+  return raw.replace(/^(?:정답|답)\s*[:：]\s*/i, "");
+}
+
 async function requestDna(args: {
   apiKey: string;
   model: string;
@@ -164,13 +176,17 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     if (signed.error) throw signed.error;
 
     const source = sourceResult.data;
-    const prompt = `당신은 한국 중고등 수학 문항을 교육적으로 분석하는 MathPooh Problem DNA 엔진입니다.
+    const prompt = `당신은 한국 중고등 수학 문항을 직접 풀고 교육적으로 분류하는 MathPooh Problem DNA 엔진입니다.
 첨부된 한 문항 이미지만 분석하여 ${PROBLEM_DNA_VERSION} JSON을 생성하세요.
 시험지 정보: ${source?.grade ?? "학년 미상"} / ${source?.subject ?? "과목 미상"} / ${source?.title ?? "제목 미상"}
 문항 번호: ${question.question_no}
 
 원칙:
 - schema_version은 반드시 ${PROBLEM_DNA_VERSION}, question_no는 ${question.question_no}입니다.
+- 먼저 문항을 끝까지 직접 풀어 정답을 산출한 뒤 나머지 분석을 수행합니다.
+- 객관식 answer는 선지 번호 1~5 중 하나만, 단답형은 최종 답만 간결하게 기록합니다.
+- 문항 일부가 잘렸거나 글자가 불명확해서 정답을 확정할 수 없을 때만 answer를 빈 문자열로 두고 review_required=true로 설정합니다.
+- 풀이가 가능하지만 단순히 정답표가 이미지에 없다는 이유로 answer를 비우지 않습니다.
 - basic은 과목·학년·교육과정·대/중/소단원·세부주제·문항형식을 분류합니다.
 - concept는 핵심/보조/선수/연결개념, 공식·정리, 개념순서, 직접·변형·역방향·유도·결합 적용을 기록합니다.
 - thinking은 첫 진입점, 풀이단계, 요구사고, 표현전환, 핵심발상, 결정적 단계, 검산법을 기록합니다.
@@ -178,8 +194,8 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 - expected_errors와 traps는 실제 문항 근거가 있는 항목만 기록합니다.
 - 모든 EvidenceTag는 tag, 구체적 evidence, confidence를 포함합니다.
 - educational_value에는 대표성, 교육가치, 변형가능성, 재출제가능성, 내신/모의/수능 적합도와 훈련목표를 기록합니다.
-- 이미지에 정답이 없으면 answer는 빈 문자열입니다. 보이지 않는 내용을 추측하지 않습니다.
-- 불확실하면 summary.review_required=true로 두고 review_reasons를 씁니다.
+- ai_confidence는 정답 산출과 분류 결과를 함께 고려합니다. 정답이 불확실하면 0.82 미만으로 설정합니다.
+- 잘림, 판독 불가, 복수정답 가능성, 정답 확신 부족, 단원 분류 불확실 중 하나라도 있으면 summary.review_required=true로 두고 review_reasons에 구체적으로 씁니다.
 - 설명이나 코드블록 없이 JSON 객체 하나만 출력합니다.`;
 
     let dna: ProblemDNA;
@@ -215,26 +231,42 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 
     const confidence = Number(dna.summary?.ai_confidence);
     const normalizedConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
-    const finalAnswer = typeof dna.answer === "string" ? dna.answer.trim() : String(question.answer ?? "").trim();
+    const finalAnswer = normalizeAnswer(dna.answer, dna.basic?.question_format) || String(question.answer ?? "").trim();
+    const classificationMissing = [legacy.subject, legacy.unit, legacy.topic]
+      .some((value) => !String(value ?? "").trim()) || String(legacy.question_type ?? "unknown") === "unknown";
+    const reviewReasons = [
+      ...validation.errors,
+      ...(Array.isArray(dna.summary?.review_reasons) ? dna.summary.review_reasons : []),
+      ...(!finalAnswer ? ["AI가 정답을 확정하지 못했습니다."] : []),
+      ...(normalizedConfidence < 0.82 ? [`AI 신뢰도 ${Math.round(normalizedConfidence * 100)}%로 자동 통과 기준 82% 미만입니다.`] : []),
+      ...(classificationMissing ? ["과목·단원·세부주제·문항형식 중 필수 분류가 비어 있습니다."] : []),
+    ].map((value) => String(value).trim()).filter(Boolean);
+    const uniqueReviewReasons = [...new Set(reviewReasons)];
     const autoPass =
-      normalizedConfidence >= 0.86 &&
+      normalizedConfidence >= 0.82 &&
       Boolean(finalAnswer) &&
       validation.valid &&
       !dna.summary.review_required &&
-      Boolean(String(legacy.unit ?? "").trim()) &&
-      Boolean(String(legacy.topic ?? "").trim()) &&
-      String(legacy.question_type ?? "unknown") !== "unknown";
+      !classificationMissing;
 
     const patch: Record<string, unknown> = {
       ai_result: aiResult,
       confidence: normalizedConfidence,
       status: autoPass ? "AUTO_REGISTERED" : "REVIEW",
-      review_reason: autoPass ? null : (dna.summary?.review_reasons?.join(" · ") || validation.errors.join(" · ") || "자동 판정 기준을 통과하지 못해 검토대상으로 보류되었습니다."),
+      review_reason: autoPass ? null : (uniqueReviewReasons.join(" · ") || "자동 판정 기준을 통과하지 못해 검토대상으로 보류되었습니다."),
+      analysis_version: PROBLEM_DNA_VERSION,
+      dna_valid: validation.valid,
+      dna_validation_errors: validation.errors,
       updated_at: new Date().toISOString(),
     };
     if (finalAnswer) patch.answer = finalAnswer;
 
-    const updated = await supabase.from("analysis_questions").update(patch).eq("id", id).select("*").single();
+    let updated = await supabase.from("analysis_questions").update(patch).eq("id", id).select("*").single();
+    if (updated.error && /analysis_version|dna_valid|dna_validation_errors|schema cache/i.test(updated.error.message)) {
+      // Problem DNA 확장 SQL을 아직 적용하지 않은 기존 DB에서도 기본 분석은 중단하지 않는다.
+      const { analysis_version: _version, dna_valid: _valid, dna_validation_errors: _errors, ...compatiblePatch } = patch;
+      updated = await supabase.from("analysis_questions").update(compatiblePatch).eq("id", id).select("*").single();
+    }
     if (updated.error) throw updated.error;
 
     return NextResponse.json({ success: true, question: updated.data, dna });
