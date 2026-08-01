@@ -1566,11 +1566,15 @@ export default function AnalysisWorkspacePage() {
     if (!context) return false;
     await page.render({ canvasContext: context, viewport }).promise;
 
+    // 해설지는 문항번호 텍스트 좌표가 정확하므로 큰 상단 여백을 열면
+    // 이전 문항의 마지막 줄이 섞인다. 분수·지수 보호용 최소 여백만 둔다.
+    const solutionTopPaddingPct = 0.45;
+    const solutionTopPct = Math.max(0, anchor.topPct - solutionTopPaddingPct);
     const rect: Rect = {
       x: Math.max(0, anchor.columnLeftPct),
-      y: Math.max(0, anchor.topPct - 2.2),
+      y: solutionTopPct,
       width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
-      height: Math.max(1, Math.min(100, anchor.bottomPct) - Math.max(0, anchor.topPct - 2.2)),
+      height: Math.max(1, Math.min(100, anchor.bottomPct) - solutionTopPct),
     };
     const cropped = cropExact(canvas, rect).canvas;
     const blob = await new Promise<Blob>((resolve, reject) => cropped.toBlob((value) => value ? resolve(value) : reject(new Error("해설 이미지 변환 실패")), "image/webp", .92));
