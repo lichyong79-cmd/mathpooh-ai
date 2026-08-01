@@ -1576,7 +1576,25 @@ export default function AnalysisWorkspacePage() {
       width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
       height: Math.max(1, Math.min(100, anchor.bottomPct) - solutionTopPct),
     };
-    const cropped = cropExact(canvas, rect).canvas;
+    let cropped = cropExact(canvas, rect).canvas;
+    // 해설 좌표의 아래 끝이 페이지 경계까지 잡힌 문항은 풀이 뒤에 큰 빈 공간이 남는다.
+    // 긴 구분선은 buildInkMask에서 구조선으로 제외하고, 마지막 실제 글자·수식 행까지만 남긴다.
+    const solutionInk = buildInkMask(cropped);
+    if (solutionInk) {
+      const finalInkRow = lastInkRow(solutionInk, solutionInk.sh - 1);
+      if (finalInkRow !== null) {
+        const bottomPadding = Math.max(12, Math.round(cropped.height * 0.008));
+        const trimmedBottom = Math.min(cropped.height, finalInkRow + bottomPadding + 1);
+        if (trimmedBottom < cropped.height - bottomPadding) {
+          cropped = cropExact(cropped, {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: Math.max(1, (trimmedBottom / cropped.height) * 100),
+          }).canvas;
+        }
+      }
+    }
     const blob = await new Promise<Blob>((resolve, reject) => cropped.toBlob((value) => value ? resolve(value) : reject(new Error("해설 이미지 변환 실패")), "image/webp", .92));
     const form = new FormData();
     form.append("image", blob, `solution-${String(question.question_no).padStart(3, "0")}.webp`);
