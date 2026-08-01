@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
-import { PROBLEM_DNA_VERSION, legacyFieldsFromDNA, problemDnaQuestionSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
+import { PROBLEM_DNA_VERSION, applyCalculatedDifficulty, legacyFieldsFromDNA, problemDnaQuestionSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -87,6 +87,16 @@ function normalizeAnswer(value: unknown, format: unknown) {
     return match?.[1] ?? raw;
   }
   return raw.replace(/^(?:정답|답)\s*[:：]\s*/i, "");
+}
+
+function cropOnlyReviewResult(value: unknown) {
+  if (!value || typeof value !== "object") return {};
+  const source = value as Record<string, unknown>;
+  const kept: Record<string, unknown> = {};
+  for (const key of ["crop_engine_version", "crop_manual", "crop_saved_at"]) {
+    if (key in source) kept[key] = source[key];
+  }
+  return kept;
 }
 
 function missingDnaClassification(dna: ProblemDNA) {
@@ -266,6 +276,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
       });
     }
 
+    dna = applyCalculatedDifficulty(dna);
     const validation = validateProblemDNA(dna);
     const officialSolutionIssues = [
       String(dna.official_solution?.review_reason ?? "").trim(),
@@ -328,6 +339,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 
     const patch: Record<string, unknown> = {
       ai_result: aiResult,
+      review_result: cropOnlyReviewResult(question.review_result),
       confidence: normalizedConfidence,
       status: autoPass ? "AUTO_REGISTERED" : "REVIEW",
       review_reason: autoPass ? null : (uniqueReviewReasons.join(" · ") || "자동 판정 기준을 통과하지 못해 검토대상으로 보류되었습니다."),

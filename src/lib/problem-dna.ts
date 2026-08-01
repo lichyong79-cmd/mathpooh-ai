@@ -1,4 +1,4 @@
-export const PROBLEM_DNA_VERSION = "problem-dna-v3.1" as const;
+export const PROBLEM_DNA_VERSION = "problem-dna-v3.2" as const;
 
 export type EvidenceTag = { tag: string; evidence: string; confidence: number };
 export type ThinkingStep = { stage: string; action: string; evidence: string };
@@ -134,6 +134,35 @@ export const problemDnaQuestionSchema = {
 export const problemDnaBatchSchema = { type: "object", additionalProperties: false, required: ["questions"], properties: { questions: { type: "array", minItems: 1, maxItems: 200, items: problemDnaQuestionSchema } } } as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
+
+function bounded(value: unknown, min: number, max: number) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : min;
+}
+
+/** AI의 중간값 선호를 막고 세부 난이도 지표로 최종 1~5단계를 일관되게 계산한다. */
+export function calculateDifficultyLevel(dna: ProblemDNA): 1 | 2 | 3 | 4 | 5 {
+  const d = dna.difficulty;
+  const score =
+    bounded(d.concept, 0, 100) * 0.14 +
+    bounded(d.condition_interpretation, 0, 100) * 0.18 +
+    bounded(d.insight, 0, 100) * 0.24 +
+    bounded(d.calculation, 0, 100) * 0.13 +
+    bounded(d.trap_strength, 0, 100) * 0.08 +
+    bounded(d.time_burden, 0, 100) * 0.10 +
+    bounded(d.thinking_step_count * 8, 0, 100) * 0.08 +
+    bounded(d.concept_count * 20, 0, 100) * 0.05;
+  if (score < 29) return 1;
+  if (score < 46) return 2;
+  if (score < 63) return 3;
+  if (score < 79) return 4;
+  return 5;
+}
+
+export function applyCalculatedDifficulty(dna: ProblemDNA) {
+  dna.difficulty.final_grade = calculateDifficultyLevel(dna);
+  return dna;
+}
 
 export function validateProblemDNA(value: unknown): { valid: boolean; errors: string[]; dna?: ProblemDNA } {
   const errors: string[] = [];

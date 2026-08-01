@@ -2305,12 +2305,14 @@ export default function AnalysisWorkspacePage() {
 
           {viewMode === "pending" && pendingQuestions.length ? (
             <section className="pending-toolbar">
+              <div className="pending-icon">✓</div>
               <div>
-                <strong>등록대기 {pendingQuestions.length}문항</strong>
+                <small>READY TO REGISTER</small>
+                <strong>등록대기 <b>{pendingQuestions.length}</b>문항</strong>
                 <span>분석 기준을 통과한 문항입니다. 한 번에 모두 등록하거나 카드별로 등록할 수 있습니다.</span>
               </div>
               <button onClick={() => void registerPendingQuestions(pendingQuestions)} disabled={!!busy}>
-                {busy === "register-pending" ? "문제은행 등록 중..." : `${pendingQuestions.length}문항 전체 문제은행 등록`}
+                {busy === "register-pending" ? "문제은행 등록 중..." : `문제은행에 ${pendingQuestions.length}문항 모두 등록 →`}
               </button>
             </section>
           ) : null}
@@ -2552,6 +2554,8 @@ export default function AnalysisWorkspacePage() {
         .workflow-action>div:first-child{display:grid;gap:4px}.workflow-action span{font-size:13px;color:#6f7889}.workflow-buttons{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
         .workflow-buttons button{height:40px;border:1px solid #d5dbe6;background:#fff;border-radius:9px;padding:0 14px;font-weight:900}.workflow-buttons button.pass{background:#5268e8;border-color:#5268e8;color:#fff}.workflow-buttons button.review-button{background:#d96a2f;border-color:#d96a2f;color:#fff}.workflow-buttons button:disabled{opacity:.45}
         .workflow-buttons button.cancel-all{border-color:#e0a7a7;background:#fff5f5;color:#ad3f3f}.workflow-buttons button.analyze-one-prominent{border-color:#c99a38;background:#fff7df;color:#76520c;box-shadow:0 2px 8px rgba(159,112,20,.15)}.analyze-one-action button{border-color:#d5a84b!important;background:#fff8e5!important;color:#76520c!important;font-weight:900}
+        .pipeline-bar{max-width:1880px;margin:0 auto 12px;padding:11px 13px;border:1px solid #dce2eb;border-radius:14px;background:#fff;display:flex;align-items:center;gap:12px;box-shadow:0 5px 18px rgba(33,48,78,.06)}.status-tabs{display:flex;gap:6px;flex-wrap:wrap}.status-tabs button{height:38px;padding:0 12px;border:1px solid #dce2eb;border-radius:9px;background:#f7f8fb;color:#59657a;font-weight:900;cursor:pointer}.status-tabs button.active{border-color:#243654;background:#243654;color:#fff}.status-tabs button.active.registered{border-color:#27845f;background:#27845f}.status-tabs button.active.pending{border-color:#c7942f;background:#c7942f;color:#fff}.status-tabs button.active.review{border-color:#d46e2e;background:#d46e2e}.status-tabs button.active.failed{border-color:#bd4652;background:#bd4652}.pipeline-counts{display:flex;gap:6px;margin-left:auto}.pipeline-counts b{padding:7px 10px;border-radius:999px;background:#eaf7f1;color:#24775a;font-size:12px}.pipeline-counts b+ b{background:#fff0e4;color:#a85a22}.queue-button{height:40px;padding:0 14px;border:0;border-radius:9px;background:#5268e8;color:#fff;font-weight:950}.queue-button:disabled{opacity:.45}
+        .pending-toolbar{max-width:1880px;margin:0 auto 14px;display:grid;grid-template-columns:52px minmax(0,1fr) auto;align-items:center;gap:14px;padding:16px 18px;border:1px solid #e0bd69;border-left:6px solid #c7942f;border-radius:15px;background:linear-gradient(120deg,#fffaf0,#fff4d7);box-shadow:0 8px 24px rgba(133,91,13,.11)}.pending-icon{width:48px;height:48px;display:grid;place-items:center;border-radius:50%;background:#c7942f;color:#fff;font-size:24px;font-weight:950;box-shadow:0 5px 13px rgba(145,99,16,.22)}.pending-toolbar>div:nth-child(2){display:grid;gap:3px}.pending-toolbar small{color:#9b6e18;font-size:10px;font-weight:950;letter-spacing:.09em}.pending-toolbar strong{color:#3d3422;font-size:18px}.pending-toolbar strong b{color:#a86e00;font-size:23px}.pending-toolbar span{color:#776a50;font-size:12px}.pending-toolbar>button{min-width:240px;height:48px;padding:0 18px;border:0;border-radius:11px;background:linear-gradient(135deg,#243654,#17233d);color:#fff;font-size:14px;font-weight:950;box-shadow:0 7px 17px rgba(23,35,61,.22);cursor:pointer}.pending-toolbar>button:hover{transform:translateY(-1px);box-shadow:0 9px 21px rgba(23,35,61,.27)}.pending-toolbar>button:disabled{opacity:.55;transform:none}
         section.workspace-grid.recognition-mode{grid-template-columns:205px minmax(760px,1fr)}
         section.workspace-grid.recognition-mode .review-panel{display:none}
         section.workspace-grid.recognition-mode .overlay{cursor:default}
@@ -2580,7 +2584,7 @@ export default function AnalysisWorkspacePage() {
         .dna-card{display:grid;gap:7px;padding:12px;border:1px solid #d7dcec;border-radius:12px;background:#f9faff}.dna-card-title{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:8px;border-bottom:1px solid #e0e4ef}.dna-card-title>div{display:grid;gap:2px}.dna-card-title small{color:#65708a;font-size:10px}.dna-card-title strong{font-size:14px}.dna-card-title em{display:grid;place-items:center;width:40px;height:40px;border-radius:50%;background:#5268e8;color:#fff;font-size:20px;font-style:normal;font-weight:950}
         .dna-card details{border:1px solid #e0e4ee;border-radius:8px;background:#fff;overflow:hidden}.dna-card summary{cursor:pointer;padding:9px 10px;color:#30394c;font-size:12px;font-weight:950}.dna-section{display:grid;gap:7px;padding:0 10px 10px}.dna-line{display:grid;gap:2px}.dna-line b{color:#727c91;font-size:10px}.dna-line span{color:#303847;font-size:12px;line-height:1.45}.dna-score-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}.dna-score-grid span{display:flex;justify-content:space-between;padding:6px;border-radius:6px;background:#eef1f8;color:#667084;font-size:10px}.dna-score-grid b{color:#24304a;font-size:11px}.dna-final{display:grid;gap:5px;padding:10px;border-radius:8px;background:#e9edff;color:#35446f;font-size:11px;line-height:1.45}.dna-final>b{color:#1f2f64;font-size:12px}
         @media(max-width:1300px){section.all-crops-grid.crop-three-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-        @media(max-width:760px){section.workspace-grid.recognition-mode{grid-template-columns:1fr}section.all-crops-grid.crop-three-grid{grid-template-columns:1fr}}
+        @media(max-width:1000px){.pipeline-bar{align-items:stretch;flex-wrap:wrap}.pipeline-counts{margin-left:0}.pending-toolbar{grid-template-columns:46px 1fr}.pending-toolbar>button{grid-column:1/-1;width:100%}}@media(max-width:760px){section.workspace-grid.recognition-mode{grid-template-columns:1fr}section.all-crops-grid.crop-three-grid{grid-template-columns:1fr}.pending-toolbar{grid-template-columns:1fr;text-align:center}.pending-icon{margin:auto}.pending-toolbar>button{grid-column:auto;min-width:0}.pipeline-counts{width:100%}}
       `}</style>
     </main>
   );

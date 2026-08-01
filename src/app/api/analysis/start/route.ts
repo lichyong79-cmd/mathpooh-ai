@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
-import { PROBLEM_DNA_VERSION, legacyFieldsFromDNA, problemDnaBatchSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
+import { PROBLEM_DNA_VERSION, applyCalculatedDifficulty, legacyFieldsFromDNA, problemDnaBatchSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -541,7 +541,10 @@ export async function POST(request: NextRequest) {
     }
 
     const analysisPayload = analysisRaw ? parseJson<{ questions: AnalysisQuestion[] }>(analysisRaw) : { questions: [] as AnalysisQuestion[] };
-    const validatedAnalysis = analysisPayload.questions.map((item) => ({ item, validation: validateProblemDNA(item) }));
+    const validatedAnalysis = analysisPayload.questions.map((rawItem) => {
+      const item = applyCalculatedDifficulty(rawItem);
+      return { item, validation: validateProblemDNA(item) };
+    });
     const analysisByNo = new Map(validatedAnalysis.map(({ item, validation }) => [Number(item.question_no), { item, validation }]));
 
     await supabase
