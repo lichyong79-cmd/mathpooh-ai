@@ -189,6 +189,12 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     if (questionResult.error || !questionResult.data) throw questionResult.error ?? new Error("문항을 찾을 수 없습니다.");
 
     const question = questionResult.data as any;
+    if (question.review_result?.bank_status === "REGISTERED") {
+      return NextResponse.json({
+        success: false,
+        message: "문제은행 등록완료 문항은 바로 재분석할 수 없습니다. 문제은행에서 해당 문항을 삭제한 뒤 재분석해 주세요.",
+      }, { status: 409 });
+    }
     const analysisResult = await supabase.from("source_analysis").select("source_file_id").eq("id", question.analysis_id).single();
     if (analysisResult.error || !analysisResult.data) throw analysisResult.error ?? new Error("분석 정보를 찾을 수 없습니다.");
     const sourceResult = await supabase

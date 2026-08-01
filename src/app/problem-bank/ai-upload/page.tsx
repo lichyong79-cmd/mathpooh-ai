@@ -2184,6 +2184,14 @@ export default function AnalysisWorkspacePage() {
                 <button onClick={() => void runAutoPipeline()} disabled={!analysisNeededQuestions.length || savedCropCount !== questions.length || !!busy}>
                   {analysisNeededQuestions.length ? `재분석 필요 ${analysisNeededQuestions.length}문항 분석` : "분석 완료"}
                 </button>
+                <button
+                  className="analyze-one-prominent"
+                  onClick={() => void analyzeOneQuestion(activeQuestion)}
+                  disabled={!activeQuestion || isBankRegistered(activeQuestion) || !!busy}
+                  title={activeQuestion && isBankRegistered(activeQuestion) ? "문제은행에서 삭제한 뒤 재분석할 수 있습니다." : "현재 선택한 문항만 재분석합니다."}
+                >
+                  {activeQuestion ? `${activeQuestion.question_no}번만 재분석` : "문항 1개 재분석"}
+                </button>
                 <button className="cancel-all" onClick={() => void resetStage("analysis")} disabled={!questions.length || !!busy}>분석 전체 취소</button>
                 <button onClick={() => setViewMode("pending")}>문제은행 대기 {pendingQuestions.length}</button>
                 <button className="review-button" onClick={() => setViewMode("review")}>보류 확인 {reviewQuestions.length}</button>
@@ -2324,12 +2332,14 @@ export default function AnalysisWorkspacePage() {
                   <div className="review-card-actions single-action solution-open-action">
                     <button onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>공식 해설·DNA 확인</button>
                   </div>
+                  {!isBankRegistered(question) ? <div className="review-card-actions single-action analyze-one-action">
+                    <button onClick={() => { setActiveQuestionId(question.id); void analyzeOneQuestion(question); }} disabled={!!busy}>{question.question_no}번만 재분석</button>
+                  </div> : null}
                   {(!isBankRegistered(question) && (question.status === "AUTO_REGISTERED" || question.status === "APPROVED")) ? <div className="review-card-actions single-action pending-actions">
                     <button className="register-now" onClick={() => void registerPendingQuestions([question])} disabled={!!busy}>이 문항 문제은행 등록</button>
                   </div> : null}
                   {question.status === "REVIEW" ? <div className="review-card-actions">
                     <button onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>자르기 수정</button>
-                    <button onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); void analyzeOneQuestion(question); }}>분석 다시</button>
                     <button className="register-now" onClick={() => void approveForPending(question)} disabled={!!busy}>수정 완료 · 대기로</button>
                     <button className="exclude" onClick={() => void excludeQuestion(question)} disabled={!!busy}>등록 제외</button>
                   </div> : null}
@@ -2541,7 +2551,7 @@ export default function AnalysisWorkspacePage() {
         .workflow-action{margin-top:11px;border-radius:12px;background:#f7f8fb;padding:13px 15px;display:flex;align-items:center;justify-content:space-between;gap:18px}
         .workflow-action>div:first-child{display:grid;gap:4px}.workflow-action span{font-size:13px;color:#6f7889}.workflow-buttons{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
         .workflow-buttons button{height:40px;border:1px solid #d5dbe6;background:#fff;border-radius:9px;padding:0 14px;font-weight:900}.workflow-buttons button.pass{background:#5268e8;border-color:#5268e8;color:#fff}.workflow-buttons button.review-button{background:#d96a2f;border-color:#d96a2f;color:#fff}.workflow-buttons button:disabled{opacity:.45}
-        .workflow-buttons button.cancel-all{border-color:#e0a7a7;background:#fff5f5;color:#ad3f3f}
+        .workflow-buttons button.cancel-all{border-color:#e0a7a7;background:#fff5f5;color:#ad3f3f}.workflow-buttons button.analyze-one-prominent{border-color:#c99a38;background:#fff7df;color:#76520c;box-shadow:0 2px 8px rgba(159,112,20,.15)}.analyze-one-action button{border-color:#d5a84b!important;background:#fff8e5!important;color:#76520c!important;font-weight:900}
         section.workspace-grid.recognition-mode{grid-template-columns:205px minmax(760px,1fr)}
         section.workspace-grid.recognition-mode .review-panel{display:none}
         section.workspace-grid.recognition-mode .overlay{cursor:default}
