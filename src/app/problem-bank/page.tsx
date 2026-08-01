@@ -69,6 +69,10 @@ function normalizeDifficulty(value: unknown) {
   return ({ A: "1", B: "2", C: "3", D: "4", E: "5", 하: "1", 중: "2", 상: "4", 최상: "5" } as Record<string, string>)[raw] ?? (/^[1-5]$/.test(raw) ? raw : "2");
 }
 
+function questionTypeLabel(value: string) {
+  return ({ multiple_choice: "객관식", short_answer: "단답형", essay: "서술형", unknown: "미분류" } as Record<string, string>)[value] ?? value;
+}
+
 export default function ProblemBankPage() {
   const [items, setItems] = useState<Problem[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -77,6 +81,8 @@ export default function ProblemBankPage() {
   const [subject, setSubject] = useState("전체");
   const [unit, setUnit] = useState("전체");
   const [difficulty, setDifficulty] = useState("전체");
+  const [questionType, setQuestionType] = useState("전체");
+  const [sourceFileId, setSourceFileId] = useState("전체");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -179,18 +185,32 @@ export default function ProblemBankPage() {
   const subjects = useMemo(() => Array.from(new Set(items.map((item) => item.subject).filter(Boolean))).sort(), [items]);
   const units = useMemo(() => Array.from(new Set(items.map((item) => item.unit).filter(Boolean))).sort(), [items]);
   const difficulties = useMemo(() => Array.from(new Set(items.map((item) => item.difficulty).filter(Boolean))), [items]);
+  const questionTypes = useMemo(() => Array.from(new Set(items.map((item) => item.question_type).filter(Boolean))).sort(), [items]);
+  const sources = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of items) if (!map.has(item.source_file_id)) map.set(item.source_file_id, item.title.replace(/\s+\d+번$/, ""));
+    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1], "ko"));
+  }, [items]);
 
   const filtered = useMemo(() => {
     const q = escapeLike(keyword).toLowerCase();
     return items.filter((item) => {
-      const haystack = [item.problem_code, item.title, item.subject, item.unit, item.topic, item.summary, item.answer, item.source_name].join(" ").toLowerCase();
+      const dnaText = item.problem_dna ? JSON.stringify(item.problem_dna) : "";
+      const haystack = [item.problem_code, item.title, item.subject, item.unit, item.topic, item.summary, item.answer, item.source_name, questionTypeLabel(item.question_type), dnaText].join(" ").toLowerCase();
       return (!q || haystack.includes(q))
         && (grade === "전체" || item.grade === grade)
         && (subject === "전체" || item.subject === subject)
         && (unit === "전체" || item.unit === unit)
-        && (difficulty === "전체" || item.difficulty === difficulty);
+        && (difficulty === "전체" || item.difficulty === difficulty)
+        && (questionType === "전체" || item.question_type === questionType)
+        && (sourceFileId === "전체" || item.source_file_id === sourceFileId);
     });
-  }, [items, keyword, grade, subject, unit, difficulty]);
+  }, [items, keyword, grade, subject, unit, difficulty, questionType, sourceFileId]);
+
+  const resetFilters = () => {
+    setKeyword(""); setGrade("전체"); setSubject("전체"); setUnit("전체");
+    setDifficulty("전체"); setQuestionType("전체"); setSourceFileId("전체");
+  };
 
   const save = async () => {
     if (!selected) return;
@@ -265,11 +285,14 @@ export default function ProblemBankPage() {
       </header>
 
       <section className="filter-bar">
-        <input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="코드, 제목, 단원, 유형, 요약 검색" />
-        <select value={grade} onChange={(event) => setGrade(event.target.value)}><option>전체</option>{grades.map((value) => <option key={value}>{value}</option>)}</select>
-        <select value={subject} onChange={(event) => setSubject(event.target.value)}><option>전체</option>{subjects.map((value) => <option key={value}>{value}</option>)}</select>
-        <select value={unit} onChange={(event) => setUnit(event.target.value)}><option>전체</option>{units.map((value) => <option key={value}>{value}</option>)}</select>
-        <select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option>전체</option>{difficulties.map((value) => <option key={value}>{value}</option>)}</select>
+        <label className="filter-search"><span>통합 검색</span><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="코드·단원·세부주제·핵심개념·요약 검색" /></label>
+        <label><span>시험지</span><select value={sourceFileId} onChange={(event) => setSourceFileId(event.target.value)}><option value="전체">전체 시험지</option>{sources.map(([id, title]) => <option key={id} value={id}>{title}</option>)}</select></label>
+        <label><span>학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}><option>전체</option>{grades.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label><span>과목</span><select value={subject} onChange={(event) => setSubject(event.target.value)}><option>전체</option>{subjects.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label><span>단원</span><select value={unit} onChange={(event) => setUnit(event.target.value)}><option>전체</option>{units.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label><span>난이도</span><select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option value="전체">전체</option>{difficulties.map((value) => <option key={value} value={value}>{value}단계</option>)}</select></label>
+        <label><span>문항 유형</span><select value={questionType} onChange={(event) => setQuestionType(event.target.value)}><option value="전체">전체</option>{questionTypes.map((value) => <option key={value} value={value}>{questionTypeLabel(value)}</option>)}</select></label>
+        <button type="button" className="filter-reset" onClick={resetFilters}>필터 초기화</button>
       </section>
 
       {message ? <div className="notice success">{message}</div> : null}
@@ -281,7 +304,7 @@ export default function ProblemBankPage() {
           {loading ? <div className="empty">문제은행을 불러오는 중입니다.</div> : filtered.length === 0 ? <div className="empty">조건에 맞는 문항이 없습니다.</div> : filtered.map((item) => (
             <button key={item.id} type="button" className={`problem-row ${selectedId === item.id ? "selected" : ""}`} onClick={() => setSelectedId(item.id)}>
               <div><strong>{item.question_no}번</strong><small>{item.problem_code}</small></div>
-              <div><b>{item.unit || "단원 미분류"}</b><small>{item.topic || item.title}</small></div>
+              <div title={`${item.unit || "단원 미분류"}\n${item.topic || item.title}`}><b>{item.unit || "단원 미분류"}</b><small>{item.topic || item.title}</small></div>
               <span className={`difficulty-chip difficulty-${item.difficulty || "unknown"}`}>{item.difficulty || "-"}</span>
             </button>
           ))}
@@ -301,7 +324,7 @@ export default function ProblemBankPage() {
 
             <form className="edit-panel" onSubmit={(event) => { event.preventDefault(); void save(); }}>
               <div className="edit-head"><div><strong>{selected.question_no}번 분석 정보</strong><span>신뢰도 {confidencePercent(selected.confidence)} · {selected.analysis_version || "legacy"}</span></div><code>{selected.problem_code}</code></div>
-              <div className="detail-tabs"><button type="button" className={detailTab === "basic" ? "active" : ""} onClick={() => setDetailTab("basic")}>기본정보 수정</button><button type="button" className={detailTab === "dna" ? "active" : ""} onClick={() => setDetailTab("dna")}>Problem DNA</button></div>
+              <div className="detail-tabs"><button type="button" className={detailTab === "basic" ? "active" : ""} onClick={() => setDetailTab("basic")}>기본정보 수정</button><button type="button" className={detailTab === "dna" ? "active" : ""} onClick={() => setDetailTab("dna")}>문항 DNA</button></div>
               {detailTab === "basic" ? <div className="edit-grid">
                 <label className="wide"><span>문항명</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
                 <label><span>학년</span><input value={draft.grade} onChange={(event) => setDraft({ ...draft, grade: event.target.value })} /></label>
@@ -314,7 +337,7 @@ export default function ProblemBankPage() {
                 <label><span>출처</span><input value={draft.source_name} onChange={(event) => setDraft({ ...draft, source_name: event.target.value })} /></label>
                 <label className="wide"><span>문항 요약</span><textarea rows={4} value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label>
                 <label><span>상태</span><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as Draft["status"] })}><option value="ACTIVE">사용</option><option value="HOLD">보류</option><option value="ARCHIVED">보관</option></select></label>
-              </div> : <div className="dna-panel">{selected.problem_dna ? <ProblemDnaCard dna={selected.problem_dna} questionNo={selected.question_no} /> : <div className="no-dna">Problem DNA가 없습니다. AI 분석관리에서 재분석해 주세요.</div>}</div>}
+              </div> : <div className="dna-panel">{selected.problem_dna ? <ProblemDnaCard dna={selected.problem_dna} questionNo={selected.question_no} /> : <div className="no-dna">문항 DNA가 없습니다. AI 분석관리에서 재분석해 주세요.</div>}</div>}
               <div className="edit-actions"><button type="button" className="delete-button" onClick={() => void remove("question")} disabled={deleting || saving}>{deleting ? "삭제 중" : "이 문항 삭제"}</button><button type="button" className="delete-source-button" onClick={() => void remove("source")} disabled={deleting || saving}>시험지 전체 삭제</button><button type="submit" className="save-button" disabled={saving || deleting}>{saving ? "저장 중" : "수정 저장"}</button></div>
             </form>
           </>}
@@ -328,11 +351,11 @@ export default function ProblemBankPage() {
         .bank-page{--navy:#17233d;--navy2:#243555;--gold:#c99a3b;--gold-soft:#fff5dc;--line:#dfe4ed;background:linear-gradient(180deg,#edf1f7 0,#f7f8fb 360px);padding:18px 22px 28px}
         .bank-header{max-width:1920px;min-height:104px;margin-bottom:12px;padding:18px 22px;border-radius:18px;background:linear-gradient(120deg,var(--navy),#293d64);box-shadow:0 12px 30px rgba(24,36,61,.16);align-items:center}
         .bank-header p{color:#f3c86e;margin:0 0 4px}.bank-header h1{color:#fff;font-size:30px;letter-spacing:-.04em}.bank-header span{color:#bfc9dc}.back-button{border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:#fff}.refresh-button{border-color:#e9c46c;background:#e9c46c;color:#2d281d;padding:12px 18px}
-        .filter-bar{max-width:1920px;margin-bottom:12px;padding:11px;border-radius:14px;box-shadow:0 5px 18px rgba(32,45,72,.06)}.filter-bar input,.filter-bar select{height:42px;border-color:#d9dfea;background:#fbfcfe;font-size:13px;font-weight:700}.filter-bar input:focus,.filter-bar select:focus{outline:3px solid rgba(201,154,59,.16);border-color:var(--gold)}
+        .filter-bar{max-width:1920px;margin-bottom:12px;padding:11px;border-radius:14px;box-shadow:0 5px 18px rgba(32,45,72,.06);display:flex;align-items:flex-end;flex-wrap:wrap;gap:8px}.filter-bar label{display:grid;gap:5px;min-width:112px;flex:1}.filter-bar label.filter-search{min-width:300px;flex:2}.filter-bar label:nth-child(2){min-width:240px;flex:1.4}.filter-bar label>span{padding-left:3px;color:#728099;font-size:10px;font-weight:900}.filter-bar input,.filter-bar select{width:100%;height:42px;border-color:#d9dfea;background:#fbfcfe;font-size:13px;font-weight:700;box-sizing:border-box}.filter-bar input:focus,.filter-bar select:focus{outline:3px solid rgba(201,154,59,.16);border-color:var(--gold)}.filter-reset{height:42px;padding:0 14px;border:1px solid #d9dfea;border-radius:9px;background:#fff;color:#56637b;font-weight:900;cursor:pointer}.filter-reset:hover{border-color:var(--gold);color:#76520c}
         .bank-layout{max-width:1920px;grid-template-columns:390px minmax(0,1fr);gap:12px}.problem-list,.problem-detail{border-radius:16px;border-color:#dce2eb;box-shadow:0 8px 26px rgba(31,45,71,.07)}.problem-list{max-height:calc(100vh - 184px);background:#f8fafc}.list-head,.problem-row{grid-template-columns:58px minmax(0,1fr) 42px}.list-head{padding:12px 13px;background:var(--navy);color:#dbe2ef;border:0}.problem-row{padding:12px 13px;background:#fff;border-bottom-color:#e9edf3;min-height:76px}.problem-row:hover{background:#fffaf0}.problem-row.selected{background:var(--gold-soft);box-shadow:inset 5px 0 0 var(--gold)}.problem-row strong{font-size:15px;color:var(--navy)}.problem-row b{font-size:13px;color:#253654}.problem-row small{font-size:10px;color:#8a94a5}.problem-row>span{padding:0;background:transparent}.difficulty-chip{display:grid!important;place-items:center;width:31px;height:31px;border-radius:50%!important;font-size:12px!important;color:#fff!important;background:#748097!important}.difficulty-1{background:#37815f!important}.difficulty-2{background:#5571ba!important}.difficulty-3{background:#c18b32!important}.difficulty-4{background:#cf6f45!important}.difficulty-5{background:#a34d5a!important}
         .problem-detail{grid-template-columns:minmax(500px,1.22fr) minmax(430px,.78fr);min-height:calc(100vh - 184px);background:#fff}.pdf-panel{background:#edf0f4;border-right-color:#dce1e9}.pdf-head,.edit-head{min-height:64px;background:#fff;padding:11px 16px}.pdf-head strong{font-size:14px;color:var(--navy)}.asset-tabs{padding:3px;border-radius:10px;background:#eef1f6}.asset-tabs button{border:0;background:transparent;color:#667289}.asset-tabs button.active{background:var(--navy);color:#fff;box-shadow:0 3px 9px rgba(24,36,61,.2)}.question-viewer{height:calc(100vh - 248px);min-height:580px;padding:30px;background:radial-gradient(circle at 50% 20%,#f6f7f9,#e4e8ed);align-items:flex-start}.question-viewer img{border-radius:4px;box-shadow:0 18px 45px rgba(31,42,63,.22)}
         .edit-panel{max-height:calc(100vh - 184px);background:#f8f9fc}.edit-head{position:sticky;top:0;z-index:4;background:var(--navy);border:0}.edit-head strong{color:#fff;font-size:15px}.edit-head span{color:#bec8da}.edit-head code{color:#ffe5a6;background:rgba(255,255,255,.1)}.detail-tabs{position:sticky;top:64px;z-index:3;padding:10px 14px;background:#fff;border-bottom:1px solid var(--line)}.detail-tabs button{flex:1;border:0;background:#eef1f6;padding:9px}.detail-tabs button.active{background:var(--gold);color:#fff}.edit-grid{gap:10px;padding:14px}.edit-grid label{padding:10px;border:1px solid #e1e6ee;border-radius:11px;background:#fff;gap:5px}.edit-grid label span{font-size:10px;color:#768197}.edit-grid input,.edit-grid select,.edit-grid textarea{border:0;border-radius:0;padding:0;background:transparent;font-size:13px}.edit-grid input,.edit-grid select{height:29px}.edit-grid input:focus,.edit-grid select:focus,.edit-grid textarea:focus{outline:none}.dna-panel{padding:14px;background:#f5f7fa}.edit-actions{padding:11px 14px;flex-wrap:wrap}.save-button{border-color:var(--navy);background:var(--navy)}.delete-button{background:#fff8f8}.delete-source-button{border:1px solid #b84451;background:#b84451;color:#fff}.notice{max-width:1920px}
-        @media(max-width:1400px){.bank-layout{grid-template-columns:340px minmax(0,1fr)}.problem-detail{grid-template-columns:minmax(450px,1fr) minmax(390px,.85fr)}}
+        @media(max-width:1400px){.bank-layout{grid-template-columns:340px minmax(0,1fr)}.problem-detail{grid-template-columns:minmax(450px,1fr) minmax(390px,.85fr)}}@media(max-width:900px){.filter-bar{display:grid;grid-template-columns:1fr 1fr}.filter-bar label,.filter-bar label.filter-search,.filter-bar label:nth-child(2){min-width:0}.filter-bar label.filter-search,.filter-bar label:nth-child(2){grid-column:1/-1}.filter-reset{width:100%}}@media(max-width:560px){.filter-bar{grid-template-columns:1fr}.filter-bar label.filter-search,.filter-bar label:nth-child(2){grid-column:auto}}
       `}</style>
     </main>
   );
