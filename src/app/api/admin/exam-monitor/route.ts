@@ -54,9 +54,27 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const examId = String(body.examId ?? "");
   if (!examId) return NextResponse.json({ message: "시험을 선택해 주세요." }, { status: 400 });
-  const { data: currentExam, error: currentError } = await ctx.supabase.from("exams").select("time_limit").eq("id", examId).maybeSingle();
+  const { data: currentExam, error: currentError } = await ctx.supabase.from("exams").select("time_limit,answer_keys,question_count,total_score").eq("id", examId).maybeSingle();
   if (currentError || !currentExam) return NextResponse.json({ message: currentError?.message || "시험을 찾지 못했습니다." }, { status: 404 });
   const action = String(body.action ?? "schedule");
+  if (action === "update-result") {
+    const attemptId = String(body.attemptId ?? "");
+    const answers = typeof body.answers === "object" && body.answers ? body.answers : {};
+    if (!attemptId) return NextResponse.json({ message: "수정할 제출 결과가 없습니다." }, { status: 400 });
+    const keys = Array.isArray(currentExam.answer_keys) ? currentExam.answer_keys.map(String) : [];
+    const wrong: number[] = [], unanswered: number[] = [];
+    let correct = 0;
+    for (let no = 1; no <= Number(currentExam.question_count); no++) {
+      const answer = String(answers[no] ?? answers[String(no)] ?? "").trim();
+      if (!answer) unanswered.push(no);
+      else if (keys[no - 1] && answer === String(keys[no - 1]).trim()) correct++;
+      else wrong.push(no);
+    }
+    const score = Math.round((correct / Math.max(1, Number(currentExam.question_count))) * Number(currentExam.total_score));
+    const gradedAt = new Date().toISOString();
+    const { data, error } = await ctx.supabase.from("exam_attempts").update({ answers, score, correct_count: correct, wrong_numbers: wrong, unanswered_numbers: unanswered, graded_at: gradedAt }).eq("id", attemptId).eq("exam_id", examId).select("id,student_id,status,answers,started_at,last_saved_at,submitted_at,score,correct_count,wrong_numbers,unanswered_numbers,graded_at").single();
+    return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ attempt: data });
+  }
   const minutes = Math.max(1, Number(currentExam.time_limit ?? 100));
   const startedAt = action === "start" ? new Date() : body.openAt ? new Date(body.openAt) : null;
   if (!startedAt || Number.isNaN(startedAt.getTime())) return NextResponse.json({ message: "시험 시작 시각을 입력해 주세요." }, { status: 400 });

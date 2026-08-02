@@ -151,3 +151,113 @@
     display: none;
   }
 }
+
+.result-detail-button {
+  background: #172a4a;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.result-modal-backdrop,
+.student-result-backdrop {
+  background: rgba(12, 24, 44, 0.72);
+  display: grid;
+  inset: 0;
+  padding: 24px;
+  place-items: center;
+  position: fixed;
+  z-index: 200;
+}
+
+.result-modal,
+.student-result-modal {
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 24px 70px rgba(8, 20, 40, 0.34);
+  max-height: calc(100vh - 48px);
+  max-width: 1050px;
+  overflow: auto;
+  width: 100%;
+}
+
+.result-modal > header,
+.student-result-modal > header {
+  align-items: center;
+  background: #172a4a;
+  color: #fff;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 1fr auto auto;
+  padding: 22px 26px;
+}
+
+.result-modal header small,
+.student-result-modal header small { color: #e0b253; font-weight: 900; }
+.result-modal header h2,
+.student-result-modal header h2 { font-size: 21px; margin: 4px 0; }
+.result-modal header p,
+.student-result-modal header p { color: #bec9d9; font-size: 12px; margin: 0; }
+.result-score,
+.student-result-score { align-items: baseline; display: flex; }
+.result-score b,
+.student-result-score b { color: #f0c462; font-size: 38px; }
+.result-close,
+.student-result-modal header > button { background: transparent; border: 0; color: #fff; cursor: pointer; font-size: 30px; }
+
+.result-legend {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  padding: 18px 24px 4px;
+}
+.result-legend span { border-radius: 20px; font-size: 11px; font-weight: 900; padding: 5px 9px; }
+.result-legend b { color: #72798a; font-size: 11px; margin-left: auto; }
+.result-legend .correct { background: #e8f7f0; color: #167652; }
+.result-legend .wrong { background: #fff0ef; color: #c7463b; }
+.result-legend .blank { background: #f0f2f6; color: #747d8f; }
+
+.result-answer-grid {
+  display: grid;
+  gap: 9px;
+  grid-template-columns: repeat(5, 1fr);
+  padding: 18px 24px;
+}
+.result-answer-grid label { border: 1px solid #dfe4ec; border-radius: 11px; display: grid; gap: 5px; grid-template-columns: 28px 1fr; padding: 9px; }
+.result-answer-grid label.correct { background: #effaf5; border-color: #abdcc5; }
+.result-answer-grid label.wrong { background: #fff3f1; border-color: #efb6af; }
+.result-answer-grid label.blank { background: #f5f6f8; }
+.result-answer-grid label > b { align-self: center; grid-row: 1 / 3; text-align: center; }
+.result-answer-grid input { border: 1px solid #cbd3df; border-radius: 7px; font-weight: 900; height: 34px; text-align: center; width: 100%; }
+.result-answer-grid span { color: #697286; font-size: 10px; }
+.result-modal footer,
+.student-result-modal footer { display: flex; gap: 8px; justify-content: flex-end; padding: 0 24px 22px; }
+
+.student-result-button { background: #d5a33f !important; color: #17233f !important; }
+.student-result-summary { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); padding: 20px 24px 4px; }
+.student-result-summary div { background: #f5f7fb; border-radius: 11px; display: grid; gap: 4px; padding: 13px; text-align: center; }
+.student-result-summary span { color: #737d91; font-size: 11px; }
+.student-result-summary b { font-size: 18px; }
+.student-result-grid { display: grid; gap: 9px; grid-template-columns: repeat(5, 1fr); padding: 18px 24px; }
+.student-result-grid > div { border: 1px solid #dfe4ec; border-radius: 11px; display: grid; gap: 4px; padding: 10px; }
+.student-result-grid > div.correct { background: #effaf5; border-color: #abdcc5; }
+.student-result-grid > div.wrong { background: #fff3f1; border-color: #efb6af; }
+.student-result-grid > div.blank { background: #f5f6f8; }
+.student-result-grid > div > b { font-size: 15px; }
+.student-result-grid span { color: #697286; display: flex; font-size: 10px; justify-content: space-between; }
+.student-result-grid em { font-size: 11px; font-style: normal; font-weight: 900; text-align: right; }
+.student-result-grid .correct em { color: #167652; }
+.student-result-grid .wrong em { color: #c7463b; }
+.student-result-modal footer button { background: #172a4a; border: 0; border-radius: 9px; color: #fff; font-weight: 900; height: 40px; min-width: 100px; }
+
+@media (max-width: 800px) {
+  .result-answer-grid,
+  .student-result-grid { grid-template-columns: repeat(2, 1fr); }
+  .result-modal-backdrop,
+  .student-result-backdrop { padding: 8px; }
+}

@@ -20,7 +20,7 @@ export async function GET() {
   const { data: registrations, error: registrationError } = await supabase.from("exam_registrations").select("exam_id,status").eq("student_id", student.id);
   if (registrationError) return NextResponse.json({ message: registrationError.message }, { status: 400 });
   const registrationMap = new Map((registrations ?? []).map((item) => [item.exam_id, item.status]));
-  const { data: exams, error } = await supabase.from("exams").select("id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,status,student_open,open_at,close_at").eq("student_open", true).order("exam_date", { ascending: false });
+  const { data: exams, error } = await supabase.from("exams").select("id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,status,student_open,open_at,close_at,answer_keys").eq("student_open", true).order("exam_date", { ascending: false });
   if (error) return NextResponse.json({ message: error.message }, { status: 400 });
   const ids = (exams ?? []).map((exam) => exam.id);
   const { data: attempts } = ids.length ? await supabase.from("exam_attempts").select("*").eq("student_id", student.id).in("exam_id", ids) : { data: [] };
@@ -32,7 +32,9 @@ export async function GET() {
     const downloadAvailable = applicationStatus === "assigned" && (!downloadAvailableAt || downloadAvailableAt <= now);
     let testUrl = "";
     if (downloadAvailable && exam.test_file_path) testUrl = (await supabase.storage.from("exam-files").createSignedUrl(exam.test_file_path, 60 * 60 * 3)).data?.signedUrl ?? "";
-    return { ...exam, application_status: applicationStatus, test_url: testUrl, download_available: downloadAvailable, download_available_at: downloadAvailableAt, attempt: attemptMap.get(exam.id) ?? null, available: applicationStatus === "assigned" && Boolean(exam.close_at) && (!exam.open_at || exam.open_at <= now) && exam.close_at >= now };
+    const attempt = attemptMap.get(exam.id) ?? null;
+    const { answer_keys, ...safeExam } = exam;
+    return { ...safeExam, application_status: applicationStatus, test_url: testUrl, download_available: downloadAvailable, download_available_at: downloadAvailableAt, official_answers: attempt?.status === "submitted" && Array.isArray(answer_keys) ? answer_keys.map(String) : [], attempt, available: applicationStatus === "assigned" && Boolean(exam.close_at) && (!exam.open_at || exam.open_at <= now) && exam.close_at >= now };
   }));
   return NextResponse.json({ student: { id: student.id, name: student.name, school: student.school, grade: student.grade, passwordChanged: student.password_changed }, exams: items });
 }
