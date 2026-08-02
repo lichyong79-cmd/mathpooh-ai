@@ -36,13 +36,14 @@ async function context() {
 
 async function loadQuestionMetadata(
   supabase: ReturnType<typeof createServerSupabase>,
-  title: string,
+  examId: string,
 ) {
   const { data } = await supabase
-    .from("problem_bank_questions")
-    .select("question_no,unit,topic,question_type,difficulty")
-    .ilike("title", `${title} %번`)
-    .eq("status", "ACTIVE")
+    .from("exam_question_analysis")
+    .select(
+      "question_no,major_unit,middle_unit,minor_unit,detailed_topic,question_type,problem_types,difficulty",
+    )
+    .eq("exam_id", examId)
     .order("question_no");
   return data ?? [];
 }
@@ -111,7 +112,7 @@ export async function GET() {
       const { answer_keys, ...safeExam } = exam;
       const submitted = attempt?.status === "submitted";
       const questionMetadata = submitted
-        ? await loadQuestionMetadata(supabase, exam.title)
+        ? await loadQuestionMetadata(supabase, exam.id)
         : [];
       return {
         ...safeExam,
@@ -186,18 +187,16 @@ export async function POST(request: Request) {
         { message: "현재 신청 가능한 시험이 아닙니다." },
         { status: 404 },
       );
-    const { error } = await supabase
-      .from("exam_registrations")
-      .upsert(
-        {
-          exam_id: examId,
-          student_id: student.id,
-          status: "requested",
-          requested_at: new Date().toISOString(),
-          assigned_at: null,
-        },
-        { onConflict: "exam_id,student_id" },
-      );
+    const { error } = await supabase.from("exam_registrations").upsert(
+      {
+        exam_id: examId,
+        student_id: student.id,
+        status: "requested",
+        requested_at: new Date().toISOString(),
+        assigned_at: null,
+      },
+      { onConflict: "exam_id,student_id" },
+    );
     return error
       ? NextResponse.json({ message: error.message }, { status: 400 })
       : NextResponse.json({ success: true, status: "requested" });

@@ -26,13 +26,14 @@ async function adminContext() {
 
 async function loadQuestionMetadata(
   supabase: ReturnType<typeof createServerSupabase>,
-  title: string,
+  examId: string,
 ) {
   const { data } = await supabase
-    .from("problem_bank_questions")
-    .select("question_no,unit,topic,question_type,difficulty")
-    .ilike("title", `${title} %번`)
-    .eq("status", "ACTIVE")
+    .from("exam_question_analysis")
+    .select(
+      "question_no,major_unit,middle_unit,minor_unit,detailed_topic,question_type,problem_types,difficulty",
+    )
+    .eq("exam_id", examId)
     .order("question_no");
   return data ?? [];
 }
@@ -69,7 +70,7 @@ export async function GET(request: Request) {
       { status: 400 },
     );
   const studentIds = (registrations ?? []).map((item) => item.student_id);
-  const questionMetadata = await loadQuestionMetadata(ctx.supabase, exam.title);
+  const questionMetadata = await loadQuestionMetadata(ctx.supabase, exam.id);
   if (!studentIds.length)
     return NextResponse.json({
       exam: { ...exam, question_metadata: questionMetadata },

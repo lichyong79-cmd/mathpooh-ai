@@ -42,9 +42,12 @@ type Exam = {
 };
 type QuestionMetadata = {
   question_no: number;
-  unit?: string;
-  topic?: string;
+  major_unit?: string;
+  middle_unit?: string;
+  minor_unit?: string;
+  detailed_topic?: string;
   question_type?: string;
+  problem_types?: string[];
   difficulty?: string;
 };
 type Portal = {
@@ -135,9 +138,31 @@ function StudentResultModal({
               return (
                 <div className={`student-result-table-row ${state}`} key={no}>
                   <b>{no}번</b>
-                  <span title={info?.unit}>{info?.unit || "정보 없음"}</span>
-                  <span title={info?.topic || info?.question_type}>
-                    {info?.topic || info?.question_type || "정보 없음"}
+                  <span
+                    title={[
+                      info?.major_unit,
+                      info?.middle_unit,
+                      info?.minor_unit,
+                    ]
+                      .filter(Boolean)
+                      .join(" > ")}
+                  >
+                    {info?.minor_unit ||
+                      info?.middle_unit ||
+                      info?.major_unit ||
+                      "정보 없음"}
+                  </span>
+                  <span
+                    title={
+                      info?.problem_types?.join(", ") ||
+                      info?.detailed_topic ||
+                      info?.question_type
+                    }
+                  >
+                    {info?.problem_types?.join(", ") ||
+                      info?.detailed_topic ||
+                      info?.question_type ||
+                      "정보 없음"}
                   </span>
                   <span>
                     <i

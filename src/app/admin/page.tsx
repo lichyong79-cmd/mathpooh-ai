@@ -1767,9 +1767,31 @@ function AdminResultModal({
               return (
                 <div className={`result-answer-table-row ${state}`} key={no}>
                   <b>{no}번</b>
-                  <span title={info?.unit}>{info?.unit || "정보 없음"}</span>
-                  <span title={info?.topic || info?.question_type}>
-                    {info?.topic || info?.question_type || "정보 없음"}
+                  <span
+                    title={[
+                      info?.major_unit,
+                      info?.middle_unit,
+                      info?.minor_unit,
+                    ]
+                      .filter(Boolean)
+                      .join(" > ")}
+                  >
+                    {info?.minor_unit ||
+                      info?.middle_unit ||
+                      info?.major_unit ||
+                      "정보 없음"}
+                  </span>
+                  <span
+                    title={
+                      info?.problem_types?.join(", ") ||
+                      info?.detailed_topic ||
+                      info?.question_type
+                    }
+                  >
+                    {info?.problem_types?.join(", ") ||
+                      info?.detailed_topic ||
+                      info?.question_type ||
+                      "정보 없음"}
                   </span>
                   <span>
                     <i
@@ -2183,13 +2205,47 @@ function ExamsPage({
     Record<number, "자동인식" | "확인필요">
   >({});
   const [saving, setSaving] = useState(false);
+  const [analysisCounts, setAnalysisCounts] = useState<Record<string, number>>(
+    {},
+  );
+  const [analyzingExamId, setAnalyzingExamId] = useState("");
 
   // 시험 입력 화면은 임시 작업 화면이므로 새로고침 후 복원하지 않습니다.
   // F5를 누르면 항상 안전한 시험 목록에서 시작합니다.
   useEffect(() => {
     window.localStorage.removeItem("matspu-exam-tab");
     setTab("list");
+    fetch("/api/admin/exam-analysis", { cache: "no-store" })
+      .then(async (response) => {
+        const result = await response.json();
+        if (response.ok) setAnalysisCounts(result.counts ?? {});
+      })
+      .catch(() => undefined);
   }, []);
+
+  const analyzeExam = async (exam: PracticeExam) => {
+    if (!exam.testFilePath) return alert("먼저 PDF 시험지를 등록해 주세요.");
+    const current = analysisCounts[exam.id] ?? 0;
+    const message = current
+      ? `기존 ${current}문항 분석을 같은 기준으로 다시 분석할까요?`
+      : `${exam.questionCount}문항을 Problem DNA 기준으로 분석할까요?`;
+    if (!window.confirm(message)) return;
+    setAnalyzingExamId(exam.id);
+    const response = await fetch("/api/admin/exam-analysis", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ examId: exam.id }),
+    });
+    const result = await response.json();
+    setAnalyzingExamId("");
+    if (!response.ok)
+      return alert(result.message || "실전모의고사 문항분석에 실패했습니다.");
+    setAnalysisCounts((previous) => ({
+      ...previous,
+      [exam.id]: Number(result.count ?? exam.questionCount),
+    }));
+    alert(`${result.count ?? exam.questionCount}문항 분석을 완료했습니다.`);
+  };
 
   const makeEmptyExam = (): Omit<PracticeExam, "id"> => ({
     round: Math.max(0, ...exams.map((exam) => exam.round)) + 1,
@@ -3053,6 +3109,22 @@ function ExamsPage({
                       </select>
                     </div>
                     <div className="row-actions">
+                      <button
+                        className={
+                          (analysisCounts[exam.id] ?? 0) === exam.questionCount
+                            ? "exam-analysis-complete"
+                            : "exam-analysis-button"
+                        }
+                        disabled={analyzingExamId === exam.id}
+                        onClick={() => void analyzeExam(exam)}
+                      >
+                        {analyzingExamId === exam.id
+                          ? "AI 분석중…"
+                          : (analysisCounts[exam.id] ?? 0) ===
+                              exam.questionCount
+                            ? `문항분석 완료 ${exam.questionCount}/${exam.questionCount}`
+                            : `AI 문항분석 ${analysisCounts[exam.id] ?? 0}/${exam.questionCount}`}
+                      </button>
                       <button onClick={() => void toggleStudentOpen(exam)}>
                         {exam.studentOpen ? "응시 마감" : "학생 공개"}
                       </button>

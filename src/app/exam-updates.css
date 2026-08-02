@@ -164,6 +164,28 @@
   padding: 0 10px;
 }
 
+.exam-analysis-button,
+.exam-analysis-complete {
+  border-radius: 8px !important;
+  font-weight: 900 !important;
+  min-width: 138px;
+}
+.exam-analysis-button {
+  background: #eef2ff !important;
+  border-color: #849cec !important;
+  color: #3555b2 !important;
+}
+.exam-analysis-complete {
+  background: #e5f7ef !important;
+  border-color: #79c6a4 !important;
+  color: #167652 !important;
+}
+.exam-analysis-button:disabled,
+.exam-analysis-complete:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .result-modal-backdrop,
 .student-result-backdrop {
   background: rgba(12, 24, 44, 0.72);
@@ -281,10 +303,9 @@
   align-items: center;
   display: grid;
   gap: 12px;
-  grid-template-columns: 58px minmax(180px, 1.5fr) minmax(
-      180px,
-      1.3fr
-    ) 90px 90px 80px 82px;
+  grid-template-columns:
+    58px minmax(180px, 1.5fr) minmax(180px, 1.3fr)
+    90px 90px 80px 82px;
   min-height: 48px;
   padding: 0 16px;
 }
