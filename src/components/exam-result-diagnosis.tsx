@@ -111,7 +111,7 @@ export default function ExamResultDiagnosis({
   const units = groupStats(
     rows,
     (info) =>
-      info?.minor_unit || info?.middle_unit || info?.major_unit || "미분류",
+      info?.middle_unit || info?.major_unit || info?.minor_unit || "미분류",
   );
   const types = groupStats(
     rows,
