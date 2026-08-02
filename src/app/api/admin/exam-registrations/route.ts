@@ -16,8 +16,8 @@ export async function GET(request: Request) {
   if (ctx.error) return ctx.error;
   const examId = new URL(request.url).searchParams.get("examId");
   if (!examId) return NextResponse.json({ message: "시험을 선택해 주세요." }, { status: 400 });
-  const { data, error } = await ctx.supabase.from("exam_registrations").select("id,exam_id,student_id,registered_at").eq("exam_id", examId).order("registered_at");
-  return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ registrations: data ?? [], studentIds: (data ?? []).map((item) => item.student_id) });
+  const { data, error } = await ctx.supabase.from("exam_registrations").select("id,exam_id,student_id,status,requested_at,assigned_at,registered_at").eq("exam_id", examId).order("requested_at");
+  return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ registrations: data ?? [], studentIds: (data ?? []).filter((item) => item.status === "assigned").map((item) => item.student_id), requestedStudentIds: (data ?? []).filter((item) => item.status === "requested").map((item) => item.student_id) });
 }
 
 export async function POST(request: Request) {
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
   const registered = Boolean(body.registered);
   if (!examId || !studentId) return NextResponse.json({ message: "시험과 학생을 선택해 주세요." }, { status: 400 });
   if (registered) {
-    const { error } = await ctx.supabase.from("exam_registrations").upsert({ exam_id: examId, student_id: studentId }, { onConflict: "exam_id,student_id" });
+    const { error } = await ctx.supabase.from("exam_registrations").upsert({ exam_id: examId, student_id: studentId, status: "assigned", assigned_at: new Date().toISOString() }, { onConflict: "exam_id,student_id" });
     if (error) return NextResponse.json({ message: error.message }, { status: 400 });
   } else {
     const { error } = await ctx.supabase.from("exam_registrations").delete().eq("exam_id", examId).eq("student_id", studentId);
@@ -48,7 +48,8 @@ export async function PUT(request: Request) {
   const removed = await ctx.supabase.from("exam_registrations").delete().eq("exam_id", examId);
   if (removed.error) return NextResponse.json({ message: removed.error.message }, { status: 400 });
   if (studentIds.length) {
-    const inserted = await ctx.supabase.from("exam_registrations").insert(studentIds.map((studentId) => ({ exam_id: examId, student_id: studentId })));
+    const assignedAt = new Date().toISOString();
+    const inserted = await ctx.supabase.from("exam_registrations").insert(studentIds.map((studentId) => ({ exam_id: examId, student_id: studentId, status: "assigned", assigned_at: assignedAt })));
     if (inserted.error) return NextResponse.json({ message: inserted.error.message }, { status: 400 });
   }
   return NextResponse.json({ success: true });

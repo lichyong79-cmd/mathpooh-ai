@@ -19,6 +19,7 @@
 .registration-state{display:inline-flex;width:max-content;border-radius:20px;padding:6px 10px;font-size:8px;font-weight:900}
 .registration-state.registered{background:#e8f7f1;color:var(--green)}
 .registration-state.unregistered{background:#fff0df;color:var(--orange)}
+.registration-state.requested{background:#fff4d8;color:#9a6712}.assignment-requested{background:#fffaf0}.toggle-register.requested{background:#d19a32;border-color:#d19a32;color:#fff}
 .toggle-register{height:31px;border:1px solid #cfd5e6;border-radius:8px;background:#fff;color:#5d6678;font-size:8px;font-weight:800}
 .toggle-register.on{border-color:#cfd4ff;background:#f0f2ff;color:var(--blue)}
 @media(max-width:760px){.registration-header{align-items:stretch;flex-direction:column}.registration-header select{min-width:0;width:100%}.registration-actions button{flex:1}.round-summary{grid-template-columns:1fr 1fr}.round-summary>div:nth-child(2){border-right:0}.round-summary>div:nth-child(-n+2){border-bottom:1px solid var(--line)}}

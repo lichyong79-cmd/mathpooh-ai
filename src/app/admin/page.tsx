@@ -196,7 +196,7 @@ export default function Home() {
           </div>
         </header>
         <div className="page-content">
-          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} exams={practiceExams} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage onOpenAnalysis={(sourceFileId) => { window.localStorage.setItem("matspu-analysis-source-id", sourceFileId); window.localStorage.setItem("matspu-admin-menu", "students"); window.location.href = "/problem-bank/ai-upload"; }} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
+          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} exams={practiceExams} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} students={students} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage onOpenAnalysis={(sourceFileId) => { window.localStorage.setItem("matspu-analysis-source-id", sourceFileId); window.localStorage.setItem("matspu-admin-menu", "students"); window.location.href = "/problem-bank/ai-upload"; }} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
         </div>
       </section>
     </main>
@@ -216,8 +216,8 @@ function StudentsPage({ students, setStudents, exams }: { students: Student[]; s
   const [registrationBusy, setRegistrationBusy] = useState(false);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("matspu-student-tab") as StudentTab | null;
-    if (saved === "students" || saved === "registration") setTab(saved);
+    setTab("students");
+    window.localStorage.setItem("matspu-student-tab", "students");
   }, []);
 
   useEffect(() => {
@@ -299,14 +299,9 @@ function StudentsPage({ students, setStudents, exams }: { students: Student[]; s
 
   return <>
     <section className="page-title-row">
-      <div><h2>학생 관리</h2><p>학생 기본정보와 시험회차별 등록 여부를 관리합니다.</p></div>
+      <div><h2>학생정보 관리</h2><p>학생 기본정보와 계정 상태를 관리합니다.</p></div>
       <button className="primary-button" onClick={() => { setEditing(null); setIsAdding(true); }}>＋ 학생 등록</button>
     </section>
-
-    <div className="student-tabs">
-      <button className={tab === "students" ? "active" : ""} onClick={() => setTab("students")}>학생 목록</button>
-      <button className={tab === "registration" ? "active" : ""} onClick={() => setTab("registration")}>시험회차별 등록여부</button>
-    </div>
 
     {tab === "students" ? <>
       <section className="student-stat-grid">
@@ -530,8 +525,65 @@ async function uploadExamFile(examId: string, kind: "test" | "solution" | "origi
   return path;
 }
 
-function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: PracticeExam[]; setExams: React.Dispatch<React.SetStateAction<PracticeExam[]>>; examFiles: Record<string, ExamFileBundle>; setExamFiles: React.Dispatch<React.SetStateAction<Record<string, ExamFileBundle>>> }) {
-  const [tab, setTab] = useState<"list" | "input">("list");
+function ExamAssignmentPanel({ exams, students }: { exams: PracticeExam[]; students: Student[] }) {
+  const [selectedExamId, setSelectedExamId] = useState(exams[0]?.id ?? "");
+  const [assignedIds, setAssignedIds] = useState<(string | number)[]>([]);
+  const [requestedIds, setRequestedIds] = useState<(string | number)[]>([]);
+  const [busy, setBusy] = useState(false);
+  const selectedExam = exams.find((exam) => exam.id === selectedExamId) ?? exams[0];
+  const availableStudents = students.filter((student) => student.status === "정상");
+  const assignedCount = assignedIds.filter((id) => availableStudents.some((student) => String(student.id) === String(id))).length;
+
+  useEffect(() => {
+    if (!selectedExamId && exams[0]?.id) setSelectedExamId(exams[0].id);
+  }, [exams, selectedExamId]);
+
+  useEffect(() => {
+    if (!selectedExamId) return;
+    setBusy(true);
+    fetch(`/api/admin/exam-registrations?examId=${encodeURIComponent(selectedExamId)}`, { cache: "no-store" })
+      .then(async (response) => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setAssignedIds(result.studentIds ?? []); setRequestedIds(result.requestedStudentIds ?? []); })
+      .catch((error) => alert(error instanceof Error ? error.message : "시험 배정 명단을 불러오지 못했습니다."))
+      .finally(() => setBusy(false));
+  }, [selectedExamId]);
+
+  const toggleAssignment = async (studentId: string | number) => {
+    if (!selectedExam) return;
+    const assigned = assignedIds.map(String).includes(String(studentId));
+    setBusy(true);
+    const response = await fetch("/api/admin/exam-registrations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ examId: selectedExam.id, studentId, registered: !assigned }) });
+    const result = await response.json();
+    setBusy(false);
+    if (!response.ok) return alert(result.message || "시험 배정 변경에 실패했습니다.");
+    setAssignedIds((previous) => assigned ? previous.filter((id) => String(id) !== String(studentId)) : [...previous, studentId]);
+    setRequestedIds((previous) => previous.filter((id) => String(id) !== String(studentId)));
+  };
+
+  const replaceAssignments = async (studentIds: (string | number)[]) => {
+    if (!selectedExam) return;
+    const message = studentIds.length ? `${studentIds.length}명에게 이 시험을 배정할까요?` : "이 시험의 학생 배정을 모두 취소할까요?";
+    if (!window.confirm(message)) return;
+    setBusy(true);
+    const response = await fetch("/api/admin/exam-registrations", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ examId: selectedExam.id, studentIds }) });
+    const result = await response.json();
+    setBusy(false);
+    if (!response.ok) return alert(result.message || "시험 배정 변경에 실패했습니다.");
+    setAssignedIds(studentIds);
+  };
+
+  return <section className="panel registration-panel">
+    <div className="registration-header">
+      <div><span className="section-kicker">배정할 시험 선택</span><select value={selectedExamId} onChange={(event) => setSelectedExamId(event.target.value)}>{exams.map((exam) => <option key={exam.id} value={exam.id}>{exam.round}회 · {exam.title} · {exam.examDate}</option>)}</select></div>
+      <div className="registration-actions"><button className="secondary-button" disabled={busy || assignedIds.length === 0} onClick={() => void replaceAssignments([])}>전체 배정 취소</button><button className="primary-button" disabled={busy || availableStudents.length === 0} onClick={() => void replaceAssignments(availableStudents.map((student) => student.id))}>{busy ? "처리 중..." : `재원 학생 ${availableStudents.length}명 전체 배정`}</button></div>
+    </div>
+    <div className="round-summary"><div><span>시험</span><strong>{selectedExam ? `${selectedExam.round}회 · ${selectedExam.title}` : "등록된 시험 없음"}</strong></div><div><span>시험일</span><strong>{selectedExam?.examDate ?? "-"}</strong></div><div><span>신청 대기</span><strong>{requestedIds.length}명</strong></div><div><span>배정 완료</span><strong>{assignedCount}명</strong></div></div>
+    <div className="registration-progress"><i style={{ width: `${availableStudents.length ? (assignedCount / availableStudents.length) * 100 : 0}%` }} /></div>
+    <div className="data-table registration-list"><div className="table-head"><span>학생</span><span>학교 / 학년</span><span>학생 연락처</span><span>학부모 연락처</span><span>신청·배정 상태</span><span>처리</span></div>{availableStudents.sort((a, b) => Number(requestedIds.map(String).includes(String(b.id))) - Number(requestedIds.map(String).includes(String(a.id)))).map((student) => { const assigned = assignedIds.map(String).includes(String(student.id)); const requested = requestedIds.map(String).includes(String(student.id)); return <div className={`table-row ${requested ? "assignment-requested" : ""}`} key={student.id}><div className="student-name"><i>{student.name.slice(0, 1)}</i><div><strong>{student.name}</strong><small>{student.school}</small></div></div><span>{student.school} · {student.grade}</span><span>{student.phone}</span><span>{student.parentPhone}</span><span className={`registration-state ${assigned ? "registered" : requested ? "requested" : "unregistered"}`}>{assigned ? "배정 완료" : requested ? "신청 접수" : "미신청"}</span><button disabled={busy} className={`toggle-register ${assigned ? "on" : requested ? "requested" : ""}`} onClick={() => void toggleAssignment(student.id)}>{assigned ? "배정 취소" : requested ? "배정 확정" : "관리자 직접배정"}</button></div>; })}{!selectedExam ? <div className="empty-list">먼저 시험을 등록해 주세요.</div> : availableStudents.length === 0 ? <div className="empty-list">등록 가능한 재원 학생이 없습니다.</div> : null}</div>
+  </section>;
+}
+
+function ExamsPage({ exams, setExams, examFiles, setExamFiles, students }: { exams: PracticeExam[]; setExams: React.Dispatch<React.SetStateAction<PracticeExam[]>>; examFiles: Record<string, ExamFileBundle>; setExamFiles: React.Dispatch<React.SetStateAction<Record<string, ExamFileBundle>>>; students: Student[] }) {
+  const [tab, setTab] = useState<"list" | "input" | "assignment">("list");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftFiles, setDraftFiles] = useState<ExamFileBundle>({});
   const [preview, setPreview] = useState<{ title: string; source: File | string; fileName: string } | null>(null);
@@ -938,12 +990,12 @@ function ExamsPage({ exams, setExams, examFiles, setExamFiles }: { exams: Practi
       }
     `}</style>
     <section className="page-title-row"><div><h2>실전 모의고사</h2><p>모든 컴퓨터가 Supabase의 동일한 시험정보와 PDF를 사용합니다.</p></div><button className="primary-button" onClick={startNew}>＋ 실전모의고사 입력</button></section>
-    <div className="student-tabs"><button className={tab === "list" ? "active" : ""} onClick={() => setTab("list")}>시험 목록</button><button className={tab === "input" ? "active" : ""} onClick={() => { if (tab !== "input") startNew(); }}>{editingId ? "시험 수정" : "실전모의고사 입력"}</button></div>
+    <div className="student-tabs"><button className={tab === "list" ? "active" : ""} onClick={() => setTab("list")}>시험 목록</button><button className={tab === "assignment" ? "active" : ""} onClick={() => setTab("assignment")}>학생 시험배정</button><button className={tab === "input" ? "active" : ""} onClick={() => { if (tab !== "input") startNew(); }}>{editingId ? "시험 수정" : "실전모의고사 입력"}</button></div>
     {tab === "list" ? <>
       <section className="student-stat-grid"><MiniStat label="전체 시험" value={`${exams.length}회`} note="Supabase 등록 기준" /><MiniStat label="등록 완료" value={`${exams.filter(e => e.status === "등록완료").length}회`} note="응시 등록 가능" /><MiniStat label="작성중" value={`${exams.filter(e => e.status === "작성중").length}회`} note="추가 입력 필요" emphasis /><MiniStat label="마감" value={`${exams.filter(e => e.status === "마감").length}회`} note="종료된 시험" /></section>
       <section className="panel exam-list-panel"><div className="list-summary"><strong>실전모의고사 {exams.length}회</strong><span>컴퓨터가 달라도 동일한 DB 내용을 표시합니다.</span></div><div className="data-table exam-list"><div className="table-head"><span>회차 / 시험명</span><span>시험코드</span><span>대상 / 과목</span><span>시험일</span><span>문항 / 시간</span><span>등록 파일</span><span>진행률</span><span>등록 상태</span><span>관리</span></div>
       {exams.map((exam) => { const progress = registrationProgress(exam); return <div className="table-row" key={exam.id}><div className="exam-name-cell"><i>{exam.round}</i><div><strong>{exam.title}</strong><small>{exam.range || "범위 미입력"}</small></div></div><b data-label="시험코드">{exam.examCode}</b><span className="nowrap-cell" data-label="대상 / 과목">{exam.grade} · {exam.subject}</span><span className="nowrap-cell" data-label="시험일">{exam.examDate}</span><span className="nowrap-cell" data-label="문항 / 시간">{exam.questionCount}문항 · {exam.timeLimit}분</span><div className="file-buttons" data-label="등록 파일"><button className={exam.testFilePath ? "ready" : ""} onClick={() => openSavedPdf(exam, "test")} disabled={!exam.testFilePath}>시험지 {exam.testFilePath ? "✓" : "-"}</button><button className={exam.solutionFilePath ? "ready" : ""} onClick={() => openSavedPdf(exam, "solution")} disabled={!exam.solutionFilePath}>해설지 {exam.solutionFilePath ? "✓" : "-"}</button><button className={exam.originalFilePath ? "ready" : ""} onClick={() => openOriginal(exam)} disabled={!exam.originalFilePath}>한글 {exam.originalFilePath ? "✓" : "-"}</button></div><div className={`exam-progress-cell ${progress.percent === 100 ? "complete" : "incomplete"}`} data-label="진행률"><div><strong>{progress.percent}%</strong><span>{progress.done}/{progress.total}단계</span></div><div className="exam-progress-bar"><i style={{ width: `${progress.percent}%` }} /></div><small>{progress.percent === 100 ? "✓ 모든 검수 완료" : `미완료: ${progress.missing.join(" · ")}`}</small></div><div className="status-control" data-label="등록 상태"><select value={exam.status} onChange={(e) => changeStatusFromList(exam, e.target.value as ExamStatus)}><option>작성중</option><option>등록완료</option><option>마감</option></select></div><div className="row-actions"><button onClick={() => void toggleStudentOpen(exam)}>{exam.studentOpen ? "응시 마감" : "학생 공개"}</button><button onClick={() => editExam(exam)}>수정</button><button className="delete" onClick={() => remove(exam.id)}>삭제</button></div></div>; })}</div></section>
-    </> : <form className="exam-input-layout" onSubmit={save}>
+    </> : tab === "assignment" ? <ExamAssignmentPanel exams={exams} students={students} /> : <form className="exam-input-layout" onSubmit={save}>
       <section className="panel exam-form-panel"><div className="form-section-title"><div><span>01</span><div><h3>시험 기본정보</h3><p>이 정보는 Supabase에 저장되어 모든 컴퓨터에서 동일하게 표시됩니다.</p></div></div></div><div className="form-grid exam-form-grid"><Field label="시험 회차 *"><input type="number" min="1" value={form.round} onChange={(e) => set("round", Number(e.target.value))} /></Field><Field label="시험일 *"><input type="date" value={form.examDate} onChange={(e) => set("examDate", e.target.value)} /></Field><label className="field full"><span>시험명 *</span><input value={form.title} onChange={(e) => set("title", e.target.value)} /></label><Field label="시험코드 *"><input value={form.examCode} onChange={(e) => set("examCode", e.target.value)} /></Field><div className="field status-readonly"><span>등록 상태</span><strong>{form.status}</strong><small>등록 상태는 시험 목록에서만 변경합니다.</small></div><Field label="대상 학년"><select value={form.grade} onChange={(e) => set("grade", e.target.value)}><option>중3</option><option>고1</option><option>고2</option><option>고3</option><option>전체</option></select></Field><Field label="과목"><input value={form.subject} onChange={(e) => set("subject", e.target.value)} /></Field><label className="field full"><span>시험 범위</span><input value={form.range} onChange={(e) => set("range", e.target.value)} /></label></div></section>
       <section className="panel exam-form-panel"><div className="form-section-title"><div><span>02</span><div><h3>문항 구성</h3></div></div></div><div className="form-grid exam-form-grid numbers"><Field label="전체 문항 수"><input type="number" min="1" value={form.questionCount} onChange={(e) => { const count = Number(e.target.value); setForm((prev) => ({ ...prev, questionCount: count, answers: Array.from({ length: count }, (_, i) => prev.answers[i] ?? "") })); }} /></Field><Field label="총점"><input type="number" min="1" value={form.totalScore} onChange={(e) => set("totalScore", Number(e.target.value))} /></Field><Field label="객관식 문항"><input type="number" min="0" value={form.objectiveCount} onChange={(e) => set("objectiveCount", Number(e.target.value))} /></Field><Field label="단답형 문항"><input type="number" min="0" value={form.shortAnswerCount} onChange={(e) => set("shortAnswerCount", Number(e.target.value))} /></Field><Field label="시험 시간(분)"><input type="number" min="1" value={form.timeLimit} onChange={(e) => set("timeLimit", Number(e.target.value))} /></Field><div className={`question-check ${form.objectiveCount + form.shortAnswerCount === form.questionCount ? "ok" : "warning"}`}><span>문항 합계</span><strong>{form.objectiveCount + form.shortAnswerCount} / {form.questionCount}</strong></div></div></section>
       <section className="panel exam-form-panel"><div className="form-section-title"><div><span>03</span><div><h3>시험 자료 3종 등록</h3><p>한글 통합본은 원본 보관용, 시험지·해설지 PDF는 SOS 운영용입니다.</p></div></div></div><div className="upload-grid three-files">{(["original", "test", "solution"] as const).map((kind) => { const isOriginal = kind === "original"; const isTest = kind === "test"; const label = isOriginal ? "한글 통합본" : isTest ? "시험지 PDF" : "해설지 PDF"; const fileName = isOriginal ? form.originalFile : isTest ? form.testFile : form.solutionFile; const localFile = draftFiles[kind]; const savedPath = isOriginal ? form.originalFilePath : isTest ? form.testFilePath : form.solutionFilePath; const hasFile = Boolean(localFile || savedPath); return <div className="upload-card-wrap" key={kind}><label className="upload-card"><span>{label}</span><strong>{fileName || "등록된 파일 없음"}</strong><input type="file" accept={isOriginal ? ".hwp,.hwpx,application/haansofthwp" : "application/pdf,.pdf"} onChange={(e) => selectExamFile(kind, e.target.files?.[0])} /><em>{hasFile ? "파일 변경" : "파일 선택"}</em></label>{isOriginal ? <button type="button" className="pdf-preview-button" disabled={!hasFile} onClick={async () => { if (localFile) { const url = URL.createObjectURL(localFile); window.open(url, "_blank"); setTimeout(() => URL.revokeObjectURL(url), 30000); return; } const tab = window.open("", "_blank"); try { const url = await getFileSource(kind); if (typeof url === "string" && url) { if (tab) tab.location.href = url; else window.open(url, "_blank"); } else tab?.close(); } catch (error) { tab?.close(); alert(error instanceof Error ? error.message : "파일을 열지 못했습니다."); } }}>한글 파일 열기</button> : <button type="button" className="pdf-preview-button" disabled={!hasFile} onClick={async () => { try { const source = await getFileSource(kind); if (!source) return; setPreview({ title: `${form.title || "현재 시험"} · ${isTest ? "시험지" : "해설지"}`, source, fileName }); } catch (error) { alert(error instanceof Error ? error.message : "PDF를 불러오지 못했습니다."); } }}>{isTest ? "시험지" : "해설지"} 미리보기</button>}</div>; })}</div><div className="upload-save-row"><button className="primary-button upload-save-button" disabled={saving}>{saving ? "파일 저장 중..." : "시험 자료 한 번에 저장"}</button><span>선택한 한글·시험지·해설지를 한 번에 저장하고 해설지 정답도 자동으로 읽습니다.</span></div><div className="file-standard-note"><b>SOS 표준 등록</b><span>한글 통합본 + 시험지 PDF + 해설지 PDF</span></div><label className="field exam-memo"><span>관리 메모</span><textarea value={form.memo} onChange={(e) => set("memo", e.target.value)} /></label></section>
