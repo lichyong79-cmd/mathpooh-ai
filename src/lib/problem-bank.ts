@@ -24,6 +24,8 @@ type SourceFile = {
   subject: string | null;
   exam_pdf_path: string | null;
   solution_pdf_path: string | null;
+  content_role?: string | null;
+  training_course?: string | null;
 };
 
 function text(value: unknown) {
@@ -108,6 +110,8 @@ export async function registerQuestions(
       answer: question.answer ?? "",
       summary: text(result.summary),
       source_name: text(source.source),
+      content_role: text(source.content_role) || "TRAINING",
+      training_course: text(source.training_course) || "대표유형",
       exam_pdf_path: source.exam_pdf_path,
       solution_pdf_path: source.solution_pdf_path,
       confidence: question.confidence,

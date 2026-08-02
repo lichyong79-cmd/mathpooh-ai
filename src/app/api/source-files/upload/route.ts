@@ -36,6 +36,8 @@ export async function POST(request: NextRequest) {
     const source = String(formData.get("source") ?? "").trim();
     const grade = String(formData.get("grade") ?? "").trim();
     const subject = String(formData.get("subject") ?? "").trim();
+    const contentRole = String(formData.get("contentRole") ?? "TRAINING").trim();
+    const trainingCourse = String(formData.get("trainingCourse") ?? "대표유형").trim();
     const hwpFile = formData.get("hwpFile");
     const examPdf = formData.get("examPdf");
     const solutionPdf = formData.get("solutionPdf");
@@ -110,6 +112,8 @@ export async function POST(request: NextRequest) {
         source: source || null,
         grade: grade || null,
         subject: subject || null,
+        content_role: contentRole === "REFERENCE" ? "REFERENCE" : "TRAINING",
+        training_course: trainingCourse || "대표유형",
         storage_path: examPdfPath,
         hwp_path: hwpPath,
         exam_pdf_path: examPdfPath,

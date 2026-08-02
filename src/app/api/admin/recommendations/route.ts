@@ -21,7 +21,7 @@ export async function GET() {
   const [{ data: students, error: studentError }, { data: attempts, error: attemptError }, { data: problems, error: problemError }] = await Promise.all([
     ctx.supabase.from("students").select("id,name,school,grade,status").neq("status", "퇴원").order("name"),
     ctx.supabase.from("exam_attempts").select("id,student_id,exam_id,status,answers,submitted_at,score,correct_count").eq("status", "submitted"),
-    ctx.supabase.from("problem_bank_questions").select("id,problem_code,title,unit,topic,difficulty,question_type,summary,problem_dna,status").eq("status", "ACTIVE"),
+    ctx.supabase.from("problem_bank_questions").select("id,problem_code,title,unit,topic,difficulty,question_type,summary,problem_dna,status,content_role,training_course").eq("status", "ACTIVE").eq("content_role", "TRAINING"),
   ]);
   if (studentError || attemptError || problemError) return NextResponse.json({ message: studentError?.message || attemptError?.message || problemError?.message }, { status: 400 });
   const examIds = [...new Set((attempts ?? []).map((item) => item.exam_id))];

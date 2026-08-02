@@ -30,6 +30,8 @@ type Problem = {
   page_no: number | null;
   problem_dna: ProblemDNA | null;
   analysis_version: string | null;
+  content_role?: "TRAINING" | "REFERENCE";
+  training_course?: string;
 };
 
 type Draft = Pick<Problem, "title" | "grade" | "subject" | "unit" | "topic" | "difficulty" | "question_type" | "answer" | "summary" | "source_name" | "status">;
@@ -110,7 +112,7 @@ export default function ProblemBankPage() {
       const fields = [
         "id", "source_file_id", "analysis_question_id", "question_no", "problem_code", "title",
         "grade", "subject", "unit", "topic", "difficulty", "question_type", "answer", "summary",
-        "source_name", "confidence", "status", "created_at", "updated_at", "question_image_path", "page_no", "problem_dna", "analysis_version",
+        "source_name", "confidence", "status", "content_role", "training_course", "created_at", "updated_at", "question_image_path", "page_no", "problem_dna", "analysis_version",
       ].join(",");
       const response = await fetch(
         `${config.url}/rest/v1/problem_bank_questions?select=${fields}&order=created_at.desc`,

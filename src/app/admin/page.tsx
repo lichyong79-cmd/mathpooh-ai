@@ -3946,6 +3946,8 @@ type SourceFile = {
   page_count: number;
   status: string;
   error_message: string | null;
+  content_role?: "TRAINING" | "REFERENCE";
+  training_course?: string;
 };
 
 const sourceStatusLabel: Record<string, string> = {
@@ -3968,6 +3970,8 @@ function ProblemsPage({
   const [source, setSource] = useState("매쓰푸 자체 제작");
   const [grade, setGrade] = useState("고1");
   const [subject, setSubject] = useState("공통수학1");
+  const [contentRole, setContentRole] = useState<"TRAINING" | "REFERENCE">("TRAINING");
+  const [trainingCourse, setTrainingCourse] = useState("대표유형");
   const [hwpFile, setHwpFile] = useState<File | null>(null);
   const [examPdf, setExamPdf] = useState<File | null>(null);
   const [solutionPdf, setSolutionPdf] = useState<File | null>(null);
@@ -4011,6 +4015,8 @@ function ProblemsPage({
         "page_count",
         "status",
         "error_message",
+        "content_role",
+        "training_course",
       ].join(",");
       const response = await fetch(
         `${config.url}/rest/v1/source_files?select=${fields}&order=created_at.desc`,
@@ -4099,6 +4105,8 @@ function ProblemsPage({
       formData.append("source", source.trim());
       formData.append("grade", grade);
       formData.append("subject", subject);
+      formData.append("contentRole", contentRole);
+      formData.append("trainingCourse", trainingCourse);
       formData.append("hwpFile", hwpFile);
       formData.append("examPdf", examPdf);
       formData.append("solutionPdf", solutionPdf);
@@ -4116,6 +4124,8 @@ function ProblemsPage({
 
       setMessage(result.message);
       setTitle("");
+      setContentRole("TRAINING");
+      setTrainingCourse("대표유형");
       setHwpFile(null);
       setExamPdf(null);
       setSolutionPdf(null);
@@ -4261,6 +4271,11 @@ function ProblemsPage({
       </section>
 
       <form className="panel ai-upload-panel" onSubmit={uploadBundle}>
+        <div className="training-role-selector">
+          <div><b>등록 용도</b><span>분석 방식은 같고, SOS 추천에 사용할지 여부만 구분합니다.</span></div>
+          <label className={contentRole === "TRAINING" ? "selected" : ""}><input type="radio" name="contentRoleView" checked={contentRole === "TRAINING"} onChange={() => setContentRole("TRAINING")} /><strong>훈련용 문항</strong><small>SOS 추천·배정 후보로 사용</small></label>
+          <label className={contentRole === "REFERENCE" ? "selected" : ""}><input type="radio" name="contentRoleView" checked={contentRole === "REFERENCE"} onChange={() => setContentRole("REFERENCE")} /><strong>참고·보관용</strong><small>문제은행 보관, 자동 추천 제외</small></label>
+        </div>
         <div className="ai-upload-grid four-fields">
           <label className="field">
             <span>시험지명</span>
@@ -4311,6 +4326,7 @@ function ProblemsPage({
             </select>
           </label>
         </div>
+        {contentRole === "TRAINING" ? <div className="training-course-row"><b>훈련 과정</b>{["기초연산","대표유형","실전유형","준킬러","킬러"].map((course) => <button key={course} type="button" className={trainingCourse === course ? "active" : ""} onClick={() => setTrainingCourse(course)}>{course}</button>)}</div> : null}
 
         <div className="bundle-upload-grid">
           <label className={`bundle-drop-zone ${hwpFile ? "selected" : ""}`}>
@@ -4501,6 +4517,7 @@ function ProblemsPage({
                   <div>
                     <strong>{item.title}</strong>
                     <small>{item.source || "-"}</small>
+                    <small className={`source-purpose ${item.content_role === "REFERENCE" ? "reference" : "training"}`}>{item.content_role === "REFERENCE" ? "참고·보관용" : `훈련용 · ${item.training_course || "대표유형"}`}</small>
                   </div>
                   <span>
                     {[item.grade, item.subject].filter(Boolean).join(" · ") ||

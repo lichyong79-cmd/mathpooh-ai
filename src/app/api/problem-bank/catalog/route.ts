@@ -14,8 +14,10 @@ export async function GET(request: NextRequest) {
     const params = request.nextUrl.searchParams;
     const status = params.get("status") || "ACTIVE";
     const limit = Math.max(1, Math.min(500, Number(params.get("limit") || 100)));
-    let query = supabase.from("problem_bank_questions").select("id,problem_code,question_no,title,grade,subject,unit,topic,difficulty,question_type,answer,summary,source_name,confidence,status,question_image_path,problem_dna,analysis_version,dna_tags,created_at,updated_at").order("created_at", { ascending: false }).limit(limit);
+    let query = supabase.from("problem_bank_questions").select("id,problem_code,question_no,title,grade,subject,unit,topic,difficulty,question_type,answer,summary,source_name,confidence,status,content_role,training_course,question_image_path,problem_dna,analysis_version,dna_tags,created_at,updated_at").order("created_at", { ascending: false }).limit(limit);
     if (status !== "ALL") query = query.eq("status", status);
+    const contentRole = params.get("contentRole");
+    if (contentRole) query = query.eq("content_role", contentRole);
     for (const key of ["grade", "subject", "unit", "difficulty"] as const) {
       const value = params.get(key);
       if (value) query = query.eq(key, value);
