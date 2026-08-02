@@ -32,7 +32,7 @@ export async function GET() {
     const downloadAvailable = applicationStatus === "assigned" && (!downloadAvailableAt || downloadAvailableAt <= now);
     let testUrl = "";
     if (downloadAvailable && exam.test_file_path) testUrl = (await supabase.storage.from("exam-files").createSignedUrl(exam.test_file_path, 60 * 60 * 3)).data?.signedUrl ?? "";
-    return { ...exam, application_status: applicationStatus, test_url: testUrl, download_available: downloadAvailable, download_available_at: downloadAvailableAt, attempt: attemptMap.get(exam.id) ?? null, available: applicationStatus === "assigned" && (!exam.open_at || exam.open_at <= now) };
+    return { ...exam, application_status: applicationStatus, test_url: testUrl, download_available: downloadAvailable, download_available_at: downloadAvailableAt, attempt: attemptMap.get(exam.id) ?? null, available: applicationStatus === "assigned" && Boolean(exam.close_at) && (!exam.open_at || exam.open_at <= now) && exam.close_at >= now };
   }));
   return NextResponse.json({ student: { id: student.id, name: student.name, school: student.school, grade: student.grade, passwordChanged: student.password_changed }, exams: items });
 }
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
   const { data: exam } = await supabase.from("exams").select("*").eq("id", examId).eq("student_open", true).maybeSingle();
   if (!exam) return NextResponse.json({ message: "응시 가능한 시험이 아닙니다." }, { status: 404 });
   const now = new Date().toISOString();
-  if (action === "start" && exam.open_at && exam.open_at > now) {
+  if (action === "start" && ((exam.open_at && exam.open_at > now) || !exam.close_at || exam.close_at <= now)) {
     return NextResponse.json({ message: "현재는 이 시험의 응시 시간이 아닙니다." }, { status: 403 });
   }
   const { data: existing } = await supabase.from("exam_attempts").select("*").eq("exam_id", examId).eq("student_id", student.id).maybeSingle();
@@ -83,6 +83,7 @@ export async function POST(request: Request) {
   const changes = { ...(existing.answer_changes ?? {}) } as Record<string, number>;
   for (const key of Object.keys(answers)) if (String(previous[key] ?? "") !== String(answers[key] ?? "")) changes[key] = Number(changes[key] ?? 0) + 1;
   if (action === "save") {
+    if (exam.close_at && exam.close_at <= now) return NextResponse.json({ message: "시험 시간이 종료되어 답안이 마감되었습니다." }, { status: 409 });
     const { error } = await supabase.from("exam_attempts").update({ answers, answer_changes: changes, last_saved_at: new Date().toISOString() }).eq("id", existing.id);
     return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ success: true, savedAt: new Date().toISOString() });
   }

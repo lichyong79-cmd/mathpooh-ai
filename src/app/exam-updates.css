@@ -32,3 +32,28 @@
   color: #72798a;
   font-size: 11px;
 }
+
+.monitor-schedule {
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, 0.8fr) auto auto auto;
+}
+
+.monitor-time-note.running {
+  background: #e9f8f1;
+  border-color: #8fd0b2;
+}
+
+.monitor-time-note.running b {
+  color: #167652;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.exam-start-button {
+  min-width: 112px;
+}
+
+@media (max-width: 1100px) {
+  .monitor-schedule {
+    grid-template-columns: 1fr 1fr;
+  }
+}

@@ -607,6 +607,7 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
   const [openAt, setOpenAt] = useState("");
   const [studentOpen, setStudentOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [clock, setClock] = useState(Date.now());
 
   const toLocalInput = (value?: string | null) => value ? new Date(value).toLocaleString("sv-SE", { timeZone: "Asia/Seoul" }).slice(0, 16) : "";
   const loadMonitor = useCallback(async (silent = false) => {
@@ -616,25 +617,39 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
     const result = await response.json();
     if (!silent) setBusy(false);
     if (!response.ok) return alert(result.message || "시험 진행상황을 불러오지 못했습니다.");
-    setRows(result.rows ?? []); setExamInfo(result.exam); setStudentOpen(Boolean(result.exam?.student_open)); setOpenAt(toLocalInput(result.exam?.open_at));
+    setRows(result.rows ?? []); setExamInfo(result.exam);
+    if (!silent) { setStudentOpen(Boolean(result.exam?.student_open)); setOpenAt(toLocalInput(result.exam?.open_at)); }
   }, [examId]);
 
   useEffect(() => { if (!examId && exams[0]?.id) setExamId(exams[0].id); }, [examId, exams]);
   useEffect(() => { void loadMonitor(); const timer = window.setInterval(() => void loadMonitor(true), 15000); return () => window.clearInterval(timer); }, [loadMonitor]);
+  useEffect(() => { const timer = window.setInterval(() => setClock(Date.now()), 1000); return () => window.clearInterval(timer); }, []);
 
   const saveSchedule = async () => {
     if (!examId) return;
     setBusy(true);
-    const response = await fetch("/api/admin/exam-monitor", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ examId, studentOpen, openAt: openAt ? new Date(openAt).toISOString() : null }) });
+    const response = await fetch("/api/admin/exam-monitor", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "schedule", examId, studentOpen, openAt: openAt ? new Date(openAt).toISOString() : null }) });
     const result = await response.json(); setBusy(false);
-    if (!response.ok) return alert(result.message || "시험 공개 설정을 저장하지 못했습니다.");
-    alert("시험 공개 설정을 저장했습니다."); void loadMonitor(true);
+    if (!response.ok) return alert(result.message || "시험 타이머를 생성하지 못했습니다.");
+    setExamInfo(result.exam); alert(`시험 타이머를 준비했습니다. 시작 버튼을 누르면 ${result.exam.time_limit ?? 100}분 타이머가 작동합니다.`);
+  };
+
+  const startExamTimer = async () => {
+    if (!examId || !openAt) return alert("먼저 시작 예정 시각을 입력하고 타이머를 생성해 주세요.");
+    if (!window.confirm(`지금 시험을 시작할까요? 시작 즉시 전체 ${examInfo?.time_limit ?? 100}분 타이머가 작동합니다.`)) return;
+    setBusy(true);
+    const response = await fetch("/api/admin/exam-monitor", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "start", examId }) });
+    const result = await response.json(); setBusy(false);
+    if (!response.ok) return alert(result.message || "시험을 시작하지 못했습니다.");
+    setExamInfo(result.exam); setStudentOpen(true); setOpenAt(toLocalInput(result.exam.open_at)); setClock(Date.now());
   };
 
   const counts = { waiting: rows.filter((row) => !row.attempt).length, running: rows.filter((row) => row.attempt?.status === "in_progress").length, submitted: rows.filter((row) => row.attempt?.status === "submitted").length };
   const formatTime = (value?: string) => value ? new Date(value).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "-";
+  const timerSeconds = examInfo?.close_at ? Math.max(0, Math.ceil((new Date(examInfo.close_at).getTime() - clock) / 1000)) : null;
+  const timerText = timerSeconds === null ? `${examInfo?.time_limit ?? 100}:00` : `${String(Math.floor(timerSeconds / 60)).padStart(2, "0")}:${String(timerSeconds % 60).padStart(2, "0")}`;
   return <div className="exam-monitor-layout">
-    <section className="panel monitor-control"><div className="monitor-title"><div><span className="section-kicker">진행할 시험</span><select value={examId} onChange={(event) => setExamId(event.target.value)}>{exams.map((exam) => <option key={exam.id} value={exam.id}>{exam.round}회 · {exam.title}</option>)}</select></div><button className="secondary-button" onClick={() => void loadMonitor()} disabled={busy}>↻ 새로고침</button></div><div className="monitor-schedule"><label><span>응시 가능 시작</span><input type="datetime-local" value={openAt} onChange={(event) => setOpenAt(event.target.value)} /></label><div className="monitor-time-note"><b>제한시간 {examInfo?.time_limit ?? 100}분</b><span>학생이 시험 시작을 누른 순간부터 개인별로 계산됩니다.</span></div><label className="open-switch"><input type="checkbox" checked={studentOpen} onChange={(event) => setStudentOpen(event.target.checked)} /><span>{studentOpen ? "학생에게 공개 중" : "학생 비공개"}</span></label><button className="primary-button" onClick={() => void saveSchedule()} disabled={busy}>{busy ? "저장 중..." : "공개 설정 저장"}</button></div></section>
+    <section className="panel monitor-control"><div className="monitor-title"><div><span className="section-kicker">진행할 시험</span><select value={examId} onChange={(event) => setExamId(event.target.value)}>{exams.map((exam) => <option key={exam.id} value={exam.id}>{exam.round}회 · {exam.title}</option>)}</select></div><button className="secondary-button" onClick={() => void loadMonitor()} disabled={busy}>↻ 새로고침</button></div><div className="monitor-schedule"><label><span>시험 시작 예정</span><input type="datetime-local" value={openAt} onChange={(event) => setOpenAt(event.target.value)} /></label><div className={`monitor-time-note ${examInfo?.close_at ? "running" : ""}`}><b>{timerText}</b><span>{examInfo?.close_at ? "전체 시험 타이머 작동 중" : `전체 학생 공통 ${examInfo?.time_limit ?? 100}분`}</span></div><label className="open-switch"><input type="checkbox" checked={studentOpen} onChange={(event) => setStudentOpen(event.target.checked)} /><span>{studentOpen ? "학생에게 공개 중" : "학생 비공개"}</span></label><button className="secondary-button" onClick={() => void saveSchedule()} disabled={busy || !openAt}>{busy ? "처리 중..." : "타이머 생성"}</button><button className="primary-button exam-start-button" onClick={() => void startExamTimer()} disabled={busy || !openAt || Boolean(examInfo?.close_at && timerSeconds && timerSeconds > 0)}>시험 시작</button></div></section>
     <section className="student-stat-grid monitor-stats"><MiniStat label="배정 완료" value={`${rows.length}명`} note="입금완료 기준" /><MiniStat label="응시 전" value={`${counts.waiting}명`} note="아직 시작하지 않음" /><MiniStat label="응시 중" value={`${counts.running}명`} note="15초 자동 갱신" emphasis /><MiniStat label="제출 완료" value={`${counts.submitted}명`} note="채점 완료" /></section>
     <section className="panel monitor-table-panel"><div className="list-summary"><strong>{examInfo?.title ?? "시험 진행관리"}</strong><span>진행 중인 학생은 15초마다 자동 갱신됩니다.</span></div><div className="data-table monitor-list"><div className="table-head"><span>학생</span><span>학교 / 학년</span><span>상태</span><span>시작 시각</span><span>답안 입력</span><span>최근 저장</span><span>제출 시각</span><span>점수</span></div>{rows.map((row) => { const attempt = row.attempt; const status = !attempt ? "응시 전" : attempt.status === "submitted" ? "제출 완료" : "응시 중"; const answered = attempt?.answers ? Object.values(attempt.answers).filter((answer) => String(answer).trim()).length : 0; return <div className="table-row" key={row.student.id}><div className="student-name"><i>{row.student.name.slice(0, 1)}</i><div><strong>{row.student.name}</strong><small>{row.student.phone}</small></div></div><span>{row.student.school} · {row.student.grade}</span><span className={`monitor-state ${attempt?.status ?? "waiting"}`}>{status}</span><span>{formatTime(attempt?.started_at)}</span><strong>{answered}개</strong><span>{formatTime(attempt?.last_saved_at)}</span><span>{formatTime(attempt?.submitted_at)}</span><strong>{attempt?.status === "submitted" ? `${attempt.score ?? 0}점` : "-"}</strong></div>; })}{rows.length === 0 ? <div className="empty-list">이 시험에 배정 완료된 학생이 없습니다.</div> : null}</div></section>
   </div>;

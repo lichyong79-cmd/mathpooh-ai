@@ -6,7 +6,7 @@ import "./student.css";
 import "./exam-updates.css";
 
 type Attempt = { id: string; status: string; answers: Record<string, string>; started_at: string; score?: number; correct_count?: number };
-type Exam = { id: string; title: string; exam_code: string; exam_date: string; grade: string; subject: string; exam_range: string; question_count: number; time_limit: number; total_score: number; objective_count: number; short_answer_count: number; test_url: string; available: boolean; download_available: boolean; download_available_at?: string | null; open_at?: string | null; application_status: "none" | "requested" | "assigned"; attempt: Attempt | null };
+type Exam = { id: string; title: string; exam_code: string; exam_date: string; grade: string; subject: string; exam_range: string; question_count: number; time_limit: number; total_score: number; objective_count: number; short_answer_count: number; test_url: string; available: boolean; download_available: boolean; download_available_at?: string | null; open_at?: string | null; close_at?: string | null; application_status: "none" | "requested" | "assigned"; attempt: Attempt | null };
 type Portal = { student: { name: string; school: string; grade: string; passwordChanged: boolean }; exams: Exam[] };
 
 export default function StudentHome() {
@@ -35,7 +35,7 @@ export default function StudentHome() {
     setBusy("");
     if (!response.ok) return alert(data.message || "시험을 시작하지 못했습니다.");
     setActiveExam(exam); setAttempt(data.attempt); setAnswers(data.attempt.answers ?? {});
-    const end = new Date(data.attempt.started_at).getTime() + exam.time_limit * 60_000;
+    const end = exam.close_at ? new Date(exam.close_at).getTime() : new Date(data.attempt.started_at).getTime() + exam.time_limit * 60_000;
     setRemaining(Math.max(0, Math.ceil((end - Date.now()) / 1000)));
   };
 
