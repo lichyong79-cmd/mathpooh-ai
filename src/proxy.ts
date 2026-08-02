@@ -33,6 +33,7 @@ export async function proxy(request: NextRequest) {
   const isPublicPath =
     pathname === "/login" ||
     pathname === "/student-login" ||
+    pathname === "/admin/login" ||
     pathname.startsWith("/auth/") ||
     pathname === "/api/health";
 
@@ -44,12 +45,16 @@ export async function proxy(request: NextRequest) {
         { status: 401 }
       );
     }
-    const loginUrl = new URL("/login", request.url);
+    const isAdminPath =
+      pathname.startsWith("/admin") ||
+      pathname.startsWith("/problem-bank") ||
+      pathname.startsWith("/pdf-mapper");
+    const loginUrl = new URL(isAdminPath ? "/admin/login" : "/student-login", request.url);
     loginUrl.searchParams.set("next", pathname + request.nextUrl.search);
     return NextResponse.redirect(loginUrl);
   }
 
-  if (user && pathname === "/login") {
+  if (user && (pathname === "/login" || pathname === "/admin/login")) {
     return NextResponse.redirect(new URL(user.user_metadata?.role === "student" ? "/" : "/admin", request.url));
   }
 

@@ -9,11 +9,18 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [nextPath, setNextPath] = useState("/");
-  const [studentLoginPage, setStudentLoginPage] = useState(false);
+  const [loginMode, setLoginMode] = useState<"student" | "admin" | "generic">("generic");
 
   // useSearchParams 대신 직접 읽어 Suspense 경계 요구를 피합니다.
   useEffect(() => {
-    setStudentLoginPage(window.location.pathname === "/student-login");
+    const pathname = window.location.pathname;
+    setLoginMode(
+      pathname === "/student-login"
+        ? "student"
+        : pathname === "/admin/login"
+          ? "admin"
+          : "generic"
+    );
     const raw = new URLSearchParams(window.location.search).get("next");
     // 외부 사이트로 튕기는 open redirect를 막습니다.
     if (raw && raw.startsWith("/") && !raw.startsWith("//")) setNextPath(raw);
@@ -29,8 +36,16 @@ export default function LoginPage() {
       const supabase = createClient();
       const rawId = email.trim();
       const phone = rawId.replace(/\D/g, "");
-      const loginEmail = rawId.includes("@") ? rawId : `${phone}@student.matspu.local`;
-      const loginPassword = !rawId.includes("@") && /^\d{4}$/.test(password) ? `Mp!${password}` : password;
+      if (loginMode === "student" && !/^\d{10,11}$/.test(phone)) {
+        setError("학생 본인의 전화번호를 정확히 입력해 주세요.");
+        return;
+      }
+      if (loginMode === "admin" && !rawId.includes("@")) {
+        setError("관리자 이메일을 입력해 주세요.");
+        return;
+      }
+      const loginEmail = loginMode === "student" ? `${phone}@student.matspu.local` : rawId;
+      const loginPassword = loginMode === "student" && /^\d{4}$/.test(password) ? `Mp!${password}` : password;
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email: loginEmail,
         password: loginPassword,
@@ -47,7 +62,8 @@ export default function LoginPage() {
 
       // 미들웨어가 쿠키를 다시 읽도록 전체 새로고침으로 이동합니다.
       const role = data.user?.user_metadata?.role;
-      if (studentLoginPage && role !== "student") { await supabase.auth.signOut(); setError("학생 계정으로 로그인해 주세요."); return; }
+      if (loginMode === "student" && role !== "student") { await supabase.auth.signOut(); setError("학생 계정으로 로그인해 주세요."); return; }
+      if (loginMode === "admin" && role === "student") { await supabase.auth.signOut(); setError("관리자 계정으로 로그인해 주세요."); return; }
       window.location.href = role === "student" ? "/" : (nextPath === "/" ? "/admin" : nextPath);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "로그인에 실패했습니다.");
@@ -67,13 +83,13 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <h1 style={styles.title}>{studentLoginPage ? "학생 로그인" : "SOS 로그인"}</h1>
-        <p style={styles.lead}>{studentLoginPage ? "본인 전화번호와 초기 비밀번호 뒤 4자리를 입력하세요." : "학생은 본인 전화번호를 아이디로 입력하세요."}</p>
+        <h1 style={styles.title}>{loginMode === "student" ? "학생 로그인" : loginMode === "admin" ? "관리자 로그인" : "SOS 로그인"}</h1>
+        <p style={styles.lead}>{loginMode === "student" ? "본인 전화번호와 비밀번호를 입력하세요." : loginMode === "admin" ? "관리자 이메일과 비밀번호를 입력하세요." : "계정 정보를 입력하세요."}</p>
 
         <label style={styles.label}>
-          아이디 · 전화번호
+          {loginMode === "admin" ? "관리자 이메일" : "학생 전화번호"}
           <input
-            type="text"
+            type={loginMode === "admin" ? "email" : "tel"}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="username"
@@ -100,7 +116,7 @@ export default function LoginPage() {
         </button>
 
         <p style={styles.help}>
-          학생 초기 비밀번호는 전화번호 뒤 4자리입니다.
+          {loginMode === "student" ? "초기 비밀번호는 전화번호 뒤 4자리이며, 로그인 후 변경할 수 있습니다." : "관리자 전용 로그인 화면입니다."}
         </p>
       </form>
     </main>
