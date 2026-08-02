@@ -67,7 +67,7 @@ export default function StudentHome() {
 
   const answered = useMemo(() => activeExam ? Array.from({ length: activeExam.question_count }, (_, i) => i + 1).filter((no) => String(answers[no] ?? "").trim()).length : 0, [activeExam, answers]);
   const changeAnswer = (no: number, value: string) => { setAnswers((prev) => ({ ...prev, [no]: value })); setSaveState("저장 대기"); };
-  const signOut = async () => { await createClient().auth.signOut(); window.location.href = "/login"; };
+  const signOut = async () => { await createClient().auth.signOut(); window.location.href = "/student-login"; };
 
   if (error) return <main className="student-loading"><strong>{error}</strong><button onClick={() => void signOut()}>다시 로그인</button></main>;
   if (!portal) return <main className="student-loading"><strong>SOS 학생 페이지를 불러오는 중...</strong></main>;

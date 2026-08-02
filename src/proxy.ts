@@ -62,8 +62,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
+  // 기본 주소는 항상 학생 진입점입니다. 관리자 세션이 남아 있어도
+  // 관리자 화면으로 되돌리지 않고 학생 로그인 화면을 보여줍니다.
   if (user && user.user_metadata?.role !== "student" && pathname === "/") {
-    return NextResponse.redirect(new URL("/admin", request.url));
+    return NextResponse.redirect(new URL("/student-login", request.url));
   }
 
   return response;
