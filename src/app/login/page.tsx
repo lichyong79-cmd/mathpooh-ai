@@ -108,11 +108,13 @@ export default function LoginPage() {
             <svg viewBox="0 0 24 24"><path d="M12 3.2c2.2 1.8 4.2 2.5 6.2 2.8v5.4c0 4.3-2.4 7.4-6.2 9.4-3.8-2-6.2-5.1-6.2-9.4V6c2-.3 4-.9 6.2-2.8Z"/><path d="m9.2 12 1.8 1.8 3.8-4"/></svg>
           </div>
 
-          <nav className="mp-role-tabs" aria-label="로그인 종류 선택">
-            {(Object.keys(modeInfo) as LoginMode[]).map((mode) => (
-              <button type="button" key={mode} className={loginMode === mode ? "active" : ""} onClick={() => changeMode(mode)}>{modeInfo[mode].tab}</button>
-            ))}
-          </nav>
+          {loginMode !== "admin" ? (
+            <nav className="mp-role-tabs" aria-label="로그인 종류 선택">
+              {(["student", "parent"] as LoginMode[]).map((mode) => (
+                <button type="button" key={mode} className={loginMode === mode ? "active" : ""} onClick={() => changeMode(mode)}>{modeInfo[mode].tab}</button>
+              ))}
+            </nav>
+          ) : null}
 
           <div className="mp-login-heading">
             <h2>{info.title}</h2>
@@ -136,6 +138,11 @@ export default function LoginPage() {
           </button>
 
           <p className="mp-login-help">{info.help}</p>
+          {loginMode === "admin" ? (
+            <a className="mp-admin-login-link back" href="/">← 학생·학부모 로그인으로</a>
+          ) : (
+            <a className="mp-admin-login-link" href="/admin/login">관리자 로그인 <span>→</span></a>
+          )}
         </form>
         <p className="mp-login-copyright">© MATHPOOH. All rights reserved.</p>
       </section>
