@@ -89,7 +89,7 @@ export default function LoginPage() {
       if (loginMode === "student" && role !== "student") { await supabase.auth.signOut(); setError("학생 계정으로 로그인해 주세요."); return; }
       if (loginMode === "parent" && role !== "parent") { await supabase.auth.signOut(); setError("학부모 계정으로 로그인해 주세요."); return; }
       if (loginMode === "admin" && (role === "student" || role === "parent")) { await supabase.auth.signOut(); setError("관리자 계정으로 로그인해 주세요."); return; }
-      window.location.href = role === "student" ? "/" : role === "parent" ? "/p" : (nextPath === "/" ? "/admin" : nextPath);
+      window.location.href = role === "student" ? "/s" : role === "parent" ? "/p" : (nextPath === "/" ? "/admin" : nextPath);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "로그인에 실패했습니다.");
     } finally {
@@ -101,11 +101,16 @@ export default function LoginPage() {
 
   return (
     <main className="mp-login-page">
+      <header className="mp-login-header">
+        <div><img src="/mathpooh-mark.svg" alt="" /><strong>매쓰푸</strong></div>
+      </header>
       <section className="mp-login-wrap">
-        <div className="mp-site-brand"><strong>MATHPOOH</strong><span>매쓰푸</span></div>
         <form onSubmit={submit} className="mp-login-card">
-          <div className="mp-login-symbol" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M12 3.2c2.2 1.8 4.2 2.5 6.2 2.8v5.4c0 4.3-2.4 7.4-6.2 9.4-3.8-2-6.2-5.1-6.2-9.4V6c2-.3 4-.9 6.2-2.8Z"/><path d="m9.2 12 1.8 1.8 3.8-4"/></svg>
+          <img className="mp-card-logo" src="/mathpooh-mark.svg" alt="매쓰푸" />
+
+          <div className="mp-login-heading">
+            <h2>{loginMode === "admin" ? "관리자 로그인" : "로그인"}</h2>
+            <p>{loginMode === "admin" ? "매쓰푸 관리자 전용 페이지입니다" : "매쓰푸 SOS 계정으로 로그인하세요"}</p>
           </div>
 
           {loginMode !== "admin" ? (
@@ -116,11 +121,6 @@ export default function LoginPage() {
             </nav>
           ) : null}
 
-          <div className="mp-login-heading">
-            <h2>{info.title}</h2>
-            <p>{info.lead}</p>
-          </div>
-
           <label className="mp-login-field">
             <span>{info.idLabel}</span>
             <input type={loginMode === "admin" ? "email" : "tel"} value={email} onChange={(e) => setEmail(e.target.value)} placeholder={info.idPlaceholder} autoComplete="username" autoFocus />
@@ -130,6 +130,8 @@ export default function LoginPage() {
             <span>비밀번호</span>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="비밀번호를 입력하세요" autoComplete="current-password" />
           </label>
+
+          {loginMode !== "admin" ? <button className="mp-find-password" type="button" onClick={() => alert("비밀번호 초기화는 관리자에게 요청해 주세요.")}>비밀번호 찾기</button> : null}
 
           {error ? <div className="mp-login-error">{error}</div> : null}
 
@@ -144,7 +146,8 @@ export default function LoginPage() {
             <a className="mp-admin-login-link" href="/admin/login">관리자 로그인 <span>→</span></a>
           )}
         </form>
-        <p className="mp-login-copyright">© MATHPOOH. All rights reserved.</p>
+        {loginMode !== "admin" ? <div className="mp-login-under"><span>SOS 이용이 처음이신가요?</span><b>관리자에게 학생 등록 요청</b></div> : null}
+        <p className="mp-login-copyright">© 2026 매쓰푸</p>
       </section>
     </main>
   );

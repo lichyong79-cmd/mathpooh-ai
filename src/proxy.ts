@@ -31,10 +31,20 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // 서비스 기본 주소는 학생 전용 진입 주소입니다. 로그인 화면을 내부적으로
-  // 렌더링하되 브라우저 주소는 `/` 그대로 유지합니다.
-  if (pathname === "/" && (!user || user.user_metadata?.role !== "student")) {
+  // 서비스 기본 주소는 통합 로그인 주소입니다.
+  if (pathname === "/") {
+    if (user?.user_metadata?.role === "student") {
+      return NextResponse.redirect(new URL("/s", request.url));
+    }
     return NextResponse.rewrite(new URL("/student-login", request.url));
+  }
+
+  if (pathname === "/s" && !user) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
+
+  if (pathname === "/s" && user?.user_metadata?.role !== "student") {
+    return NextResponse.redirect(new URL("/", request.url));
   }
 
   const isPublicPath =
@@ -66,6 +76,10 @@ export async function proxy(request: NextRequest) {
     const role = user.user_metadata?.role;
     if (pathname === "/parent-login" && role === "parent") return NextResponse.redirect(new URL("/p", request.url));
     if (pathname === "/admin/login") return NextResponse.redirect(new URL(role === "student" ? "/" : role === "parent" ? "/p" : "/admin", request.url));
+  }
+
+  if (user?.user_metadata?.role === "student" && pathname === "/student-login") {
+    return NextResponse.redirect(new URL("/s", request.url));
   }
 
   if (user?.user_metadata?.role === "student" && (pathname.startsWith("/admin") || pathname.startsWith("/problem-bank") || pathname.startsWith("/pdf-mapper"))) {
