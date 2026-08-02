@@ -196,14 +196,14 @@ export default function Home() {
           </div>
         </header>
         <div className="page-content">
-          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage onOpenAnalysis={(sourceFileId) => { window.localStorage.setItem("matspu-analysis-source-id", sourceFileId); window.localStorage.setItem("matspu-admin-menu", "students"); window.location.href = "/problem-bank/ai-upload"; }} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
+          {active === "students" ? <StudentsPage students={students} setStudents={setStudents} exams={practiceExams} /> : active === "exams" ? <ExamsPage exams={practiceExams} setExams={setPracticeExams} examFiles={examFiles} setExamFiles={setExamFiles} /> : active === "results" ? <ResultsPage students={students} /> : active === "problems" ? <ProblemsPage onOpenAnalysis={(sourceFileId) => { window.localStorage.setItem("matspu-analysis-source-id", sourceFileId); window.localStorage.setItem("matspu-admin-menu", "students"); window.location.href = "/problem-bank/ai-upload"; }} /> : active === "dashboard" ? <Dashboard students={students} onMove={setActive} /> : <ComingSoon title={title} onMove={setActive} />}
         </div>
       </section>
     </main>
   );
 }
 
-function StudentsPage({ students, setStudents }: { students: Student[]; setStudents: React.Dispatch<React.SetStateAction<Student[]>> }) {
+function StudentsPage({ students, setStudents, exams }: { students: Student[]; setStudents: React.Dispatch<React.SetStateAction<Student[]>>; exams: PracticeExam[] }) {
   const [search, setSearch] = useState("");
   const [grade, setGrade] = useState("전체");
   const [status, setStatus] = useState("전체");
@@ -211,7 +211,9 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
   const [editing, setEditing] = useState<Student | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [tab, setTab] = useState<StudentTab>("students");
-  const [selectedRoundId, setSelectedRoundId] = useState(examRounds[0].id);
+  const [selectedRoundId, setSelectedRoundId] = useState("");
+  const [registeredIds, setRegisteredIds] = useState<(string | number)[]>([]);
+  const [registrationBusy, setRegistrationBusy] = useState(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("matspu-student-tab") as StudentTab | null;
@@ -221,7 +223,18 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
   useEffect(() => {
     window.localStorage.setItem("matspu-student-tab", tab);
   }, [tab]);
-  const [registrations, setRegistrations] = useState<Record<number, (string | number)[]>>({});
+  useEffect(() => {
+    if (!selectedRoundId && exams[0]?.id) setSelectedRoundId(exams[0].id);
+  }, [exams, selectedRoundId]);
+
+  useEffect(() => {
+    if (tab !== "registration" || !selectedRoundId) return;
+    setRegistrationBusy(true);
+    fetch(`/api/admin/exam-registrations?examId=${encodeURIComponent(selectedRoundId)}`, { cache: "no-store" })
+      .then(async (response) => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setRegisteredIds(result.studentIds ?? []); })
+      .catch((error) => alert(error instanceof Error ? error.message : "등록 명단을 불러오지 못했습니다."))
+      .finally(() => setRegistrationBusy(false));
+  }, [selectedRoundId, tab]);
 
   const filtered = useMemo(() => students.filter((student) => {
     const keyword = `${student.name} ${student.school} ${student.phone} ${student.parentPhone}`.toLowerCase();
@@ -258,17 +271,30 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
     setSelected(null);
   };
 
-  const selectedRound = examRounds.find((round) => round.id === selectedRoundId) ?? examRounds[0];
-  const roundStudents = students.filter((student) => student.status === "정상" && (selectedRound.grade === "전체" || student.grade === selectedRound.grade));
-  const registeredIds = registrations[selectedRoundId] ?? [];
-  const toggleRegistration = (studentId: string | number) => {
-    setRegistrations((prev) => {
-      const current = prev[selectedRoundId] ?? [];
-      return { ...prev, [selectedRoundId]: current.includes(studentId) ? current.filter((id) => id !== studentId) : [...current, studentId] };
-    });
+  const selectedRound = exams.find((round) => round.id === selectedRoundId) ?? exams[0];
+  const roundStudents = selectedRound ? students.filter((student) => student.status === "정상" && (selectedRound.grade === "전체" || student.grade === selectedRound.grade)) : [];
+  const registeredCount = registeredIds.filter((id) => roundStudents.some((student) => String(student.id) === String(id))).length;
+  const toggleRegistration = async (studentId: string | number) => {
+    if (!selectedRound) return;
+    const isRegistered = registeredIds.map(String).includes(String(studentId));
+    setRegistrationBusy(true);
+    const response = await fetch("/api/admin/exam-registrations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ examId: selectedRound.id, studentId, registered: !isRegistered }) });
+    const result = await response.json(); setRegistrationBusy(false);
+    if (!response.ok) return alert(result.message || "등록 상태 변경에 실패했습니다.");
+    setRegisteredIds((previous) => isRegistered ? previous.filter((id) => String(id) !== String(studentId)) : [...previous, studentId]);
   };
-  const registerAll = () => setRegistrations((prev) => ({ ...prev, [selectedRoundId]: roundStudents.map((student) => student.id) }));
-  const clearAll = () => setRegistrations((prev) => ({ ...prev, [selectedRoundId]: [] }));
+  const replaceRegistrations = async (studentIds: (string | number)[]) => {
+    if (!selectedRound) return;
+    const message = studentIds.length ? `${studentIds.length}명을 이 시험에 전체 등록할까요?` : "이 시험의 학생 등록을 모두 취소할까요?";
+    if (!window.confirm(message)) return;
+    setRegistrationBusy(true);
+    const response = await fetch("/api/admin/exam-registrations", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ examId: selectedRound.id, studentIds }) });
+    const result = await response.json(); setRegistrationBusy(false);
+    if (!response.ok) return alert(result.message || "전체 등록 변경에 실패했습니다.");
+    setRegisteredIds(studentIds);
+  };
+  const registerAll = () => void replaceRegistrations(roundStudents.map((student) => student.id));
+  const clearAll = () => void replaceRegistrations([]);
 
 
   return <>
@@ -315,34 +341,34 @@ function StudentsPage({ students, setStudents }: { students: Student[]; setStude
       <div className="registration-header">
         <div>
           <span className="section-kicker">시험회차 선택</span>
-          <select value={selectedRoundId} onChange={(e) => setSelectedRoundId(Number(e.target.value))}>
-            {examRounds.map((round) => <option key={round.id} value={round.id}>{round.name} · {round.date} · {round.grade}</option>)}
+          <select value={selectedRoundId} onChange={(e) => setSelectedRoundId(e.target.value)}>
+            {exams.map((round) => <option key={round.id} value={round.id}>{round.round}회 · {round.title} · {round.examDate} · {round.grade}</option>)}
           </select>
         </div>
         <div className="registration-actions">
-          <button className="secondary-button" onClick={clearAll}>전체 미등록</button>
-          <button className="primary-button" onClick={registerAll}>전체 등록</button>
+          <button className="secondary-button" onClick={clearAll} disabled={registrationBusy || !selectedRound}>전체 미등록</button>
+          <button className="primary-button" onClick={registerAll} disabled={registrationBusy || !selectedRound}>{registrationBusy ? "처리 중..." : "대상 학생 전체 등록"}</button>
         </div>
       </div>
       <div className="round-summary">
-        <div><span>시험 회차</span><strong>{selectedRound.name}</strong></div>
-        <div><span>시험일</span><strong>{selectedRound.date}</strong></div>
-        <div><span>대상</span><strong>{selectedRound.grade}</strong></div>
-        <div><span>등록 현황</span><strong>{registeredIds.filter((id) => roundStudents.some((student) => student.id === id)).length} / {roundStudents.length}명</strong></div>
+        <div><span>시험 회차</span><strong>{selectedRound ? `${selectedRound.round}회 · ${selectedRound.title}` : "등록된 시험 없음"}</strong></div>
+        <div><span>시험일</span><strong>{selectedRound?.examDate ?? "-"}</strong></div>
+        <div><span>대상</span><strong>{selectedRound?.grade ?? "-"}</strong></div>
+        <div><span>등록 현황</span><strong>{registeredCount} / {roundStudents.length}명</strong></div>
       </div>
-      <div className="registration-progress"><i style={{ width: `${roundStudents.length ? (registeredIds.filter((id) => roundStudents.some((student) => student.id === id)).length / roundStudents.length) * 100 : 0}%` }} /></div>
+      <div className="registration-progress"><i style={{ width: `${roundStudents.length ? (registeredCount / roundStudents.length) * 100 : 0}%` }} /></div>
       <div className="data-table registration-list">
         <div className="table-head"><span>학생</span><span>학교 / 학년</span><span>학생 연락처</span><span>학부모 연락처</span><span>등록 여부</span><span>변경</span></div>
         {roundStudents.map((student) => {
-          const isRegistered = registeredIds.includes(student.id);
+          const isRegistered = registeredIds.map(String).includes(String(student.id));
           return <div className="table-row" key={student.id}>
             <div className="student-name"><i>{student.name.slice(0, 1)}</i><div><strong>{student.name}</strong><small>{student.school}</small></div></div>
             <span>{student.school} · {student.grade}</span><span>{student.phone}</span><span>{student.parentPhone}</span>
             <span className={`registration-state ${isRegistered ? "registered" : "unregistered"}`}>{isRegistered ? "등록" : "미등록"}</span>
-            <button className={`toggle-register ${isRegistered ? "on" : ""}`} onClick={() => toggleRegistration(student.id)}>{isRegistered ? "등록 취소" : "등록하기"}</button>
+            <button disabled={registrationBusy} className={`toggle-register ${isRegistered ? "on" : ""}`} onClick={() => void toggleRegistration(student.id)}>{isRegistered ? "등록 취소" : "등록하기"}</button>
           </div>;
         })}
-        {roundStudents.length === 0 && <div className="empty-list">이 회차 대상 학생이 없습니다.</div>}
+        {!selectedRound ? <div className="empty-list">먼저 실전모의고사를 등록해 주세요.</div> : roundStudents.length === 0 && <div className="empty-list">이 회차 대상 학생이 없습니다.</div>}
       </div>
     </section>}
 

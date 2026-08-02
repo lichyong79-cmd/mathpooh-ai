@@ -17,7 +17,11 @@ export async function GET() {
   if (ctx.error) return ctx.error;
   const { student, supabase } = ctx;
   const now = new Date().toISOString();
-  const { data: exams, error } = await supabase.from("exams").select("id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,status,student_open,open_at,close_at").eq("student_open", true).or(`grade.eq.${student.grade},grade.eq.전체`).order("exam_date", { ascending: false });
+  const { data: registrations, error: registrationError } = await supabase.from("exam_registrations").select("exam_id").eq("student_id", student.id);
+  if (registrationError) return NextResponse.json({ message: registrationError.message }, { status: 400 });
+  const registeredExamIds = (registrations ?? []).map((item) => item.exam_id);
+  if (!registeredExamIds.length) return NextResponse.json({ student: { id: student.id, name: student.name, school: student.school, grade: student.grade, passwordChanged: student.password_changed }, exams: [] });
+  const { data: exams, error } = await supabase.from("exams").select("id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,status,student_open,open_at,close_at").in("id", registeredExamIds).eq("student_open", true).or(`grade.eq.${student.grade},grade.eq.전체`).order("exam_date", { ascending: false });
   if (error) return NextResponse.json({ message: error.message }, { status: 400 });
   const ids = (exams ?? []).map((exam) => exam.id);
   const { data: attempts } = ids.length ? await supabase.from("exam_attempts").select("*").eq("student_id", student.id).in("exam_id", ids) : { data: [] };
@@ -45,8 +49,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true });
   }
   const examId = String(body.examId ?? "");
+  const { data: registration } = await supabase.from("exam_registrations").select("id").eq("exam_id", examId).eq("student_id", student.id).maybeSingle();
+  if (!registration) return NextResponse.json({ message: "이 시험에 등록된 학생이 아닙니다." }, { status: 403 });
   const { data: exam } = await supabase.from("exams").select("*").eq("id", examId).eq("student_open", true).maybeSingle();
   if (!exam) return NextResponse.json({ message: "응시 가능한 시험이 아닙니다." }, { status: 404 });
+  const now = new Date().toISOString();
+  if ((exam.open_at && exam.open_at > now) || (exam.close_at && exam.close_at < now)) {
+    return NextResponse.json({ message: "현재는 이 시험의 응시 시간이 아닙니다." }, { status: 403 });
+  }
+  if (exam.grade !== "전체" && exam.grade !== student.grade) {
+    return NextResponse.json({ message: "이 시험의 대상 학년이 아닙니다." }, { status: 403 });
+  }
   const { data: existing } = await supabase.from("exam_attempts").select("*").eq("exam_id", examId).eq("student_id", student.id).maybeSingle();
   if (action === "start") {
     if (existing?.status === "submitted") return NextResponse.json({ message: "이미 제출한 시험입니다." }, { status: 409 });
