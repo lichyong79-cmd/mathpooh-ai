@@ -12,6 +12,6 @@ alter table public.exam_registrations
 update public.exam_registrations
 set status = 'assigned',
     assigned_at = coalesce(assigned_at, registered_at)
-where status is null or status not in ('requested', 'assigned');
+where status is null or status not in ('requested', 'assigned', 'cancelled', 'refunded');
 
 notify pgrst, 'reload schema';

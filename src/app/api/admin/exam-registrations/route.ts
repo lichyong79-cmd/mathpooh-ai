@@ -26,8 +26,15 @@ export async function POST(request: Request) {
   const body = await request.json();
   const examId = String(body.examId ?? "");
   const studentId = String(body.studentId ?? "");
+  const nextStatus = String(body.status ?? "");
   const registered = Boolean(body.registered);
   if (!examId || !studentId) return NextResponse.json({ message: "시험과 학생을 선택해 주세요." }, { status: 400 });
+  if (["requested", "assigned", "cancelled", "refunded"].includes(nextStatus)) {
+    const now = new Date().toISOString();
+    const payload = { exam_id: examId, student_id: studentId, status: nextStatus, ...(nextStatus === "assigned" ? { assigned_at: now } : {}) };
+    const { error } = await ctx.supabase.from("exam_registrations").upsert(payload, { onConflict: "exam_id,student_id" });
+    return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ success: true, status: nextStatus });
+  }
   if (registered) {
     const { error } = await ctx.supabase.from("exam_registrations").upsert({ exam_id: examId, student_id: studentId, status: "assigned", assigned_at: new Date().toISOString() }, { onConflict: "exam_id,student_id" });
     if (error) return NextResponse.json({ message: error.message }, { status: 400 });

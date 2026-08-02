@@ -26,7 +26,7 @@ create table if not exists public.exam_registrations (
 alter table public.exam_registrations add column if not exists status text not null default 'assigned';
 alter table public.exam_registrations add column if not exists requested_at timestamptz not null default now();
 alter table public.exam_registrations add column if not exists assigned_at timestamptz;
-update public.exam_registrations set status = 'assigned', assigned_at = coalesce(assigned_at, registered_at) where status is null or status not in ('requested','assigned');
+update public.exam_registrations set status = 'assigned', assigned_at = coalesce(assigned_at, registered_at) where status is null or status not in ('requested','assigned','cancelled','refunded');
 
 create table if not exists public.exam_attempts (
   id uuid primary key default gen_random_uuid(),

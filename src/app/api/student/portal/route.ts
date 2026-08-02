@@ -26,7 +26,8 @@ export async function GET() {
   const { data: attempts } = ids.length ? await supabase.from("exam_attempts").select("*").eq("student_id", student.id).in("exam_id", ids) : { data: [] };
   const attemptMap = new Map((attempts ?? []).map((attempt) => [attempt.exam_id, attempt]));
   const items = await Promise.all((exams ?? []).map(async (exam) => {
-    const applicationStatus = registrationMap.get(exam.id) ?? "none";
+    const savedStatus = registrationMap.get(exam.id);
+    const applicationStatus = savedStatus === "assigned" || savedStatus === "requested" ? savedStatus : "none";
     let testUrl = "";
     if (applicationStatus === "assigned" && exam.test_file_path) testUrl = (await supabase.storage.from("exam-files").createSignedUrl(exam.test_file_path, 60 * 60 * 3)).data?.signedUrl ?? "";
     return { ...exam, application_status: applicationStatus, test_url: testUrl, attempt: attemptMap.get(exam.id) ?? null, available: applicationStatus === "assigned" && (!exam.open_at || exam.open_at <= now) && (!exam.close_at || exam.close_at >= now) };

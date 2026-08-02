@@ -529,6 +529,7 @@ function ExamAssignmentPanel({ exams, students }: { exams: PracticeExam[]; stude
   const [selectedExamId, setSelectedExamId] = useState(exams[0]?.id ?? "");
   const [assignedIds, setAssignedIds] = useState<(string | number)[]>([]);
   const [requestedIds, setRequestedIds] = useState<(string | number)[]>([]);
+  const [statusByStudent, setStatusByStudent] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const selectedExam = exams.find((exam) => exam.id === selectedExamId) ?? exams[0];
   const availableStudents = students.filter((student) => student.status === "정상");
@@ -542,7 +543,7 @@ function ExamAssignmentPanel({ exams, students }: { exams: PracticeExam[]; stude
     if (!selectedExamId) return;
     setBusy(true);
     fetch(`/api/admin/exam-registrations?examId=${encodeURIComponent(selectedExamId)}`, { cache: "no-store" })
-      .then(async (response) => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setAssignedIds(result.studentIds ?? []); setRequestedIds(result.requestedStudentIds ?? []); })
+      .then(async (response) => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setAssignedIds(result.studentIds ?? []); setRequestedIds(result.requestedStudentIds ?? []); setStatusByStudent(Object.fromEntries((result.registrations ?? []).map((item: { student_id: string; status: string }) => [String(item.student_id), item.status]))); })
       .catch((error) => alert(error instanceof Error ? error.message : "시험 배정 명단을 불러오지 못했습니다."))
       .finally(() => setBusy(false));
   }, [selectedExamId]);
@@ -557,6 +558,20 @@ function ExamAssignmentPanel({ exams, students }: { exams: PracticeExam[]; stude
     if (!response.ok) return alert(result.message || "시험 배정 변경에 실패했습니다.");
     setAssignedIds((previous) => assigned ? previous.filter((id) => String(id) !== String(studentId)) : [...previous, studentId]);
     setRequestedIds((previous) => previous.filter((id) => String(id) !== String(studentId)));
+  };
+
+  const changeAssignmentStatus = async (studentId: string | number, status: "assigned" | "cancelled" | "refunded") => {
+    if (!selectedExam) return;
+    const label = status === "assigned" ? "입금완료 및 시험배정" : status === "cancelled" ? "신청취소" : "환불완료";
+    if (!window.confirm(`${label} 처리할까요?`)) return;
+    setBusy(true);
+    const response = await fetch("/api/admin/exam-registrations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ examId: selectedExam.id, studentId, status }) });
+    const result = await response.json();
+    setBusy(false);
+    if (!response.ok) return alert(result.message || "처리 상태를 변경하지 못했습니다.");
+    setStatusByStudent((previous) => ({ ...previous, [String(studentId)]: status }));
+    setRequestedIds((previous) => previous.filter((id) => String(id) !== String(studentId)));
+    setAssignedIds((previous) => status === "assigned" ? (previous.map(String).includes(String(studentId)) ? previous : [...previous, studentId]) : previous.filter((id) => String(id) !== String(studentId)));
   };
 
   const replaceAssignments = async (studentIds: (string | number)[]) => {
@@ -574,11 +589,11 @@ function ExamAssignmentPanel({ exams, students }: { exams: PracticeExam[]; stude
   return <section className="panel registration-panel">
     <div className="registration-header">
       <div><span className="section-kicker">배정할 시험 선택</span><select value={selectedExamId} onChange={(event) => setSelectedExamId(event.target.value)}>{exams.map((exam) => <option key={exam.id} value={exam.id}>{exam.round}회 · {exam.title} · {exam.examDate}</option>)}</select></div>
-      <div className="registration-actions"><button className="secondary-button" disabled={busy || assignedIds.length === 0} onClick={() => void replaceAssignments([])}>전체 배정 취소</button><button className="primary-button" disabled={busy || availableStudents.length === 0} onClick={() => void replaceAssignments(availableStudents.map((student) => student.id))}>{busy ? "처리 중..." : `재원 학생 ${availableStudents.length}명 전체 배정`}</button></div>
+      <div className="assignment-flow-note"><b>신청 접수 → 입금완료 → 시험배정</b><span>취소와 환불은 기록으로 유지됩니다.</span></div>
     </div>
     <div className="round-summary"><div><span>시험</span><strong>{selectedExam ? `${selectedExam.round}회 · ${selectedExam.title}` : "등록된 시험 없음"}</strong></div><div><span>시험일</span><strong>{selectedExam?.examDate ?? "-"}</strong></div><div><span>신청 대기</span><strong>{requestedIds.length}명</strong></div><div><span>배정 완료</span><strong>{assignedCount}명</strong></div></div>
     <div className="registration-progress"><i style={{ width: `${availableStudents.length ? (assignedCount / availableStudents.length) * 100 : 0}%` }} /></div>
-    <div className="data-table registration-list"><div className="table-head"><span>학생</span><span>학교 / 학년</span><span>학생 연락처</span><span>학부모 연락처</span><span>신청·배정 상태</span><span>처리</span></div>{availableStudents.sort((a, b) => Number(requestedIds.map(String).includes(String(b.id))) - Number(requestedIds.map(String).includes(String(a.id)))).map((student) => { const assigned = assignedIds.map(String).includes(String(student.id)); const requested = requestedIds.map(String).includes(String(student.id)); return <div className={`table-row ${requested ? "assignment-requested" : ""}`} key={student.id}><div className="student-name"><i>{student.name.slice(0, 1)}</i><div><strong>{student.name}</strong><small>{student.school}</small></div></div><span>{student.school} · {student.grade}</span><span>{student.phone}</span><span>{student.parentPhone}</span><span className={`registration-state ${assigned ? "registered" : requested ? "requested" : "unregistered"}`}>{assigned ? "배정 완료" : requested ? "신청 접수" : "미신청"}</span><button disabled={busy} className={`toggle-register ${assigned ? "on" : requested ? "requested" : ""}`} onClick={() => void toggleAssignment(student.id)}>{assigned ? "배정 취소" : requested ? "배정 확정" : "관리자 직접배정"}</button></div>; })}{!selectedExam ? <div className="empty-list">먼저 시험을 등록해 주세요.</div> : availableStudents.length === 0 ? <div className="empty-list">등록 가능한 재원 학생이 없습니다.</div> : null}</div>
+    <div className="data-table registration-list"><div className="table-head"><span>학생</span><span>학교 / 학년</span><span>학생 연락처</span><span>학부모 연락처</span><span>신청·결제 상태</span><span>처리</span></div>{availableStudents.sort((a, b) => Number(requestedIds.map(String).includes(String(b.id))) - Number(requestedIds.map(String).includes(String(a.id)))).map((student) => { const assigned = assignedIds.map(String).includes(String(student.id)); const requested = requestedIds.map(String).includes(String(student.id)); const savedStatus = statusByStudent[String(student.id)] ?? (assigned ? "assigned" : requested ? "requested" : "none"); const statusLabel = savedStatus === "assigned" ? "입금완료 · 배정완료" : savedStatus === "requested" ? "신청 접수" : savedStatus === "cancelled" ? "신청 취소" : savedStatus === "refunded" ? "환불 완료" : "미신청"; return <div className={`table-row ${requested ? "assignment-requested" : ""}`} key={student.id}><div className="student-name"><i>{student.name.slice(0, 1)}</i><div><strong>{student.name}</strong><small>{student.school}</small></div></div><span>{student.school} · {student.grade}</span><span>{student.phone}</span><span>{student.parentPhone}</span><span className={`registration-state ${savedStatus === "assigned" ? "registered" : savedStatus === "requested" ? "requested" : savedStatus === "refunded" ? "refunded" : "unregistered"}`}>{statusLabel}</span><div className="assignment-actions">{savedStatus === "requested" ? <><button disabled={busy} className="payment-complete" onClick={() => void changeAssignmentStatus(student.id, "assigned")}>입금완료</button><button disabled={busy} className="cancel-application" onClick={() => void changeAssignmentStatus(student.id, "cancelled")}>취소</button></> : savedStatus === "assigned" ? <button disabled={busy} className="refund-payment" onClick={() => void changeAssignmentStatus(student.id, "refunded")}>환불</button> : <button disabled={busy} onClick={() => void changeAssignmentStatus(student.id, "assigned")}>직접 배정</button>}</div></div>; })}{!selectedExam ? <div className="empty-list">먼저 시험을 등록해 주세요.</div> : availableStudents.length === 0 ? <div className="empty-list">등록 가능한 재원 학생이 없습니다.</div> : null}</div>
   </section>;
 }
 
