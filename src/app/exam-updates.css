@@ -194,6 +194,18 @@
     320px !important;
   min-width: 1925px !important;
 }
+/* 기존 우측 고정 관리열을 완전히 해제: 진행률·등록상태를 덮지 않도록 함 */
+.exam-list.data-table .table-head > :last-child,
+.exam-list.data-table .table-row > :last-child {
+  background: inherit !important;
+  box-shadow: none !important;
+  position: static !important;
+  right: auto !important;
+  z-index: auto !important;
+}
+.exam-list.data-table .table-head > :last-child {
+  background: #f7f8fb !important;
+}
 .exam-list .row-actions {
   align-items: stretch;
   display: grid !important;
