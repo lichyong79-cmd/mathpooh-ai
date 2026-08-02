@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import "./student.css";
 import "./exam-updates.css";
+import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 
 type Attempt = {
   id: string;
@@ -112,6 +113,12 @@ function StudentResultModal({
             <b>{attempt.unanswered_numbers?.length ?? 0}문항</b>
           </div>
         </div>
+        <ExamResultDiagnosis
+          questionCount={exam.question_count}
+          answers={attempt.answers ?? {}}
+          keys={keys}
+          metadata={exam.question_metadata ?? []}
+        />
         <div className="student-result-table-wrap">
           <div className="student-result-table">
             <div className="student-result-table-head">

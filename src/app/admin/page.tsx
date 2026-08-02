@@ -12,6 +12,7 @@ import { getSupabaseConfig } from "@/lib/supabase";
 import { authHeaders, signedStorageUrl } from "@/lib/supabase/rest";
 import AccountBox from "../AccountBox";
 import "../exam-updates.css";
+import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 
 type AdminMenu =
   | "dashboard"
@@ -1743,6 +1744,14 @@ function AdminResultModal({
           <span className="blank">미응답</span>
           <b>관리자는 제출 답안을 수정한 뒤 재채점할 수 있습니다.</b>
         </div>
+        <ExamResultDiagnosis
+          questionCount={count}
+          answers={answers}
+          keys={keys}
+          metadata={
+            Array.isArray(exam?.question_metadata) ? exam.question_metadata : []
+          }
+        />
         <div className="result-answer-table-wrap">
           <div className="result-answer-table">
             <div className="result-answer-table-head">
