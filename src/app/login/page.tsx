@@ -9,9 +9,11 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [nextPath, setNextPath] = useState("/");
+  const [studentLoginPage, setStudentLoginPage] = useState(false);
 
   // useSearchParams 대신 직접 읽어 Suspense 경계 요구를 피합니다.
   useEffect(() => {
+    setStudentLoginPage(window.location.pathname === "/student-login");
     const raw = new URLSearchParams(window.location.search).get("next");
     // 외부 사이트로 튕기는 open redirect를 막습니다.
     if (raw && raw.startsWith("/") && !raw.startsWith("//")) setNextPath(raw);
@@ -28,9 +30,10 @@ export default function LoginPage() {
       const rawId = email.trim();
       const phone = rawId.replace(/\D/g, "");
       const loginEmail = rawId.includes("@") ? rawId : `${phone}@student.matspu.local`;
+      const loginPassword = !rawId.includes("@") && /^\d{4}$/.test(password) ? `Mp!${password}` : password;
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email: loginEmail,
-        password,
+        password: loginPassword,
       });
 
       if (signInError) {
@@ -44,7 +47,8 @@ export default function LoginPage() {
 
       // 미들웨어가 쿠키를 다시 읽도록 전체 새로고침으로 이동합니다.
       const role = data.user?.user_metadata?.role;
-      window.location.href = role === "student" ? (nextPath.startsWith("/admin") ? "/" : nextPath) : (nextPath === "/" ? "/admin" : nextPath);
+      if (studentLoginPage && role !== "student") { await supabase.auth.signOut(); setError("학생 계정으로 로그인해 주세요."); return; }
+      window.location.href = role === "student" ? "/" : (nextPath === "/" ? "/admin" : nextPath);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "로그인에 실패했습니다.");
     } finally {
@@ -63,8 +67,8 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <h1 style={styles.title}>SOS 로그인</h1>
-        <p style={styles.lead}>학생은 본인 전화번호를 아이디로 입력하세요.</p>
+        <h1 style={styles.title}>{studentLoginPage ? "학생 로그인" : "SOS 로그인"}</h1>
+        <p style={styles.lead}>{studentLoginPage ? "본인 전화번호와 초기 비밀번호 뒤 4자리를 입력하세요." : "학생은 본인 전화번호를 아이디로 입력하세요."}</p>
 
         <label style={styles.label}>
           아이디 · 전화번호

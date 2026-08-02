@@ -16,13 +16,14 @@ export async function POST(request: Request) {
   if (phone.length < 8) return NextResponse.json({ message: "학생 전화번호를 먼저 정확히 입력해 주세요." }, { status: 400 });
   const loginId = phone;
   const temporaryPassword = phone.slice(-4);
+  const authPassword = `Mp!${temporaryPassword}`;
   const email = `${phone}@student.matspu.local`;
   let authUserId = student.auth_user_id as string | null;
   if (authUserId) {
-    const updated = await supabase.auth.admin.updateUserById(authUserId, { password: temporaryPassword, user_metadata: { role: "student", student_id: student.id, name: student.name } });
+    const updated = await supabase.auth.admin.updateUserById(authUserId, { password: authPassword, user_metadata: { role: "student", student_id: student.id, name: student.name } });
     if (updated.error) return NextResponse.json({ message: updated.error.message }, { status: 400 });
   } else {
-    const created = await supabase.auth.admin.createUser({ email, password: temporaryPassword, email_confirm: true, user_metadata: { role: "student", student_id: student.id, name: student.name } });
+    const created = await supabase.auth.admin.createUser({ email, password: authPassword, email_confirm: true, user_metadata: { role: "student", student_id: student.id, name: student.name } });
     if (created.error || !created.data.user) return NextResponse.json({ message: created.error?.message || "학생 계정을 만들지 못했습니다." }, { status: 400 });
     authUserId = created.data.user.id;
   }

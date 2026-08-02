@@ -189,6 +189,7 @@ export default function Home() {
         <header className="topbar">
           <div><p>매쓰푸 SOS 관리자</p><h1>{title}</h1></div>
           <div className="top-actions">
+            <button className="secondary-button" onClick={() => window.open("/student-login", "_blank")}>학생 로그인 화면</button>
             <button className="icon-button">?</button>
             <button className="icon-button notification">♢<b>3</b></button>
             <button className="primary-button" onClick={() => setActive("exams")}>＋ 새 시험 만들기</button>
