@@ -2325,7 +2325,13 @@ export default function AnalysisWorkspacePage() {
                     <div className="crop-thumb">
                       {thumbnailUrls[question.id] ? <img src={thumbnailUrls[question.id]} alt={`${question.question_no}번 잘린 문항`} /> : <span>{thumbnailBusy ? "미리보기 생성 중..." : "미리보기 없음"}</span>}
                     </div>
-                    <div className="crop-card-head"><strong>{question.question_no}번</strong><span>{displayQuestionStatus(question)}</span></div>
+                    <div className="crop-card-head">
+                      <strong>{question.question_no}번</strong>
+                      <div className="card-status-group">
+                        <span className={`card-difficulty level-${valueOf(question, "difficulty") || "unknown"}`}>난이도 {valueOf(question, "difficulty") || "-"}</span>
+                        <span className="card-workflow-status">{displayQuestionStatus(question)}</span>
+                      </div>
+                    </div>
                     <small>{valueOf(question, "unit") || "단원 분석 전"}</small>
                     <small>신뢰도 {question.confidence == null ? "-" : `${Math.round(Number(question.confidence) * 100)}%`}</small>
                     <small className={`solution-badge ${officialSolutionOf(question).tone}`}>{officialSolutionOf(question).label}</small>
@@ -2568,6 +2574,15 @@ export default function AnalysisWorkspacePage() {
         section.all-crops-grid.crop-three-grid .crop-thumb img{width:100%;max-height:none;object-fit:contain}
         section.all-crops-grid.crop-three-grid .crop-card-head strong{font-size:22px}
         section.all-crops-grid.crop-three-grid .crop-card-head span,section.all-crops-grid.crop-three-grid .crop-card small{font-size:15px}
+        .card-status-group{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+        .card-difficulty{display:inline-flex;align-items:center;justify-content:center;min-width:70px;padding:5px 9px;border-radius:999px;font-size:13px!important;font-weight:900;line-height:1;color:#fff;box-shadow:0 3px 8px rgba(15,29,55,.14)}
+        .card-difficulty.level-1{background:#31936c}
+        .card-difficulty.level-2{background:#4f72c8}
+        .card-difficulty.level-3{background:#c9932d}
+        .card-difficulty.level-4{background:#e36f2d}
+        .card-difficulty.level-5{background:#b83d58}
+        .card-difficulty.level-unknown{background:#8b95a7}
+        .card-workflow-status{white-space:nowrap}
         .workflow-action .crop-live-progress{flex:1 0 100%;display:grid;grid-template-columns:auto minmax(240px,1fr) auto;align-items:center;gap:10px;padding:11px 13px;border-radius:10px;background:#eaf0ff;color:#364dbb}
         .crop-live-progress>span{height:12px;overflow:hidden;border-radius:999px;background:#d4dcf7}.crop-live-progress>span i{display:block;height:100%;background:#5268e8;transition:width .2s}.crop-live-progress small{font-weight:800;color:#65708c}
         .workflow-action:has(.crop-live-progress){flex-wrap:wrap}

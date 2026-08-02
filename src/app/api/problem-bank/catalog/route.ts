@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     }
     const result = await query;
     if (result.error) throw result.error;
-    return NextResponse.json({ success: true, contract_version: "mathpooh-problem-bank-v1", problem_dna_version: "problem-dna-v3.2", items: result.data ?? [] });
+    return NextResponse.json({ success: true, contract_version: "mathpooh-problem-bank-v1", problem_dna_version: "problem-dna-v3.4", items: result.data ?? [] });
   } catch (error) {
     return NextResponse.json({ success: false, message: error instanceof Error ? error.message : "문제은행 카탈로그를 불러오지 못했습니다." }, { status: 500 });
   }

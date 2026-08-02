@@ -1,4 +1,4 @@
-export const PROBLEM_DNA_VERSION = "problem-dna-v3.2" as const;
+export const PROBLEM_DNA_VERSION = "problem-dna-v3.4" as const;
 
 export type EvidenceTag = { tag: string; evidence: string; confidence: number };
 export type ThinkingStep = { stage: string; action: string; evidence: string };
@@ -41,6 +41,9 @@ export type ProblemDNA = {
   abilities: EvidenceTag[];
   difficulty: {
     final_grade: 1 | 2 | 3 | 4 | 5;
+    csat_point_equivalent: 2 | 3 | 4;
+    csat_difficulty_band: "two_point" | "three_point" | "four_easy" | "four_medium" | "four_hard" | "semi_killer_easy" | "semi_killer_hard" | "killer";
+    csat_basis: string;
     concept: number; condition_interpretation: number; insight: number; calculation: number;
     solution_length: "짧음" | "중간" | "김";
     trap_strength: number; time_burden: number; concept_count: number; thinking_step_count: number;
@@ -114,8 +117,8 @@ export const problemDnaQuestionSchema = {
     abilities: evidenceArray(13),
     difficulty: {
       type: "object", additionalProperties: false,
-      required: ["final_grade", "concept", "condition_interpretation", "insight", "calculation", "solution_length", "trap_strength", "time_burden", "concept_count", "thinking_step_count", "estimated_minutes", "reasons"],
-      properties: { final_grade: { type: "integer", minimum: 1, maximum: 5 }, concept: score, condition_interpretation: score, insight: score, calculation: score, solution_length: { type: "string", enum: ["짧음", "중간", "김"] }, trap_strength: score, time_burden: score, concept_count: { type: "integer", minimum: 0, maximum: 20 }, thinking_step_count: { type: "integer", minimum: 0, maximum: 30 }, estimated_minutes: { type: "number", minimum: 0, maximum: 120 }, reasons: evidenceArray(8) },
+      required: ["final_grade", "csat_point_equivalent", "csat_difficulty_band", "csat_basis", "concept", "condition_interpretation", "insight", "calculation", "solution_length", "trap_strength", "time_burden", "concept_count", "thinking_step_count", "estimated_minutes", "reasons"],
+      properties: { final_grade: { type: "integer", minimum: 1, maximum: 5 }, csat_point_equivalent: { type: "integer", enum: [2, 3, 4] }, csat_difficulty_band: { type: "string", enum: ["two_point", "three_point", "four_easy", "four_medium", "four_hard", "semi_killer_easy", "semi_killer_hard", "killer"] }, csat_basis: { type: "string" }, concept: score, condition_interpretation: score, insight: score, calculation: score, solution_length: { type: "string", enum: ["짧음", "중간", "김"] }, trap_strength: score, time_burden: score, concept_count: { type: "integer", minimum: 0, maximum: 20 }, thinking_step_count: { type: "integer", minimum: 0, maximum: 30 }, estimated_minutes: { type: "number", minimum: 0, maximum: 120 }, reasons: evidenceArray(8) },
     },
     errors: evidenceArray(14), traps: evidenceArray(12),
     educational_value: {
@@ -143,6 +146,12 @@ function bounded(value: unknown, min: number, max: number) {
 /** AI의 중간값 선호를 막고 세부 난이도 지표로 최종 1~5단계를 일관되게 계산한다. */
 export function calculateDifficultyLevel(dna: ProblemDNA): 1 | 2 | 3 | 4 | 5 {
   const d = dna.difficulty;
+  if (d.csat_point_equivalent === 2 || d.csat_difficulty_band === "two_point") return 1;
+  if (d.csat_point_equivalent === 3 || d.csat_difficulty_band === "three_point") return 2;
+  if (d.csat_difficulty_band === "four_easy" || d.csat_difficulty_band === "four_medium") return 3;
+  if (d.csat_difficulty_band === "four_hard" || d.csat_difficulty_band === "semi_killer_easy") return 4;
+  if (d.csat_difficulty_band === "semi_killer_hard" || d.csat_difficulty_band === "killer") return 5;
+  // 구버전/비정상 응답에만 사용하는 안전한 보조 계산식.
   const score =
     bounded(d.concept, 0, 100) * 0.14 +
     bounded(d.condition_interpretation, 0, 100) * 0.18 +
