@@ -106,3 +106,48 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+.exam-input-layout {
+  padding-bottom: 92px;
+}
+
+.exam-input-layout .exam-form-actions {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #d8deea;
+  border-radius: 16px;
+  bottom: 18px;
+  box-shadow: 0 12px 35px rgba(20, 36, 65, 0.2);
+  display: flex;
+  gap: 10px;
+  left: max(270px, calc((100vw - 1500px) / 2 + 250px));
+  padding: 12px 16px;
+  position: fixed;
+  right: 24px;
+  z-index: 80;
+}
+
+.exam-input-layout .exam-form-actions::before {
+  color: #657086;
+  content: "입력한 시험 기본정보와 자료를 저장합니다.";
+  font-size: 12px;
+  font-weight: 700;
+  margin-right: auto;
+}
+
+.exam-input-layout .exam-form-actions .primary-button {
+  background: #172a4a;
+  min-width: 150px;
+}
+
+@media (max-width: 900px) {
+  .exam-input-layout .exam-form-actions {
+    bottom: 10px;
+    left: 10px;
+    right: 10px;
+  }
+
+  .exam-input-layout .exam-form-actions::before {
+    display: none;
+  }
+}
