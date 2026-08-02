@@ -707,3 +707,191 @@
 .recommendation-layout{display:grid;grid-template-columns:310px 1fr;min-height:620px;overflow:hidden}.recommendation-students{border-right:1px solid #e4e9f1;padding:18px}.recommendation-students>button{display:flex;width:100%;flex-direction:column;gap:5px;padding:14px;margin:7px 0;border:1px solid #e3e8f0;border-radius:12px;background:#fff;text-align:left;cursor:pointer}.recommendation-students>button.selected{border-color:#4f6bea;background:#eef3ff}.recommendation-students span,.recommendation-students small{color:#758198}.recommendation-main{padding:24px}.recommendation-head{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid #e4e9f1;padding-bottom:18px}.recommendation-head h3{margin:0 0 8px;font-size:24px}.recommendation-head p{margin:5px 0;color:#68758b}.recommendation-head>div:last-child{display:flex;gap:8px;align-items:flex-start}.recommendation-candidates{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:20px}.recommendation-candidates>label{display:flex;gap:12px;padding:16px;border:1px solid #e1e6ee;border-radius:14px;background:#fff;cursor:pointer}.recommendation-candidates label:has(input:checked){border-color:#399474;background:#effaf6}.recommendation-candidates div{display:flex;flex-direction:column;gap:6px}.recommendation-candidates span,.recommendation-candidates small{color:#6f7c91}.recommendation-empty{margin:80px auto;text-align:center;padding:35px}.recommendation-empty b{font-size:22px}.recommendation-empty p{color:#7b879b}@media(max-width:900px){.recommendation-layout{grid-template-columns:1fr}.recommendation-students{border-right:0;border-bottom:1px solid #e4e9f1}.recommendation-candidates{grid-template-columns:1fr}}
 .training-role-selector{display:grid;grid-template-columns:1fr 250px 250px;gap:12px;align-items:stretch;margin-bottom:16px}.training-role-selector>div{display:flex;flex-direction:column;justify-content:center}.training-role-selector>div span{margin-top:5px;color:#778399}.training-role-selector>label{display:flex;flex-direction:column;gap:4px;padding:14px;border:1px solid #dfe5ee;border-radius:14px;background:#f8fafc;cursor:pointer}.training-role-selector>label.selected{border-color:#3a9474;background:#effaf6;box-shadow:inset 0 0 0 1px #3a9474}.training-role-selector input{position:absolute;opacity:0}.training-role-selector small{color:#718096}.training-course-row{display:flex;align-items:center;gap:8px;margin:4px 0 18px}.training-course-row b{margin-right:8px}.training-course-row button{padding:9px 14px;border:1px solid #dce3ed;border-radius:999px;background:#fff;font-weight:800;cursor:pointer}.training-course-row button.active{border-color:#182e50;background:#182e50;color:#fff}.source-purpose{display:block;width:max-content;margin-top:5px;padding:4px 8px;border-radius:999px;font-weight:800}.source-purpose.training{background:#e7f7f0;color:#23795b}.source-purpose.reference{background:#eef1f6;color:#667287}@media(max-width:900px){.training-role-selector{grid-template-columns:1fr}.training-course-row{flex-wrap:wrap}}
 .engine-actions{display:flex;gap:8px;flex-wrap:wrap}.engine-actions button{padding:11px 15px;border-radius:10px;font-weight:900;cursor:pointer}.diagnosis-button{border:1px solid #4f6bea;background:#eef2ff;color:#304db9}.diagnosis-more-button{border:1px solid #d49a2c;background:#fff8e8;color:#8b5d09}.training-button{border:1px solid #318467;background:#e9f8f2;color:#17674e}.engine-actions button:disabled{opacity:.4;cursor:not-allowed}.training-session-summary{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid #e5e9f0}.training-session-summary span{padding:6px 10px;border-radius:999px;background:#eef1f6;color:#68758b;font-size:12px;font-weight:800}.training-session-summary span.diagnosis{background:#eef2ff;color:#3853b8}.training-session-summary span.training{background:#e8f7f1;color:#267458}
+
+/* SOS v1.10 — 관리자 화면 공통 UI 정돈 (기능/데이터 로직 변경 없음) */
+.admin-app{
+  --navy:#182e50;
+  --navy-deep:#10233f;
+  --gold:#d5a13a;
+  --gold-soft:#fff7e6;
+  --green:#2f8d6e;
+  --blue:#4f6bea;
+  --surface:#ffffff;
+  --surface-soft:#f7f9fc;
+  --line:#dfe5ef;
+  background:
+    radial-gradient(circle at 82% 0,rgba(79,107,234,.07),transparent 26rem),
+    #f3f6fb;
+}
+.admin-app .sidebar{
+  width:264px;
+  padding:22px 16px;
+  background:linear-gradient(180deg,var(--navy-deep),#1b3155 58%,#152844);
+  border-right:1px solid rgba(255,255,255,.08);
+  box-shadow:12px 0 35px rgba(16,35,63,.12);
+}
+.admin-app .brand-row{padding:2px 7px 22px}
+.admin-app .brand-symbol{
+  width:43px;height:43px;border-radius:14px;
+  background:linear-gradient(145deg,#f4c768,#d49a2c);
+  color:#172a49;box-shadow:0 8px 22px rgba(213,161,58,.24)
+}
+.admin-app .brand-copy strong{font-size:17px;letter-spacing:.02em}
+.admin-app .brand-copy span{font-size:11px;color:#aebbd1}
+.admin-app .workspace-card{
+  padding:13px;border-radius:15px;background:rgba(255,255,255,.07);
+  border-color:rgba(255,255,255,.1)
+}
+.admin-app .side-nav{gap:5px;margin-top:20px}
+.admin-app .side-nav p{margin:13px 12px 6px;color:#7f91af;font-weight:800;letter-spacing:.08em}
+.admin-app .side-nav button{height:48px;border-radius:12px;padding:0 13px;transition:.16s ease}
+.admin-app .side-nav button:hover{background:rgba(255,255,255,.08);transform:translateX(2px)}
+.admin-app .side-nav button.active{
+  background:linear-gradient(90deg,rgba(213,161,58,.2),rgba(255,255,255,.09));
+  box-shadow:inset 4px 0 var(--gold);color:#fff
+}
+.admin-app .side-nav button.active i{color:#f4c768}
+.admin-app .main-area{margin-left:264px}
+.admin-app .topbar{
+  height:84px;padding:0 34px;background:rgba(255,255,255,.92);
+  backdrop-filter:blur(14px);border-bottom-color:rgba(214,222,234,.9);
+  box-shadow:0 5px 18px rgba(24,46,80,.04)
+}
+.admin-app .topbar h1{font-size:24px;letter-spacing:-.035em;color:var(--navy)}
+.admin-app .topbar p{font-size:12px;color:#8793a8}
+.admin-app .page-content{max-width:1760px;padding:32px 34px 64px}
+.admin-app .page-title-row{
+  min-height:102px;margin:0 0 20px;padding:22px 25px;border:1px solid var(--line);
+  border-radius:19px;background:linear-gradient(120deg,#fff,#f8faff);
+  box-shadow:0 9px 26px rgba(24,46,80,.055)
+}
+.admin-app .page-title-row h2{font-size:28px;color:var(--navy);letter-spacing:-.04em}
+.admin-app .page-title-row p{font-size:14px;line-height:1.65;color:#748197}
+.admin-app .panel{
+  border-color:var(--line);border-radius:19px;
+  box-shadow:0 10px 30px rgba(24,46,80,.055)
+}
+.admin-app .student-stat-grid{gap:16px;margin-bottom:18px}
+.admin-app .mini-stat{
+  position:relative;overflow:hidden;min-height:135px;padding:24px 25px;
+  border-radius:18px;box-shadow:0 8px 24px rgba(24,46,80,.045)
+}
+.admin-app .mini-stat::before{content:"";position:absolute;inset:0 auto 0 0;width:5px;background:#6e83d8}
+.admin-app .mini-stat:nth-child(2)::before{background:var(--gold)}
+.admin-app .mini-stat:nth-child(3)::before{background:var(--green)}
+.admin-app .mini-stat:nth-child(4)::before{background:#8058ad}
+.admin-app .mini-stat span{font-size:13px;font-weight:800;color:#758198}
+.admin-app .mini-stat strong{font-size:33px;color:var(--navy);letter-spacing:-.04em}
+.admin-app .mini-stat small{font-size:12px;color:#8a95a7}
+.admin-app .primary-button,.admin-app .secondary-button,.admin-app .icon-button{
+  transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease
+}
+.admin-app .primary-button{background:linear-gradient(135deg,#506bea,#405acb)}
+.admin-app .primary-button:hover,.admin-app .secondary-button:hover,.admin-app .icon-button:hover{
+  transform:translateY(-1px);box-shadow:0 7px 18px rgba(24,46,80,.12)
+}
+.admin-app button:focus-visible,.admin-app input:focus-visible,.admin-app select:focus-visible,.admin-app textarea:focus-visible{
+  outline:3px solid rgba(79,107,234,.18);outline-offset:2px
+}
+.admin-app .student-toolbar,.admin-app .registration-header,.admin-app .monitor-title{
+  padding:2px 0 12px
+}
+.admin-app .global-search,.admin-app .student-toolbar select,.admin-app .field input,
+.admin-app .field select,.admin-app .field textarea,.admin-app .monitor-title select,
+.admin-app .monitor-schedule input[type=datetime-local]{
+  border-color:#d9e0eb;background:#fbfcfe;transition:.15s ease
+}
+.admin-app .global-search:focus-within,.admin-app .field input:focus,.admin-app .field select:focus,
+.admin-app .field textarea:focus,.admin-app .monitor-title select:focus{
+  border-color:#8092ed;background:#fff;box-shadow:0 0 0 4px rgba(79,107,234,.09)
+}
+.admin-app .table-head{
+  min-height:50px;background:#edf2f8;color:#536179;border-radius:11px 11px 0 0;
+  font-size:13px;font-weight:900;letter-spacing:-.01em
+}
+.admin-app .table-row{min-height:74px;transition:background .14s ease,box-shadow .14s ease}
+.admin-app .table-row:hover{background:#f8faff}
+.admin-app .table-row.clickable:hover{box-shadow:inset 4px 0 var(--blue)}
+.admin-app .pill{font-weight:900;border:1px solid transparent}
+.admin-app .pill.green{border-color:#ccebdd}.admin-app .pill.orange{border-color:#f2d4ae}
+.admin-app .row-actions{align-items:center;flex-wrap:wrap}
+.admin-app .row-actions button{
+  min-width:54px;height:40px;border-radius:10px;font-weight:800;background:#fff;white-space:nowrap
+}
+.admin-app .row-actions button:hover{border-color:#aeb9cd;background:#f8fafc}
+.admin-app .row-actions button.delete:hover{background:#fff2f3;border-color:#eab8bf}
+
+/* 시험 목록: 관리 버튼이 상태/진행률 위로 겹치지 않도록 각 셀을 고정 흐름으로 배치 */
+.admin-app .exam-list-panel{padding:20px;overflow:hidden}
+.admin-app .exam-list.data-table{overflow-x:auto;padding-bottom:13px}
+.admin-app .exam-list .table-head,.admin-app .exam-list .table-row{
+  grid-template-columns:minmax(330px,1.7fr) 150px 190px 135px 155px 220px 160px minmax(310px,1.25fr);
+  min-width:1680px;column-gap:16px
+}
+.admin-app .exam-list .table-row>*,.admin-app .exam-list .table-head>*{min-width:0}
+.admin-app .exam-list .row-actions{display:grid;grid-template-columns:minmax(120px,1fr) repeat(2,minmax(62px,auto));gap:8px}
+.admin-app .exam-list .row-actions .exam-analysis-button,
+.admin-app .exam-list .row-actions .exam-analysis-complete{grid-column:1/-1;width:100%;min-height:42px}
+.admin-app .exam-list.data-table::-webkit-scrollbar{height:12px}
+.admin-app .exam-list.data-table::-webkit-scrollbar-track{background:#edf1f6;border-radius:999px}
+.admin-app .exam-list.data-table::-webkit-scrollbar-thumb{background:#9ba6b8;border:3px solid #edf1f6;border-radius:999px}
+
+/* 성적 관리 */
+.admin-app .cumulative-performance-panel{padding:28px}
+.admin-app .performance-heading{padding-bottom:19px;border-bottom:1px solid #e7ebf2}
+.admin-app .performance-heading h3{color:var(--navy);letter-spacing:-.035em}
+.admin-app .performance-heading>strong{padding:7px 14px;border-radius:12px;background:var(--gold-soft);color:#a56e0d}
+.admin-app .performance-summary{gap:15px;margin:22px 0}
+.admin-app .performance-summary>div{min-height:105px;padding:19px;background:linear-gradient(145deg,#fff,#f7f9fc)}
+.admin-app .performance-groups>div{background:#fbfcfe;padding:20px}
+.admin-app .performance-bar>i{height:10px}
+
+/* SOS 추천/훈련 매칭 */
+.admin-app .recommendation-layout{grid-template-columns:330px minmax(0,1fr);min-height:660px}
+.admin-app .recommendation-students{padding:20px;background:#f8fafc}
+.admin-app .recommendation-students>button{padding:16px;border-radius:14px;transition:.15s ease}
+.admin-app .recommendation-students>button:hover{border-color:#b8c2d4;transform:translateY(-1px)}
+.admin-app .recommendation-students>button.selected{border-color:#506bea;box-shadow:0 7px 18px rgba(79,107,234,.1)}
+.admin-app .recommendation-main{min-width:0;padding:28px}
+.admin-app .recommendation-head{align-items:flex-start}
+.admin-app .recommendation-head>div:last-child{flex-wrap:wrap;justify-content:flex-end}
+.admin-app .recommendation-candidates>label{min-width:0;transition:.15s ease}
+.admin-app .recommendation-candidates>label:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(24,46,80,.08)}
+.admin-app .engine-actions button{min-height:43px;box-shadow:0 5px 13px rgba(24,46,80,.055)}
+.admin-app .training-session-summary{gap:10px;padding:17px 0}
+
+@media(max-width:1280px){
+  .admin-app .sidebar{width:236px}.admin-app .main-area{margin-left:236px}
+  .admin-app .page-content{padding:26px 24px 55px}
+  .admin-app .exam-list-panel{overflow:visible}
+  .admin-app .exam-list.data-table{overflow:visible;padding:0}
+  .admin-app .exam-list .table-row{min-width:0;grid-template-columns:1fr 1fr}
+  .admin-app .exam-list .row-actions{grid-template-columns:1fr 1fr;justify-content:stretch}
+  .admin-app .exam-list .row-actions .exam-analysis-button,
+  .admin-app .exam-list .row-actions .exam-analysis-complete{grid-column:1/-1}
+  .admin-app .recommendation-head{flex-direction:column}
+  .admin-app .recommendation-head>div:last-child{justify-content:flex-start}
+}
+@media(max-width:900px){
+  .admin-app .recommendation-layout{grid-template-columns:1fr}
+  .admin-app .recommendation-students{display:flex;gap:9px;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)}
+  .admin-app .recommendation-students>button{min-width:210px;margin:0}
+  .admin-app .performance-summary,.admin-app .performance-groups{grid-template-columns:1fr 1fr}
+}
+@media(max-width:760px){
+  .admin-app .sidebar{width:100%;padding:12px 16px}.admin-app .main-area{margin-left:0}
+  .admin-app .brand-row{padding:0}.admin-app .topbar{height:auto;padding:14px 16px}
+  .admin-app .topbar p{display:none}.admin-app .topbar h1{font-size:20px}
+  .admin-app .page-content{padding:14px 12px 42px}
+  .admin-app .page-title-row{min-height:0;padding:18px;align-items:stretch;flex-direction:column;gap:15px}
+  .admin-app .page-title-row h2{font-size:23px}
+  .admin-app .student-stat-grid{grid-template-columns:1fr 1fr;gap:10px}
+  .admin-app .mini-stat{min-height:112px;padding:18px}.admin-app .mini-stat strong{font-size:27px}
+  .admin-app .panel{border-radius:15px}.admin-app .student-panel,.admin-app .exam-list-panel{padding:13px}
+  .admin-app .exam-list .table-row{grid-template-columns:1fr;gap:13px}
+  .admin-app .exam-list .row-actions{grid-template-columns:1fr 1fr}
+  .admin-app .recommendation-main{padding:18px 14px}
+  .admin-app .recommendation-candidates,.admin-app .performance-summary,.admin-app .performance-groups{grid-template-columns:1fr}
+  .admin-app .performance-groups>div:last-child{grid-column:auto}
+  .admin-app .cumulative-performance-panel{padding:18px 14px}
+}
