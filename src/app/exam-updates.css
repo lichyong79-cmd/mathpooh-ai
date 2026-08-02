@@ -186,6 +186,46 @@
   opacity: 0.72;
 }
 
+/* 시험 목록 관리열: 분석 버튼은 윗줄, 공개/수정/삭제는 아랫줄로 고정 */
+.exam-list.data-table .table-head,
+.exam-list.data-table .table-row {
+  grid-template-columns:
+    minmax(330px, 1.55fr) 180px 230px 150px 165px 240px 170px 140px
+    320px !important;
+  min-width: 1925px !important;
+}
+.exam-list .row-actions {
+  align-items: stretch;
+  display: grid !important;
+  gap: 7px !important;
+  grid-template-columns: minmax(112px, 1fr) 70px 70px;
+  white-space: nowrap;
+  width: 100%;
+}
+.exam-list .row-actions .exam-analysis-button,
+.exam-list .row-actions .exam-analysis-complete {
+  grid-column: 1 / -1;
+  height: 34px;
+  width: 100%;
+}
+.exam-list .row-actions > button:not(.exam-analysis-button):not(.exam-analysis-complete) {
+  box-sizing: border-box;
+  height: 34px;
+  min-width: 0;
+  padding: 0 8px;
+  white-space: nowrap;
+  width: 100%;
+}
+
+@media (max-width: 760px) {
+  .exam-list.data-table .table-row {
+    min-width: 0 !important;
+  }
+  .exam-list .row-actions {
+    grid-template-columns: 1fr 1fr 1fr !important;
+  }
+}
+
 .result-modal-backdrop,
 .student-result-backdrop {
   background: rgba(12, 24, 44, 0.72);
