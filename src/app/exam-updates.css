@@ -1,0 +1,34 @@
+.exam-state .exam-download {
+  align-items: center;
+  background: #d5a33f;
+  border: 0;
+  border-radius: 10px;
+  box-sizing: border-box;
+  color: #17233f;
+  display: inline-flex;
+  font-weight: 900;
+  height: 42px;
+  justify-content: center;
+  padding: 0 20px;
+  text-decoration: none;
+}
+
+.monitor-time-note {
+  align-content: center;
+  background: #fff9e8;
+  border: 1px solid #ecd493;
+  border-radius: 9px;
+  display: grid;
+  height: 44px;
+  padding: 0 14px;
+}
+
+.monitor-time-note b {
+  color: #9a6918;
+  font-size: 13px;
+}
+
+.monitor-time-note span {
+  color: #72798a;
+  font-size: 11px;
+}

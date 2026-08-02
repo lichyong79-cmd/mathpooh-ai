@@ -28,9 +28,11 @@ export async function GET() {
   const items = await Promise.all((exams ?? []).map(async (exam) => {
     const savedStatus = registrationMap.get(exam.id);
     const applicationStatus = savedStatus === "assigned" || savedStatus === "requested" ? savedStatus : "none";
+    const downloadAvailableAt = exam.open_at ? new Date(new Date(exam.open_at).getTime() - 60 * 60 * 1000).toISOString() : null;
+    const downloadAvailable = applicationStatus === "assigned" && (!downloadAvailableAt || downloadAvailableAt <= now);
     let testUrl = "";
-    if (applicationStatus === "assigned" && exam.test_file_path) testUrl = (await supabase.storage.from("exam-files").createSignedUrl(exam.test_file_path, 60 * 60 * 3)).data?.signedUrl ?? "";
-    return { ...exam, application_status: applicationStatus, test_url: testUrl, attempt: attemptMap.get(exam.id) ?? null, available: applicationStatus === "assigned" && (!exam.open_at || exam.open_at <= now) && (!exam.close_at || exam.close_at >= now) };
+    if (downloadAvailable && exam.test_file_path) testUrl = (await supabase.storage.from("exam-files").createSignedUrl(exam.test_file_path, 60 * 60 * 3)).data?.signedUrl ?? "";
+    return { ...exam, application_status: applicationStatus, test_url: testUrl, download_available: downloadAvailable, download_available_at: downloadAvailableAt, attempt: attemptMap.get(exam.id) ?? null, available: applicationStatus === "assigned" && (!exam.open_at || exam.open_at <= now) };
   }));
   return NextResponse.json({ student: { id: student.id, name: student.name, school: student.school, grade: student.grade, passwordChanged: student.password_changed }, exams: items });
 }
@@ -65,7 +67,7 @@ export async function POST(request: Request) {
   const { data: exam } = await supabase.from("exams").select("*").eq("id", examId).eq("student_open", true).maybeSingle();
   if (!exam) return NextResponse.json({ message: "응시 가능한 시험이 아닙니다." }, { status: 404 });
   const now = new Date().toISOString();
-  if ((exam.open_at && exam.open_at > now) || (exam.close_at && exam.close_at < now)) {
+  if (action === "start" && exam.open_at && exam.open_at > now) {
     return NextResponse.json({ message: "현재는 이 시험의 응시 시간이 아닙니다." }, { status: 403 });
   }
   const { data: existing } = await supabase.from("exam_attempts").select("*").eq("exam_id", examId).eq("student_id", student.id).maybeSingle();

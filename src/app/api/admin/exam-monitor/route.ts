@@ -37,7 +37,8 @@ export async function PATCH(request: Request) {
   const body = await request.json();
   const examId = String(body.examId ?? "");
   if (!examId) return NextResponse.json({ message: "시험을 선택해 주세요." }, { status: 400 });
-  const payload = { student_open: Boolean(body.studentOpen), open_at: body.openAt || null, close_at: body.closeAt || null };
+  // 응시 가능 시작 시각만 공통으로 관리합니다. 실제 종료는 학생별 시작 시각 + 제한시간으로 계산합니다.
+  const payload = { student_open: Boolean(body.studentOpen), open_at: body.openAt || null, close_at: null };
   const { data, error } = await ctx.supabase.from("exams").update(payload).eq("id", examId).select("id,title,exam_date,time_limit,student_open,open_at,close_at").single();
   return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ exam: data });
 }
