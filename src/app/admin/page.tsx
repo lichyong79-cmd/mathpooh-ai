@@ -1685,6 +1685,11 @@ function AdminResultModal({
     ? exam.answer_keys.map(String)
     : [];
   const count = Number(exam?.question_count ?? keys.length ?? 0);
+  const metadata = new Map<number, any>(
+    (Array.isArray(exam?.question_metadata) ? exam.question_metadata : []).map(
+      (item: any) => [Number(item.question_no), item],
+    ),
+  );
   const saveResult = async () => {
     if (!row.attempt) return;
     setSaving(true);
@@ -1738,34 +1743,64 @@ function AdminResultModal({
           <span className="blank">미응답</span>
           <b>관리자는 제출 답안을 수정한 뒤 재채점할 수 있습니다.</b>
         </div>
-        <div className="result-answer-grid">
-          {Array.from({ length: count }, (_, index) => {
-            const no = index + 1;
-            const answer = String(answers[no] ?? answers[String(no)] ?? "");
-            const key = String(keys[index] ?? "");
-            const state = !answer
-              ? "blank"
-              : answer === key
-                ? "correct"
-                : "wrong";
-            return (
-              <label className={state} key={no}>
-                <b>{no}</b>
-                <input
-                  value={answer}
-                  onChange={(event) =>
-                    setAnswers((prev) => ({
-                      ...prev,
-                      [no]: event.target.value
-                        .replace(/[^0-9-]/g, "")
-                        .slice(0, 5),
-                    }))
-                  }
-                />
-                <span>정답 {key || "-"}</span>
-              </label>
-            );
-          })}
+        <div className="result-answer-table-wrap">
+          <div className="result-answer-table">
+            <div className="result-answer-table-head">
+              <span>문항</span>
+              <span>단원</span>
+              <span>문항 유형</span>
+              <span>난이도</span>
+              <span>학생 답</span>
+              <span>정답</span>
+              <span>결과</span>
+            </div>
+            {Array.from({ length: count }, (_, index) => {
+              const no = index + 1;
+              const answer = String(answers[no] ?? answers[String(no)] ?? "");
+              const key = String(keys[index] ?? "");
+              const info = metadata.get(no);
+              const state = !answer
+                ? "blank"
+                : answer === key
+                  ? "correct"
+                  : "wrong";
+              return (
+                <div className={`result-answer-table-row ${state}`} key={no}>
+                  <b>{no}번</b>
+                  <span title={info?.unit}>{info?.unit || "정보 없음"}</span>
+                  <span title={info?.topic || info?.question_type}>
+                    {info?.topic || info?.question_type || "정보 없음"}
+                  </span>
+                  <span>
+                    <i
+                      className={`difficulty difficulty-${info?.difficulty || "none"}`}
+                    >
+                      {info?.difficulty ? `${info.difficulty}단계` : "-"}
+                    </i>
+                  </span>
+                  <input
+                    value={answer}
+                    onChange={(event) =>
+                      setAnswers((prev) => ({
+                        ...prev,
+                        [no]: event.target.value
+                          .replace(/[^0-9-]/g, "")
+                          .slice(0, 5),
+                      }))
+                    }
+                  />
+                  <strong>{key || "-"}</strong>
+                  <em>
+                    {state === "correct"
+                      ? "정답"
+                      : state === "wrong"
+                        ? "오답"
+                        : "미응답"}
+                  </em>
+                </div>
+              );
+            })}
+          </div>
         </div>
         <footer>
           <button className="secondary-button" onClick={onClose}>

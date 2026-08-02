@@ -36,8 +36,16 @@ type Exam = {
   open_at?: string | null;
   close_at?: string | null;
   official_answers?: string[];
+  question_metadata?: QuestionMetadata[];
   application_status: "none" | "requested" | "assigned";
   attempt: Attempt | null;
+};
+type QuestionMetadata = {
+  question_no: number;
+  unit?: string;
+  topic?: string;
+  question_type?: string;
+  difficulty?: string;
 };
 type Portal = {
   student: {
@@ -49,29 +57,112 @@ type Portal = {
   exams: Exam[];
 };
 
-function StudentResultModal({ exam, onClose }: { exam: Exam; onClose: () => void }) {
+function StudentResultModal({
+  exam,
+  onClose,
+}: {
+  exam: Exam;
+  onClose: () => void;
+}) {
   const attempt = exam.attempt;
   const keys = exam.official_answers ?? [];
+  const metadata = new Map(
+    (exam.question_metadata ?? []).map((item) => [
+      Number(item.question_no),
+      item,
+    ]),
+  );
   if (!attempt) return null;
   return (
     <div className="student-result-backdrop" onMouseDown={onClose}>
-      <section className="student-result-modal" onMouseDown={(event) => event.stopPropagation()}>
+      <section
+        className="student-result-modal"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <header>
-          <div><small>SOS 시험 결과</small><h2>{exam.title}</h2><p>{attempt.submitted_at ? `${new Date(attempt.submitted_at).toLocaleString("ko-KR")} 제출` : "제출 완료"}</p></div>
-          <div className="student-result-score"><b>{attempt.score ?? 0}</b><span>점</span></div>
+          <div>
+            <small>SOS 시험 결과</small>
+            <h2>{exam.title}</h2>
+            <p>
+              {attempt.submitted_at
+                ? `${new Date(attempt.submitted_at).toLocaleString("ko-KR")} 제출`
+                : "제출 완료"}
+            </p>
+          </div>
+          <div className="student-result-score">
+            <b>{attempt.score ?? 0}</b>
+            <span>점</span>
+          </div>
           <button onClick={onClose}>×</button>
         </header>
-        <div className="student-result-summary"><div><span>정답</span><b>{attempt.correct_count ?? 0}문항</b></div><div><span>오답</span><b>{attempt.wrong_numbers?.length ?? 0}문항</b></div><div><span>미응답</span><b>{attempt.unanswered_numbers?.length ?? 0}문항</b></div></div>
-        <div className="student-result-grid">
-          {Array.from({ length: exam.question_count }, (_, index) => {
-            const no = index + 1;
-            const answer = String(attempt.answers?.[no] ?? attempt.answers?.[String(no)] ?? "");
-            const key = String(keys[index] ?? "");
-            const state = !answer ? "blank" : answer === key ? "correct" : "wrong";
-            return <div className={state} key={no}><b>{no}</b><span>내 답 <strong>{answer || "-"}</strong></span><span>정답 <strong>{key || "-"}</strong></span><em>{state === "correct" ? "O" : state === "wrong" ? "X" : "미응답"}</em></div>;
-          })}
+        <div className="student-result-summary">
+          <div>
+            <span>정답</span>
+            <b>{attempt.correct_count ?? 0}문항</b>
+          </div>
+          <div>
+            <span>오답</span>
+            <b>{attempt.wrong_numbers?.length ?? 0}문항</b>
+          </div>
+          <div>
+            <span>미응답</span>
+            <b>{attempt.unanswered_numbers?.length ?? 0}문항</b>
+          </div>
         </div>
-        <footer><button onClick={onClose}>닫기</button></footer>
+        <div className="student-result-table-wrap">
+          <div className="student-result-table">
+            <div className="student-result-table-head">
+              <span>문항</span>
+              <span>단원</span>
+              <span>문항 유형</span>
+              <span>난이도</span>
+              <span>내 답</span>
+              <span>정답</span>
+              <span>결과</span>
+            </div>
+            {Array.from({ length: exam.question_count }, (_, index) => {
+              const no = index + 1;
+              const answer = String(
+                attempt.answers?.[no] ?? attempt.answers?.[String(no)] ?? "",
+              );
+              const key = String(keys[index] ?? "");
+              const info = metadata.get(no);
+              const state = !answer
+                ? "blank"
+                : answer === key
+                  ? "correct"
+                  : "wrong";
+              return (
+                <div className={`student-result-table-row ${state}`} key={no}>
+                  <b>{no}번</b>
+                  <span title={info?.unit}>{info?.unit || "정보 없음"}</span>
+                  <span title={info?.topic || info?.question_type}>
+                    {info?.topic || info?.question_type || "정보 없음"}
+                  </span>
+                  <span>
+                    <i
+                      className={`difficulty difficulty-${info?.difficulty || "none"}`}
+                    >
+                      {info?.difficulty ? `${info.difficulty}단계` : "-"}
+                    </i>
+                  </span>
+                  <strong>{answer || "-"}</strong>
+                  <strong>{key || "-"}</strong>
+                  <em>
+                    {state === "correct"
+                      ? "정답"
+                      : state === "wrong"
+                        ? "오답"
+                        : "미응답"}
+                  </em>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <footer>
+          <button onClick={onClose}>닫기</button>
+        </footer>
       </section>
     </div>
   );
@@ -416,7 +507,12 @@ export default function StudentHome() {
                 <>
                   <b className="complete">제출 완료</b>
                   <strong>{exam.attempt.score}점</strong>
-                  <button className="student-result-button" onClick={() => setResultExam(exam)}>결과 보기</button>
+                  <button
+                    className="student-result-button"
+                    onClick={() => setResultExam(exam)}
+                  >
+                    결과 보기
+                  </button>
                 </>
               ) : exam.application_status === "none" ? (
                 <>
@@ -470,7 +566,12 @@ export default function StudentHome() {
           <div className="student-empty">현재 신청 가능한 시험이 없습니다.</div>
         ) : null}
       </section>
-      {resultExam ? <StudentResultModal exam={resultExam} onClose={() => setResultExam(null)} /> : null}
+      {resultExam ? (
+        <StudentResultModal
+          exam={resultExam}
+          onClose={() => setResultExam(null)}
+        />
+      ) : null}
     </main>
   );
 }
