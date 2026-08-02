@@ -91,7 +91,7 @@ const menus: MenuItem[] = [
   { id: "analysis", label: "AI 분석 관리", icon: "✦", badge: 12 },
   { id: "bank", label: "문제은행", icon: "▣" },
   { id: "recommend", label: "SOS 추천", icon: "◎", badge: 7 },
-  { id: "results", label: "결과 · 이력", icon: "↗" },
+  { id: "results", label: "성적 관리", icon: "↗" },
   { id: "settings", label: "환경 설정", icon: "⚙" },
 ];
 
@@ -1146,43 +1146,69 @@ function StudentDrawer({
 function ResultsPage({ students }: { students: Student[] }) {
   const [search, setSearch] = useState("");
   const [grade, setGrade] = useState("전체");
-  const filtered = students.filter(
+  const [rows, setRows] = useState<any[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    fetch("/api/admin/student-performance")
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "성적을 불러오지 못했습니다.");
+        if (active) {
+          setRows(data.students ?? []);
+          setSelectedId((current) => current || String(data.students?.[0]?.id ?? ""));
+        }
+      })
+      .catch((error) => alert(error instanceof Error ? error.message : "성적 조회 실패"))
+      .finally(() => active && setLoading(false));
+    return () => { active = false; };
+  }, []);
+  const filtered = rows.filter(
     (student) =>
       `${student.name} ${student.school}`
         .toLowerCase()
         .includes(search.toLowerCase()) &&
       (grade === "전체" || student.grade === grade),
   );
+  const selected = rows.find((student) => String(student.id) === selectedId) ?? filtered[0];
+  const summary = selected?.performance?.summary;
+  const groups: Array<[string, any[]]> = [
+    ["누적 단원 성취도", selected?.performance?.units ?? []],
+    ["누적 유형 성취도", selected?.performance?.types ?? []],
+    ["누적 난이도 성취도", selected?.performance?.difficulties ?? []],
+  ];
 
   return (
     <>
       <section className="page-title-row">
         <div>
           <h2>성적 관리</h2>
-          <p>학생별 점수, 최근 응시일과 SOS 진행 상태를 관리합니다.</p>
+          <p>시험 운영과 분리된 학생별 누적 성적·성취도 화면입니다.</p>
         </div>
       </section>
       <section className="student-stat-grid">
         <MiniStat
           label="성적 등록 학생"
-          value={`${students.filter((s) => s.lastScore !== null).length}명`}
-          note="최근 점수 기준"
+          value={`${rows.filter((s) => s.performance?.summary?.examCount > 0).length}명`}
+          note="1회 이상 제출"
         />
         <MiniStat
-          label="분석 완료"
-          value={`${students.filter((s) => s.sosStatus === "분석완료").length}명`}
-          note="분석 결과 확인"
+          label="누적 응시"
+          value={`${rows.reduce((sum, s) => sum + Number(s.performance?.summary?.examCount ?? 0), 0)}회`}
+          note="제출 완료 기준"
         />
         <MiniStat
-          label="훈련중"
-          value={`${students.filter((s) => s.sosStatus === "훈련중").length}명`}
-          note="SOS 진행중"
+          label="전체 평균"
+          value={`${Math.round(rows.filter((s) => s.performance?.summary?.averageScore !== null).reduce((sum, s) => sum + s.performance.summary.averageScore, 0) / Math.max(1, rows.filter((s) => s.performance?.summary?.averageScore !== null).length))}점`}
+          note="학생 평균의 평균"
           emphasis
         />
         <MiniStat
-          label="진단 대기"
-          value={`${students.filter((s) => s.sosStatus === "진단대기").length}명`}
-          note="확인 필요"
+          label="미응시"
+          value={`${rows.filter((s) => !s.performance?.summary?.examCount).length}명`}
+          note="제출 결과 없음"
         />
       </section>
       <section className="panel student-panel">
@@ -1204,20 +1230,17 @@ function ResultsPage({ students }: { students: Student[] }) {
           </select>
         </div>
         <div className="list-summary">
-          <strong>성적 {filtered.length}명</strong>
-          <span>점수와 SOS 상태는 성적관리에서 확인합니다.</span>
+          <strong>{loading ? "성적 불러오는 중" : `학생 ${filtered.length}명`}</strong>
+          <span>학생을 선택하면 누적 분석과 시험별 추이를 확인합니다.</span>
         </div>
         <div className="data-table results-list">
           <div className="table-head">
             <span>학생</span>
             <span>학교 / 학년</span>
-            <span>최근 점수</span>
-            <span>최근 응시</span>
-            <span>SOS 상태</span>
-            <span>관리 메모</span>
+            <span>최근 점수</span><span>평균</span><span>응시</span><span>추이</span>
           </div>
           {filtered.map((student) => (
-            <div className="table-row" key={student.id}>
+            <button className={`table-row performance-student-row ${String(student.id) === String(selected?.id) ? "selected" : ""}`} key={student.id} onClick={() => setSelectedId(String(student.id))}>
               <div className="student-name">
                 <i>{student.name.slice(0, 1)}</i>
                 <div>
@@ -1228,16 +1251,20 @@ function ResultsPage({ students }: { students: Student[] }) {
               <span>
                 {student.school} · {student.grade}
               </span>
-              <b className="score-cell">
-                {student.lastScore === null ? "-" : `${student.lastScore}점`}
-              </b>
-              <span>{student.lastExam}</span>
-              <Status text={student.sosStatus} />
-              <span>{student.memo || "-"}</span>
-            </div>
+              <b className="score-cell">{student.performance.summary.latestScore === null ? "-" : `${student.performance.summary.latestScore}점`}</b>
+              <span>{student.performance.summary.averageScore === null ? "-" : `${student.performance.summary.averageScore}점`}</span>
+              <span>{student.performance.summary.examCount}회</span>
+              <span>{student.performance.summary.scoreChange === null ? "-" : `${student.performance.summary.scoreChange >= 0 ? "+" : ""}${student.performance.summary.scoreChange}점`}</span>
+            </button>
           ))}
         </div>
       </section>
+      {selected ? <section className="panel cumulative-performance-panel">
+        <div className="performance-heading"><div><h3>{selected.name} 누적 성적</h3><p>{selected.school} · {selected.grade}</p></div><strong>{summary.latestScore ?? "-"}점</strong></div>
+        <div className="performance-summary"><div><small>응시</small><b>{summary.examCount}회</b></div><div><small>평균</small><b>{summary.averageScore ?? "-"}점</b></div><div><small>최고</small><b>{summary.bestScore ?? "-"}점</b></div><div><small>직전 대비</small><b>{summary.scoreChange === null ? "-" : `${summary.scoreChange >= 0 ? "+" : ""}${summary.scoreChange}점`}</b></div></div>
+        <div className="performance-history"><h4>시험별 성적</h4>{selected.performance.history.length ? selected.performance.history.map((item: any) => <div key={item.attemptId}><span>{item.examDate} · {item.title}</span><b>{item.score}점</b><small>{item.correct}/{item.questionCount}문항</small></div>) : <p>제출된 시험이 없습니다.</p>}</div>
+        <div className="performance-groups">{groups.map(([title, items]) => <div key={title}><h4>{title}</h4>{items.length ? items.map((item: any) => <div className="performance-bar" key={item.label}><span>{item.label}</span><i><em style={{ width: `${item.rate}%` }} /></i><b>{item.correct}/{item.total} · {item.rate}%</b></div>) : <p>분석 데이터가 없습니다.</p>}</div>)}</div>
+      </section> : null}
     </>
   );
 }
