@@ -1,7 +1,40 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
+import "./login.css";
+
+type LoginMode = "student" | "parent" | "admin";
+
+const modeInfo = {
+  student: {
+    tab: "학생 로그인",
+    eyebrow: "STUDENT",
+    title: "오늘의 성장을 시작합니다",
+    lead: "본인 전화번호와 비밀번호로 로그인하세요.",
+    idLabel: "학생 전화번호",
+    idPlaceholder: "01012345678",
+    help: "초기 비밀번호는 전화번호 뒤 4자리이며, 로그인 후 변경할 수 있습니다.",
+  },
+  parent: {
+    tab: "학부모 로그인",
+    eyebrow: "PARENT",
+    title: "자녀의 성장을 확인합니다",
+    lead: "등록된 학부모 전화번호와 비밀번호를 입력하세요.",
+    idLabel: "학부모 전화번호",
+    idPlaceholder: "01012345678",
+    help: "학부모 계정은 관리자에게 등록을 요청해 주세요.",
+  },
+  admin: {
+    tab: "관리자 로그인",
+    eyebrow: "ADMIN",
+    title: "SOS 관리 시스템",
+    lead: "관리자 이메일과 비밀번호를 입력하세요.",
+    idLabel: "관리자 이메일",
+    idPlaceholder: "admin@mathpooh.com",
+    help: "관리 권한이 등록된 계정만 접속할 수 있습니다.",
+  },
+} as const;
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -9,24 +42,21 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [nextPath, setNextPath] = useState("/");
-  const [loginMode, setLoginMode] = useState<"student" | "parent" | "admin" | "generic">("generic");
+  const [loginMode, setLoginMode] = useState<LoginMode>("student");
 
-  // useSearchParams 대신 직접 읽어 Suspense 경계 요구를 피합니다.
   useEffect(() => {
     const pathname = window.location.pathname;
-    setLoginMode(
-      pathname === "/student-login"
-        ? "student"
-        : pathname === "/parent-login"
-          ? "parent"
-        : pathname === "/admin/login"
-          ? "admin"
-          : "generic"
-    );
+    setLoginMode(pathname === "/admin/login" ? "admin" : pathname === "/parent-login" ? "parent" : "student");
     const raw = new URLSearchParams(window.location.search).get("next");
-    // 외부 사이트로 튕기는 open redirect를 막습니다.
     if (raw && raw.startsWith("/") && !raw.startsWith("//")) setNextPath(raw);
   }, []);
+
+  const changeMode = (mode: LoginMode) => {
+    setLoginMode(mode);
+    setEmail("");
+    setPassword("");
+    setError("");
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -47,22 +77,14 @@ export default function LoginPage() {
         return;
       }
       const loginEmail = loginMode === "student" ? `${phone}@student.matspu.local` : loginMode === "parent" ? `${phone}@parent.matspu.local` : rawId;
-      const loginPassword = (loginMode === "student" || loginMode === "parent") && /^\d{4}$/.test(password) ? `Mp!${password}` : password;
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: loginPassword,
-      });
+      const loginPassword = loginMode !== "admin" && /^\d{4}$/.test(password) ? `Mp!${password}` : password;
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({ email: loginEmail, password: loginPassword });
 
       if (signInError) {
-        setError(
-          signInError.message === "Invalid login credentials"
-            ? "아이디 또는 비밀번호가 올바르지 않습니다."
-            : signInError.message
-        );
+        setError(signInError.message === "Invalid login credentials" ? "아이디 또는 비밀번호가 올바르지 않습니다." : signInError.message);
         return;
       }
 
-      // 미들웨어가 쿠키를 다시 읽도록 전체 새로고침으로 이동합니다.
       const role = data.user?.user_metadata?.role;
       if (loginMode === "student" && role !== "student") { await supabase.auth.signOut(); setError("학생 계정으로 로그인해 주세요."); return; }
       if (loginMode === "parent" && role !== "parent") { await supabase.auth.signOut(); setError("학부모 계정으로 로그인해 주세요."); return; }
@@ -75,128 +97,62 @@ export default function LoginPage() {
     }
   };
 
+  const info = modeInfo[loginMode];
+
   return (
-    <main style={styles.page}>
-      <form onSubmit={submit} style={styles.card}>
-        <div style={styles.brandRow}>
-          <div style={styles.logo}>S</div>
-          <div>
-            <strong style={styles.brandName}>SOS</strong>
-            <div style={styles.brandSub}>Score Optimization System</div>
+    <main className="mp-login-page">
+      <section className="mp-login-shell">
+        <aside className="mp-brand-panel">
+          <div className="mp-wordmark">
+            <span className="mp-mark"><i>m</i><b>+</b></span>
+            <div><strong>MATHPOOH</strong><em>매쓰푸 수학연구소</em></div>
           </div>
-        </div>
+          <div className="mp-brand-copy">
+            <small>SCORE OPTIMIZATION SYSTEM</small>
+            <h1>점수는 우연이 아니라<br />정확한 훈련의 결과입니다.</h1>
+            <p>진단부터 훈련, 실전까지 학생의 모든 학습 흐름을 하나로 연결합니다.</p>
+          </div>
+          <div className="mp-brand-footer"><b>SOS</b><span>Analyze · Train · Improve</span></div>
+        </aside>
 
-        <nav style={styles.roleTabs} aria-label="로그인 종류 선택">
-          <a href="/student-login" style={{ ...styles.roleTab, ...(loginMode === "student" ? styles.roleTabActive : {}) }}>학생</a>
-          <a href="/parent-login" style={{ ...styles.roleTab, ...(loginMode === "parent" ? styles.roleTabActive : {}) }}>학부모</a>
-          <a href="/admin/login" style={{ ...styles.roleTab, ...(loginMode === "admin" ? styles.roleTabActive : {}) }}>관리자</a>
-        </nav>
+        <form onSubmit={submit} className="mp-login-card">
+          <div className="mp-mobile-wordmark">
+            <span className="mp-mark"><i>m</i><b>+</b></span>
+            <div><strong>MATHPOOH</strong><em>매쓰푸</em></div>
+          </div>
 
-        <h1 style={styles.title}>{loginMode === "student" ? "학생 로그인" : loginMode === "parent" ? "학부모 로그인" : loginMode === "admin" ? "관리자 로그인" : "SOS 로그인"}</h1>
-        <p style={styles.lead}>{loginMode === "student" ? "본인 전화번호와 비밀번호를 입력하세요." : loginMode === "parent" ? "등록된 학부모 전화번호와 비밀번호를 입력하세요." : loginMode === "admin" ? "관리자 이메일과 비밀번호를 입력하세요." : "계정 정보를 입력하세요."}</p>
+          <nav className="mp-role-tabs" aria-label="로그인 종류 선택">
+            {(Object.keys(modeInfo) as LoginMode[]).map((mode) => (
+              <button type="button" key={mode} className={loginMode === mode ? "active" : ""} onClick={() => changeMode(mode)}>{modeInfo[mode].tab}</button>
+            ))}
+          </nav>
 
-        <label style={styles.label}>
-          {loginMode === "admin" ? "관리자 이메일" : loginMode === "parent" ? "학부모 전화번호" : "학생 전화번호"}
-          <input
-            type={loginMode === "admin" ? "email" : "tel"}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="username"
-            autoFocus
-            style={styles.input}
-          />
-        </label>
+          <div className="mp-login-heading">
+            <small>{info.eyebrow} LOGIN</small>
+            <h2>{info.title}</h2>
+            <p>{info.lead}</p>
+          </div>
 
-        <label style={styles.label}>
-          비밀번호
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            style={styles.input}
-          />
-        </label>
+          <label className="mp-login-field">
+            <span>{info.idLabel}</span>
+            <input type={loginMode === "admin" ? "email" : "tel"} value={email} onChange={(e) => setEmail(e.target.value)} placeholder={info.idPlaceholder} autoComplete="username" autoFocus />
+          </label>
 
-        {error ? <div style={styles.error}>{error}</div> : null}
+          <label className="mp-login-field">
+            <span>비밀번호</span>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="비밀번호를 입력하세요" autoComplete="current-password" />
+          </label>
 
-        <button type="submit" disabled={loading} style={{ ...styles.button, opacity: loading ? 0.6 : 1 }}>
-          {loading ? "확인 중..." : "로그인"}
-        </button>
+          {error ? <div className="mp-login-error">{error}</div> : null}
 
-        <p style={styles.help}>
-          {loginMode === "student" ? "초기 비밀번호는 전화번호 뒤 4자리이며, 로그인 후 변경할 수 있습니다." : loginMode === "parent" ? "학부모 계정은 관리자에게 등록을 요청해 주세요." : "관리자 전용 로그인 화면입니다."}
-        </p>
-      </form>
+          <button type="submit" disabled={loading} className="mp-login-submit">
+            {loading ? <><i className="mp-spinner" /> 로그인 확인 중</> : <>{info.tab} <span>→</span></>}
+          </button>
+
+          <p className="mp-login-help">{info.help}</p>
+          <div className="mp-login-copyright">© MATHPOOH. All rights reserved.</div>
+        </form>
+      </section>
     </main>
   );
 }
-
-const styles: Record<string, CSSProperties> = {
-  page: {
-    minHeight: "100vh",
-    display: "grid",
-    placeItems: "center",
-    background: "var(--bg, #f4f6fa)",
-    padding: 20,
-  },
-  card: {
-    width: "100%",
-    maxWidth: 380,
-    background: "#fff",
-    border: "1px solid var(--line, #e5e8f0)",
-    borderRadius: 16,
-    padding: "30px 28px 24px",
-    display: "grid",
-    gap: 14,
-    boxShadow: "0 18px 44px rgba(29,39,68,.10)",
-  },
-  brandRow: { display: "flex", alignItems: "center", gap: 10, marginBottom: 4 },
-  logo: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    background: "linear-gradient(135deg,#6679ff,#9d75ef)",
-    display: "grid",
-    placeItems: "center",
-    color: "#fff",
-    fontWeight: 900,
-    fontSize: 17,
-  },
-  brandName: { fontSize: 16, color: "var(--navy, #1d2744)", letterSpacing: ".04em" },
-  brandSub: { fontSize: 10, color: "var(--muted, #8b93a7)", marginTop: 2 },
-  roleTabs: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, padding: 5, borderRadius: 12, background: "#f1f3f8" },
-  roleTab: { padding: "10px 4px", borderRadius: 9, color: "#7c8599", fontSize: 12.5, fontWeight: 800, textAlign: "center", textDecoration: "none" },
-  roleTabActive: { color: "#fff", background: "linear-gradient(135deg,#5268e8,#7c69e8)", boxShadow: "0 5px 14px rgba(82,104,232,.22)" },
-  title: { margin: "6px 0 0", fontSize: 19, color: "var(--text, #20263a)" },
-  lead: { margin: 0, fontSize: 12.5, color: "var(--muted, #8b93a7)" },
-  label: { display: "grid", gap: 6, fontSize: 12.5, color: "var(--navy, #1d2744)", fontWeight: 700 },
-  input: {
-    height: 42,
-    padding: "0 12px",
-    border: "1px solid var(--line, #e5e8f0)",
-    borderRadius: 10,
-    fontSize: 14,
-    fontWeight: 400,
-    outlineColor: "var(--blue, #5268e8)",
-  },
-  error: {
-    background: "#fdeef0",
-    color: "var(--red, #cf5260)",
-    border: "1px solid #f6d3d8",
-    borderRadius: 10,
-    padding: "10px 12px",
-    fontSize: 12.5,
-  },
-  button: {
-    height: 44,
-    marginTop: 4,
-    border: 0,
-    borderRadius: 10,
-    background: "var(--blue, #5268e8)",
-    color: "#fff",
-    fontSize: 14.5,
-    fontWeight: 800,
-  },
-  help: { margin: 0, fontSize: 11.5, color: "var(--muted, #8b93a7)", textAlign: "center" },
-};

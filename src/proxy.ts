@@ -30,6 +30,13 @@ export async function proxy(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
+
+  // 서비스 기본 주소는 학생 전용 진입 주소입니다. 로그인 화면을 내부적으로
+  // 렌더링하되 브라우저 주소는 `/` 그대로 유지합니다.
+  if (pathname === "/" && (!user || user.user_metadata?.role !== "student")) {
+    return NextResponse.rewrite(new URL("/student-login", request.url));
+  }
+
   const isPublicPath =
     pathname === "/login" ||
     pathname === "/student-login" ||
@@ -67,12 +74,6 @@ export async function proxy(request: NextRequest) {
 
   if (user?.user_metadata?.role === "parent" && pathname !== "/p" && !pathname.startsWith("/parent-login") && !pathname.startsWith("/auth/")) {
     return NextResponse.redirect(new URL("/p", request.url));
-  }
-
-  // 기본 주소는 항상 학생 진입점입니다. 관리자 세션이 남아 있어도
-  // 관리자 화면으로 되돌리지 않고 학생 로그인 화면을 보여줍니다.
-  if (user && user.user_metadata?.role !== "student" && pathname === "/") {
-    return NextResponse.redirect(new URL("/student-login", request.url));
   }
 
   return response;
