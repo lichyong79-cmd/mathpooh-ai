@@ -19,28 +19,32 @@ export default function LoginPage() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!email.trim() || !password) return setError("이메일과 비밀번호를 입력해 주세요.");
+    if (!email.trim() || !password) return setError("아이디와 비밀번호를 입력해 주세요.");
 
     setLoading(true);
     setError("");
     try {
       const supabase = createClient();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+      const rawId = email.trim();
+      const phone = rawId.replace(/\D/g, "");
+      const loginEmail = rawId.includes("@") ? rawId : `${phone}@student.matspu.local`;
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
         password,
       });
 
       if (signInError) {
         setError(
           signInError.message === "Invalid login credentials"
-            ? "이메일 또는 비밀번호가 올바르지 않습니다."
+            ? "아이디 또는 비밀번호가 올바르지 않습니다."
             : signInError.message
         );
         return;
       }
 
       // 미들웨어가 쿠키를 다시 읽도록 전체 새로고침으로 이동합니다.
-      window.location.href = nextPath;
+      const role = data.user?.user_metadata?.role;
+      window.location.href = role === "student" ? (nextPath.startsWith("/admin") ? "/" : nextPath) : (nextPath === "/" ? "/admin" : nextPath);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "로그인에 실패했습니다.");
     } finally {
@@ -59,13 +63,13 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <h1 style={styles.title}>관리자 로그인</h1>
-        <p style={styles.lead}>등록된 계정만 접속할 수 있습니다.</p>
+        <h1 style={styles.title}>SOS 로그인</h1>
+        <p style={styles.lead}>학생은 본인 전화번호를 아이디로 입력하세요.</p>
 
         <label style={styles.label}>
-          이메일
+          아이디 · 전화번호
           <input
-            type="email"
+            type="text"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="username"
@@ -92,7 +96,7 @@ export default function LoginPage() {
         </button>
 
         <p style={styles.help}>
-          계정 발급이 필요하면 원장에게 문의해 주세요.
+          학생 초기 비밀번호는 전화번호 뒤 4자리입니다.
         </p>
       </form>
     </main>

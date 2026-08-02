@@ -49,7 +49,15 @@ export async function proxy(request: NextRequest) {
   }
 
   if (user && pathname === "/login") {
+    return NextResponse.redirect(new URL(user.user_metadata?.role === "student" ? "/" : "/admin", request.url));
+  }
+
+  if (user?.user_metadata?.role === "student" && (pathname.startsWith("/admin") || pathname.startsWith("/problem-bank") || pathname.startsWith("/pdf-mapper"))) {
     return NextResponse.redirect(new URL("/", request.url));
+  }
+
+  if (user && user.user_metadata?.role !== "student" && pathname === "/") {
+    return NextResponse.redirect(new URL("/admin", request.url));
   }
 
   return response;
