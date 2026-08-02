@@ -101,24 +101,11 @@ export default function LoginPage() {
 
   return (
     <main className="mp-login-page">
-      <section className="mp-login-shell">
-        <aside className="mp-brand-panel">
-          <div className="mp-wordmark">
-            <span className="mp-mark"><i>m</i><b>+</b></span>
-            <div><strong>MATHPOOH</strong><em>매쓰푸 수학연구소</em></div>
-          </div>
-          <div className="mp-brand-copy">
-            <small>SCORE OPTIMIZATION SYSTEM</small>
-            <h1>점수는 우연이 아니라<br />정확한 훈련의 결과입니다.</h1>
-            <p>진단부터 훈련, 실전까지 학생의 모든 학습 흐름을 하나로 연결합니다.</p>
-          </div>
-          <div className="mp-brand-footer"><b>SOS</b><span>Analyze · Train · Improve</span></div>
-        </aside>
-
+      <section className="mp-login-wrap">
+        <div className="mp-site-brand"><strong>MATHPOOH</strong><span>매쓰푸</span></div>
         <form onSubmit={submit} className="mp-login-card">
-          <div className="mp-mobile-wordmark">
-            <span className="mp-mark"><i>m</i><b>+</b></span>
-            <div><strong>MATHPOOH</strong><em>매쓰푸</em></div>
+          <div className="mp-login-symbol" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 3.2c2.2 1.8 4.2 2.5 6.2 2.8v5.4c0 4.3-2.4 7.4-6.2 9.4-3.8-2-6.2-5.1-6.2-9.4V6c2-.3 4-.9 6.2-2.8Z"/><path d="m9.2 12 1.8 1.8 3.8-4"/></svg>
           </div>
 
           <nav className="mp-role-tabs" aria-label="로그인 종류 선택">
@@ -128,7 +115,6 @@ export default function LoginPage() {
           </nav>
 
           <div className="mp-login-heading">
-            <small>{info.eyebrow} LOGIN</small>
             <h2>{info.title}</h2>
             <p>{info.lead}</p>
           </div>
@@ -150,8 +136,8 @@ export default function LoginPage() {
           </button>
 
           <p className="mp-login-help">{info.help}</p>
-          <div className="mp-login-copyright">© MATHPOOH. All rights reserved.</div>
         </form>
+        <p className="mp-login-copyright">© MATHPOOH. All rights reserved.</p>
       </section>
     </main>
   );
