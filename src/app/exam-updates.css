@@ -48,6 +48,55 @@
   font-variant-numeric: tabular-nums;
 }
 
+.monitor-time-note.ready {
+  background: #eef6ff;
+  border-color: #9bbce8;
+}
+
+.monitor-time-note.ready b {
+  color: #315f9e;
+}
+
+.monitor-scheduled-at,
+.monitor-ready-card {
+  align-content: center;
+  border: 1px solid #dce2ec;
+  border-radius: 9px;
+  display: grid;
+  min-height: 58px;
+  padding: 8px 14px;
+}
+
+.monitor-scheduled-at span,
+.monitor-ready-card span {
+  color: #72798a;
+  font-size: 11px;
+}
+
+.monitor-scheduled-at b,
+.monitor-ready-card strong {
+  color: #17233f;
+  font-size: 13px;
+}
+
+.monitor-ready-card.ready {
+  background: #edf9f3;
+  border-color: #91d0b4;
+}
+
+.monitor-ready-card.ready strong {
+  color: #167652;
+}
+
+.monitor-ready-card.running {
+  background: #fff6df;
+  border-color: #e4bd61;
+}
+
+.monitor-ready-card.running strong {
+  color: #a36a0b;
+}
+
 .exam-start-button {
   min-width: 112px;
 }
