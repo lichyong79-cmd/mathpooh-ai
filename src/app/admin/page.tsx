@@ -1278,6 +1278,7 @@ function RecommendPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [problemCount, setProblemCount] = useState(0);
+  const [sessions, setSessions] = useState<any[]>([]);
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -1293,6 +1294,33 @@ function RecommendPage() {
   useEffect(() => { void load(); }, [load]);
   const selected = rows.find((item) => String(item.id) === selectedId) ?? rows[0];
   useEffect(() => { setChecked([]); }, [selectedId]);
+  const loadSessions = useCallback(async (studentId: string) => {
+    if (!studentId) return setSessions([]);
+    const response = await fetch(`/api/admin/training-engine?studentId=${encodeURIComponent(studentId)}`, { cache: "no-store" });
+    const data = await response.json();
+    if (response.ok) setSessions(data.sessions ?? []);
+  }, []);
+  useEffect(() => { void loadSessions(selectedId); }, [selectedId, loadSessions]);
+  const generate = async (action: "generate-diagnosis" | "additional-diagnosis" | "generate-training") => {
+    if (!selected) return;
+    const latestDiagnosis = sessions.find((item) => item.phase === "DIAGNOSIS");
+    let diagnosticCorrect = 0;
+    if (action === "generate-training") {
+      if (!latestDiagnosis) return alert("먼저 진단 3문항을 생성해 주세요.");
+      const value = window.prompt("가장 최근 진단의 정답 수를 입력하세요. (0~3)", String(latestDiagnosis.correct_count ?? 0));
+      if (value === null) return;
+      diagnosticCorrect = Math.max(0, Math.min(3, Number(value)));
+    }
+    setSaving(true);
+    try {
+      const response = await fetch("/api/admin/training-engine", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, studentId: selected.id, parentSessionId: latestDiagnosis?.id, diagnosticCorrect, target: { units: selected.weakUnits, types: selected.weakTypes } }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "문항 생성 실패");
+      await loadSessions(String(selected.id));
+      alert(action === "generate-training" ? "훈련 10문항을 생성했습니다." : action === "additional-diagnosis" ? "중복 없는 추가 진단 3문항을 생성했습니다." : "진단 3문항을 생성했습니다.");
+    } catch (error) { alert(error instanceof Error ? error.message : "문항 생성 실패"); }
+    finally { setSaving(false); }
+  };
   const save = async (assign: boolean) => {
     if (!selected || !checked.length) return alert("추천할 문항을 선택해 주세요.");
     setSaving(true);
@@ -1309,7 +1337,7 @@ function RecommendPage() {
     <section className="student-stat-grid"><MiniStat label="분석 학생" value={`${rows.filter((item) => item.performance.summary.examCount).length}명`} note="응시 이력 기준" /><MiniStat label="훈련 문항" value={`${problemCount}문항`} note="문제은행 ACTIVE" /><MiniStat label="매칭 가능" value={`${rows.filter((item) => item.candidates.length).length}명`} note="후보 1개 이상" emphasis /><MiniStat label="문항 부족" value={`${rows.filter((item) => item.performance.summary.examCount && !item.candidates.length).length}명`} note="추가 등록 필요" /></section>
     <section className="panel recommendation-layout">
       <aside className="recommendation-students"><h3>학생별 취약점</h3>{loading ? <p>불러오는 중...</p> : rows.map((item) => <button key={item.id} className={String(item.id) === String(selected?.id) ? "selected" : ""} onClick={() => setSelectedId(String(item.id))}><strong>{item.name}</strong><span>{item.performance.summary.examCount}회 · 평균 {item.performance.summary.averageScore ?? "-"}점</span><small>{item.weakUnits[0]?.label || "취약 단원 분석 전"}</small></button>)}</aside>
-      <div className="recommendation-main">{selected ? <><div className="recommendation-head"><div><h3>{selected.name} 훈련 후보</h3><p>취약 단원: {selected.weakUnits.map((item: any) => `${item.label} ${item.rate}%`).join(" · ") || "없음"}</p><p>취약 유형: {selected.weakTypes.map((item: any) => `${item.label} ${item.rate}%`).join(" · ") || "없음"}</p></div><div><button className="secondary-button" disabled={saving || !checked.length} onClick={() => void save(false)}>추천안 저장</button><button className="primary-button" disabled={saving || !checked.length} onClick={() => void save(true)}>선택 문항 배정</button></div></div>{selected.candidates.length ? <div className="recommendation-candidates">{selected.candidates.map((problem: any) => <label key={problem.id}><input type="checkbox" checked={checked.includes(problem.id)} onChange={(event) => setChecked((current) => event.target.checked ? [...current, problem.id] : current.filter((id) => id !== problem.id))} /><div><strong>{problem.problem_code || problem.title}</strong><span>{problem.unit} · {problem.topic} · {problem.difficulty}단계</span><small>{problem.reasons.join(" / ")} · 매칭 {problem.matchScore}점</small></div></label>)}</div> : <div className="recommendation-empty"><b>현재 매칭되는 훈련 문항이 없습니다.</b><p>문제은행에 취약 단원·유형 문항을 등록하면 이곳에 자동으로 나타납니다.</p><button className="primary-button" onClick={() => { window.location.href = "/problem-bank/ai-upload"; }}>훈련 문항 등록하기</button></div>}</> : <div className="recommendation-empty"><b>학생 데이터가 없습니다.</b></div>}</div>
+      <div className="recommendation-main">{selected ? <><div className="recommendation-head"><div><h3>{selected.name} 훈련 후보</h3><p>취약 단원: {selected.weakUnits.map((item: any) => `${item.label} ${item.rate}%`).join(" · ") || "없음"}</p><p>취약 유형: {selected.weakTypes.map((item: any) => `${item.label} ${item.rate}%`).join(" · ") || "없음"}</p></div><div className="engine-actions"><button className="diagnosis-button" disabled={saving} onClick={() => void generate("generate-diagnosis")}>진단 3문항</button><button className="diagnosis-more-button" disabled={saving || !sessions.some((item) => item.phase === "DIAGNOSIS")} onClick={() => void generate("additional-diagnosis")}>추가 진단 3문항</button><button className="training-button" disabled={saving || !sessions.some((item) => item.phase === "DIAGNOSIS")} onClick={() => void generate("generate-training")}>훈련 10문항</button></div></div><div className="training-session-summary"><b>진단·훈련 생성 이력</b>{sessions.length ? sessions.map((session) => <span key={session.id} className={session.phase === "DIAGNOSIS" ? "diagnosis" : "training"}>{session.phase === "DIAGNOSIS" ? `진단 ${session.round_no}차 · 3문항` : "훈련 · 10문항"} · {session.status}</span>) : <span>아직 생성된 문항이 없습니다.</span>}</div>{selected.candidates.length ? <div className="recommendation-candidates">{selected.candidates.map((problem: any) => <label key={problem.id}><input type="checkbox" checked={checked.includes(problem.id)} onChange={(event) => setChecked((current) => event.target.checked ? [...current, problem.id] : current.filter((id) => id !== problem.id))} /><div><strong>{problem.problem_code || problem.title}</strong><span>{problem.unit} · {problem.topic} · {problem.difficulty}단계</span><small>{problem.reasons.join(" / ")} · 매칭 {problem.matchScore}점</small></div></label>)}</div> : <div className="recommendation-empty"><b>현재 매칭되는 훈련 문항이 없습니다.</b><p>문제은행에 취약 단원·유형 문항을 등록하면 이곳에 자동으로 나타납니다.</p><button className="primary-button" onClick={() => { window.location.href = "/problem-bank/ai-upload"; }}>훈련 문항 등록하기</button></div>}</> : <div className="recommendation-empty"><b>학생 데이터가 없습니다.</b></div>}</div>
     </section>
   </>;
 }
