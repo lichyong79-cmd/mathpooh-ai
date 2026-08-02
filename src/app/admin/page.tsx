@@ -272,7 +272,7 @@ function StudentsPage({ students, setStudents, exams }: { students: Student[]; s
   };
 
   const selectedRound = exams.find((round) => round.id === selectedRoundId) ?? exams[0];
-  const roundStudents = selectedRound ? students.filter((student) => student.status === "정상" && (selectedRound.grade === "전체" || student.grade === selectedRound.grade)) : [];
+  const roundStudents = selectedRound ? students.filter((student) => student.status === "정상") : [];
   const registeredCount = registeredIds.filter((id) => roundStudents.some((student) => String(student.id) === String(id))).length;
   const toggleRegistration = async (studentId: string | number) => {
     if (!selectedRound) return;
@@ -346,14 +346,14 @@ function StudentsPage({ students, setStudents, exams }: { students: Student[]; s
           </select>
         </div>
         <div className="registration-actions">
-          <button className="secondary-button" onClick={clearAll} disabled={registrationBusy || !selectedRound}>전체 미등록</button>
-          <button className="primary-button" onClick={registerAll} disabled={registrationBusy || !selectedRound}>{registrationBusy ? "처리 중..." : "대상 학생 전체 등록"}</button>
+          <button className="secondary-button" onClick={clearAll} disabled={registrationBusy || !selectedRound || registeredIds.length === 0}>전체 미등록</button>
+          <button className="primary-button" onClick={registerAll} disabled={registrationBusy || !selectedRound || roundStudents.length === 0}>{registrationBusy ? "처리 중..." : roundStudents.length === 0 ? "등록 가능한 재원 학생 없음" : `재원 학생 ${roundStudents.length}명 전체 등록`}</button>
         </div>
       </div>
       <div className="round-summary">
         <div><span>시험 회차</span><strong>{selectedRound ? `${selectedRound.round}회 · ${selectedRound.title}` : "등록된 시험 없음"}</strong></div>
         <div><span>시험일</span><strong>{selectedRound?.examDate ?? "-"}</strong></div>
-        <div><span>대상</span><strong>{selectedRound?.grade ?? "-"}</strong></div>
+        <div><span>등록 기준</span><strong>학년 제한 없음 · 학생별 지정</strong></div>
         <div><span>등록 현황</span><strong>{registeredCount} / {roundStudents.length}명</strong></div>
       </div>
       <div className="registration-progress"><i style={{ width: `${roundStudents.length ? (registeredCount / roundStudents.length) * 100 : 0}%` }} /></div>
@@ -368,7 +368,7 @@ function StudentsPage({ students, setStudents, exams }: { students: Student[]; s
             <button disabled={registrationBusy} className={`toggle-register ${isRegistered ? "on" : ""}`} onClick={() => void toggleRegistration(student.id)}>{isRegistered ? "등록 취소" : "등록하기"}</button>
           </div>;
         })}
-        {!selectedRound ? <div className="empty-list">먼저 실전모의고사를 등록해 주세요.</div> : roundStudents.length === 0 && <div className="empty-list">이 회차 대상 학생이 없습니다.</div>}
+        {!selectedRound ? <div className="empty-list">먼저 실전모의고사를 등록해 주세요.</div> : roundStudents.length === 0 && <div className="empty-list"><strong>등록 가능한 재원 학생이 없습니다.</strong><br />학생 목록에서 재원 상태를 확인해 주세요.</div>}
       </div>
     </section>}
 

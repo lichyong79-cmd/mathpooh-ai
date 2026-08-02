@@ -21,7 +21,7 @@ export async function GET() {
   if (registrationError) return NextResponse.json({ message: registrationError.message }, { status: 400 });
   const registeredExamIds = (registrations ?? []).map((item) => item.exam_id);
   if (!registeredExamIds.length) return NextResponse.json({ student: { id: student.id, name: student.name, school: student.school, grade: student.grade, passwordChanged: student.password_changed }, exams: [] });
-  const { data: exams, error } = await supabase.from("exams").select("id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,status,student_open,open_at,close_at").in("id", registeredExamIds).eq("student_open", true).or(`grade.eq.${student.grade},grade.eq.전체`).order("exam_date", { ascending: false });
+  const { data: exams, error } = await supabase.from("exams").select("id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,status,student_open,open_at,close_at").in("id", registeredExamIds).eq("student_open", true).order("exam_date", { ascending: false });
   if (error) return NextResponse.json({ message: error.message }, { status: 400 });
   const ids = (exams ?? []).map((exam) => exam.id);
   const { data: attempts } = ids.length ? await supabase.from("exam_attempts").select("*").eq("student_id", student.id).in("exam_id", ids) : { data: [] };
@@ -56,9 +56,6 @@ export async function POST(request: Request) {
   const now = new Date().toISOString();
   if ((exam.open_at && exam.open_at > now) || (exam.close_at && exam.close_at < now)) {
     return NextResponse.json({ message: "현재는 이 시험의 응시 시간이 아닙니다." }, { status: 403 });
-  }
-  if (exam.grade !== "전체" && exam.grade !== student.grade) {
-    return NextResponse.json({ message: "이 시험의 대상 학년이 아닙니다." }, { status: 403 });
   }
   const { data: existing } = await supabase.from("exam_attempts").select("*").eq("exam_id", examId).eq("student_id", student.id).maybeSingle();
   if (action === "start") {
