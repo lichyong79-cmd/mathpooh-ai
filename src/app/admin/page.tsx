@@ -451,6 +451,8 @@ export default function Home() {
             />
           ) : active === "results" ? (
             <ResultsPage students={students} />
+          ) : active === "recommend" ? (
+            <RecommendPage />
           ) : active === "problems" ? (
             <ProblemsPage
               onOpenAnalysis={(sourceFileId) => {
@@ -1267,6 +1269,49 @@ function ResultsPage({ students }: { students: Student[] }) {
       </section> : null}
     </>
   );
+}
+
+function RecommendPage() {
+  const [rows, setRows] = useState<any[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [checked, setChecked] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [problemCount, setProblemCount] = useState(0);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/admin/recommendations", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "추천 데이터를 불러오지 못했습니다.");
+      setRows(data.students ?? []);
+      setProblemCount(Number(data.problemCount ?? 0));
+      setSelectedId((value) => value || String(data.students?.[0]?.id ?? ""));
+    } catch (error) { alert(error instanceof Error ? error.message : "추천 조회 실패"); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const selected = rows.find((item) => String(item.id) === selectedId) ?? rows[0];
+  useEffect(() => { setChecked([]); }, [selectedId]);
+  const save = async (assign: boolean) => {
+    if (!selected || !checked.length) return alert("추천할 문항을 선택해 주세요.");
+    setSaving(true);
+    try {
+      const response = await fetch("/api/admin/recommendations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ studentId: selected.id, problemIds: checked, assign, weakness: { units: selected.weakUnits, types: selected.weakTypes } }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "추천 저장 실패");
+      alert(assign ? "학생에게 훈련을 배정했습니다." : "추천안을 저장했습니다.");
+    } catch (error) { alert(error instanceof Error ? error.message : "추천 저장 실패"); }
+    finally { setSaving(false); }
+  };
+  return <>
+    <section className="page-title-row"><div><h2>SOS 훈련 매칭</h2><p>누적 성적의 취약점과 문제은행 문항을 자동 연결합니다.</p></div><button className="secondary-button" onClick={() => void load()}>새로고침</button></section>
+    <section className="student-stat-grid"><MiniStat label="분석 학생" value={`${rows.filter((item) => item.performance.summary.examCount).length}명`} note="응시 이력 기준" /><MiniStat label="훈련 문항" value={`${problemCount}문항`} note="문제은행 ACTIVE" /><MiniStat label="매칭 가능" value={`${rows.filter((item) => item.candidates.length).length}명`} note="후보 1개 이상" emphasis /><MiniStat label="문항 부족" value={`${rows.filter((item) => item.performance.summary.examCount && !item.candidates.length).length}명`} note="추가 등록 필요" /></section>
+    <section className="panel recommendation-layout">
+      <aside className="recommendation-students"><h3>학생별 취약점</h3>{loading ? <p>불러오는 중...</p> : rows.map((item) => <button key={item.id} className={String(item.id) === String(selected?.id) ? "selected" : ""} onClick={() => setSelectedId(String(item.id))}><strong>{item.name}</strong><span>{item.performance.summary.examCount}회 · 평균 {item.performance.summary.averageScore ?? "-"}점</span><small>{item.weakUnits[0]?.label || "취약 단원 분석 전"}</small></button>)}</aside>
+      <div className="recommendation-main">{selected ? <><div className="recommendation-head"><div><h3>{selected.name} 훈련 후보</h3><p>취약 단원: {selected.weakUnits.map((item: any) => `${item.label} ${item.rate}%`).join(" · ") || "없음"}</p><p>취약 유형: {selected.weakTypes.map((item: any) => `${item.label} ${item.rate}%`).join(" · ") || "없음"}</p></div><div><button className="secondary-button" disabled={saving || !checked.length} onClick={() => void save(false)}>추천안 저장</button><button className="primary-button" disabled={saving || !checked.length} onClick={() => void save(true)}>선택 문항 배정</button></div></div>{selected.candidates.length ? <div className="recommendation-candidates">{selected.candidates.map((problem: any) => <label key={problem.id}><input type="checkbox" checked={checked.includes(problem.id)} onChange={(event) => setChecked((current) => event.target.checked ? [...current, problem.id] : current.filter((id) => id !== problem.id))} /><div><strong>{problem.problem_code || problem.title}</strong><span>{problem.unit} · {problem.topic} · {problem.difficulty}단계</span><small>{problem.reasons.join(" / ")} · 매칭 {problem.matchScore}점</small></div></label>)}</div> : <div className="recommendation-empty"><b>현재 매칭되는 훈련 문항이 없습니다.</b><p>문제은행에 취약 단원·유형 문항을 등록하면 이곳에 자동으로 나타납니다.</p><button className="primary-button" onClick={() => { window.location.href = "/problem-bank/ai-upload"; }}>훈련 문항 등록하기</button></div>}</> : <div className="recommendation-empty"><b>학생 데이터가 없습니다.</b></div>}</div>
+    </section>
+  </>;
 }
 
 function examFromRow(row: any): PracticeExam {
