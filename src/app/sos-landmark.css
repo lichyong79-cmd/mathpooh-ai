@@ -646,3 +646,210 @@
   .slm-pin:after { transition: none; }
   .slm-intro { animation: none; }
 }
+
+/* ── SOS135 Living City: 가림판 없이 도시 밀도와 미완성 청사진을 표현 ── */
+.slm-tower-body { z-index: 3; }
+
+.slm-tower-blueprint {
+  position: absolute;
+  inset: 0;
+  display: block;
+  opacity: 0.13;
+  filter: grayscale(0.25) saturate(0.55) brightness(1.2)
+    drop-shadow(0 0 8px color-mix(in srgb, var(--slm-accent) 24%, transparent));
+}
+.slm-tower-blueprint .slm-art {
+  opacity: 0.9;
+  filter: none;
+}
+.slm-tower-blueprint .slm-shape {
+  fill: color-mix(in srgb, var(--slm-accent) 12%, transparent);
+  stroke: color-mix(in srgb, var(--slm-accent) 68%, transparent);
+  stroke-width: 1.3;
+  stroke-dasharray: 3.5 3;
+}
+.slm-tower-blueprint .slm-edge,
+.slm-tower-blueprint .slm-podium {
+  fill: transparent;
+  stroke: color-mix(in srgb, var(--slm-accent) 54%, transparent);
+  stroke-dasharray: 3 3;
+}
+.slm-tower-blueprint .slm-beacon { display: none; }
+
+.slm-city-base {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: -1.5%;
+  width: 250%;
+  height: 26%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.slm-ground-shadow {
+  position: absolute;
+  left: 50%;
+  bottom: 7%;
+  width: 78%;
+  height: 28%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(0, 5, 12, 0.78), rgba(0, 10, 18, 0.18) 58%, transparent 74%);
+  filter: blur(3px);
+  transform: translateX(-50%);
+}
+.slm-road-strip {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: 0;
+  height: 20%;
+  min-height: 5px;
+  overflow: hidden;
+  border-top: 1px solid rgba(160, 211, 225, 0.2);
+  border-bottom: 1px solid rgba(0, 5, 10, 0.75);
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(31, 55, 66, 0.78), rgba(3, 14, 21, 0.94));
+  box-shadow: 0 4px 10px rgba(0, 5, 10, 0.55);
+}
+.slm-road-strip:after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 45%;
+  height: 1px;
+  background: repeating-linear-gradient(90deg, rgba(255, 218, 120, 0.72) 0 10px, transparent 10px 20px);
+  opacity: calc(0.25 + var(--completion, 0%) * 0.006);
+}
+.slm-car {
+  position: absolute;
+  top: 18%;
+  width: 8px;
+  height: 3px;
+  border-radius: 2px 3px 1px 1px;
+  background: #d6f4ff;
+  box-shadow: 0 0 5px rgba(215, 246, 255, 0.72);
+  opacity: 0.6;
+}
+.slm-car:before,
+.slm-car:after {
+  content: "";
+  position: absolute;
+  bottom: -1px;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #07121a;
+}
+.slm-car:before { left: 1px; }
+.slm-car:after { right: 1px; }
+.car-a { left: 18%; animation: slm-car-a 8s linear infinite; }
+.car-b { right: 18%; transform: scaleX(-1); animation: slm-car-b 10s linear infinite; }
+@keyframes slm-car-a { from { transform: translateX(-8px); } to { transform: translateX(48px); } }
+@keyframes slm-car-b { from { transform: scaleX(-1) translateX(-8px); } to { transform: scaleX(-1) translateX(48px); } }
+
+.slm-trees {
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  bottom: 14%;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+}
+.slm-trees i {
+  position: relative;
+  width: 7px;
+  height: 12px;
+  border-radius: 60% 60% 45% 45%;
+  background: linear-gradient(145deg, #2c9c6f, #0b4c3a);
+  box-shadow: 0 0 7px rgba(75, 220, 157, 0.28);
+  opacity: 0.75;
+}
+.slm-trees i:after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 80%;
+  width: 1px;
+  height: 5px;
+  background: #71563a;
+  transform: translateX(-50%);
+}
+.slm-trees i:nth-child(2) { transform: scale(0.75); }
+.slm-trees i:nth-child(3) { transform: scale(1.15); }
+.slm-trees i:nth-child(4) { transform: scale(0.82); }
+
+.slm-lamps {
+  position: absolute;
+  left: 17%;
+  right: 17%;
+  bottom: 16%;
+  display: flex;
+  justify-content: space-between;
+}
+.slm-lamps i {
+  position: relative;
+  width: 1px;
+  height: 13px;
+  background: rgba(131, 175, 192, 0.55);
+}
+.slm-lamps i:before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #ffe9a7;
+  box-shadow: 0 0 7px #ffd76a;
+  transform: translateX(-50%);
+  opacity: calc(0.25 + var(--completion, 0%) * 0.0075);
+}
+
+.slm-sixtythree .slm-city-base:before,
+.slm-lct .slm-city-base:before {
+  content: "";
+  position: absolute;
+  left: 7%;
+  right: 7%;
+  bottom: -9%;
+  height: 22%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(65, 176, 212, 0.4), rgba(5, 43, 64, 0.75));
+  box-shadow: inset 0 1px rgba(176, 238, 255, 0.36), 0 0 12px rgba(60, 190, 230, 0.2);
+}
+.slm-lotte .slm-city-base:before {
+  content: "";
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 3%;
+  height: 24%;
+  border-radius: 50%;
+  border: 1px solid rgba(77, 183, 234, 0.42);
+  background: radial-gradient(ellipse, rgba(75, 171, 217, 0.3), rgba(4, 36, 54, 0.72));
+  box-shadow: inset 0 0 8px rgba(102, 207, 255, 0.18);
+}
+
+.city-0 .slm-trees i:nth-child(n+3),
+.city-0 .slm-lamps i:nth-child(n+2),
+.city-0 .slm-car { opacity: 0; }
+.city-1 .slm-trees i:nth-child(n+4),
+.city-1 .slm-lamps i:nth-child(n+3),
+.city-1 .car-b { opacity: 0; }
+.city-2 .slm-city-base { opacity: 0.84; }
+.city-3 .slm-city-base,
+.city-4 .slm-city-base { opacity: 1; }
+
+@media (max-width: 900px) {
+  .slm-city-base { width: 230%; height: 24%; }
+  .slm-trees i { width: 5px; height: 9px; }
+  .slm-lamps i { height: 10px; }
+  .slm-car { width: 6px; height: 2px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slm-car { animation: none; }
+}

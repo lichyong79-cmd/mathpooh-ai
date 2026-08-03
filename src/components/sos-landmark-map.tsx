@@ -388,7 +388,23 @@ function Tower({
       }
       aria-label={`${config.subject} ${config.place}, 백분위 ${state.best}, ${state.floors}층 완성. 자세히 보기`}
     >
+      <span className="slm-city-base" aria-hidden="true">
+        <span className="slm-ground-shadow" />
+        <span className="slm-road-strip">
+          <i className="slm-car car-a" />
+          <i className="slm-car car-b" />
+        </span>
+        <span className="slm-trees">
+          <i /><i /><i /><i /><i />
+        </span>
+        <span className="slm-lamps">
+          <i /><i /><i />
+        </span>
+      </span>
       <span className="slm-tower-body">
+        <span className="slm-tower-blueprint">
+          <TowerArt kind={config.kind} />
+        </span>
         <span className="slm-tower-reveal">
           <TowerArt kind={config.kind} />
         </span>
