@@ -107,21 +107,21 @@ export default function SOSLandmarkMap({ data, onSelect }: Props) {
 
           <ellipse cx="550" cy="555" rx="420" ry="72" fill="#03121d" opacity="0.78" />
           <g filter="url(#mapShadow)" transform="translate(0 20)">
-            <path d="M440 60 C505 45 570 60 620 95 C670 132 690 190 675 238 C660 284 684 323 723 351 C768 384 788 435 756 480 C726 521 675 532 637 565 C596 602 530 610 482 585 C443 565 418 526 377 508 C326 485 289 448 300 398 C312 346 286 310 268 269 C248 223 266 176 304 144 C344 110 388 78 440 60 Z" fill="url(#landFill)" stroke="#4dc2d8" strokeWidth="3" />
-            <path d="M440 49 C505 34 570 49 620 84 C670 121 690 179 675 227 C660 273 684 312 723 340 C768 373 788 424 756 469 C726 510 675 521 637 554 C596 591 530 599 482 574 C443 554 418 515 377 497 C326 474 289 437 300 387 C312 335 286 299 268 258 C248 212 266 165 304 133 C344 99 388 67 440 49 Z" fill="url(#landTop)" stroke="#65d7e7" strokeWidth="2.5" />
-            <path d="M334 155 C410 190 468 230 540 250 C605 268 650 317 705 370" fill="none" stroke="#4297a8" strokeWidth="2" opacity="0.72" />
-            <path d="M320 360 C395 335 452 364 515 405 C576 445 635 465 708 464" fill="none" stroke="#397e91" strokeWidth="2" opacity="0.64" />
-            <path d="M400 100 C438 178 412 260 448 332 C478 390 532 444 584 548" fill="none" stroke="#34798c" strokeWidth="2" opacity="0.55" />
+            <path d="M410 68 C455 48 520 52 565 78 C604 101 625 132 621 169 C617 201 632 226 654 250 C679 277 682 309 670 337 C657 365 672 394 700 420 C731 449 737 483 716 512 C694 542 656 553 621 566 C585 580 553 610 511 607 C470 604 446 579 415 557 C383 534 345 529 320 500 C295 471 295 437 310 405 C326 371 316 340 299 310 C281 278 282 244 300 216 C321 184 342 163 354 132 C367 99 382 80 410 68 Z" fill="url(#landFill)" stroke="#4dc2d8" strokeWidth="3" />
+            <path d="M410 55 C455 35 520 39 565 65 C604 88 625 119 621 156 C617 188 632 213 654 237 C679 264 682 296 670 324 C657 352 672 381 700 407 C731 436 737 470 716 499 C694 529 656 540 621 553 C585 567 553 597 511 594 C470 591 446 566 415 544 C383 521 345 516 320 487 C295 458 295 424 310 392 C326 358 316 327 299 297 C281 265 282 231 300 203 C321 171 342 150 354 119 C367 86 382 67 410 55 Z" fill="url(#landTop)" stroke="#65d7e7" strokeWidth="2.5" />
+            <path d="M335 172 C392 194 448 211 502 243 C552 273 594 304 646 350" fill="none" stroke="#4297a8" strokeWidth="2" opacity="0.72" />
+            <path d="M321 384 C386 358 445 373 500 410 C554 446 612 468 682 474" fill="none" stroke="#397e91" strokeWidth="2" opacity="0.64" />
+            <path d="M414 88 C438 160 421 240 449 318 C474 385 523 452 566 565" fill="none" stroke="#34798c" strokeWidth="2" opacity="0.55" />
           </g>
 
-          {[[356,165],[382,184],[418,175],[452,206],[490,224],[528,249],[562,271],[600,300],[636,333],[677,372],[707,416],[684,467],[638,505],[582,548],[518,558],[458,530],[401,493],[355,448],[329,399],[343,340],[316,282],[302,225]].map(([x,y], i) => (
+          {[[350,170],[370,183],[395,176],[430,195],[465,218],[505,246],[544,273],[584,304],[620,338],[652,373],[682,419],[694,463],[661,506],[618,541],[566,571],[514,576],[465,552],[419,522],[375,488],[340,447],[325,399],[333,350],[315,301],[302,253],[319,210]].map(([x,y], i) => (
             <circle key={i} cx={x} cy={y} r={i % 4 === 0 ? 4 : 2.4} fill={i % 3 === 0 ? "#ffd86b" : "#78dfff"} opacity="0.9" filter="url(#cityGlow)" />
           ))}
           <g className="map-place-labels">
-            <text x="330" y="151">서울</text><text x="704" y="442">부산</text><text x="577" y="282">대구</text><text x="425" y="332">대전</text><text x="356" y="432">광주</text>
+            <text x="337" y="157">서울</text><text x="672" y="448">부산</text><text x="576" y="323">대구</text><text x="444" y="332">대전</text><text x="355" y="448">광주</text>
           </g>
 
-          <g className="landmark-svg algebra-building" transform="translate(300 192) skewX(-4)" onClick={() => onSelect("대수")}>
+          <g className="landmark-svg algebra-building" transform="translate(300 178) scale(.72) skewX(-4)" onClick={() => onSelect("대수")}>
             <ellipse cx="65" cy="246" rx="78" ry="17" fill="#020b12" opacity="0.7" />
             <path d="M16 238 L32 18 L115 0 L126 238 Z" fill="#172531" stroke="#6f7c82" strokeWidth="2" opacity="0.82" />
             <g clipPath="url(#clipAlgebra)">
@@ -131,7 +131,7 @@ export default function SOSLandmarkMap({ data, onSelect }: Props) {
             {algebra < 90 ? <g className="construction-lines"><line x1="3" y1="238" x2="120" y2="15"/><line x1="126" y1="238" x2="30" y2="18"/><line x1="5" y1="84" x2="133" y2="84"/><line x1="3" y1="146" x2="132" y2="146"/></g> : null}
           </g>
 
-          <g className="landmark-svg calculus-building" transform="translate(472 103) scale(.88)" onClick={() => onSelect("미적분1")}>
+          <g className="landmark-svg calculus-building" transform="translate(386 78) scale(.70)" onClick={() => onSelect("미적분1")}>
             <ellipse cx="58" cy="310" rx="70" ry="16" fill="#020b12" opacity="0.72" />
             <path d="M18 300 C23 204 31 112 48 25 L58 0 L68 25 C85 112 93 204 98 300 Z" fill="#142736" stroke="#54788f" strokeWidth="2" opacity="0.85" />
             <g clipPath="url(#clipCalculus)">
@@ -141,7 +141,7 @@ export default function SOSLandmarkMap({ data, onSelect }: Props) {
             {calculus < 90 ? <g className="construction-lines"><line x1="7" y1="300" x2="58" y2="0"/><line x1="108" y1="300" x2="58" y2="0"/><line x1="10" y1="113" x2="104" y2="113"/><line x1="9" y1="202" x2="106" y2="202"/></g> : null}
           </g>
 
-          <g className="landmark-svg statistics-building" transform="translate(675 386)" onClick={() => onSelect("확률과통계")}>
+          <g className="landmark-svg statistics-building" transform="translate(642 374) scale(.92)" onClick={() => onSelect("확률과통계")}>
             <ellipse cx="92" cy="238" rx="105" ry="18" fill="#020b12" opacity="0.72" />
             <g fill="#132a31" stroke="#4f8178" strokeWidth="2" opacity="0.88">
               <path d="M5 230 L20 45 L67 30 L72 230 Z"/><path d="M60 230 L76 10 L126 0 L132 230 Z"/><path d="M120 230 L137 60 L176 48 L181 230 Z"/>
