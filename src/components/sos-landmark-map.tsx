@@ -361,39 +361,6 @@ function FloorGauge({ floors }: { floors: number }) {
 
 /* ─────────────────────────── 건물 ─────────────────────────── */
 
-function TowerCard({
-  config,
-  state,
-}: {
-  config: TowerConfig;
-  state: LandmarkSummary["subjects"][LandmarkSubject];
-}) {
-  return (
-    <span className="slm-card">
-      <span className="slm-card-head">
-        <i />
-        <b>{config.subject}</b>
-      </span>
-      <small>
-        {config.city} · {config.place}
-      </small>
-      {state.attempts ? (
-        <span className="slm-card-score">
-          <b>{state.best}</b>
-          <em>
-            백분위 · {state.floors}층{state.grade ? ` · ${state.grade}등급` : ""}
-          </em>
-        </span>
-      ) : (
-        <span className="slm-card-score is-empty">
-          <b>착공 대기</b>
-          <em>실전모의고사 응시 전</em>
-        </span>
-      )}
-    </span>
-  );
-}
-
 function Tower({
   config,
   state,
@@ -433,7 +400,10 @@ function Tower({
       </span>
       <FloorGauge floors={reveal ? state.floors : 0} />
       <span className="slm-pin" />
-      <TowerCard config={config} state={state} />
+      <span className="slm-tower-badge">
+        <b>{state.attempts ? `${state.floors}층` : "대기"}</b>
+        <small>{config.subject}</small>
+      </span>
     </button>
   );
 }
