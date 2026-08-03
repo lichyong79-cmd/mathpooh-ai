@@ -689,12 +689,6 @@ export default function StudentHome() {
             {activeSection === "apply" ? "필요한 SOS 프로그램과 새로운 안내를 확인하세요." : activeSection === "exams" ? "신청·배정된 실전모의고사를 확인하고 응시하세요." : activeSection === "strategy" ? "시험 결과를 바탕으로 나에게 필요한 공략을 훈련합니다." : "시험별 결과와 취약 단원, 성장 흐름을 확인합니다."}
           </p>
         </div>
-        <div>
-          <button onClick={() => (window.location.href = "/password")}>
-            비밀번호 변경
-          </button>
-          <button onClick={() => void signOut()}>로그아웃</button>
-        </div>
       </header> : null}
       {activeSection === "exams" ? <section className="student-welcome">
         <div>

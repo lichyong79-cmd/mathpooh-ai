@@ -125,3 +125,49 @@
   .mp-apply-button span{display:none}
   .student-today-task{margin-top:16px;margin-bottom:14px}
 }
+
+/* SOS140: 나의SOS를 제외한 3개 학생 탭의 상단 녹색 헤더만 슬림하게 */
+.student-hero.section-exams,
+.student-hero.section-strategy,
+.student-hero.section-analysis {
+  min-height: 104px;
+  padding: 18px 34px;
+  margin-top: 22px;
+}
+
+.student-hero.section-exams h1,
+.student-hero.section-strategy h1,
+.student-hero.section-analysis h1 {
+  margin: 3px 0 3px;
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.student-hero.section-exams small,
+.student-hero.section-strategy small,
+.student-hero.section-analysis small {
+  font-size: 14px;
+}
+
+.student-hero.section-exams p,
+.student-hero.section-strategy p,
+.student-hero.section-analysis p {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+  .student-hero.section-exams,
+  .student-hero.section-strategy,
+  .student-hero.section-analysis {
+    min-height: 96px;
+    padding: 16px 22px;
+    margin-top: 18px;
+  }
+
+  .student-hero.section-exams h1,
+  .student-hero.section-strategy h1,
+  .student-hero.section-analysis h1 {
+    font-size: 25px;
+  }
+}
