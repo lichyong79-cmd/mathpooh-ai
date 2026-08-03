@@ -376,8 +376,8 @@ export default function Home() {
         <div className="brand-row">
           <div className="brand-symbol"><img src="/mathpooh-logo.png" alt="매쓰푸" /></div>
           <div className="brand-copy">
-            <strong>MATSPU SOS</strong>
-            <span>Score Optimization System</span>
+            <div className="brand-title-line"><strong>MATHPOOH</strong><b>SOS</b></div>
+            <span>SCORE OPTIMIZATION SYSTEM</span>
           </div>
           <button
             className="collapse-button"
