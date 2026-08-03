@@ -6,7 +6,7 @@ import "./student.css";
 import "./exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
-import SOSLandmarkMap from "@/components/sos-landmark-map";
+import SosLandmarkMap from "@/components/sos-landmark-map";
 
 type Attempt = {
   id: string;
@@ -369,11 +369,11 @@ export default function StudentHome() {
         : 0,
     [activeExam, answers],
   );
-  const landmarkData = useMemo(() => {
-    const grouped: Record<"대수" | "미적분1" | "확률과통계", number[]> = {
-      대수: [],
-      미적분1: [],
-      확률과통계: [],
+  const towerData = useMemo(() => {
+    const result = {
+      대수: new Set<number>(),
+      미적분1: new Set<number>(),
+      확률과통계: new Set<number>(),
     };
     for (const exam of portal?.exams ?? []) {
       if (exam.attempt?.status !== "submitted") continue;
@@ -386,24 +386,54 @@ export default function StudentHome() {
             ? "대수"
             : null;
       if (!subject) continue;
-      grouped[subject].push(Math.max(0, Math.min(100, Number(exam.attempt.score ?? 0))));
+      const keys = exam.official_answers ?? [];
+      for (let floor = 1; floor <= Math.min(10, exam.question_count); floor += 1) {
+        const answer = String(exam.attempt.answers?.[floor] ?? exam.attempt.answers?.[String(floor)] ?? "").trim();
+        const key = String(keys[floor - 1] ?? "").trim();
+        if (answer && key && answer === key) result[subject].add(floor);
+      }
     }
-    const summarize = (scores: number[]) => ({
-      best: scores.length ? Math.max(...scores) : 0,
-      recent: scores.length
-        ? Math.round(scores.slice(-3).reduce((sum, score) => sum + score, 0) / Math.min(3, scores.length))
-        : 0,
-      attempts: scores.length,
-    });
     return {
-      대수: summarize(grouped.대수),
-      미적분1: summarize(grouped.미적분1),
-      확률과통계: summarize(grouped.확률과통계),
+      대수: [...result.대수].sort((a, b) => a - b),
+      미적분1: [...result.미적분1].sort((a, b) => a - b),
+      확률과통계: [...result.확률과통계].sort((a, b) => a - b),
     };
   }, [portal]);
-  const totalLandmarkProgress = Math.round(
-    (landmarkData.대수.best + landmarkData.미적분1.best + landmarkData.확률과통계.best) / 3,
-  );
+  const landmarkData = useMemo(() => {
+    const scores: Record<"대수" | "미적분1" | "확률과통계", number[]> = {
+      대수: [],
+      미적분1: [],
+      확률과통계: [],
+    };
+    const recentScores: number[] = [];
+    for (const exam of portal?.exams ?? []) {
+      if (exam.attempt?.status !== "submitted") continue;
+      const score = Math.max(0, Math.min(100, Number(exam.attempt.score ?? 0)));
+      recentScores.push(score);
+      const subjectText = `${exam.subject ?? ""} ${exam.title ?? ""}`;
+      const subject = subjectText.includes("미적분")
+        ? "미적분1"
+        : subjectText.includes("확률") || subjectText.includes("통계") || subjectText.includes("확통")
+          ? "확률과통계"
+          : subjectText.includes("대수")
+            ? "대수"
+            : null;
+      if (subject) scores[subject].push(score);
+    }
+    const highest = (values: number[]) => values.length ? Math.max(...values) : 0;
+    const latest = recentScores.slice(-3);
+    const recentCondition = latest.length
+      ? Math.round(latest.reduce((sum, value) => sum + value, 0) / latest.length)
+      : 82;
+    return {
+      progress: {
+        대수: highest(scores.대수),
+        미적분1: highest(scores.미적분1),
+        확률과통계: highest(scores.확률과통계),
+      },
+      recentCondition,
+    };
+  }, [portal]);
   const changeAnswer = (no: number, value: string) => {
     setAnswers((prev) => ({ ...prev, [no]: value }));
     setSaveState("저장 대기");
@@ -562,7 +592,11 @@ export default function StudentHome() {
           <button className="mp-menu-logout" onClick={() => void signOut()}>로그아웃</button>
         </aside>
       </div> : null}
-      <SOSLandmarkMap data={landmarkData} onSelect={setSelectedTower} />
+      <SosLandmarkMap
+        progress={landmarkData.progress}
+        recentCondition={landmarkData.recentCondition}
+        onSelect={setSelectedTower}
+      />
       {selectedTower ? (
         <div className="sos-tower-modal-backdrop" onMouseDown={() => setSelectedTower(null)}>
           <section className="sos-tower-modal" onMouseDown={(event) => event.stopPropagation()}>
@@ -571,14 +605,12 @@ export default function StudentHome() {
               <button onClick={() => setSelectedTower(null)}>×</button>
             </header>
             <div className="sos-floor-grid">
-              {Array.from({ length: 10 }, (_, index) => index + 1).map((stage) => {
-                const progress = landmarkData[selectedTower].best;
-                const active = progress >= stage * 10 - 9;
-                const labels = ["부지 조성", "기초 공사", "저층 골조", "중층 골조", "외벽 시작", "유리 외벽", "상층 완성", "조명 공사", "외관 마감", "랜드마크 완공"];
-                return <button key={stage} className={active ? "conquered" : "locked"} onClick={() => moveSection("analysis")}><b>{stage}단계</b><span>{labels[stage - 1]}</span></button>;
+              {Array.from({ length: 10 }, (_, index) => index + 1).map((floor) => {
+                const active = towerData[selectedTower].includes(floor);
+                return <button key={floor} className={active ? "conquered" : "locked"} onClick={() => moveSection("analysis")}><b>{floor}단계</b><span>{active ? "달성 완료" : "진행 예정"}</span></button>;
               })}
             </div>
-            <p>건물 완성도는 제출한 실전모의고사의 과목별 최고 점수(백분위 연동 전 임시 기준)를 반영합니다. 최근 성적은 도시 날씨와 조명 상태에 반영됩니다.</p>
+            <p>랜드마크 완성도는 제출한 실전모의고사의 과목별 최고 점수를 기준으로 표시됩니다.</p>
           </section>
         </div>
       ) : null}
