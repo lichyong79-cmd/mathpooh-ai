@@ -24,3 +24,10 @@ SOS116R 적용 안내
 
 빌드 확인
 - Next.js production build 및 TypeScript 검사 통과
+
+긴급 오류 수정
+- DB 시험 목록 로딩 전에 사용되던 demo-1/demo-2 임시 시험을 제거했습니다.
+- 시험 배정 API에 UUID 검사를 추가했습니다.
+- invalid input syntax for type uuid: "demo-1" 오류를 차단했습니다.
+- 문제등록 메뉴는 SOS115의 AI 문제등록 업로드 화면으로 연결됩니다.
+- AI 분석 화면에서 관리자로 이동하면 /admin의 해당 메뉴로 정확히 돌아갑니다.

@@ -2076,8 +2076,17 @@ export default function AnalysisWorkspacePage() {
       router.push("/problem-bank");
       return;
     }
-    window.localStorage.setItem("matspu-admin-menu", target);
-    router.push("/");
+    const adminTargets: Record<string, string> = {
+      problems: "problem-sources",
+      exams: "exam-list",
+      recommend: "sos-learning",
+      results: "student-results",
+    };
+    window.localStorage.setItem(
+      "matspu-admin-menu",
+      adminTargets[target] ?? target,
+    );
+    router.push("/admin");
   }
 
   return (

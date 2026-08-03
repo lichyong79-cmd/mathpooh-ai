@@ -239,58 +239,9 @@ const examRounds: ExamRound[] = [
   },
 ];
 
-const initialPracticeExams: PracticeExam[] = [
-  {
-    id: "demo-1",
-    round: 1,
-    title: "2026 SOS 고1 실전모의고사 1회",
-    examCode: "SOS-H1-2026-01",
-    examDate: "2026-08-02",
-    startAt: "2026-08-02T10:00",
-    grade: "고1",
-    subject: "공통수학2",
-    range: "도형의 방정식 ~ 집합과 명제",
-    questionCount: 30,
-    timeLimit: 80,
-    totalScore: 100,
-    objectiveCount: 21,
-    shortAnswerCount: 9,
-    status: "등록완료",
-    testFile: "SOS_H1_01_시험지.pdf",
-    solutionFile: "SOS_H1_01_해설지.pdf",
-    originalFile: "",
-    answers: Array(30).fill(""),
-    answerVerified: false,
-    coverVerified: false,
-    regionVerified: false,
-    memo: "고1 여름방학 진단용",
-  },
-  {
-    id: "demo-2",
-    round: 2,
-    title: "2026 SOS 고2 실전모의고사 2회",
-    examCode: "SOS-H2-2026-02",
-    examDate: "2026-08-09",
-    startAt: "2026-08-09T10:00",
-    grade: "고2",
-    subject: "수학Ⅱ",
-    range: "함수의 극한 ~ 미분",
-    questionCount: 30,
-    timeLimit: 80,
-    totalScore: 100,
-    objectiveCount: 21,
-    shortAnswerCount: 9,
-    status: "작성중",
-    testFile: "",
-    solutionFile: "",
-    originalFile: "",
-    answers: Array(30).fill(""),
-    answerVerified: false,
-    coverVerified: false,
-    regionVerified: false,
-    memo: "문항 검토 중",
-  },
-];
+// 실제 DB 시험만 화면과 배정 기능에서 사용합니다.
+// 임시 demo-* ID는 UUID 컬럼에 저장할 수 없으므로 초기 예시 시험을 두지 않습니다.
+const initialPracticeExams: PracticeExam[] = [];
 
 const emptyStudent: Omit<Student, "id"> = {
   name: "",
@@ -411,7 +362,7 @@ export default function Home() {
                   if (menu.id === "problem-analysis") {
                     window.localStorage.setItem(
                       "matspu-admin-menu",
-                      "students",
+                      "problem-sources",
                     );
                     window.location.href = "/problem-bank/ai-upload";
                     return;
@@ -498,7 +449,10 @@ export default function Home() {
                   "matspu-analysis-source-id",
                   sourceFileId,
                 );
-                window.localStorage.setItem("matspu-admin-menu", "students");
+                window.localStorage.setItem(
+                  "matspu-admin-menu",
+                  "problem-sources",
+                );
                 window.location.href = "/problem-bank/ai-upload";
               }}
             />
