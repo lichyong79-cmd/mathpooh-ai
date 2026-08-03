@@ -2540,25 +2540,20 @@ function ExamsPage({
     setReanalyzingAll(true);
     setReanalyzingAllProgress({ current: 0, total });
     try {
-      for (let questionNo = 1; questionNo <= total; questionNo += 1) {
-        const response = await fetch("/api/admin/exam-analysis", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            examId: analysisReviewExam.id,
-            questionNo,
-          }),
-        });
-        const result = await response.json();
-        if (!response.ok) {
-          throw new Error(
-            `${questionNo}번 문항: ${result.message || "재분석에 실패했습니다."}`,
-          );
-        }
-        setReanalyzingAllProgress({ current: questionNo, total });
+      // 문항별로 PDF를 30번 다시 보내지 않고, 시험지/해설지를 한 번만 전송해
+      // 서버에서 전체 문항을 한 번에 분석하고 한 번에 저장한다.
+      const response = await fetch("/api/admin/exam-analysis", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ examId: analysisReviewExam.id }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.message || "전체 재분석에 실패했습니다.");
       }
+      setReanalyzingAllProgress({ current: total, total });
       await openAnalysisReview(analysisReviewExam);
-      alert(`전체 ${total}문항 재분석을 완료했습니다.`);
+      alert(`전체 ${result.count ?? total}문항 재분석을 완료했습니다.`);
     } catch (error) {
       alert(error instanceof Error ? error.message : "전체 재분석 실패");
     } finally {
