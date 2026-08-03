@@ -2428,6 +2428,8 @@ function ExamsPage({
   >([]);
   const [analysisReviewLoading, setAnalysisReviewLoading] = useState(false);
   const [reanalyzingQuestionNo, setReanalyzingQuestionNo] = useState(0);
+  const [reanalyzingAll, setReanalyzingAll] = useState(false);
+  const [reanalyzingAllProgress, setReanalyzingAllProgress] = useState({ current: 0, total: 0 });
   const [analysisReviewFiles, setAnalysisReviewFiles] = useState<{
     testUrl?: string;
     solutionUrl?: string;
@@ -2496,7 +2498,7 @@ function ExamsPage({
   };
 
   const reanalyzeOneQuestion = async (questionNo: number) => {
-    if (!analysisReviewExam || reanalyzingQuestionNo) return;
+    if (!analysisReviewExam || reanalyzingQuestionNo || reanalyzingAll) return;
     if (!window.confirm(`${questionNo}번 문항만 다시 분석할까요?`)) return;
     setReanalyzingQuestionNo(questionNo);
     try {
@@ -2516,6 +2518,50 @@ function ExamsPage({
       alert(error instanceof Error ? error.message : "문항 재분석 실패");
     } finally {
       setReanalyzingQuestionNo(0);
+    }
+  };
+
+
+  const reanalyzeAllQuestions = async () => {
+    if (!analysisReviewExam || reanalyzingAll || reanalyzingQuestionNo) return;
+    const total = Math.max(
+      analysisReviewExam.questionCount || 0,
+      analysisReviewItems.length,
+    );
+    if (!total) return alert("재분석할 문항이 없습니다.");
+    if (
+      !window.confirm(
+        `전체 ${total}문항을 다시 분석할까요?\n기존 AI 분석 결과가 모두 갱신됩니다.`,
+      )
+    )
+      return;
+
+    setReanalyzingAll(true);
+    setReanalyzingAllProgress({ current: 0, total });
+    try {
+      for (let questionNo = 1; questionNo <= total; questionNo += 1) {
+        const response = await fetch("/api/admin/exam-analysis", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            examId: analysisReviewExam.id,
+            questionNo,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            `${questionNo}번 문항: ${result.message || "재분석에 실패했습니다."}`,
+          );
+        }
+        setReanalyzingAllProgress({ current: questionNo, total });
+      }
+      await openAnalysisReview(analysisReviewExam);
+      alert(`전체 ${total}문항 재분석을 완료했습니다.`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "전체 재분석 실패");
+    } finally {
+      setReanalyzingAll(false);
     }
   };
 
@@ -4015,13 +4061,40 @@ function ExamsPage({
                   문항만 다시 분석할 수 있습니다.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setAnalysisReviewExam(null)}
-              >
-                닫기 ×
-              </button>
+              <div className="analysis-result-head-actions">
+                <button
+                  type="button"
+                  className="analysis-reanalyze-all"
+                  disabled={reanalyzingAll || reanalyzingQuestionNo > 0}
+                  onClick={() => void reanalyzeAllQuestions()}
+                >
+                  {reanalyzingAll
+                    ? `전체 재분석 중 ${reanalyzingAllProgress.current}/${reanalyzingAllProgress.total}`
+                    : "↻ 전체 재분석"}
+                </button>
+                <button
+                  type="button"
+                  disabled={reanalyzingAll}
+                  onClick={() => setAnalysisReviewExam(null)}
+                >
+                  닫기 ×
+                </button>
+              </div>
             </header>
+            {reanalyzingAll ? (
+              <div className="analysis-reanalyze-progress">
+                <div>
+                  <b>전체 재분석 중…</b>
+                  <span>
+                    {reanalyzingAllProgress.current} / {reanalyzingAllProgress.total} 문항 완료
+                  </span>
+                </div>
+                <progress
+                  max={Math.max(1, reanalyzingAllProgress.total)}
+                  value={reanalyzingAllProgress.current}
+                />
+              </div>
+            ) : null}
             {analysisReviewLoading ? (
               <div className="analysis-result-loading">
                 AI 분석 결과를 불러오는 중입니다…
@@ -4070,7 +4143,7 @@ function ExamsPage({
                     <span>{item.analysis_data?.summary || "-"}</span>
                     <button
                       type="button"
-                      disabled={reanalyzingQuestionNo > 0}
+                      disabled={reanalyzingQuestionNo > 0 || reanalyzingAll}
                       onClick={() => void reanalyzeOneQuestion(item.question_no)}
                     >
                       {reanalyzingQuestionNo === item.question_no
