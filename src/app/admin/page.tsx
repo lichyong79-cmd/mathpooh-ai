@@ -13,6 +13,7 @@ import { authHeaders, signedStorageUrl } from "@/lib/supabase/rest";
 import AccountBox from "../AccountBox";
 import "../exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
+import MathPoohLoader from "@/components/math-pooh-loader";
 
 type AdminMenu =
   | "dashboard"
@@ -4082,18 +4083,13 @@ function ExamsPage({
               </div>
             </header>
             {reanalyzingAll ? (
-              <div className="analysis-reanalyze-progress">
-                <div>
-                  <b>전체 재분석 중…</b>
-                  <span>
-                    {reanalyzingAllProgress.current} / {reanalyzingAllProgress.total} 문항 완료
-                  </span>
-                </div>
-                <progress
-                  max={Math.max(1, reanalyzingAllProgress.total)}
-                  value={reanalyzingAllProgress.current}
-                />
-              </div>
+              <MathPoohLoader
+                title="AI 전체 재분석 중!!"
+                detail={`현재 ${Math.min(reanalyzingAllProgress.current + 1, reanalyzingAllProgress.total)}번 문항을 분석하고 있습니다.`}
+                current={reanalyzingAllProgress.current}
+                total={reanalyzingAllProgress.total}
+                kind="analysis"
+              />
             ) : null}
             {analysisReviewLoading ? (
               <div className="analysis-result-loading">

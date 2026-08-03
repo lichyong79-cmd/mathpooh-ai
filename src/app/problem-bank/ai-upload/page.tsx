@@ -18,6 +18,7 @@ import {
   type QuestionAnchor,
 } from "@/lib/crop/question-anchors";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
+import MathPoohLoader from "@/components/math-pooh-loader";
 
 type SourceFile = {
   id: string;
@@ -2268,20 +2269,13 @@ export default function AnalysisWorkspacePage() {
       ) : null}
 
       {currentBusyInfo ? (
-        <div className="ai-working-overlay" role="status" aria-live="polite">
-          <div className="ai-working-card">
-            <div className="ai-orbit"><span>{["analysis", "queue", "one"].includes(busy) ? "AI" : "···"}</span></div>
-            <h2>{currentBusyInfo.title}</h2>
-            <p>{currentBusyInfo.detail}<br />화면을 닫거나 조작하지 말고 잠시 기다려 주세요.</p>
-            {showQueueProgress ? (
-              <>
-                <div className="ai-progress-label"><b>{queueProgress.done} / {queueProgress.total}</b><span>문항 처리</span></div>
-                <div className="ai-progress-track"><i style={{ width: `${queueProgress.total ? Math.round(queueProgress.done / queueProgress.total * 100) : 0}%` }} /></div>
-                <small>{busy === "queue" ? "AI 분석 → 자동 판정 → 문제은행 대기 또는 보류" : "문항을 순서대로 안전하게 처리하고 있습니다."}</small>
-              </>
-            ) : <div className="ai-pulse-row"><i /><i /><i /></div>}
-          </div>
-        </div>
+        <MathPoohLoader
+          title={currentBusyInfo.title}
+          detail={currentBusyInfo.detail}
+          current={showQueueProgress ? queueProgress.done : undefined}
+          total={showQueueProgress ? queueProgress.total : undefined}
+          kind={busy === "recrop" || busy === "crop" ? "crop" : busy === "save" || busy === "register-pending" ? "save" : busy === "load" || busy === "pdf" ? "loading" : "analysis"}
+        />
       ) : null}
 
       {!workspace ? (

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import "./student.css";
 import "./exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
+import MathPoohLoader from "@/components/math-pooh-loader";
 
 type Attempt = {
   id: string;
@@ -385,19 +386,18 @@ export default function StudentHome() {
   if (!portal)
     return (
       <main className="student-loading">
-        <strong>SOS 학생 페이지를 불러오는 중...</strong>
+        <MathPoohLoader title="학생 페이지를 준비하고 있습니다..." kind="loading" compact />
       </main>
     );
   if (activeExam && attempt)
     return (
       <main className="exam-room">
         {busy ? (
-          <div className="student-busy">
-            <div>
-              <b>{busy}</b>
-              <span>화면을 닫지 말고 잠시 기다려 주세요.</span>
-            </div>
-          </div>
+          <MathPoohLoader
+            title={busy}
+            kind={busy.includes("채점") || busy.includes("성적") ? "grading" : "exam"}
+            compact
+          />
         ) : null}
         <header className="exam-room-head">
           <div>
@@ -487,12 +487,11 @@ export default function StudentHome() {
   return (
     <main className="student-portal">
       {busy ? (
-        <div className="student-busy">
-          <div>
-            <b>{busy}</b>
-            <span>잠시 기다려 주세요.</span>
-          </div>
-        </div>
+        <MathPoohLoader
+          title={busy}
+          kind={busy.includes("채점") || busy.includes("성적") ? "grading" : "exam"}
+          compact
+        />
       ) : null}
       <header className="mp-site-header">
         <button className="mp-menu-button" onClick={() => setMenuOpen(true)} aria-label="메뉴 열기">
