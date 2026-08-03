@@ -1031,3 +1031,150 @@
   .slm-city-base { width: 285%; height: 31%; }
   .slm-mini-block { min-width: 5px; }
 }
+
+/* ── SOS137 · 비행기에서 바라본 대한민국 ───────────────────────────── */
+.slm {
+  min-height: 720px;
+  background:
+    radial-gradient(ellipse at 52% -8%, rgba(144, 210, 239, 0.28), transparent 38%),
+    radial-gradient(ellipse at 16% 30%, rgba(56, 137, 176, 0.18), transparent 42%),
+    linear-gradient(180deg, #071c30 0%, #06243a 24%, #041827 58%, #020b14 100%);
+}
+.slm-sky { z-index: 3; perspective: 900px; }
+.slm-cloud-layer { position: absolute; inset: 0; pointer-events: none; }
+.slm-cloud-layer-back { z-index: 1; opacity: .56; filter: blur(3px); transform: translateZ(-90px) scale(1.1); }
+.slm-cloud-layer-mid { z-index: 8; opacity: .78; }
+.slm-cloud-layer-front { z-index: 18; opacity: .9; filter: blur(1.5px); }
+
+.slm-cloud {
+  opacity: 1;
+  left: auto;
+  background: none;
+  filter: none;
+  animation-timing-function: linear;
+}
+.slm-cloud:before,
+.slm-cloud:after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+}
+.slm-cloud-soft {
+  width: 330px;
+  height: 92px;
+  border-radius: 52% 48% 46% 54%;
+  background: radial-gradient(ellipse at 50% 55%, rgba(214,236,248,.22), rgba(122,169,196,.08) 58%, transparent 72%);
+  filter: blur(14px);
+  animation: slm-fly-cloud 58s linear infinite;
+}
+.slm-cloud-puff {
+  width: 170px;
+  height: 48px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(239,249,255,.75), rgba(166,205,225,.3));
+  box-shadow: 0 13px 28px rgba(1,12,22,.22), inset 0 -10px 18px rgba(66,116,148,.16);
+  animation: slm-fly-cloud 39s linear infinite;
+}
+.slm-cloud-puff:before { width: 75px; height: 75px; left: 22px; bottom: 10px; background: inherit; }
+.slm-cloud-puff:after { width: 96px; height: 62px; right: 12px; bottom: 6px; background: inherit; }
+.slm-cloud-front {
+  width: 280px;
+  height: 68px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(244,251,255,.9), rgba(180,214,230,.46));
+  box-shadow: 0 18px 36px rgba(1,12,22,.3), inset 0 -14px 24px rgba(73,123,150,.2);
+  animation: slm-fly-cloud 26s linear infinite;
+}
+.slm-cloud-front:before { width: 108px; height: 98px; left: 32px; bottom: 9px; background: inherit; }
+.slm-cloud-front:after { width: 126px; height: 82px; right: 24px; bottom: 5px; background: inherit; }
+.cloud-a { top: 40px; transform: translateX(-420px) scale(1.4); }
+.cloud-b { top: 168px; animation-delay: -31s; transform: translateX(-460px) scale(.95); }
+.cloud-c { top: 270px; animation-delay: -17s; transform: translateX(-380px) scale(.72); }
+.cloud-d { top: 90px; animation-delay: -19s; transform: translateX(-260px) scale(.82); }
+.cloud-e { top: 235px; animation-delay: -4s; transform: translateX(-260px) scale(1.12); }
+.cloud-f { top: -24px; animation-delay: -11s; transform: translateX(-360px) scale(1.18); }
+.cloud-g { top: 315px; animation-delay: -22s; transform: translateX(-360px) scale(.88); }
+@keyframes slm-fly-cloud { to { translate: calc(100vw + 680px) 0; } }
+
+.slm-flight {
+  position: absolute;
+  z-index: 12;
+  right: 9%;
+  top: 12%;
+  width: 180px;
+  height: 42px;
+  opacity: .72;
+  transform: rotate(-8deg);
+  animation: slm-flight-drift 9s ease-in-out infinite alternate;
+}
+.slm-plane {
+  position: absolute;
+  right: 0;
+  top: 0;
+  color: rgba(231,247,255,.86);
+  font-size: 25px;
+  text-shadow: 0 0 13px rgba(148,221,255,.7);
+}
+.slm-contrail {
+  position: absolute;
+  right: 24px;
+  top: 20px;
+  width: 150px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(218,241,251,.12) 20%, rgba(235,248,255,.65));
+  filter: blur(.6px);
+}
+@keyframes slm-flight-drift { to { transform: translate(-14px, 8px) rotate(-6deg); opacity: .9; } }
+
+/* 창가에서 내려다보는 듯한 가장자리와 우하단 날개 */
+.slm-cabin-glass {
+  position: absolute;
+  z-index: 24;
+  inset: -7% -4%;
+  border-radius: 46% 46% 38% 38% / 18% 18% 24% 24%;
+  box-shadow:
+    inset 0 0 0 18px rgba(2,8,15,.16),
+    inset 0 0 90px 30px rgba(0,4,9,.36),
+    inset 0 -34px 70px rgba(1,8,15,.45);
+}
+.slm-cabin-wing {
+  position: absolute;
+  z-index: 23;
+  right: -2%;
+  bottom: 5%;
+  width: 34%;
+  height: 16%;
+  clip-path: polygon(100% 30%, 100% 78%, 30% 72%, 0 96%, 18% 55%, 53% 46%);
+  background: linear-gradient(160deg, rgba(219,232,240,.62), rgba(75,101,118,.36) 46%, rgba(15,31,44,.58));
+  border-top: 1px solid rgba(237,248,255,.5);
+  filter: drop-shadow(-16px 18px 18px rgba(0,5,10,.35));
+  opacity: .5;
+  transform: rotate(-4deg);
+}
+
+/* 국토를 창밖 중심부로 조금 내려 두어 상공 여백을 확보 */
+.slm-stage { padding-top: clamp(110px, 19vw, 205px); }
+.slm-globe { transform: perspective(1100px) rotateX(3deg) rotateZ(-1.4deg) scale(.98); transform-origin: 50% 58%; }
+.slm-map { filter: drop-shadow(0 24px 28px rgba(0,8,14,.38)); }
+
+/* 주요 도시를 잇는 항공뷰 야간 축 */
+.slm-map:after { content: none; }
+.slm-place { opacity: .78; }
+.slm-lights circle { filter: drop-shadow(0 0 2px #96fff3); }
+.city-3 .slm-lights circle,
+.city-4 .slm-lights circle { filter: drop-shadow(0 0 4px #bafff6); }
+
+@media (max-width: 900px) {
+  .slm { min-height: 620px; }
+  .slm-cabin-wing { width: 42%; bottom: 10%; opacity: .36; }
+  .slm-flight { right: 5%; top: 8%; transform: scale(.78) rotate(-8deg); }
+  .slm-stage { padding-top: clamp(92px, 20vw, 150px); }
+}
+@media (max-width: 560px) {
+  .slm-cabin-wing { display: none; }
+  .slm-cloud-front { opacity: .65; }
+  .slm-flight { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .slm-cloud, .slm-flight { animation: none !important; }
+}

@@ -499,9 +499,25 @@ export default function SosLandmarkMap({ data, studentName, onSelect }: Props) {
       className={`slm weather-${weather} city-${data.cityLevel} ${reveal ? "is-lit" : ""}`}
     >
       <div className="slm-sky" aria-hidden="true">
-        <span className="slm-cloud cloud-a" />
-        <span className="slm-cloud cloud-b" />
-        <span className="slm-cloud cloud-c" />
+        <div className="slm-cloud-layer slm-cloud-layer-back">
+          <span className="slm-cloud slm-cloud-soft cloud-a" />
+          <span className="slm-cloud slm-cloud-soft cloud-b" />
+          <span className="slm-cloud slm-cloud-soft cloud-c" />
+        </div>
+        <div className="slm-cloud-layer slm-cloud-layer-mid">
+          <span className="slm-cloud slm-cloud-puff cloud-d" />
+          <span className="slm-cloud slm-cloud-puff cloud-e" />
+        </div>
+        <div className="slm-flight" role="presentation">
+          <span className="slm-plane">✈</span>
+          <span className="slm-contrail" />
+        </div>
+        <div className="slm-cloud-layer slm-cloud-layer-front">
+          <span className="slm-cloud slm-cloud-front cloud-f" />
+          <span className="slm-cloud slm-cloud-front cloud-g" />
+        </div>
+        <span className="slm-cabin-wing" />
+        <span className="slm-cabin-glass" />
       </div>
 
       <header className="slm-head">
