@@ -59,6 +59,7 @@ type Portal = {
     passwordChanged: boolean;
   };
   exams: Exam[];
+  posters: { id: string; title: string; image_url: string; link_url: string; sort_order: number }[];
 };
 
 function StudentResultModal({
@@ -486,7 +487,7 @@ export default function StudentHome() {
           <span /><span /><span />
         </button>
         <div className="mp-site-brand">
-          <img src="/mathpooh-mark.svg" alt="매쓰푸" />
+          <img src="/mathpooh-logo.png" alt="매쓰푸" />
           <strong>매쓰푸</strong>
         </div>
         <div className="mp-user-mark">{portal.student.name.slice(0, 1)}</div>
@@ -494,7 +495,7 @@ export default function StudentHome() {
       {menuOpen ? <div className="mp-menu-backdrop" onClick={() => setMenuOpen(false)}>
         <aside className="mp-side-menu" onClick={(event) => event.stopPropagation()}>
           <div className="mp-side-menu-head">
-            <div className="mp-site-brand"><img src="/mathpooh-mark.svg" alt="" /><strong>매쓰푸</strong></div>
+            <div className="mp-site-brand"><img src="/mathpooh-logo.png" alt="" /><strong>매쓰푸</strong></div>
             <button onClick={() => setMenuOpen(false)} aria-label="메뉴 닫기">×</button>
           </div>
           <nav>
@@ -537,6 +538,13 @@ export default function StudentHome() {
           <small>배정 완료</small>
         </b>
       </section>
+      {portal.posters?.length ? <section className="student-poster-section">
+        <div className="student-list-heading"><div><i /><div><small>MATHPOOH NEWS</small><h2>매쓰푸 소식</h2></div></div><span>{portal.posters.length}개 안내</span></div>
+        <div className="student-poster-grid">{portal.posters.map((poster) => {
+          const content = <><img src={poster.image_url} alt={poster.title} /><div><strong>{poster.title}</strong><span>자세히 보기　→</span></div></>;
+          return poster.link_url ? <a key={poster.id} href={poster.link_url} target="_blank" rel="noreferrer">{content}</a> : <article key={poster.id}>{content}</article>;
+        })}</div>
+      </section> : null}
       <section className="student-exam-list">
         <div className="student-list-heading"><div><i /> <div><small>MATHEMATICS PROGRAM</small><h2>실전모의고사 신청·응시</h2></div></div><span>{portal.exams.length}개 시험</span></div>
         {portal.exams.map((exam) => (
@@ -630,7 +638,7 @@ export default function StudentHome() {
         />
       ) : null}
       <footer className="mp-site-footer">
-        <div><div className="mp-site-brand"><img src="/mathpooh-mark.svg" alt="" /><strong>MathPooh</strong></div><b>© 2026 매쓰푸</b></div>
+        <div><div className="mp-site-brand"><img src="/mathpooh-logo.png" alt="" /><strong>MathPooh</strong></div><b>© 2026 매쓰푸</b></div>
         <p>매쓰푸 수학연구소 · 학생용 SOS 학습 시스템</p>
         <span>이용약관　 개인정보처리방침</span>
       </footer>

@@ -134,6 +134,19 @@ export async function GET() {
       };
     }),
   );
+  const { data: posterRows } = await supabase
+    .from("site_posters")
+    .select("id,title,image_path,link_url,sort_order")
+    .eq("is_published", true)
+    .order("sort_order")
+    .order("created_at", { ascending: false });
+  const posters = await Promise.all((posterRows ?? []).map(async (poster) => ({
+    id: poster.id,
+    title: poster.title,
+    link_url: poster.link_url,
+    sort_order: poster.sort_order,
+    image_url: (await supabase.storage.from("site-posters").createSignedUrl(poster.image_path, 60 * 60 * 3)).data?.signedUrl ?? "",
+  })));
   return NextResponse.json({
     student: {
       id: student.id,
@@ -143,6 +156,7 @@ export async function GET() {
       passwordChanged: student.password_changed,
     },
     exams: items,
+    posters,
   });
 }
 

@@ -102,11 +102,11 @@ export default function LoginPage() {
   return (
     <main className="mp-login-page">
       <header className="mp-login-header">
-        <div><img src="/mathpooh-mark.svg" alt="" /><strong>매쓰푸</strong></div>
+        <div><img src="/mathpooh-logo.png" alt="" /><strong>매쓰푸</strong></div>
       </header>
       <section className="mp-login-wrap">
         <form onSubmit={submit} className="mp-login-card">
-          <img className="mp-card-logo" src="/mathpooh-mark.svg" alt="매쓰푸" />
+          <img className="mp-card-logo" src="/mathpooh-logo.png" alt="매쓰푸" />
 
           <div className="mp-login-heading">
             <h2>{loginMode === "admin" ? "관리자 로그인" : "로그인"}</h2>

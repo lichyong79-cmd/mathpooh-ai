@@ -23,6 +23,7 @@ type AdminMenu =
   | "bank"
   | "recommend"
   | "results"
+  | "posters"
   | "settings";
 type StudentStatus = "정상" | "휴원" | "퇴원";
 type SosStatus = "분석완료" | "훈련중" | "진단대기" | "미응시";
@@ -92,6 +93,7 @@ const menus: MenuItem[] = [
   { id: "bank", label: "문제은행", icon: "▣" },
   { id: "recommend", label: "SOS 추천", icon: "◎", badge: 7 },
   { id: "results", label: "성적 관리", icon: "↗" },
+  { id: "posters", label: "포스터 관리", icon: "▧" },
   { id: "settings", label: "환경 설정", icon: "⚙" },
 ];
 
@@ -342,7 +344,7 @@ export default function Home() {
     <main className={`admin-app ${collapsed ? "collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="brand-row">
-          <div className="brand-symbol"><img src="/mathpooh-mark.svg" alt="매쓰푸" /></div>
+          <div className="brand-symbol"><img src="/mathpooh-logo.png" alt="매쓰푸" /></div>
           <div className="brand-copy">
             <strong>MATSPU SOS</strong>
             <span>Score Optimization System</span>
@@ -356,7 +358,7 @@ export default function Home() {
           </button>
         </div>
         <div className="workspace-card">
-          <div className="workspace-logo"><img src="/mathpooh-mark.svg" alt="" /></div>
+          <div className="workspace-logo"><img src="/mathpooh-logo.png" alt="" /></div>
           <div>
             <strong>매쓰푸</strong>
             <span>관리자 워크스페이스</span>
@@ -451,6 +453,8 @@ export default function Home() {
             />
           ) : active === "results" ? (
             <ResultsPage students={students} />
+          ) : active === "posters" ? (
+            <PostersPage />
           ) : active === "recommend" ? (
             <RecommendPage />
           ) : active === "problems" ? (
@@ -473,6 +477,91 @@ export default function Home() {
       </section>
     </main>
   );
+}
+
+type SitePoster = {
+  id: string;
+  title: string;
+  image_url: string;
+  link_url: string;
+  is_published: boolean;
+  sort_order: number;
+};
+
+function PostersPage() {
+  const [posters, setPosters] = useState<SitePoster[]>([]);
+  const [title, setTitle] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [image, setImage] = useState<File | null>(null);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState("");
+
+  const load = useCallback(async () => {
+    const response = await fetch("/api/admin/posters", { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message || "포스터를 불러오지 못했습니다.");
+    setPosters(result.posters ?? []);
+  }, []);
+
+  useEffect(() => { void load().catch((error) => setMessage(error.message)); }, [load]);
+
+  const upload = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!image || !title.trim()) return setMessage("포스터 제목과 이미지를 넣어 주세요.");
+    setBusy("포스터 업로드 중"); setMessage("");
+    try {
+      const form = new FormData();
+      form.set("title", title.trim()); form.set("linkUrl", linkUrl.trim()); form.set("image", image); form.set("isPublished", "true"); form.set("sortOrder", "0");
+      const response = await fetch("/api/admin/posters", { method: "POST", body: form });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "등록하지 못했습니다.");
+      setTitle(""); setLinkUrl(""); setImage(null); setMessage("학생 페이지에 포스터를 등록했습니다."); await load();
+      const input = document.querySelector<HTMLInputElement>("#poster-image-input"); if (input) input.value = "";
+    } catch (error) { setMessage(error instanceof Error ? error.message : "등록하지 못했습니다."); }
+    finally { setBusy(""); }
+  };
+
+  const update = async (poster: SitePoster, changes: Partial<SitePoster>) => {
+    setBusy("포스터 저장 중"); setMessage("");
+    try {
+      const next = { ...poster, ...changes };
+      const response = await fetch("/api/admin/posters", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: next.id, title: next.title, linkUrl: next.link_url, isPublished: next.is_published, sortOrder: next.sort_order }) });
+      const result = await response.json(); if (!response.ok) throw new Error(result.message || "저장하지 못했습니다.");
+      await load();
+    } catch (error) { setMessage(error instanceof Error ? error.message : "저장하지 못했습니다."); }
+    finally { setBusy(""); }
+  };
+
+  const remove = async (poster: SitePoster) => {
+    if (!window.confirm(`'${poster.title}' 포스터를 삭제할까요?\n학생 페이지에서도 즉시 사라집니다.`)) return;
+    setBusy("포스터 삭제 중"); setMessage("");
+    try { const response = await fetch(`/api/admin/posters?id=${encodeURIComponent(poster.id)}`, { method: "DELETE" }); const result = await response.json(); if (!response.ok) throw new Error(result.message || "삭제하지 못했습니다."); await load(); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "삭제하지 못했습니다."); }
+    finally { setBusy(""); }
+  };
+
+  return <section className="poster-admin-page">
+    {busy ? <div className="admin-busy"><div><b>{busy}</b><span>잠시 기다려 주세요.</span></div></div> : null}
+    <div className="page-title-row"><div><h2>포스터 관리</h2><p>학생 홈에 노출할 매쓰푸 프로그램·시험 안내 포스터를 관리합니다.</p></div></div>
+    <form className="panel poster-upload-panel" onSubmit={upload}>
+      <div className="poster-upload-copy"><small>MATHPOOH CONTENT</small><h3>새 포스터 등록</h3><p>가로형·세로형 이미지를 모두 사용할 수 있습니다. 최대 10MB</p></div>
+      <label><span>포스터 제목 *</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="예: SOS 2회 실전모의고사 안내" /></label>
+      <label><span>연결 주소</span><input value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="선택사항" /></label>
+      <label className="poster-file"><span>포스터 이미지 *</span><input id="poster-image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => setImage(event.target.files?.[0] ?? null)} /><b>{image?.name || "이미지 선택"}</b></label>
+      <button className="primary-button" disabled={Boolean(busy)}>학생 페이지에 등록</button>
+    </form>
+    {message ? <div className="poster-message">{message}</div> : null}
+    <div className="poster-admin-grid">
+      {posters.map((poster) => <article className={`poster-admin-card ${poster.is_published ? "published" : "hidden"}`} key={poster.id}>
+        <div className="poster-preview"><img src={poster.image_url} alt={poster.title} /></div>
+        <div className="poster-card-body"><div><span className="poster-state">{poster.is_published ? "학생 공개 중" : "숨김"}</span><strong>{poster.title}</strong><small>{poster.link_url || "연결 주소 없음"}</small></div>
+          <label>순서 <input type="number" value={poster.sort_order} onChange={(event) => setPosters((current) => current.map((item) => item.id === poster.id ? { ...item, sort_order: Number(event.target.value) } : item))} onBlur={(event) => void update(poster, { sort_order: Number(event.target.value) || 0 })} /></label>
+          <div className="poster-card-actions"><button onClick={() => void update(poster, { is_published: !poster.is_published })}>{poster.is_published ? "학생에게 숨기기" : "학생에게 공개"}</button><button className="danger" onClick={() => void remove(poster)}>삭제</button></div>
+        </div>
+      </article>)}
+      {!posters.length ? <div className="poster-empty"><b>등록된 포스터가 없습니다.</b><span>위에서 이미지를 등록하면 학생 홈에 바로 표시됩니다.</span></div> : null}
+    </div>
+  </section>;
 }
 
 function StudentsPage({
@@ -2838,7 +2927,7 @@ function ExamsPage({
 
   const printCover = () => {
     printHtmlSafely(
-      `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(form.title)}</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{font-family:Arial,'Noto Sans KR',sans-serif;margin:0;color:#244f2d}.page{width:210mm;min-height:297mm;padding:22mm}.brand{text-align:center;font-weight:900;font-size:34px}.sub{text-align:center;font-size:14px;color:#667085}.line{height:3px;background:#2d6536;margin:24px 0}.title{text-align:center;font-size:28px;font-weight:900;margin:24px 0 34px}.info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cfd5e6}.info div{padding:14px 16px;border-right:1px solid #cfd5e6;border-bottom:1px solid #cfd5e6}.value{font-size:18px;font-weight:800;margin-top:5px}.student{margin-top:34px;border:1px solid #cfd5e6;padding:22px;line-height:3;font-size:18px}.notice{margin-top:34px;background:#f5f7fb;padding:20px 24px;line-height:1.9}</style></head><body><section class="page"><div class="brand">SOS</div><div class="sub">Score Optimization System · MATSPU</div><div class="line"></div><div class="title">${escapeHtml(form.title)}</div><div class="info"><div>대상<div class="value">${escapeHtml(form.grade)}</div></div><div>과목<div class="value">${escapeHtml(form.subject)}</div></div><div>시험일<div class="value">${escapeHtml(form.examDate)}</div></div><div>시험시간<div class="value">${form.timeLimit}분</div></div><div>문항수<div class="value">${form.questionCount}문항</div></div><div>총점<div class="value">${form.totalScore}점</div></div></div><div class="student">학생명 _______________________________<br>학교 _________________________________<br>반 ____________ 번호 ____________</div><div class="notice"><strong>응시 안내</strong><br>1. 감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br>2. 제한시간을 지키고 답안을 빠짐없이 작성하세요.<br>3. 시험 종료 후 시험지와 답안을 모두 제출하세요.</div></section></body></html>`,
+      `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(form.title)}</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{font-family:Arial,'Noto Sans KR',sans-serif;margin:0;color:#285c31}.page{width:210mm;min-height:297mm;padding:22mm}.brand{text-align:center;font-weight:900;font-size:34px}.sub{text-align:center;font-size:14px;color:#667085}.line{height:3px;background:#2f6937;margin:24px 0}.title{text-align:center;font-size:28px;font-weight:900;margin:24px 0 34px}.info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cfd5e6}.info div{padding:14px 16px;border-right:1px solid #cfd5e6;border-bottom:1px solid #cfd5e6}.value{font-size:18px;font-weight:800;margin-top:5px}.student{margin-top:34px;border:1px solid #cfd5e6;padding:22px;line-height:3;font-size:18px}.notice{margin-top:34px;background:#f5f7fb;padding:20px 24px;line-height:1.9}</style></head><body><section class="page"><div class="brand">SOS</div><div class="sub">Score Optimization System · MATSPU</div><div class="line"></div><div class="title">${escapeHtml(form.title)}</div><div class="info"><div>대상<div class="value">${escapeHtml(form.grade)}</div></div><div>과목<div class="value">${escapeHtml(form.subject)}</div></div><div>시험일<div class="value">${escapeHtml(form.examDate)}</div></div><div>시험시간<div class="value">${form.timeLimit}분</div></div><div>문항수<div class="value">${form.questionCount}문항</div></div><div>총점<div class="value">${form.totalScore}점</div></div></div><div class="student">학생명 _______________________________<br>학교 _________________________________<br>반 ____________ 번호 ____________</div><div class="notice"><strong>응시 안내</strong><br>1. 감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br>2. 제한시간을 지키고 답안을 빠짐없이 작성하세요.<br>3. 시험 종료 후 시험지와 답안을 모두 제출하세요.</div></section></body></html>`,
       `${form.examCode} 표지`,
     );
   };

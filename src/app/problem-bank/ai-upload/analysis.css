@@ -219,7 +219,7 @@
 .progress-wrap span {
   display: block;
   height: 100%;
-  background: #2d6536;
+  background: #2f6937;
 }
 
 .pipeline-bar {
@@ -246,8 +246,8 @@
 }
 
 .mode-buttons button.active {
-  border-color: #2d6536;
-  background: #2d6536;
+  border-color: #2f6937;
+  background: #2f6937;
   color: #fff;
 }
 
@@ -326,8 +326,8 @@
 }
 
 .number-grid button.active {
-  border-color: #2d6536;
-  background: #2d6536;
+  border-color: #2f6937;
+  background: #2f6937;
   color: #fff;
 }
 
@@ -342,7 +342,7 @@
 .legend span { display: flex; align-items: center; gap: 7px; }
 .legend i { width: 10px; height: 10px; border-radius: 50%; }
 .done-dot { background: #62b391; }
-.active-dot { background: #2d6536; }
+.active-dot { background: #2f6937; }
 
 .pdf-panel { overflow: hidden; }
 
@@ -368,7 +368,7 @@
 
 .pdf-toolbar span {
   margin-left: auto;
-  color: #2d6536;
+  color: #2f6937;
   font-weight: 900;
 }
 
@@ -420,7 +420,7 @@
 }
 
 .crop-box.draft {
-  border-color: #2d6536;
+  border-color: #2f6937;
   border-style: dashed;
   background: rgba(83, 105, 223, .08);
 }
@@ -540,7 +540,7 @@
   height: 44px;
   border: 0;
   border-radius: 9px;
-  background: #2d6536;
+  background: #2f6937;
   color: #fff;
   font-weight: 900;
 }
