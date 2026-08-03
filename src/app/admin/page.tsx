@@ -342,7 +342,7 @@ export default function Home() {
     <main className={`admin-app ${collapsed ? "collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="brand-row">
-          <div className="brand-symbol">M</div>
+          <div className="brand-symbol"><img src="/mathpooh-mark.svg" alt="매쓰푸" /></div>
           <div className="brand-copy">
             <strong>MATSPU SOS</strong>
             <span>Score Optimization System</span>
@@ -356,7 +356,7 @@ export default function Home() {
           </button>
         </div>
         <div className="workspace-card">
-          <div className="workspace-logo">M</div>
+          <div className="workspace-logo"><img src="/mathpooh-mark.svg" alt="" /></div>
           <div>
             <strong>매쓰푸</strong>
             <span>관리자 워크스페이스</span>
@@ -2838,7 +2838,7 @@ function ExamsPage({
 
   const printCover = () => {
     printHtmlSafely(
-      `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(form.title)}</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{font-family:Arial,'Noto Sans KR',sans-serif;margin:0;color:#1d2744}.page{width:210mm;min-height:297mm;padding:22mm}.brand{text-align:center;font-weight:900;font-size:34px}.sub{text-align:center;font-size:14px;color:#667085}.line{height:3px;background:#5268e8;margin:24px 0}.title{text-align:center;font-size:28px;font-weight:900;margin:24px 0 34px}.info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cfd5e6}.info div{padding:14px 16px;border-right:1px solid #cfd5e6;border-bottom:1px solid #cfd5e6}.value{font-size:18px;font-weight:800;margin-top:5px}.student{margin-top:34px;border:1px solid #cfd5e6;padding:22px;line-height:3;font-size:18px}.notice{margin-top:34px;background:#f5f7fb;padding:20px 24px;line-height:1.9}</style></head><body><section class="page"><div class="brand">SOS</div><div class="sub">Score Optimization System · MATSPU</div><div class="line"></div><div class="title">${escapeHtml(form.title)}</div><div class="info"><div>대상<div class="value">${escapeHtml(form.grade)}</div></div><div>과목<div class="value">${escapeHtml(form.subject)}</div></div><div>시험일<div class="value">${escapeHtml(form.examDate)}</div></div><div>시험시간<div class="value">${form.timeLimit}분</div></div><div>문항수<div class="value">${form.questionCount}문항</div></div><div>총점<div class="value">${form.totalScore}점</div></div></div><div class="student">학생명 _______________________________<br>학교 _________________________________<br>반 ____________ 번호 ____________</div><div class="notice"><strong>응시 안내</strong><br>1. 감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br>2. 제한시간을 지키고 답안을 빠짐없이 작성하세요.<br>3. 시험 종료 후 시험지와 답안을 모두 제출하세요.</div></section></body></html>`,
+      `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(form.title)}</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{font-family:Arial,'Noto Sans KR',sans-serif;margin:0;color:#244f2d}.page{width:210mm;min-height:297mm;padding:22mm}.brand{text-align:center;font-weight:900;font-size:34px}.sub{text-align:center;font-size:14px;color:#667085}.line{height:3px;background:#2d6536;margin:24px 0}.title{text-align:center;font-size:28px;font-weight:900;margin:24px 0 34px}.info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cfd5e6}.info div{padding:14px 16px;border-right:1px solid #cfd5e6;border-bottom:1px solid #cfd5e6}.value{font-size:18px;font-weight:800;margin-top:5px}.student{margin-top:34px;border:1px solid #cfd5e6;padding:22px;line-height:3;font-size:18px}.notice{margin-top:34px;background:#f5f7fb;padding:20px 24px;line-height:1.9}</style></head><body><section class="page"><div class="brand">SOS</div><div class="sub">Score Optimization System · MATSPU</div><div class="line"></div><div class="title">${escapeHtml(form.title)}</div><div class="info"><div>대상<div class="value">${escapeHtml(form.grade)}</div></div><div>과목<div class="value">${escapeHtml(form.subject)}</div></div><div>시험일<div class="value">${escapeHtml(form.examDate)}</div></div><div>시험시간<div class="value">${form.timeLimit}분</div></div><div>문항수<div class="value">${form.questionCount}문항</div></div><div>총점<div class="value">${form.totalScore}점</div></div></div><div class="student">학생명 _______________________________<br>학교 _________________________________<br>반 ____________ 번호 ____________</div><div class="notice"><strong>응시 안내</strong><br>1. 감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br>2. 제한시간을 지키고 답안을 빠짐없이 작성하세요.<br>3. 시험 종료 후 시험지와 답안을 모두 제출하세요.</div></section></body></html>`,
       `${form.examCode} 표지`,
     );
   };

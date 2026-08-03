@@ -219,7 +219,7 @@
 .progress-wrap span {
   display: block;
   height: 100%;
-  background: #5369df;
+  background: #2d6536;
 }
 
 .pipeline-bar {
@@ -246,8 +246,8 @@
 }
 
 .mode-buttons button.active {
-  border-color: #5369df;
-  background: #5369df;
+  border-color: #2d6536;
+  background: #2d6536;
   color: #fff;
 }
 
@@ -259,8 +259,8 @@
 }
 
 .queue-button {
-  border-color: #283247;
-  background: #283247;
+  border-color: #365d3c;
+  background: #365d3c;
   color: #fff;
 }
 
@@ -326,8 +326,8 @@
 }
 
 .number-grid button.active {
-  border-color: #5369df;
-  background: #5369df;
+  border-color: #2d6536;
+  background: #2d6536;
   color: #fff;
 }
 
@@ -342,7 +342,7 @@
 .legend span { display: flex; align-items: center; gap: 7px; }
 .legend i { width: 10px; height: 10px; border-radius: 50%; }
 .done-dot { background: #62b391; }
-.active-dot { background: #5369df; }
+.active-dot { background: #2d6536; }
 
 .pdf-panel { overflow: hidden; }
 
@@ -368,7 +368,7 @@
 
 .pdf-toolbar span {
   margin-left: auto;
-  color: #5369df;
+  color: #2d6536;
   font-weight: 900;
 }
 
@@ -420,7 +420,7 @@
 }
 
 .crop-box.draft {
-  border-color: #5369df;
+  border-color: #2d6536;
   border-style: dashed;
   background: rgba(83, 105, 223, .08);
 }
@@ -540,7 +540,7 @@
   height: 44px;
   border: 0;
   border-radius: 9px;
-  background: #5369df;
+  background: #2d6536;
   color: #fff;
   font-weight: 900;
 }

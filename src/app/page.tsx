@@ -210,6 +210,7 @@ export default function StudentHome() {
   const [saveState, setSaveState] = useState("저장됨");
   const [error, setError] = useState("");
   const [resultExam, setResultExam] = useState<Exam | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const load = useCallback(async () => {
     const response = await fetch("/api/student/portal", { cache: "no-store" });
     if (response.status === 403) return window.location.replace("/admin");
@@ -480,12 +481,36 @@ export default function StudentHome() {
           </div>
         </div>
       ) : null}
+      <header className="mp-site-header">
+        <button className="mp-menu-button" onClick={() => setMenuOpen(true)} aria-label="메뉴 열기">
+          <span /><span /><span />
+        </button>
+        <div className="mp-site-brand">
+          <img src="/mathpooh-mark.svg" alt="매쓰푸" />
+          <strong>매쓰푸</strong>
+        </div>
+        <div className="mp-user-mark">{portal.student.name.slice(0, 1)}</div>
+      </header>
+      {menuOpen ? <div className="mp-menu-backdrop" onClick={() => setMenuOpen(false)}>
+        <aside className="mp-side-menu" onClick={(event) => event.stopPropagation()}>
+          <div className="mp-side-menu-head">
+            <div className="mp-site-brand"><img src="/mathpooh-mark.svg" alt="" /><strong>매쓰푸</strong></div>
+            <button onClick={() => setMenuOpen(false)} aria-label="메뉴 닫기">×</button>
+          </div>
+          <nav>
+            <button className="active" onClick={() => setMenuOpen(false)}>홈</button>
+            <button onClick={() => { setMenuOpen(false); document.querySelector(".student-exam-list")?.scrollIntoView({ behavior: "smooth" }); }}>실전모의고사</button>
+            <button onClick={() => { setMenuOpen(false); window.location.href = "/password"; }}>비밀번호 변경</button>
+          </nav>
+          <button className="mp-menu-logout" onClick={() => void signOut()}>로그아웃</button>
+        </aside>
+      </div> : null}
       <header className="student-hero">
         <div>
-          <small>MATSPU SOS</small>
+          <small>환영합니다</small>
           <h1>{portal.student.name} 학생</h1>
           <p>
-            {portal.student.school} · {portal.student.grade}
+            매쓰푸에서 수학 실력을 키워보세요. · {portal.student.school} {portal.student.grade}
           </p>
         </div>
         <div>
@@ -513,7 +538,7 @@ export default function StudentHome() {
         </b>
       </section>
       <section className="student-exam-list">
-        <h2>실전모의고사 신청·응시</h2>
+        <div className="student-list-heading"><div><i /> <div><small>MATHEMATICS PROGRAM</small><h2>실전모의고사 신청·응시</h2></div></div><span>{portal.exams.length}개 시험</span></div>
         {portal.exams.map((exam) => (
           <article key={exam.id}>
             <div className="exam-date">
@@ -604,6 +629,11 @@ export default function StudentHome() {
           onClose={() => setResultExam(null)}
         />
       ) : null}
+      <footer className="mp-site-footer">
+        <div><div className="mp-site-brand"><img src="/mathpooh-mark.svg" alt="" /><strong>MathPooh</strong></div><b>© 2026 매쓰푸</b></div>
+        <p>매쓰푸 수학연구소 · 학생용 SOS 학습 시스템</p>
+        <span>이용약관　 개인정보처리방침</span>
+      </footer>
     </main>
   );
 }
