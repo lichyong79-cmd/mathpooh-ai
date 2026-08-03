@@ -4215,7 +4215,7 @@ function PdfRegionPreview({
         source.height = Math.ceil(viewport.height);
         const sourceContext = source.getContext("2d", { alpha: false });
         if (!sourceContext) throw new Error("문항 이미지를 만들 수 없습니다.");
-        await page.render({ canvasContext: sourceContext, viewport }).promise;
+        await page.render({ canvas: source, canvasContext: sourceContext, viewport }).promise;
 
         const padding = 18;
         const sx = Math.max(0, Math.floor(x * source.width) - padding);
