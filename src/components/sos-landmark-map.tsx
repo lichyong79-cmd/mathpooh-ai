@@ -389,14 +389,9 @@ function Tower({
       aria-label={`${config.subject} ${config.place}, 백분위 ${state.best}, ${state.floors}층 완성. 자세히 보기`}
     >
       <span className="slm-tower-body">
-        <TowerArt kind={config.kind} />
-        <span className="slm-tower-dim" />
-        {completion < 100 ? (
-          <span className="slm-tower-works">
-            <i className="slm-mesh" />
-            <i className="slm-crane" />
-          </span>
-        ) : null}
+        <span className="slm-tower-reveal">
+          <TowerArt kind={config.kind} />
+        </span>
       </span>
       <FloorGauge floors={reveal ? state.floors : 0} />
       <span className="slm-pin" />
