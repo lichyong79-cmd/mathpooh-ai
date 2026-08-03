@@ -73,7 +73,7 @@ type Portal = {
   landmark?: LandmarkSummary;
   posters: { id: string; title: string; image_url: string; link_url: string; sort_order: number }[];
 };
-type StudentSection = "apply" | "exams" | "strategy" | "analysis";
+type StudentSection = "home" | "apply" | "exams" | "strategy" | "analysis";
 
 function StudentResultModal({
   exam,
@@ -226,7 +226,8 @@ export default function StudentHome() {
   const [resultExam, setResultExam] = useState<Exam | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedTower, setSelectedTower] = useState<LandmarkSubject | null>(null);
-  const [activeSection, setActiveSection] = useState<StudentSection>("apply");
+  const [activeSection, setActiveSection] = useState<StudentSection>("home");
+  const [profileOpen, setProfileOpen] = useState(false);
   const load = useCallback(async () => {
     const response = await fetch("/api/student/portal", { cache: "no-store" });
     if (response.status === 403) return window.location.replace("/admin");
@@ -240,7 +241,7 @@ export default function StudentHome() {
   }, [load]);
   useEffect(() => {
     const saved = window.localStorage.getItem("matspu-student-section") as StudentSection | null;
-    if (saved && ["apply", "exams", "strategy", "analysis"].includes(saved)) setActiveSection(saved);
+    if (saved && ["home", "apply", "exams", "strategy", "analysis"].includes(saved)) setActiveSection(saved);
   }, []);
   const moveSection = (section: StudentSection) => {
     setActiveSection(section);
@@ -385,6 +386,73 @@ export default function StudentHome() {
     () => portal?.landmark ?? summarizeExamsForLandmark(portal?.exams ?? []),
     [portal],
   );
+  const todayTask = useMemo(() => {
+    if (!portal) return null;
+    const seoulDate = (value: Date | string) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Seoul",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(value));
+    const today = seoulDate(new Date());
+    const todaysExam = portal.exams.find(
+      (exam) =>
+        seoulDate(exam.exam_date) === today &&
+        exam.application_status === "assigned" &&
+        exam.attempt?.status !== "submitted",
+    );
+    if (todaysExam) {
+      return {
+        kind: "exam",
+        eyebrow: "TODAY'S MISSION",
+        title: "오늘은 실전모의고사 보는 날이에요.",
+        description: `${todaysExam.title} 응시 가능 시간을 확인하고 시험을 완료하세요.`,
+        action: "실전모의고사 보기",
+        section: "exams" as StudentSection,
+      };
+    }
+    const submitted = portal.exams
+      .filter((exam) => exam.attempt?.status === "submitted")
+      .sort((a, b) =>
+        String(b.attempt?.submitted_at ?? b.exam_date).localeCompare(
+          String(a.attempt?.submitted_at ?? a.exam_date),
+        ),
+      );
+    if (!submitted.length) {
+      return {
+        kind: "diagnosis",
+        eyebrow: "NEXT STEP",
+        title: "SOS 진단을 받으시기 바랍니다.",
+        description: "진단을 통해 현재 부족한 개념과 문제 유형을 먼저 확인합니다.",
+        action: "SOS 공략 확인",
+        section: "strategy" as StudentSection,
+      };
+    }
+    const latest = submitted[0];
+    const submittedDate = new Date(latest.attempt?.submitted_at ?? latest.exam_date);
+    const todayDate = new Date(`${today}T00:00:00+09:00`);
+    const latestDate = new Date(`${seoulDate(submittedDate)}T00:00:00+09:00`);
+    const daysSince = Math.max(0, Math.floor((todayDate.getTime() - latestDate.getTime()) / 86400000));
+    if (daysSince <= 2) {
+      return {
+        kind: "diagnosis",
+        eyebrow: "RESULT CHECK",
+        title: "SOS 진단을 받으시기 바랍니다.",
+        description: `${latest.title} 결과를 바탕으로 부족한 영역을 진단할 차례입니다.`,
+        action: "진단 확인",
+        section: "strategy" as StudentSection,
+      };
+    }
+    return {
+      kind: "training",
+      eyebrow: "TRAINING DAY",
+      title: "SOS 훈련을 하시기 바랍니다.",
+      description: "진단 결과에 맞춰 배정된 훈련을 진행하고 취약 유형을 보완하세요.",
+      action: "훈련 시작",
+      section: "strategy" as StudentSection,
+    };
+  }, [portal]);
   const changeAnswer = (no: number, value: string) => {
     setAnswers((prev) => ({ ...prev, [no]: value }));
     setSaveState("저장 대기");
@@ -520,12 +588,27 @@ export default function StudentHome() {
           <strong>MATHPOOH</strong>
         </div>
         <nav className="mp-main-nav" aria-label="학생 메뉴">
-          <button className={activeSection === "apply" ? "active" : ""} onClick={() => moveSection("apply")}>SOS 신청하기</button>
+          <button className={activeSection === "home" ? "active" : ""} onClick={() => moveSection("home")}>나의SOS</button>
           <button className={activeSection === "exams" ? "active" : ""} onClick={() => moveSection("exams")}>실전모의고사</button>
           <button className={activeSection === "strategy" ? "active" : ""} onClick={() => moveSection("strategy")}>SOS 공략</button>
           <button className={activeSection === "analysis" ? "active" : ""} onClick={() => moveSection("analysis")}>학습분석</button>
         </nav>
-        <div className="mp-user-mark">{portal.student.name.slice(0, 1)}</div>
+        <div className="mp-header-actions">
+          <button className="mp-apply-button" onClick={() => moveSection("apply")}>SOS 신청하기</button>
+          <div className="mp-profile-wrap">
+            <button className="mp-profile-button" onClick={() => setProfileOpen((value) => !value)} aria-expanded={profileOpen}>
+              <span className="mp-user-mark">{portal.student.name.slice(0, 1)}</span>
+              <strong>{portal.student.name}</strong>
+              <i>⌄</i>
+            </button>
+            {profileOpen ? (
+              <div className="mp-profile-menu">
+                <button onClick={() => { setProfileOpen(false); window.location.href = "/password"; }}>비밀번호 변경</button>
+                <button className="logout" onClick={() => void signOut()}>로그아웃</button>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </header>
       {menuOpen ? <div className="mp-menu-backdrop" onClick={() => setMenuOpen(false)}>
         <aside className="mp-side-menu" onClick={(event) => event.stopPropagation()}>
@@ -534,7 +617,7 @@ export default function StudentHome() {
             <button onClick={() => setMenuOpen(false)} aria-label="메뉴 닫기">×</button>
           </div>
           <nav>
-            <button className={activeSection === "apply" ? "active" : ""} onClick={() => moveSection("apply")}>SOS 신청하기</button>
+            <button className={activeSection === "home" ? "active" : ""} onClick={() => moveSection("home")}>나의SOS</button>
             <button className={activeSection === "exams" ? "active" : ""} onClick={() => moveSection("exams")}>실전모의고사</button>
             <button className={activeSection === "strategy" ? "active" : ""} onClick={() => moveSection("strategy")}>SOS 공략</button>
             <button className={activeSection === "analysis" ? "active" : ""} onClick={() => moveSection("analysis")}>학습분석</button>
@@ -543,11 +626,28 @@ export default function StudentHome() {
           <button className="mp-menu-logout" onClick={() => void signOut()}>로그아웃</button>
         </aside>
       </div> : null}
-      <SosLandmarkMap
-        data={landmark}
-        studentName={portal.student.name}
-        onSelect={setSelectedTower}
-      />
+      {activeSection === "home" ? (
+        <>
+          <SosLandmarkMap
+            data={landmark}
+            studentName={portal.student.name}
+            onSelect={setSelectedTower}
+          />
+          {todayTask ? (
+            <section className={`student-today-task task-${todayTask.kind}`}>
+              <div className="student-task-icon" aria-hidden="true">
+                {todayTask.kind === "exam" ? "01" : todayTask.kind === "diagnosis" ? "02" : "03"}
+              </div>
+              <div className="student-task-copy">
+                <small>{todayTask.eyebrow}</small>
+                <h2>{todayTask.title}</h2>
+                <p>{todayTask.description}</p>
+              </div>
+              <button onClick={() => moveSection(todayTask.section)}>{todayTask.action}</button>
+            </section>
+          ) : null}
+        </>
+      ) : null}
       {selectedTower ? (
         <div className="sos-tower-modal-backdrop" onMouseDown={() => setSelectedTower(null)}>
           <section className="sos-tower-modal" onMouseDown={(event) => event.stopPropagation()}>
@@ -581,7 +681,7 @@ export default function StudentHome() {
           </section>
         </div>
       ) : null}
-      <header className={`student-hero section-${activeSection}`}>
+      {activeSection !== "home" ? <header className={`student-hero section-${activeSection}`}>
         <div>
           <small>{activeSection === "apply" ? "SOS PROGRAM" : activeSection === "exams" ? "PRACTICE EXAM" : activeSection === "strategy" ? "SOS STRATEGY" : "LEARNING ANALYSIS"}</small>
           <h1>{activeSection === "apply" ? "SOS 신청하기" : activeSection === "exams" ? "실전모의고사" : activeSection === "strategy" ? "SOS 공략" : "학습분석"}</h1>
@@ -595,7 +695,7 @@ export default function StudentHome() {
           </button>
           <button onClick={() => void signOut()}>로그아웃</button>
         </div>
-      </header>
+      </header> : null}
       {activeSection === "exams" ? <section className="student-welcome">
         <div>
           <span>이번 주 목표</span>

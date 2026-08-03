@@ -62,3 +62,32 @@
 .landmark-real-rain{position:absolute;z-index:20;inset:0;width:100%;height:100%;pointer-events:none}.weather-rain .landmark-world{filter:saturate(.78) brightness(.76)}.weather-cloudy .landmark-world{filter:saturate(.9) brightness(.88)}.landmark-vignette{position:absolute;z-index:22;inset:0;pointer-events:none;box-shadow:inset 0 0 90px rgba(0,8,14,.66)}
 @media(max-width:900px){.landmark-map{min-height:650px}.landmark-head{padding:25px 24px 0}.landmark-head h1{font-size:30px}.landmark-status{min-width:150px}.landmark-world{inset:110px 0 0}.korea-map{width:760px;left:52%}.landmark-sixty-three{left:21%;top:auto;bottom:56%;transform:scale(.82) rotate(-4deg)}.landmark-lotte{left:35%;top:auto;bottom:58%;transform:scale(.74)}.landmark-lct{right:7%;top:auto;bottom:13%;transform:scale(.82)}.city-label{transform:scale(.85)}.map-legend{left:18px;right:18px;justify-content:center;flex-wrap:wrap}}
 @media(max-width:620px){.landmark-map{min-height:590px;border-radius:22px}.landmark-head{padding:20px 18px 0;gap:12px}.landmark-head p{display:none}.landmark-head h1{font-size:26px}.landmark-status{min-width:118px;padding:10px}.landmark-status>b{font-size:24px}.landmark-status>small{display:none}.landmark-world{inset:90px 0 0}.korea-map{width:690px;left:54%;top:49%}.landmark-sixty-three{left:7%;top:auto;bottom:55%;transform:scale(.62) rotate(-4deg)}.landmark-lotte{left:29%;top:auto;bottom:57%;transform:scale(.56)}.landmark-lct{right:-3%;top:auto;bottom:12%;transform:scale(.64)}.landmark-info{bottom:-60px;min-width:132px}.city-label{display:none}.map-legend{bottom:14px}.map-legend span{font-size:8px}}
+
+/* SOS137 student home cleanup */
+.mp-site-header{grid-template-columns:minmax(190px,auto) 1fr auto}
+.mp-header-actions{justify-self:end;display:flex;align-items:center;gap:10px}
+.mp-apply-button{height:40px;padding:0 16px;border:1px solid #2f6937;border-radius:10px;background:#2f6937;color:#fff;font-weight:900;white-space:nowrap}
+.mp-apply-button:hover{background:#285c31}
+.mp-profile-wrap{position:relative}
+.mp-profile-button{height:46px;padding:0 8px 0 4px;border:1px solid transparent;border-radius:13px;background:transparent;display:flex;align-items:center;gap:9px;color:#252725}
+.mp-profile-button:hover,.mp-profile-button[aria-expanded="true"]{background:#f3f6f3;border-color:#dfe7df}
+.mp-profile-button .mp-user-mark{width:38px;height:38px;flex:0 0 38px}
+.mp-profile-button strong{font-size:14px;white-space:nowrap}
+.mp-profile-button i{font-style:normal;color:#788078;font-size:13px}
+.mp-profile-menu{position:absolute;right:0;top:54px;z-index:70;width:164px;padding:7px;border:1px solid #dfe4df;border-radius:13px;background:#fff;box-shadow:0 16px 42px rgba(20,38,24,.16);display:grid}
+.mp-profile-menu button{height:42px;padding:0 12px;border:0;border-radius:9px;background:#fff;text-align:left;color:#363936;font-weight:800}
+.mp-profile-menu button:hover{background:#f2f6f2;color:#2f6937}
+.mp-profile-menu button.logout{color:#b34c4c}
+.student-today-task{margin:20px 0 32px;padding:24px 26px;border:1px solid #dbe5dc;border-radius:20px;background:linear-gradient(120deg,#fbfdfb,#f1f7f1);box-shadow:0 8px 24px rgba(47,105,55,.08);display:grid;grid-template-columns:58px 1fr auto;gap:20px;align-items:center}
+.student-task-icon{width:58px;height:58px;border-radius:17px;display:grid;place-items:center;background:#2f6937;color:#fff;font-size:18px;font-weight:950;box-shadow:0 8px 18px rgba(47,105,55,.22)}
+.student-task-copy small{display:block;color:#2f6937;font-size:11px;font-weight:950;letter-spacing:.09em}
+.student-task-copy h2{margin:5px 0 6px;font-size:22px;letter-spacing:-.04em}
+.student-task-copy p{margin:0;color:#727872;font-size:14px}
+.student-today-task>button{height:44px;padding:0 18px;border:0;border-radius:11px;background:#2f6937;color:#fff;font-weight:900;white-space:nowrap}
+.student-today-task>button:hover{background:#285c31}
+.student-today-task.task-exam{border-color:#e6d6a7;background:linear-gradient(120deg,#fffdf6,#fff7df)}
+.student-today-task.task-exam .student-task-icon,.student-today-task.task-exam>button{background:#9b7222}
+.student-today-task.task-training{border-color:#d8e1ea;background:linear-gradient(120deg,#fbfdff,#eef4fa)}
+.student-today-task.task-training .student-task-icon,.student-today-task.task-training>button{background:#365f82}
+@media(max-width:900px){.mp-site-header{grid-template-columns:auto 1fr auto}.mp-site-header>.mp-menu-button{display:grid}.mp-main-nav{display:none}.mp-site-brand strong{display:none}.mp-header-actions{gap:7px}.mp-profile-button strong,.mp-profile-button i{display:none}.mp-profile-button{padding:0}.mp-apply-button{padding:0 12px}.student-today-task{grid-template-columns:50px 1fr}.student-task-icon{width:50px;height:50px}.student-today-task>button{grid-column:2;justify-self:start}}
+@media(max-width:620px){.mp-site-header{height:76px;padding:0 16px;margin:0 -24px}.mp-apply-button{font-size:12px;height:38px}.student-today-task{margin-top:14px;padding:18px;gap:14px}.student-task-copy h2{font-size:19px}.student-task-copy p{font-size:13px}.student-today-task>button{width:100%}}
