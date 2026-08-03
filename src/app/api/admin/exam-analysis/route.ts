@@ -20,6 +20,8 @@ const questionSchema = {
     "problem_types",
     "difficulty",
     "confidence",
+    "answer",
+    "summary",
   ],
   properties: {
     question_no: { type: "integer", minimum: 1, maximum: 100 },
@@ -34,6 +36,8 @@ const questionSchema = {
     problem_types: { type: "array", items: { type: "string" }, maxItems: 8 },
     difficulty: { type: "integer", minimum: 1, maximum: 5 },
     confidence: { type: "number", minimum: 0, maximum: 1 },
+    answer: { type: "string" },
+    summary: { type: "string" },
   },
 } as const;
 
@@ -76,7 +80,7 @@ export async function GET(request: Request) {
   let query = ctx.supabase
     .from("exam_question_analysis")
     .select(
-      "exam_id,question_no,major_unit,middle_unit,minor_unit,detailed_topic,question_type,problem_types,difficulty,confidence,analysis_version",
+      "exam_id,question_no,major_unit,middle_unit,minor_unit,detailed_topic,question_type,problem_types,difficulty,confidence,analysis_version,analysis_data,updated_at",
     )
     .order("question_no");
   if (examId) query = query.eq("exam_id", examId);
@@ -93,7 +97,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const ctx = await adminContext();
   if (ctx.error) return ctx.error;
-  const { examId } = await request.json();
+  const { examId, questionNo } = await request.json();
   if (!examId)
     return NextResponse.json(
       { message: "분석할 시험을 선택해 주세요." },
@@ -137,7 +141,19 @@ export async function POST(request: Request) {
   }
 
   const count = Number(exam.question_count);
-  const prompt = `실전모의고사 PDF의 ${count}개 문항을 번호별로 분류하라. 시험명=${exam.title}, 과목=${exam.subject}, 범위=${exam.exam_range}. 문제은행 등록이 아니라 시험 결과 진단용 메타데이터다. 1번부터 ${count}번까지 빠짐없이 한 번씩 반환한다. 단원은 교육과정 기준 대/중/소단원과 세부주제를 구분한다. problem_types는 계산형, 조건해석형, 추론형, 그래프해석형, 도형구조형 등 실제 성격을 기록한다. 난이도는 SOS Problem DNA 기준을 그대로 적용한다: 수능 2점=1, 수능 3점=2, 쉬운·보통 4점=3, 어려운 4점·쉬운 준킬러=4, 어려운 준킬러·킬러=5. 모든 문항을 2로 몰아넣지 말고 발상·계산·시간 부담을 비교하라.`;
+  const requestedQuestionNo = Number(questionNo || 0);
+  if (requestedQuestionNo && (requestedQuestionNo < 1 || requestedQuestionNo > count))
+    return NextResponse.json(
+      { message: `문항 번호는 1~${count} 사이여야 합니다.` },
+      { status: 400 },
+    );
+  const targetNumbers = requestedQuestionNo
+    ? [requestedQuestionNo]
+    : Array.from({ length: count }, (_, index) => index + 1);
+  const targetDescription = requestedQuestionNo
+    ? `${requestedQuestionNo}번 문항 하나만`
+    : `1번부터 ${count}번까지 모든 문항을`;
+  const prompt = `실전모의고사 PDF에서 ${targetDescription} 번호별로 분석하라. 시험명=${exam.title}, 과목=${exam.subject}, 범위=${exam.exam_range}. 문제은행 등록이 아니라 시험 결과 진단용 메타데이터다. 지정한 문항을 빠짐없이 한 번씩 반환한다. 단원은 교육과정 기준 대/중/소단원과 세부주제를 구분한다. problem_types는 계산형, 조건해석형, 추론형, 그래프해석형, 도형구조형 등 실제 성격을 기록한다. 해설지 PDF가 함께 제공되면 answer에는 해당 문항의 공식 정답만, summary에는 핵심 풀이와 발상을 2문장 이내로 기록한다. 난이도는 SOS Problem DNA 기준을 그대로 적용한다: 수능 2점=1, 수능 3점=2, 쉬운·보통 4점=3, 어려운 4점·쉬운 준킬러=4, 어려운 준킬러·킬러=5. 모든 문항을 2로 몰아넣지 말고 발상·계산·시간 부담을 비교하라.`;
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -168,8 +184,8 @@ export async function POST(request: Request) {
             properties: {
               questions: {
                 type: "array",
-                minItems: count,
-                maxItems: count,
+                minItems: targetNumbers.length,
+                maxItems: targetNumbers.length,
                 items: questionSchema,
               },
             },
@@ -204,14 +220,12 @@ export async function POST(request: Request) {
     questions.map((item) => [Number(item.question_no), item]),
   );
   if (
-    unique.size !== count ||
-    Array.from({ length: count }, (_, index) => index + 1).some(
-      (no) => !unique.has(no),
-    )
+    unique.size !== targetNumbers.length ||
+    targetNumbers.some((no) => !unique.has(no))
   )
     return NextResponse.json(
       {
-        message: `AI가 전체 문항을 반환하지 못했습니다. ${unique.size}/${count}문항 인식`,
+        message: `AI가 지정 문항을 모두 반환하지 못했습니다. ${unique.size}/${targetNumbers.length}문항 인식`,
       },
       { status: 422 },
     );

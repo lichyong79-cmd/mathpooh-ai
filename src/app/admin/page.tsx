@@ -73,6 +73,22 @@ type PracticeExam = {
   studentOpen?: boolean;
 };
 
+type ExamQuestionAnalysis = {
+  exam_id: string;
+  question_no: number;
+  major_unit: string;
+  middle_unit: string;
+  minor_unit: string;
+  detailed_topic: string;
+  question_type: string;
+  problem_types: string[];
+  difficulty: number;
+  confidence: number;
+  analysis_version?: string;
+  analysis_data?: { answer?: string; summary?: string };
+  updated_at?: string;
+};
+
 type ExamFileBundle = { test?: File; solution?: File; original?: File };
 type Student = {
   id: string | number;
@@ -2398,6 +2414,13 @@ function ExamsPage({
     {},
   );
   const [analyzingExamId, setAnalyzingExamId] = useState("");
+  const [analysisReviewExam, setAnalysisReviewExam] =
+    useState<PracticeExam | null>(null);
+  const [analysisReviewItems, setAnalysisReviewItems] = useState<
+    ExamQuestionAnalysis[]
+  >([]);
+  const [analysisReviewLoading, setAnalysisReviewLoading] = useState(false);
+  const [reanalyzingQuestionNo, setReanalyzingQuestionNo] = useState(0);
 
   // 시험 입력 화면은 임시 작업 화면이므로 새로고침 후 복원하지 않습니다.
   // F5를 누르면 항상 안전한 시험 목록에서 시작합니다.
@@ -2434,6 +2457,49 @@ function ExamsPage({
       [exam.id]: Number(result.count ?? exam.questionCount),
     }));
     alert(`${result.count ?? exam.questionCount}문항 분석을 완료했습니다.`);
+  };
+
+  const openAnalysisReview = async (exam: PracticeExam) => {
+    setAnalysisReviewExam(exam);
+    setAnalysisReviewLoading(true);
+    try {
+      const response = await fetch(
+        `/api/admin/exam-analysis?examId=${encodeURIComponent(exam.id)}`,
+        { cache: "no-store" },
+      );
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(result.message || "분석 결과를 불러오지 못했습니다.");
+      setAnalysisReviewItems(result.items ?? []);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "분석 결과 조회 실패");
+    } finally {
+      setAnalysisReviewLoading(false);
+    }
+  };
+
+  const reanalyzeOneQuestion = async (questionNo: number) => {
+    if (!analysisReviewExam || reanalyzingQuestionNo) return;
+    if (!window.confirm(`${questionNo}번 문항만 다시 분석할까요?`)) return;
+    setReanalyzingQuestionNo(questionNo);
+    try {
+      const response = await fetch("/api/admin/exam-analysis", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          examId: analysisReviewExam.id,
+          questionNo,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(result.message || "문항 재분석에 실패했습니다.");
+      await openAnalysisReview(analysisReviewExam);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "문항 재분석 실패");
+    } finally {
+      setReanalyzingQuestionNo(0);
+    }
   };
 
   const makeEmptyExam = (): Omit<PracticeExam, "id"> => ({
@@ -3311,13 +3377,19 @@ function ExamsPage({
                             : "exam-analysis-button"
                         }
                         disabled={analyzingExamId === exam.id}
-                        onClick={() => void analyzeExam(exam)}
+                        onClick={() =>
+                          (analysisCounts[exam.id] ?? 0) > 0
+                            ? void openAnalysisReview(exam)
+                            : void analyzeExam(exam)
+                        }
                       >
                         {analyzingExamId === exam.id
                           ? "AI 분석중…"
                           : (analysisCounts[exam.id] ?? 0) ===
                               exam.questionCount
-                            ? `문항분석 완료 ${exam.questionCount}/${exam.questionCount}`
+                            ? `분석 결과 확인 ${exam.questionCount}/${exam.questionCount}`
+                            : (analysisCounts[exam.id] ?? 0) > 0
+                              ? `분석 결과 확인 ${analysisCounts[exam.id]}/${exam.questionCount}`
                             : `AI 문항분석 ${analysisCounts[exam.id] ?? 0}/${exam.questionCount}`}
                       </button>
                       <button onClick={() => void toggleStudentOpen(exam)}>
@@ -3907,6 +3979,89 @@ function ExamsPage({
           html={htmlPreview.html}
           onClose={() => setHtmlPreview(null)}
         />
+      ) : null}
+      {analysisReviewExam ? (
+        <div
+          className="analysis-result-backdrop"
+          onMouseDown={() => setAnalysisReviewExam(null)}
+        >
+          <section
+            className="analysis-result-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="analysis-result-head">
+              <div>
+                <small>실전모의고사 AI 분석 결과</small>
+                <h2>{analysisReviewExam.title}</h2>
+                <p>
+                  문항별 분류·난이도·공식 정답·핵심 풀이를 확인하고 필요한
+                  문항만 다시 분석할 수 있습니다.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAnalysisReviewExam(null)}
+              >
+                닫기 ×
+              </button>
+            </header>
+            {analysisReviewLoading ? (
+              <div className="analysis-result-loading">
+                AI 분석 결과를 불러오는 중입니다…
+              </div>
+            ) : (
+              <div className="analysis-result-table-wrap">
+                <div className="analysis-result-row analysis-result-labels">
+                  <span>문항</span>
+                  <span>단원 분류</span>
+                  <span>세부 주제</span>
+                  <span>문항 유형</span>
+                  <span>난이도</span>
+                  <span>정답</span>
+                  <span>신뢰도</span>
+                  <span>AI 핵심 풀이</span>
+                  <span>관리</span>
+                </div>
+                {analysisReviewItems.map((item) => (
+                  <div className="analysis-result-row" key={item.question_no}>
+                    <strong>{item.question_no}번</strong>
+                    <span title={[item.major_unit, item.middle_unit, item.minor_unit].filter(Boolean).join(" > ")}>
+                      {[item.major_unit, item.middle_unit, item.minor_unit]
+                        .filter(Boolean)
+                        .join(" > ") || "-"}
+                    </span>
+                    <span>{item.detailed_topic || "-"}</span>
+                    <span>
+                      {(item.problem_types ?? []).join(" · ") ||
+                        item.question_type ||
+                        "-"}
+                    </span>
+                    <b className={`analysis-difficulty d${item.difficulty}`}>
+                      {item.difficulty}단계
+                    </b>
+                    <b>{item.analysis_data?.answer || "-"}</b>
+                    <span>{Math.round(Number(item.confidence || 0) * 100)}%</span>
+                    <span>{item.analysis_data?.summary || "-"}</span>
+                    <button
+                      type="button"
+                      disabled={reanalyzingQuestionNo > 0}
+                      onClick={() => void reanalyzeOneQuestion(item.question_no)}
+                    >
+                      {reanalyzingQuestionNo === item.question_no
+                        ? "재분석 중…"
+                        : "이 문항 재분석"}
+                    </button>
+                  </div>
+                ))}
+                {analysisReviewItems.length === 0 ? (
+                  <div className="analysis-result-empty">
+                    저장된 문항분석 결과가 없습니다.
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </section>
+        </div>
       ) : null}
     </>
   );
