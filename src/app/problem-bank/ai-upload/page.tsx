@@ -18,7 +18,7 @@ import {
   type QuestionAnchor,
 } from "@/lib/crop/question-anchors";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
-import MathPoohLoader from "@/components/math-pooh-loader";
+import MATHPOOHLoader from "@/components/math-pooh-loader";
 
 type SourceFile = {
   id: string;
@@ -2269,7 +2269,7 @@ export default function AnalysisWorkspacePage() {
       ) : null}
 
       {currentBusyInfo ? (
-        <MathPoohLoader
+        <MATHPOOHLoader
           audience="admin"
           title={currentBusyInfo.title}
           detail={currentBusyInfo.detail}

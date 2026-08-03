@@ -228,7 +228,7 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
       if (solutionSigned.error) throw solutionSigned.error;
       solutionImageUrl = solutionSigned.data.signedUrl;
     }
-    const prompt = `당신은 한국 중고등 수학 문항을 직접 풀고 교육적으로 분류하는 MathPooh Problem DNA 엔진입니다.
+    const prompt = `당신은 한국 중고등 수학 문항을 직접 풀고 교육적으로 분류하는 MATHPOOH Problem DNA 엔진입니다.
 첫 번째 첨부는 분석할 한 문항 이미지입니다.${solutionImageUrl ? " 두 번째 첨부는 같은 문항번호의 공식 해설 이미지만 잘라낸 것입니다." : " 해당 문항의 공식 해설 이미지는 첨부되지 않았습니다."}
 문항 이미지와 공식 해설을 함께 확인하여 ${PROBLEM_DNA_VERSION} JSON을 생성하세요.
 시험지 정보: ${source?.grade ?? "학년 미상"} / ${source?.subject ?? "과목 미상"} / ${source?.title ?? "제목 미상"}

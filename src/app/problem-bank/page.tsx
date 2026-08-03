@@ -289,7 +289,7 @@ export default function ProblemBankPage() {
           >
             ← 관리자
           </button>
-          <p>MATSPU SOS</p>
+          <p>MATHPOOH SOS</p>
           <h1>문제은행</h1>
           <span>등록 문항 {items.length}개 · 검색 결과 {filtered.length}개</span>
         </div>

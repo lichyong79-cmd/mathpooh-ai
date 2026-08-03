@@ -61,11 +61,11 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
   return <div className={`${styles.shell} ${collapsed ? styles.collapsed : ""}`}>
     <aside className={styles.sidebar}>
       <div className={styles.brand}>
-        <img src="/mathpooh-logo.png" alt="매쓰푸" />
+        <img src="/mathpooh-logo.png" alt="MATHPOOH" />
         <div className={styles.brandCopy}><strong>MATHPOOH SOS</strong><span>SCORE OPTIMIZATION SYSTEM</span></div>
         <button className={styles.collapse} type="button" onClick={toggle} aria-label={collapsed ? "메뉴 펼치기" : "메뉴 접기"}>{collapsed ? "›" : "‹"}</button>
       </div>
-      <div className={styles.workspace}><b>매</b><div><strong>매쓰푸</strong><span>관리자 워크스페이스</span></div></div>
+      <div className={styles.workspace}><b>매</b><div><strong>MATHPOOH</strong><span>관리자 워크스페이스</span></div></div>
       <nav className={styles.nav}>
         {groups.map((group) => <section className={`${styles.group} ${group.items.length > 1 ? styles.nested : ""}`} key={group.label}>
           <p className={styles.groupTitle}>{group.label}</p>
@@ -74,7 +74,7 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
           </a>)}
         </section>)}
       </nav>
-      <div className={styles.footer}><strong>매쓰푸 SOS 관리자</strong><span>통합 관리 메뉴</span></div>
+      <div className={styles.footer}><strong>MATHPOOH SOS 관리자</strong><span>통합 관리 메뉴</span></div>
     </aside>
     <div className={styles.content}>{children}</div>
   </div>;

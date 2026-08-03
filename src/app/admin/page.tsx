@@ -13,7 +13,7 @@ import { authHeaders, signedStorageUrl } from "@/lib/supabase/rest";
 import AccountBox from "../AccountBox";
 import "../exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
-import MathPoohLoader from "@/components/math-pooh-loader";
+import MATHPOOHLoader from "@/components/math-pooh-loader";
 
 type AdminMenu =
   | "dashboard"
@@ -350,7 +350,7 @@ export default function Home() {
     <main className={`admin-app ${collapsed ? "collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="brand-row">
-          <div className="brand-symbol"><img src="/mathpooh-logo.png" alt="매쓰푸" /></div>
+          <div className="brand-symbol"><img src="/mathpooh-logo.png" alt="MATHPOOH" /></div>
           <div className="brand-copy">
             <strong><span>MATHPOOH</span><b>SOS</b></strong>
             <span>SCORE OPTIMIZATION SYSTEM</span>
@@ -366,7 +366,7 @@ export default function Home() {
         <div className="workspace-card">
           <div className="workspace-logo"><img src="/mathpooh-logo.png" alt="" /></div>
           <div>
-            <strong>매쓰푸</strong>
+            <strong>MATHPOOH</strong>
             <span>관리자 워크스페이스</span>
           </div>
           <b>⌄</b>
@@ -422,7 +422,7 @@ export default function Home() {
       <section className="main-area">
         <header className="topbar">
           <div>
-            <p>매쓰푸 SOS 관리자</p>
+            <p>MATHPOOH SOS 관리자</p>
             <h1>{title}</h1>
           </div>
           <div className="top-actions">
@@ -553,7 +553,7 @@ function PostersPage() {
 
   return <section className="poster-admin-page">
     {busy ? <div className="admin-busy"><div><b>{busy}</b><span>잠시 기다려 주세요.</span></div></div> : null}
-    <div className="page-title-row"><div><h2>포스터 관리</h2><p>학생 홈에 노출할 매쓰푸 프로그램·시험 안내 포스터를 관리합니다.</p></div></div>
+    <div className="page-title-row"><div><h2>포스터 관리</h2><p>학생 홈에 노출할 MATHPOOH 프로그램·시험 안내 포스터를 관리합니다.</p></div></div>
     <form className="panel poster-upload-panel" onSubmit={upload}>
       <div className="poster-upload-copy"><small>MATHPOOH CONTENT</small><h3>새 포스터 등록</h3><p>가로형·세로형 이미지를 모두 사용할 수 있습니다. 최대 10MB</p></div>
       <label><span>포스터 제목 *</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="예: SOS 2회 실전모의고사 안내" /></label>
@@ -1082,7 +1082,7 @@ function StudentModal({
         <div className="modal-head">
           <div>
             <h3>{title}</h3>
-            <p>매쓰푸 SOS에서 사용할 학생 기본정보입니다.</p>
+            <p>MATHPOOH SOS에서 사용할 학생 기본정보입니다.</p>
           </div>
           <button type="button" onClick={onClose}>
             ×
@@ -3043,7 +3043,7 @@ function ExamsPage({
 
   const printCover = () => {
     printHtmlSafely(
-      `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(form.title)}</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{font-family:Arial,'Noto Sans KR',sans-serif;margin:0;color:#285c31}.page{width:210mm;min-height:297mm;padding:22mm}.brand{text-align:center;font-weight:900;font-size:34px}.sub{text-align:center;font-size:14px;color:#667085}.line{height:3px;background:#2f6937;margin:24px 0}.title{text-align:center;font-size:28px;font-weight:900;margin:24px 0 34px}.info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cfd5e6}.info div{padding:14px 16px;border-right:1px solid #cfd5e6;border-bottom:1px solid #cfd5e6}.value{font-size:18px;font-weight:800;margin-top:5px}.student{margin-top:34px;border:1px solid #cfd5e6;padding:22px;line-height:3;font-size:18px}.notice{margin-top:34px;background:#f5f7fb;padding:20px 24px;line-height:1.9}</style></head><body><section class="page"><div class="brand">SOS</div><div class="sub">Score Optimization System · MATSPU</div><div class="line"></div><div class="title">${escapeHtml(form.title)}</div><div class="info"><div>대상<div class="value">${escapeHtml(form.grade)}</div></div><div>과목<div class="value">${escapeHtml(form.subject)}</div></div><div>시험일<div class="value">${escapeHtml(form.examDate)}</div></div><div>시험시간<div class="value">${form.timeLimit}분</div></div><div>문항수<div class="value">${form.questionCount}문항</div></div><div>총점<div class="value">${form.totalScore}점</div></div></div><div class="student">학생명 _______________________________<br>학교 _________________________________<br>반 ____________ 번호 ____________</div><div class="notice"><strong>응시 안내</strong><br>1. 감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br>2. 제한시간을 지키고 답안을 빠짐없이 작성하세요.<br>3. 시험 종료 후 시험지와 답안을 모두 제출하세요.</div></section></body></html>`,
+      `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(form.title)}</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{font-family:Arial,'Noto Sans KR',sans-serif;margin:0;color:#285c31}.page{width:210mm;min-height:297mm;padding:22mm}.brand{text-align:center;font-weight:900;font-size:34px}.sub{text-align:center;font-size:14px;color:#667085}.line{height:3px;background:#2f6937;margin:24px 0}.title{text-align:center;font-size:28px;font-weight:900;margin:24px 0 34px}.info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cfd5e6}.info div{padding:14px 16px;border-right:1px solid #cfd5e6;border-bottom:1px solid #cfd5e6}.value{font-size:18px;font-weight:800;margin-top:5px}.student{margin-top:34px;border:1px solid #cfd5e6;padding:22px;line-height:3;font-size:18px}.notice{margin-top:34px;background:#f5f7fb;padding:20px 24px;line-height:1.9}</style></head><body><section class="page"><div class="brand">SOS</div><div class="sub">Score Optimization System · MATHPOOH</div><div class="line"></div><div class="title">${escapeHtml(form.title)}</div><div class="info"><div>대상<div class="value">${escapeHtml(form.grade)}</div></div><div>과목<div class="value">${escapeHtml(form.subject)}</div></div><div>시험일<div class="value">${escapeHtml(form.examDate)}</div></div><div>시험시간<div class="value">${form.timeLimit}분</div></div><div>문항수<div class="value">${form.questionCount}문항</div></div><div>총점<div class="value">${form.totalScore}점</div></div></div><div class="student">학생명 _______________________________<br>학교 _________________________________<br>반 ____________ 번호 ____________</div><div class="notice"><strong>응시 안내</strong><br>1. 감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br>2. 제한시간을 지키고 답안을 빠짐없이 작성하세요.<br>3. 시험 종료 후 시험지와 답안을 모두 제출하세요.</div></section></body></html>`,
       `${form.examCode} 표지`,
     );
   };
@@ -3864,7 +3864,7 @@ function ExamsPage({
             <div className="cover-builder">
               <article className="exam-cover-preview">
                 <div className="cover-logo">SOS</div>
-                <small>Score Optimization System · MATSPU</small>
+                <small>Score Optimization System · MATHPOOH</small>
                 <div className="cover-rule" />
                 <h2>{form.title || "시험명을 입력해 주세요"}</h2>
                 <div className="cover-info-grid">
@@ -4078,7 +4078,7 @@ function ExamsPage({
               </div>
             </header>
             {reanalyzingAll ? (
-              <MathPoohLoader
+              <MATHPOOHLoader
                 audience="admin"
                 title="AI 전체 재분석 중!!"
                 detail={`현재 ${Math.min(reanalyzingAllProgress.current + 1, reanalyzingAllProgress.total)}번 문항을 분석하고 있습니다.`}
@@ -4419,7 +4419,7 @@ function Dashboard({
         <div>
           <span className="pill">MATHPOOH SOS</span>
           <h2>학생의 점수를 데이터로 최적화합니다.</h2>
-          <p>진단부터 훈련 추천까지 매쓰푸의 전체 흐름을 관리하세요.</p>
+          <p>진단부터 훈련 추천까지 MATHPOOH의 전체 흐름을 관리하세요.</p>
         </div>
       </section>
       <section className="student-stat-grid">
@@ -4486,7 +4486,7 @@ function ProblemsPage({
   onOpenAnalysis: (sourceFileId: string) => void;
 }) {
   const [title, setTitle] = useState("");
-  const [source, setSource] = useState("매쓰푸 자체 제작");
+  const [source, setSource] = useState("MATHPOOH 자체 제작");
   const [grade, setGrade] = useState("고1");
   const [subject, setSubject] = useState("공통수학1");
   const [contentRole, setContentRole] = useState<"TRAINING" | "REFERENCE">("TRAINING");
@@ -4807,7 +4807,7 @@ function ProblemsPage({
             <input
               value={source}
               onChange={(e) => setSource(e.target.value)}
-              placeholder="예: 매쓰푸 자체 제작"
+              placeholder="예: MATHPOOH 자체 제작"
               disabled={uploading}
             />
           </label>

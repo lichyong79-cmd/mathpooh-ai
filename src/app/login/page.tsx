@@ -102,15 +102,15 @@ export default function LoginPage() {
   return (
     <main className="mp-login-page">
       <header className="mp-login-header">
-        <div><img src="/mathpooh-logo.png" alt="" /><strong>매쓰푸</strong></div>
+        <div><img src="/mathpooh-logo.png" alt="" /><strong>MATHPOOH</strong></div>
       </header>
       <section className="mp-login-wrap">
         <form onSubmit={submit} className="mp-login-card">
-          <img className="mp-card-logo" src="/mathpooh-logo.png" alt="매쓰푸" />
+          <img className="mp-card-logo" src="/mathpooh-logo.png" alt="MATHPOOH" />
 
           <div className="mp-login-heading">
             <h2>{loginMode === "admin" ? "관리자 로그인" : "로그인"}</h2>
-            <p>{loginMode === "admin" ? "매쓰푸 관리자 전용 페이지입니다" : "매쓰푸 SOS 계정으로 로그인하세요"}</p>
+            <p>{loginMode === "admin" ? "MATHPOOH 관리자 전용 페이지입니다" : "MATHPOOH SOS 계정으로 로그인하세요"}</p>
           </div>
 
           {loginMode !== "admin" ? (
@@ -147,7 +147,7 @@ export default function LoginPage() {
           )}
         </form>
         {loginMode !== "admin" ? <div className="mp-login-under"><span>SOS 이용이 처음이신가요?</span><b>관리자에게 학생 등록 요청</b></div> : null}
-        <p className="mp-login-copyright">© 2026 매쓰푸</p>
+        <p className="mp-login-copyright">© 2026 MATHPOOH</p>
       </section>
     </main>
   );

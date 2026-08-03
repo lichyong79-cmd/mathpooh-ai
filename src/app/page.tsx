@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import "./student.css";
 import "./exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
-import MathPoohLoader from "@/components/math-pooh-loader";
+import MATHPOOHLoader from "@/components/math-pooh-loader";
 
 type Attempt = {
   id: string;
@@ -386,14 +386,14 @@ export default function StudentHome() {
   if (!portal)
     return (
       <main className="student-loading">
-        <MathPoohLoader title="학생 페이지를 준비하고 있습니다..." kind="loading" compact />
+        <MATHPOOHLoader title="학생 페이지를 준비하고 있습니다..." kind="loading" compact />
       </main>
     );
   if (activeExam && attempt)
     return (
       <main className="exam-room">
         {busy ? (
-          <MathPoohLoader
+          <MATHPOOHLoader
             title={busy}
             kind={busy.includes("채점") || busy.includes("성적") ? "grading" : "exam"}
             compact
@@ -401,7 +401,7 @@ export default function StudentHome() {
         ) : null}
         <header className="exam-room-head">
           <div>
-            <b>MATSPU SOS</b>
+            <b>MATHPOOH SOS</b>
             <strong>{activeExam.title}</strong>
           </div>
           <div className={`exam-timer ${remaining < 300 ? "danger" : ""}`}>
@@ -487,7 +487,7 @@ export default function StudentHome() {
   return (
     <main className="student-portal">
       {busy ? (
-        <MathPoohLoader
+        <MATHPOOHLoader
           title={busy}
           kind={busy.includes("채점") || busy.includes("성적") ? "grading" : "exam"}
           compact
@@ -498,8 +498,8 @@ export default function StudentHome() {
           <span /><span /><span />
         </button>
         <div className="mp-site-brand">
-          <img src="/mathpooh-logo.png" alt="매쓰푸" />
-          <strong>매쓰푸</strong>
+          <img src="/mathpooh-logo.png" alt="MATHPOOH" />
+          <strong>MATHPOOH</strong>
         </div>
         <nav className="mp-main-nav" aria-label="학생 메뉴">
           <button className={activeSection === "apply" ? "active" : ""} onClick={() => moveSection("apply")}>SOS 신청하기</button>
@@ -512,7 +512,7 @@ export default function StudentHome() {
       {menuOpen ? <div className="mp-menu-backdrop" onClick={() => setMenuOpen(false)}>
         <aside className="mp-side-menu" onClick={(event) => event.stopPropagation()}>
           <div className="mp-side-menu-head">
-            <div className="mp-site-brand"><img src="/mathpooh-logo.png" alt="" /><strong>매쓰푸</strong></div>
+            <div className="mp-site-brand"><img src="/mathpooh-logo.png" alt="" /><strong>MATHPOOH</strong></div>
             <button onClick={() => setMenuOpen(false)} aria-label="메뉴 닫기">×</button>
           </div>
           <nav>
@@ -692,8 +692,8 @@ export default function StudentHome() {
         />
       ) : null}
       <footer className="mp-site-footer">
-        <div><div className="mp-site-brand"><img src="/mathpooh-logo.png" alt="" /><strong>MathPooh</strong></div><b>© 2026 매쓰푸</b></div>
-        <p>매쓰푸 수학연구소 · 학생용 SOS 학습 시스템</p>
+        <div><div className="mp-site-brand"><img src="/mathpooh-logo.png" alt="" /><strong>MATHPOOH</strong></div><b>© 2026 MATHPOOH</b></div>
+        <p>MATHPOOH 수학연구소 · 학생용 SOS 학습 시스템</p>
         <span>이용약관　 개인정보처리방침</span>
       </footer>
     </main>
