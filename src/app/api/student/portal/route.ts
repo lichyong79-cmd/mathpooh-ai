@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
+import {
+  buildLandmarkSummary,
+  clampPercentile,
+  classifyLandmarkSubject,
+  cohortPercentile,
+  estimatePercentile,
+  type LandmarkBasis,
+  type LandmarkRecord,
+} from "@/lib/landmark";
 
 async function context() {
   const user = await getSessionUser();
@@ -134,6 +143,67 @@ export async function GET() {
       };
     }),
   );
+  /* ── SOS LANDMARK ────────────────────────────────────────────────────────
+     제출한 시험마다 같은 시험 응시자 전체 점수를 모아 실제 백분위를 계산합니다.
+     응시 인원이 적으면(기본 8명 미만) 원점수 환산 추정 백분위로 대체합니다.
+     응시자 점수는 집계에만 쓰고, 다른 학생 정보는 응답에 담지 않습니다. */
+  const submittedExamIds = items
+    .filter((item) => item.attempt?.status === "submitted")
+    .map((item) => item.id);
+  const peerRows: { exam_id: string; score: number | null }[] =
+    submittedExamIds.length
+      ? ((
+          await supabase
+            .from("exam_attempts")
+            .select("exam_id,score")
+            .eq("status", "submitted")
+            .in("exam_id", submittedExamIds)
+        ).data ?? [])
+      : [];
+  const peerScores = new Map<string, number[]>();
+  for (const row of peerRows) {
+    const score = Number(row.score ?? 0);
+    if (!Number.isFinite(score)) continue;
+    const list = peerScores.get(row.exam_id) ?? [];
+    list.push(score);
+    peerScores.set(row.exam_id, list);
+  }
+
+  const landmarkRecords: LandmarkRecord[] = [];
+  const examItems = items.map((item) => {
+    if (item.attempt?.status !== "submitted")
+      return {
+        ...item,
+        percentile: null,
+        percentile_basis: null,
+        participants: 0,
+      };
+    const score = Number(item.attempt.score ?? 0);
+    const peers = peerScores.get(item.id) ?? [];
+    const cohort = cohortPercentile(score, peers);
+    const percentile = clampPercentile(
+      cohort ?? estimatePercentile(score, Number(item.total_score ?? 100)),
+    );
+    const basis: LandmarkBasis = cohort === null ? "estimated" : "cohort";
+    const subject = classifyLandmarkSubject(item.subject, item.title);
+    if (subject)
+      landmarkRecords.push({
+        subject,
+        percentile,
+        basis,
+        score,
+        title: item.title ?? "",
+        date: item.attempt.submitted_at ?? item.exam_date ?? "",
+      });
+    return {
+      ...item,
+      percentile,
+      percentile_basis: basis,
+      participants: peers.length,
+    };
+  });
+  const landmark = buildLandmarkSummary(landmarkRecords);
+
   const { data: posterRows } = await supabase
     .from("site_posters")
     .select("id,title,image_path,link_url,sort_order")
@@ -155,7 +225,8 @@ export async function GET() {
       grade: student.grade,
       passwordChanged: student.password_changed,
     },
-    exams: items,
+    exams: examItems,
+    landmark,
     posters,
   });
 }
