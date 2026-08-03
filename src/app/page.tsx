@@ -61,6 +61,7 @@ type Portal = {
   exams: Exam[];
   posters: { id: string; title: string; image_url: string; link_url: string; sort_order: number }[];
 };
+type StudentSection = "apply" | "exams" | "strategy" | "analysis";
 
 function StudentResultModal({
   exam,
@@ -212,6 +213,7 @@ export default function StudentHome() {
   const [error, setError] = useState("");
   const [resultExam, setResultExam] = useState<Exam | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<StudentSection>("apply");
   const load = useCallback(async () => {
     const response = await fetch("/api/student/portal", { cache: "no-store" });
     if (response.status === 403) return window.location.replace("/admin");
@@ -223,6 +225,16 @@ export default function StudentHome() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    const saved = window.localStorage.getItem("matspu-student-section") as StudentSection | null;
+    if (saved && ["apply", "exams", "strategy", "analysis"].includes(saved)) setActiveSection(saved);
+  }, []);
+  const moveSection = (section: StudentSection) => {
+    setActiveSection(section);
+    setMenuOpen(false);
+    window.localStorage.setItem("matspu-student-section", section);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const startExam = async (exam: Exam) => {
     if (!exam.available || !exam.test_url) return;
@@ -490,6 +502,12 @@ export default function StudentHome() {
           <img src="/mathpooh-logo.png" alt="매쓰푸" />
           <strong>매쓰푸</strong>
         </div>
+        <nav className="mp-main-nav" aria-label="학생 메뉴">
+          <button className={activeSection === "apply" ? "active" : ""} onClick={() => moveSection("apply")}>SOS 신청하기</button>
+          <button className={activeSection === "exams" ? "active" : ""} onClick={() => moveSection("exams")}>실전모의고사</button>
+          <button className={activeSection === "strategy" ? "active" : ""} onClick={() => moveSection("strategy")}>SOS 공략</button>
+          <button className={activeSection === "analysis" ? "active" : ""} onClick={() => moveSection("analysis")}>학습분석</button>
+        </nav>
         <div className="mp-user-mark">{portal.student.name.slice(0, 1)}</div>
       </header>
       {menuOpen ? <div className="mp-menu-backdrop" onClick={() => setMenuOpen(false)}>
@@ -499,19 +517,21 @@ export default function StudentHome() {
             <button onClick={() => setMenuOpen(false)} aria-label="메뉴 닫기">×</button>
           </div>
           <nav>
-            <button className="active" onClick={() => setMenuOpen(false)}>홈</button>
-            <button onClick={() => { setMenuOpen(false); document.querySelector(".student-exam-list")?.scrollIntoView({ behavior: "smooth" }); }}>실전모의고사</button>
+            <button className={activeSection === "apply" ? "active" : ""} onClick={() => moveSection("apply")}>SOS 신청하기</button>
+            <button className={activeSection === "exams" ? "active" : ""} onClick={() => moveSection("exams")}>실전모의고사</button>
+            <button className={activeSection === "strategy" ? "active" : ""} onClick={() => moveSection("strategy")}>SOS 공략</button>
+            <button className={activeSection === "analysis" ? "active" : ""} onClick={() => moveSection("analysis")}>학습분석</button>
             <button onClick={() => { setMenuOpen(false); window.location.href = "/password"; }}>비밀번호 변경</button>
           </nav>
           <button className="mp-menu-logout" onClick={() => void signOut()}>로그아웃</button>
         </aside>
       </div> : null}
-      <header className="student-hero">
+      <header className={`student-hero section-${activeSection}`}>
         <div>
-          <small>환영합니다</small>
-          <h1>{portal.student.name} 학생</h1>
+          <small>{activeSection === "apply" ? "SOS PROGRAM" : activeSection === "exams" ? "PRACTICE EXAM" : activeSection === "strategy" ? "SOS STRATEGY" : "LEARNING ANALYSIS"}</small>
+          <h1>{activeSection === "apply" ? "SOS 신청하기" : activeSection === "exams" ? "실전모의고사" : activeSection === "strategy" ? "SOS 공략" : "학습분석"}</h1>
           <p>
-            매쓰푸에서 수학 실력을 키워보세요. · {portal.student.school} {portal.student.grade}
+            {activeSection === "apply" ? "필요한 SOS 프로그램과 새로운 안내를 확인하세요." : activeSection === "exams" ? "신청·배정된 실전모의고사를 확인하고 응시하세요." : activeSection === "strategy" ? "시험 결과를 바탕으로 나에게 필요한 공략을 훈련합니다." : "시험별 결과와 취약 단원, 성장 흐름을 확인합니다."}
           </p>
         </div>
         <div>
@@ -521,7 +541,7 @@ export default function StudentHome() {
           <button onClick={() => void signOut()}>로그아웃</button>
         </div>
       </header>
-      <section className="student-welcome">
+      {activeSection === "exams" ? <section className="student-welcome">
         <div>
           <span>이번 주 목표</span>
           <h2>아래 점수부터 하나씩 확보합니다.</h2>
@@ -537,15 +557,16 @@ export default function StudentHome() {
           }
           <small>배정 완료</small>
         </b>
-      </section>
-      {portal.posters?.length ? <section className="student-poster-section">
-        <div className="student-list-heading"><div><i /><div><small>MATHPOOH NEWS</small><h2>매쓰푸 소식</h2></div></div><span>{portal.posters.length}개 안내</span></div>
+      </section> : null}
+      {activeSection === "apply" ? <section className="student-poster-section">
+        <div className="student-list-heading"><div><i /><div><small>MATHPOOH SOS</small><h2>SOS 프로그램 신청·안내</h2></div></div><span>{portal.posters?.length ?? 0}개 안내</span></div>
         <div className="student-poster-grid">{portal.posters.map((poster) => {
           const content = <><img src={poster.image_url} alt={poster.title} /><div><strong>{poster.title}</strong><span>자세히 보기　→</span></div></>;
           return poster.link_url ? <a key={poster.id} href={poster.link_url} target="_blank" rel="noreferrer">{content}</a> : <article key={poster.id}>{content}</article>;
         })}</div>
+        {!portal.posters?.length ? <div className="student-section-empty"><b>현재 신청 가능한 SOS 프로그램이 없습니다.</b><span>새 프로그램이 열리면 이곳에 표시됩니다.</span></div> : null}
       </section> : null}
-      <section className="student-exam-list">
+      {activeSection === "exams" ? <section className="student-exam-list">
         <div className="student-list-heading"><div><i /> <div><small>MATHEMATICS PROGRAM</small><h2>실전모의고사 신청·응시</h2></div></div><span>{portal.exams.length}개 시험</span></div>
         {portal.exams.map((exam) => (
           <article key={exam.id}>
@@ -630,7 +651,21 @@ export default function StudentHome() {
         {portal.exams.length === 0 ? (
           <div className="student-empty">현재 신청 가능한 시험이 없습니다.</div>
         ) : null}
-      </section>
+      </section> : null}
+      {activeSection === "strategy" ? <section className="student-strategy-page">
+        <div className="student-list-heading"><div><i /><div><small>PERSONALIZED TRAINING</small><h2>나의 SOS 공략</h2></div></div></div>
+        <div className="strategy-summary">
+          <article><span>분석 완료 시험</span><b>{portal.exams.filter((exam) => exam.attempt?.status === "submitted").length}회</b><small>제출한 시험 기준</small></article>
+          <article><span>공략 준비 상태</span><b>{portal.exams.some((exam) => exam.attempt?.status === "submitted") ? "분석 가능" : "시험 필요"}</b><small>{portal.exams.some((exam) => exam.attempt?.status === "submitted") ? "진단·훈련 매칭을 준비합니다." : "실전모의고사 응시 후 생성됩니다."}</small></article>
+        </div>
+        <div className="student-section-empty strategy"><b>진단 3문항 → 부족하면 추가 3문항 → 훈련 10문항</b><span>관리자가 공략 문항을 배정하면 이곳에 문항과 진행률이 표시됩니다.</span><button onClick={() => moveSection("exams")}>실전모의고사 확인</button></div>
+      </section> : null}
+      {activeSection === "analysis" ? <section className="student-analysis-page">
+        <div className="student-list-heading"><div><i /><div><small>SOS RESULT</small><h2>학습분석</h2></div></div><span>{portal.exams.filter((exam) => exam.attempt?.status === "submitted").length}회 응시</span></div>
+        <div className="analysis-overview"><article><span>응시 완료</span><b>{portal.exams.filter((exam) => exam.attempt?.status === "submitted").length}회</b></article><article><span>평균 점수</span><b>{(() => { const done = portal.exams.filter((exam) => exam.attempt?.status === "submitted"); return done.length ? `${Math.round(done.reduce((sum, exam) => sum + Number(exam.attempt?.score ?? 0), 0) / done.length)}점` : "-"; })()}</b></article><article><span>최근 점수</span><b>{portal.exams.find((exam) => exam.attempt?.status === "submitted")?.attempt?.score ?? "-"}{portal.exams.some((exam) => exam.attempt?.status === "submitted") ? "점" : ""}</b></article></div>
+        <div className="analysis-exam-list">{portal.exams.filter((exam) => exam.attempt?.status === "submitted").map((exam) => <button key={exam.id} onClick={() => setResultExam(exam)}><div><small>{exam.exam_date} · {exam.subject}</small><strong>{exam.title}</strong><span>{exam.attempt?.correct_count ?? 0}/{exam.question_count}문항 정답</span></div><b>{exam.attempt?.score ?? 0}점</b><i>상세 분석 →</i></button>)}</div>
+        {!portal.exams.some((exam) => exam.attempt?.status === "submitted") ? <div className="student-section-empty"><b>아직 분석할 시험 결과가 없습니다.</b><span>실전모의고사를 제출하면 결과와 취약 영역이 자동으로 표시됩니다.</span><button onClick={() => moveSection("exams")}>시험 보러 가기</button></div> : null}
+      </section> : null}
       {resultExam ? (
         <StudentResultModal
           exam={resultExam}
