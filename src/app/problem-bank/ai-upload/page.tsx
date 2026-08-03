@@ -2270,6 +2270,7 @@ export default function AnalysisWorkspacePage() {
 
       {currentBusyInfo ? (
         <MathPoohLoader
+          audience="admin"
           title={currentBusyInfo.title}
           detail={currentBusyInfo.detail}
           current={showQueueProgress ? queueProgress.done : undefined}

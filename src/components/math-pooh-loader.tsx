@@ -7,6 +7,7 @@ type MathPoohLoaderProps = {
   total?: number;
   compact?: boolean;
   kind?: "analysis" | "crop" | "grading" | "exam" | "save" | "report" | "loading";
+  audience?: "student" | "admin";
 };
 
 const kindLabel: Record<NonNullable<MathPoohLoaderProps["kind"]>, string> = {
@@ -26,6 +27,7 @@ export default function MathPoohLoader({
   total,
   compact = false,
   kind = "loading",
+  audience = "student",
 }: MathPoohLoaderProps) {
   const hasProgress = Number.isFinite(current) && Number.isFinite(total) && Number(total) > 0;
   const safeCurrent = hasProgress ? Math.max(0, Math.min(Number(current), Number(total))) : 0;
@@ -34,8 +36,13 @@ export default function MathPoohLoader({
   return (
     <div className={`mathpooh-loader ${compact ? "is-compact" : ""}`} role="status" aria-live="polite" aria-busy="true">
       <div className="mathpooh-loader-card">
-        <div className="mathpooh-runway" aria-hidden="true">
-          <span className="mathpooh-runner">🐻</span>
+        <div className={`mathpooh-runway is-${audience}`} aria-hidden="true">
+          <span className="mathpooh-runner">
+            <img
+              src={audience === "admin" ? "/characters/mathpooh-director.png" : "/characters/mathpooh-student.png"}
+              alt=""
+            />
+          </span>
           <i className="mathpooh-shadow" />
         </div>
         <small className="mathpooh-kicker">MATSPU SOS · {kindLabel[kind]}</small>

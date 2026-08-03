@@ -4079,6 +4079,7 @@ function ExamsPage({
             </header>
             {reanalyzingAll ? (
               <MathPoohLoader
+                audience="admin"
                 title="AI 전체 재분석 중!!"
                 detail={`현재 ${Math.min(reanalyzingAllProgress.current + 1, reanalyzingAllProgress.total)}번 문항을 분석하고 있습니다.`}
                 current={reanalyzingAllProgress.current}

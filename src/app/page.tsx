@@ -525,6 +525,26 @@ export default function StudentHome() {
           <button className="mp-menu-logout" onClick={() => void signOut()}>로그아웃</button>
         </aside>
       </div> : null}
+      <section className="sos-world" aria-label="SOS 월드">
+        <div className="sos-world-copy">
+          <small>SOS WORLD</small>
+          <h1>{portal.student.name}의 SOS 월드</h1>
+          <p>오늘의 시험과 성장 기록을 확인하고 필요한 훈련으로 바로 이동하세요.</p>
+          <div className="sos-world-actions">
+            <button onClick={() => moveSection("exams")}><b>실전모의고사</b><span>시험 신청·응시</span></button>
+            <button onClick={() => moveSection("strategy")}><b>SOS 공략실</b><span>취약 유형 훈련</span></button>
+            <button onClick={() => moveSection("analysis")}><b>성장 분석실</b><span>성적·취약 단원</span></button>
+            <button onClick={() => moveSection("apply")}><b>SOS 광장</b><span>프로그램 안내</span></button>
+          </div>
+        </div>
+        <div className="sos-world-scene" aria-hidden="true">
+          <i className="sos-world-sun" />
+          <div className="sos-world-building"><span>SOS</span><b>AI CAMPUS</b></div>
+          <div className="sos-world-tree"><i /><i /><i /><b>성장나무</b></div>
+          <img src="/characters/mathpooh-student.png" alt="" />
+          <span className="sos-world-path" />
+        </div>
+      </section>
       <header className={`student-hero section-${activeSection}`}>
         <div>
           <small>{activeSection === "apply" ? "SOS PROGRAM" : activeSection === "exams" ? "PRACTICE EXAM" : activeSection === "strategy" ? "SOS STRATEGY" : "LEARNING ANALYSIS"}</small>
