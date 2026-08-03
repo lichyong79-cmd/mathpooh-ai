@@ -30,12 +30,17 @@ export default function SosTower({
       <span className="tower-stage" aria-hidden="true">
         <span className="tower-shadow" />
 
-        <span className={`tower-building ${completed ? "is-complete" : ""}`}>
+        <span className={`tower-building landmark-${accent} ${completed ? "is-complete" : ""}`}>
           <span className="tower-crown">
             <span className="crown-light" />
             <span className="crown-cap" />
             <span className="crown-spire" />
+            <span className="crown-fin crown-fin-left" />
+            <span className="crown-fin crown-fin-right" />
           </span>
+
+          <span className="tower-wing tower-wing-left" />
+          <span className="tower-wing tower-wing-right" />
 
           <span className="tower-face tower-front">
             {FLOORS.map((floor) => {
@@ -187,6 +192,159 @@ export default function SosTower({
         .tower-card:focus-visible .tower-shadow {
           transform: rotateX(70deg) scale(1.08);
           opacity: 0.86;
+        }
+
+
+        /* 세 건물의 실루엣을 완전히 다르게 만든다. */
+        .landmark-blue {
+          width: 132px;
+          height: 368px;
+          transform: translateX(-58%) rotateY(-16deg) rotateX(1deg);
+        }
+
+        .landmark-blue .tower-front {
+          width: 132px;
+          height: 300px;
+          clip-path: polygon(45% 0, 55% 0, 76% 22%, 90% 58%, 100% 100%, 0 100%, 10% 58%, 24% 22%);
+        }
+
+        .landmark-blue .tower-side {
+          left: 132px;
+          width: 38px;
+          height: 300px;
+          clip-path: polygon(0 0, 72% 21%, 100% 100%, 0 100%);
+        }
+
+        .landmark-blue .tower-crown {
+          left: 14px;
+          top: -20px;
+          width: 104px;
+          height: 86px;
+        }
+
+        .landmark-blue .crown-cap {
+          left: 28px;
+          width: 48px;
+          height: 42px;
+          clip-path: polygon(46% 0, 54% 0, 100% 100%, 0 100%);
+        }
+
+        .landmark-blue .crown-spire {
+          height: 54px;
+        }
+
+        .landmark-gold {
+          width: 148px;
+          height: 338px;
+          transform: translateX(-58%) rotateY(-14deg) rotateX(1deg);
+        }
+
+        .landmark-gold .tower-front {
+          width: 148px;
+          height: 276px;
+          clip-path: polygon(5% 0, 100% 7%, 92% 100%, 0 100%);
+          background: linear-gradient(110deg, #5d4514 0%, #9d7726 22%, #3b2b0d 50%, #7a5a18 76%, #241806 100%);
+        }
+
+        .landmark-gold .tower-side {
+          left: 148px;
+          width: 50px;
+          height: 276px;
+          clip-path: polygon(0 7%, 100% 0, 100% 100%, 0 100%);
+        }
+
+        .landmark-gold .tower-crown {
+          left: 3px;
+          top: 18px;
+          width: 145px;
+          height: 35px;
+        }
+
+        .landmark-gold .crown-cap {
+          left: 5px;
+          width: 132px;
+          height: 20px;
+          clip-path: polygon(0 0, 100% 30%, 96% 100%, 0 100%);
+        }
+
+        .landmark-gold .crown-spire,
+        .landmark-gold .crown-fin {
+          display: none;
+        }
+
+        .landmark-green {
+          width: 126px;
+          height: 342px;
+          transform: translateX(-56%) rotateY(-18deg) rotateX(1deg);
+        }
+
+        .landmark-green .tower-front {
+          width: 126px;
+          height: 278px;
+          clip-path: polygon(18% 5%, 38% 0, 52% 7%, 68% 1%, 88% 7%, 100% 100%, 0 100%);
+          background: linear-gradient(180deg, #174d39, #07180f 64%, #031009);
+        }
+
+        .landmark-green .tower-side {
+          left: 126px;
+          width: 46px;
+          height: 278px;
+          clip-path: polygon(0 7%, 78% 0, 100% 100%, 0 100%);
+        }
+
+        .landmark-green .tower-crown {
+          left: 0;
+          top: 8px;
+          width: 126px;
+          height: 48px;
+        }
+
+        .landmark-green .crown-cap {
+          left: 38px;
+          width: 48px;
+          height: 25px;
+          clip-path: polygon(15% 0, 85% 0, 100% 100%, 0 100%);
+        }
+
+        .landmark-green .crown-spire {
+          height: 26px;
+        }
+
+        .crown-fin {
+          display: none;
+          position: absolute;
+          bottom: 0;
+          width: 22px;
+          height: 34px;
+          border: 1px solid rgba(var(--accent-rgb), 0.5);
+          background: linear-gradient(180deg, var(--front-1), var(--front-2));
+        }
+
+        .landmark-green .crown-fin { display: block; }
+        .landmark-green .crown-fin-left { left: 12px; transform: skewY(-12deg); }
+        .landmark-green .crown-fin-right { right: 10px; transform: skewY(12deg); }
+
+        .tower-wing {
+          display: none;
+          position: absolute;
+          bottom: 36px;
+          width: 34px;
+          height: 210px;
+          background: linear-gradient(180deg, #103b2b, #04130c);
+          border: 1px solid rgba(var(--accent-rgb), 0.35);
+          box-shadow: inset 0 0 20px rgba(0,0,0,.45);
+        }
+
+        .landmark-green .tower-wing { display: block; }
+        .landmark-green .tower-wing-left {
+          left: -24px;
+          clip-path: polygon(40% 0, 100% 8%, 100% 100%, 0 100%);
+          transform: translateZ(10px);
+        }
+        .landmark-green .tower-wing-right {
+          right: -31px;
+          clip-path: polygon(0 8%, 60% 0, 100% 100%, 0 100%);
+          transform: translateZ(-4px);
         }
 
         .tower-face {
