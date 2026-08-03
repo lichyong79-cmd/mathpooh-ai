@@ -36,7 +36,7 @@
 
 .page-header small {
   display: block;
-  color: #566bdc;
+  color: #326738;
   font-weight: 900;
   letter-spacing: .08em;
 }
@@ -117,8 +117,8 @@
 }
 
 .source-status-badge.registered { background: #dff7ea; color: #16734e; }
-.source-status-badge.analysis { background: #eee7ff; color: #6841b7; }
-.source-status-badge.crop { background: #e5efff; color: #315db4; }
+.source-status-badge.analysis { background: #e8f2e7; color: #285c31; }
+.source-status-badge.crop { background: #eef5eb; color: #397042; }
 .source-status-badge.recognition { background: #fff0dc; color: #a65a17; }
 .source-status-badge.idle { background: #edf0f4; color: #687181; }
 
@@ -135,8 +135,8 @@
 }
 
 .source-bar select.source-status-select.registered { border-color: #6fc59c; background: #effbf5; color: #146b49; }
-.source-bar select.source-status-select.analysis { border-color: #a98ce0; background: #f7f3ff; color: #603ca7; }
-.source-bar select.source-status-select.crop { border-color: #83a7e8; background: #f1f6ff; color: #2f58a2; }
+.source-bar select.source-status-select.analysis { border-color: #8fba94; background: #f2f8f1; color: #285c31; }
+.source-bar select.source-status-select.crop { border-color: #abc9ac; background: #f5f9f3; color: #397042; }
 .source-bar select.source-status-select.recognition { border-color: #e5aa6f; background: #fff8ef; color: #96531a; }
 .source-bar select.source-status-select.idle { border-color: #d8dde7; background: #fff; color: #454e5d; }
 
