@@ -980,3 +980,32 @@
 .admin-app .sidebar-bottom span,.admin-app .sidebar-bottom button{color:#888}
 .admin-app .admin-avatar{background:#edf2ec;color:#326738}
 .admin-app .collapse-button{border-color:#4b4b4b;background:#242424;color:#fff}
+
+/* SOS120 · 실전모의고사 AI 문항분석 화면 */
+.admin-app .analysis-list-panel{padding:22px;overflow:visible!important}
+.admin-app .analysis-card-list{display:grid!important;gap:14px;overflow:visible!important;padding:0!important}
+.admin-app .analysis-card-list>.table-head{display:none!important}
+.admin-app .analysis-card-list>.table-row{
+  display:grid!important;width:100%!important;min-width:0!important;min-height:0!important;
+  grid-template-columns:minmax(280px,1.25fr) minmax(110px,.45fr) minmax(140px,.55fr) minmax(130px,.5fr) minmax(260px,1fr);
+  grid-template-areas:
+    "name code target date count"
+    "files progress progress status actions";
+  gap:16px 20px;padding:20px;border:1px solid #dfe6df;border-radius:15px;background:#fff;
+  box-shadow:0 5px 16px rgba(25,48,29,.045)
+}
+.admin-app .analysis-card-list>.table-row>div:nth-child(1){grid-area:name}
+.admin-app .analysis-card-list>.table-row>b:nth-child(2){grid-area:code;align-self:center}
+.admin-app .analysis-card-list>.table-row>span:nth-child(3){grid-area:target;align-self:center}
+.admin-app .analysis-card-list>.table-row>span:nth-child(4){grid-area:date;align-self:center}
+.admin-app .analysis-card-list>.table-row>span:nth-child(5){grid-area:count;align-self:center;color:#687269;font-size:13px}
+.admin-app .analysis-card-list>.table-row>.file-buttons{grid-area:files;align-self:center}
+.admin-app .analysis-card-list>.table-row>.exam-progress-cell{grid-area:progress;align-self:center}
+.admin-app .analysis-card-list>.table-row>.status-control{grid-area:status;align-self:center}
+.admin-app .analysis-card-list>.table-row>.row-actions{grid-area:actions;align-self:center;display:grid!important;grid-template-columns:1fr 1fr 1fr!important;gap:7px!important}
+.admin-app .analysis-card-list .row-actions .exam-analysis-button,
+.admin-app .analysis-card-list .row-actions .exam-analysis-complete{grid-column:1/-1!important;min-height:42px}
+.admin-app .analysis-card-list .row-actions>button{height:36px!important;min-width:0!important}
+@media(max-width:1200px){
+  .admin-app .analysis-card-list>.table-row{grid-template-columns:1fr 1fr;grid-template-areas:"name name" "code target" "date count" "files files" "progress status" "actions actions"}
+}

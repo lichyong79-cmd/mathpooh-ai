@@ -408,16 +408,14 @@ export default function Home() {
             >
               학생 로그인 화면
             </button>
-            <button className="icon-button">?</button>
-            <button className="icon-button notification">
-              ♢<b>3</b>
-            </button>
-            <button
-              className="primary-button"
-              onClick={() => setActive("exam-input")}
-            >
-              ＋ 새 시험 만들기
-            </button>
+            {["exam-list", "exam-input"].includes(active) ? (
+              <button
+                className="primary-button"
+                onClick={() => setActive("exam-input")}
+              >
+                ＋ 새 시험 만들기
+              </button>
+            ) : null}
           </div>
         </header>
         <div className="page-content">
@@ -3144,12 +3142,12 @@ function ExamsPage({
       `}</style>
       <section className="page-title-row">
         <div>
-          <h2>실전 모의고사</h2>
-          <p>모든 컴퓨터가 Supabase의 동일한 시험정보와 PDF를 사용합니다.</p>
+          <h2>{tab === "analysis" ? "실전모의고사 AI 문항분석" : "실전 모의고사"}</h2>
+          <p>{tab === "analysis" ? "등록된 시험지의 문항을 분석하고 완료 상태를 확인합니다." : "모든 컴퓨터가 Supabase의 동일한 시험정보와 PDF를 사용합니다."}</p>
         </div>
-        <button className="primary-button" onClick={startNew}>
+        {tab !== "analysis" ? <button className="primary-button" onClick={startNew}>
           ＋ 실전모의고사 입력
-        </button>
+        </button> : null}
       </section>
       <div className="student-tabs">
         <button
@@ -3189,33 +3187,33 @@ function ExamsPage({
         <>
           <section className="student-stat-grid">
             <MiniStat
-              label="전체 시험"
+              label={tab === "analysis" ? "분석 대상 시험" : "전체 시험"}
               value={`${exams.length}회`}
-              note="Supabase 등록 기준"
+              note={tab === "analysis" ? "등록된 시험 기준" : "Supabase 등록 기준"}
             />
             <MiniStat
-              label="등록 완료"
-              value={`${exams.filter((e) => e.status === "등록완료").length}회`}
-              note="응시 등록 가능"
+              label={tab === "analysis" ? "문항분석 완료" : "등록 완료"}
+              value={`${tab === "analysis" ? exams.filter((e) => (analysisCounts[e.id] ?? 0) === e.questionCount).length : exams.filter((e) => e.status === "등록완료").length}회`}
+              note={tab === "analysis" ? "전체 문항 분석 완료" : "응시 등록 가능"}
             />
             <MiniStat
-              label="작성중"
-              value={`${exams.filter((e) => e.status === "작성중").length}회`}
-              note="추가 입력 필요"
+              label={tab === "analysis" ? "분석 필요" : "작성중"}
+              value={`${tab === "analysis" ? exams.filter((e) => (analysisCounts[e.id] ?? 0) < e.questionCount).length : exams.filter((e) => e.status === "작성중").length}회`}
+              note={tab === "analysis" ? "분석 또는 재분석 필요" : "추가 입력 필요"}
               emphasis
             />
             <MiniStat
-              label="마감"
-              value={`${exams.filter((e) => e.status === "마감").length}회`}
-              note="종료된 시험"
+              label={tab === "analysis" ? "분석 문항" : "마감"}
+              value={tab === "analysis" ? `${Object.values(analysisCounts).reduce((sum, count) => sum + count, 0)}문항` : `${exams.filter((e) => e.status === "마감").length}회`}
+              note={tab === "analysis" ? "현재 저장된 분석 결과" : "종료된 시험"}
             />
           </section>
-          <section className="panel exam-list-panel">
+          <section className={`panel exam-list-panel ${tab === "analysis" ? "analysis-list-panel" : ""}`}>
             <div className="list-summary">
-              <strong>실전모의고사 {exams.length}회</strong>
-              <span>컴퓨터가 달라도 동일한 DB 내용을 표시합니다.</span>
+              <strong>{tab === "analysis" ? `AI 문항분석 대상 ${exams.length}회` : `실전모의고사 ${exams.length}회`}</strong>
+              <span>{tab === "analysis" ? "시험별 분석 진행률과 문항 수를 확인하세요." : "컴퓨터가 달라도 동일한 DB 내용을 표시합니다."}</span>
             </div>
-            <div className="data-table exam-list">
+            <div className={`data-table exam-list ${tab === "analysis" ? "analysis-card-list" : ""}`}>
               <div className="table-head">
                 <span>회차 / 시험명</span>
                 <span>시험코드</span>
