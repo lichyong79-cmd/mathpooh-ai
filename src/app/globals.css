@@ -37,6 +37,9 @@ body{font-size:16px;line-height:1.5}
 .workspace-card strong{font-size:14px}.workspace-card span{font-size:11px}
 .side-nav p{font-size:11px}.side-nav button{height:46px}.side-nav button span{font-size:15px}.side-nav button b{font-size:11px}
 .sidebar-bottom strong{font-size:14px}.sidebar-bottom span{font-size:11px}
+
+/* SOS114 관리자 메뉴 정보구조 */
+.sidebar{overflow:hidden}.side-nav{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:3px;align-content:start;scrollbar-width:thin;scrollbar-color:#739579 transparent}.side-nav-group{display:grid;gap:2px;margin:0}.side-nav-group>p{height:25px;margin:7px 9px 2px;display:flex;align-items:center;gap:7px;color:#a9c0ac;font-size:10px;font-weight:800;letter-spacing:-.02em}.side-nav-group>p i{font-style:normal;color:#dce9dd}.side-nav-group>button{height:38px}.side-nav-group.nested>button{position:relative;padding-left:31px}.side-nav-group.nested>button::before{content:"";position:absolute;left:17px;top:0;bottom:0;width:1px;background:rgba(220,233,221,.22)}.side-nav-group.nested>button i{width:15px;font-size:11px;color:#9fb2a2}.side-nav button:hover{background:rgba(255,255,255,.1);color:#fff}.side-nav button.active{background:#f2f7f2;color:#285c31;box-shadow:inset 3px 0 #91b866}.side-nav button.active i{color:#285c31}.side-nav .system-title{margin-top:10px;border-top:1px solid rgba(220,233,221,.14);padding-top:10px;height:auto}.collapsed .side-nav-group>p{display:none}.collapsed .side-nav-group.nested>button{padding-left:11px}.collapsed .side-nav-group.nested>button::before{display:none}
 .topbar{height:88px}.topbar p{font-size:12px}.topbar h1{font-size:26px}
 .primary-button,.secondary-button{height:44px;padding:0 18px;font-size:15px}
 .page-title-row h2{font-size:28px}.page-title-row p{font-size:14px}

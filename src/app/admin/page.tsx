@@ -16,14 +16,21 @@ import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 
 type AdminMenu =
   | "dashboard"
-  | "students"
-  | "exams"
-  | "problems"
-  | "analysis"
-  | "bank"
-  | "recommend"
-  | "results"
   | "posters"
+  | "students"
+  | "applications"
+  | "exam-list"
+  | "exam-input"
+  | "exam-analysis"
+  | "exam-assignment"
+  | "exam-progress"
+  | "problem-sources"
+  | "problem-analysis"
+  | "sos-bank"
+  | "sos-learning"
+  | "exam-results"
+  | "student-results"
+  | "learning-analysis"
   | "settings";
 type StudentStatus = "정상" | "휴원" | "퇴원";
 type SosStatus = "분석완료" | "훈련중" | "진단대기" | "미응시";
@@ -83,18 +90,35 @@ type Student = {
 };
 
 type MenuItem = { id: AdminMenu; label: string; icon: string; badge?: number };
+type MenuGroup = { label: string; icon?: string; items: MenuItem[] };
 
 const menus: MenuItem[] = [
   { id: "dashboard", label: "대시보드", icon: "⌂" },
-  { id: "students", label: "학생 관리", icon: "♙" },
-  { id: "exams", label: "실전 모의고사", icon: "▤" },
-  { id: "problems", label: "AI 문제등록", icon: "▦" },
-  { id: "analysis", label: "AI 분석 관리", icon: "✦", badge: 12 },
-  { id: "bank", label: "문제은행", icon: "▣" },
-  { id: "recommend", label: "SOS 추천", icon: "◎", badge: 7 },
-  { id: "results", label: "성적 관리", icon: "↗" },
   { id: "posters", label: "포스터 관리", icon: "▧" },
+  { id: "students", label: "학생정보 관리", icon: "♙" },
+  { id: "applications", label: "신청 관리", icon: "✓" },
+  { id: "exam-list", label: "시험지 목록", icon: "▤" },
+  { id: "exam-input", label: "시험지 입력", icon: "+" },
+  { id: "exam-analysis", label: "AI 분석", icon: "✦" },
+  { id: "exam-assignment", label: "시험지 배정", icon: "↗" },
+  { id: "exam-progress", label: "실전모의고사 진행", icon: "▶" },
+  { id: "problem-sources", label: "문제등록", icon: "▦" },
+  { id: "problem-analysis", label: "AI 분석", icon: "✦", badge: 12 },
+  { id: "sos-bank", label: "SOS 문제은행", icon: "▣" },
+  { id: "sos-learning", label: "SOS 학습관리", icon: "◎", badge: 7 },
+  { id: "exam-results", label: "시험성적 분석", icon: "▥" },
+  { id: "student-results", label: "학생성적 분석", icon: "↗" },
+  { id: "learning-analysis", label: "학생학습 분석", icon: "◫" },
   { id: "settings", label: "환경 설정", icon: "⚙" },
+];
+
+const menuGroups: MenuGroup[] = [
+  { label: "기본 운영", items: menus.filter((item) => ["dashboard", "posters", "students", "applications"].includes(item.id)) },
+  { label: "실전모의고사 관리", icon: "▤", items: menus.filter((item) => ["exam-list", "exam-input", "exam-analysis", "exam-assignment"].includes(item.id)) },
+  { label: "시험 운영", items: menus.filter((item) => item.id === "exam-progress") },
+  { label: "문제은행 관리", icon: "▦", items: menus.filter((item) => ["problem-sources", "problem-analysis"].includes(item.id)) },
+  { label: "SOS 운영", items: menus.filter((item) => ["sos-bank", "sos-learning"].includes(item.id)) },
+  { label: "분석", items: menus.filter((item) => ["exam-results", "student-results", "learning-analysis"].includes(item.id)) },
 ];
 
 const initialStudents: Student[] = [
@@ -287,13 +311,19 @@ export default function Home() {
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(
-      "matspu-admin-menu",
-    ) as AdminMenu | null;
-    if (saved === "analysis") {
+    const legacyMenu: Record<string, AdminMenu> = {
+      exams: "exam-list",
+      problems: "problem-sources",
+      bank: "sos-bank",
+      recommend: "sos-learning",
+      results: "student-results",
+    };
+    const stored = window.localStorage.getItem("matspu-admin-menu");
+    if (stored === "analysis") {
       window.location.replace("/problem-bank/ai-upload");
       return;
     }
+    const saved = (stored && legacyMenu[stored] ? legacyMenu[stored] : stored) as AdminMenu | null;
     if (saved && menus.some((menu) => menu.id === saved)) setActive(saved);
   }, []);
 
@@ -366,19 +396,19 @@ export default function Home() {
           <b>⌄</b>
         </div>
         <nav className="side-nav">
-          <p>운영 메뉴</p>
-          {menus
-            .filter((menu) => menu.id !== "settings")
-            .map((menu) => (
+          {menuGroups.map((group) => (
+            <section className={`side-nav-group ${group.items.length > 1 ? "nested" : ""}`} key={group.label}>
+              <p>{group.icon ? <i>{group.icon}</i> : null}{group.label}</p>
+              {group.items.map((menu) => (
               <button
                 key={menu.id}
                 className={active === menu.id ? "active" : ""}
                 onClick={() => {
-                  if (menu.id === "bank") {
+                  if (menu.id === "sos-bank") {
                     window.location.href = "/problem-bank";
                     return;
                   }
-                  if (menu.id === "analysis") {
+                  if (menu.id === "problem-analysis") {
                     window.localStorage.setItem(
                       "matspu-admin-menu",
                       "students",
@@ -393,7 +423,9 @@ export default function Home() {
                 <span>{menu.label}</span>
                 {menu.badge ? <b>{menu.badge}</b> : null}
               </button>
-            ))}
+              ))}
+            </section>
+          ))}
           <p className="system-title">시스템</p>
           {menus
             .filter((menu) => menu.id === "settings")
@@ -430,34 +462,36 @@ export default function Home() {
             </button>
             <button
               className="primary-button"
-              onClick={() => setActive("exams")}
+              onClick={() => setActive("exam-input")}
             >
               ＋ 새 시험 만들기
             </button>
           </div>
         </header>
         <div className="page-content">
-          {active === "students" ? (
-            <StudentsPage
+          {active === "students" || active === "applications" ? (
+            <StudentsPage key={active}
+              initialTab={active === "applications" ? "registration" : "students"}
               students={students}
               setStudents={setStudents}
               exams={practiceExams}
             />
-          ) : active === "exams" ? (
-            <ExamsPage
+          ) : ["exam-list", "exam-input", "exam-analysis", "exam-assignment", "exam-progress", "exam-results"].includes(active) ? (
+            <ExamsPage key={active}
+              initialTab={active === "exam-input" ? "input" : active === "exam-analysis" ? "analysis" : active === "exam-assignment" ? "assignment" : active === "exam-progress" || active === "exam-results" ? "monitor" : "list"}
               exams={practiceExams}
               setExams={setPracticeExams}
               examFiles={examFiles}
               setExamFiles={setExamFiles}
               students={students}
             />
-          ) : active === "results" ? (
+          ) : active === "student-results" || active === "learning-analysis" ? (
             <ResultsPage students={students} />
           ) : active === "posters" ? (
             <PostersPage />
-          ) : active === "recommend" ? (
+          ) : active === "sos-learning" ? (
             <RecommendPage />
-          ) : active === "problems" ? (
+          ) : active === "problem-sources" ? (
             <ProblemsPage
               onOpenAnalysis={(sourceFileId) => {
                 window.localStorage.setItem(
@@ -565,10 +599,12 @@ function PostersPage() {
 }
 
 function StudentsPage({
+  initialTab = "students",
   students,
   setStudents,
   exams,
 }: {
+  initialTab?: StudentTab;
   students: Student[];
   setStudents: React.Dispatch<React.SetStateAction<Student[]>>;
   exams: PracticeExam[];
@@ -579,15 +615,15 @@ function StudentsPage({
   const [selected, setSelected] = useState<Student | null>(null);
   const [editing, setEditing] = useState<Student | null>(null);
   const [isAdding, setIsAdding] = useState(false);
-  const [tab, setTab] = useState<StudentTab>("students");
+  const [tab, setTab] = useState<StudentTab>(initialTab);
   const [selectedRoundId, setSelectedRoundId] = useState("");
   const [registeredIds, setRegisteredIds] = useState<(string | number)[]>([]);
   const [registrationBusy, setRegistrationBusy] = useState(false);
 
   useEffect(() => {
-    setTab("students");
-    window.localStorage.setItem("matspu-student-tab", "students");
-  }, []);
+    setTab(initialTab);
+    window.localStorage.setItem("matspu-student-tab", initialTab);
+  }, [initialTab]);
 
   useEffect(() => {
     window.localStorage.setItem("matspu-student-tab", tab);
@@ -2371,12 +2407,14 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
 }
 
 function ExamsPage({
+  initialTab = "list",
   exams,
   setExams,
   examFiles,
   setExamFiles,
   students,
 }: {
+  initialTab?: "list" | "input" | "analysis" | "assignment" | "monitor";
   exams: PracticeExam[];
   setExams: React.Dispatch<React.SetStateAction<PracticeExam[]>>;
   examFiles: Record<string, ExamFileBundle>;
@@ -2385,8 +2423,8 @@ function ExamsPage({
   >;
   students: Student[];
 }) {
-  const [tab, setTab] = useState<"list" | "input" | "assignment" | "monitor">(
-    "list",
+  const [tab, setTab] = useState<"list" | "input" | "analysis" | "assignment" | "monitor">(
+    initialTab,
   );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftFiles, setDraftFiles] = useState<ExamFileBundle>({});
@@ -2412,14 +2450,14 @@ function ExamsPage({
   // F5를 누르면 항상 안전한 시험 목록에서 시작합니다.
   useEffect(() => {
     window.localStorage.removeItem("matspu-exam-tab");
-    setTab("list");
+    setTab(initialTab);
     fetch("/api/admin/exam-analysis", { cache: "no-store" })
       .then(async (response) => {
         const result = await response.json();
         if (response.ok) setAnalysisCounts(result.counts ?? {});
       })
       .catch(() => undefined);
-  }, []);
+  }, [initialTab]);
 
   const analyzeExam = async (exam: PracticeExam) => {
     if (!exam.testFilePath) return alert("먼저 PDF 시험지를 등록해 주세요.");
@@ -3166,6 +3204,12 @@ function ExamsPage({
           시험 목록
         </button>
         <button
+          className={tab === "analysis" ? "active" : ""}
+          onClick={() => setTab("analysis")}
+        >
+          AI 문항분석
+        </button>
+        <button
           className={tab === "assignment" ? "active" : ""}
           onClick={() => setTab("assignment")}
         >
@@ -3186,7 +3230,7 @@ function ExamsPage({
           {editingId ? "시험 수정" : "실전모의고사 입력"}
         </button>
       </div>
-      {tab === "list" ? (
+      {tab === "list" || tab === "analysis" ? (
         <>
           <section className="student-stat-grid">
             <MiniStat
