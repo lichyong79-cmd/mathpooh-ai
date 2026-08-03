@@ -37,7 +37,6 @@ export async function POST(request: NextRequest) {
     const grade = String(formData.get("grade") ?? "").trim();
     const subject = String(formData.get("subject") ?? "").trim();
     const contentRole = String(formData.get("contentRole") ?? "TRAINING").trim();
-    const trainingCourse = String(formData.get("trainingCourse") ?? "대표유형").trim();
     const hwpFile = formData.get("hwpFile");
     const examPdf = formData.get("examPdf");
     const solutionPdf = formData.get("solutionPdf");
@@ -113,7 +112,9 @@ export async function POST(request: NextRequest) {
         grade: grade || null,
         subject: subject || null,
         content_role: contentRole === "REFERENCE" ? "REFERENCE" : "TRAINING",
-        training_course: trainingCourse || "대표유형",
+        // 훈련 단계는 문제 등록 시 정하지 않습니다.
+        // SOS 학습관리/추천 단계에서 문항 DNA를 기준으로 별도 분류합니다.
+        training_course: null,
         storage_path: examPdfPath,
         hwp_path: hwpPath,
         exam_pdf_path: examPdfPath,
