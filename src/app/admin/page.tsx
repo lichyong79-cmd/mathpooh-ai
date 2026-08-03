@@ -376,7 +376,7 @@ export default function Home() {
         <div className="brand-row">
           <div className="brand-symbol"><img src="/mathpooh-logo.png" alt="매쓰푸" /></div>
           <div className="brand-copy">
-            <div className="brand-title-line"><strong>MATHPOOH</strong><b>SOS</b></div>
+            <strong><span>MATHPOOH</span><b>SOS</b></strong>
             <span>SCORE OPTIMIZATION SYSTEM</span>
           </div>
           <button
@@ -4059,7 +4059,7 @@ function Dashboard({
     <>
       <section className="welcome-card">
         <div>
-          <span className="pill">MATSPU SOS</span>
+          <span className="pill">MATHPOOH SOS</span>
           <h2>학생의 점수를 데이터로 최적화합니다.</h2>
           <p>진단부터 훈련 추천까지 매쓰푸의 전체 흐름을 관리하세요.</p>
         </div>
