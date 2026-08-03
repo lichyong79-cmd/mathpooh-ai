@@ -5,6 +5,7 @@ import { getSupabaseConfig } from "@/lib/supabase";
 import { authHeaders } from "@/lib/supabase/rest";
 import { ProblemDnaCard } from "@/components/problem-dna-card";
 import type { ProblemDNA } from "@/lib/problem-dna";
+import AdminPortalShell from "@/components/admin-portal-sidebar";
 
 type Problem = {
   id: string;
@@ -275,10 +276,19 @@ export default function ProblemBankPage() {
 
 
   return (
+    <AdminPortalShell current="sos-bank">
     <main className="bank-page">
       <header className="bank-header">
         <div>
-          <button className="back-button" type="button" onClick={() => { window.location.href = "/"; }}>← 관리자</button>
+          <button
+            className="back-button"
+            type="button"
+            onClick={() => {
+              window.location.href = "/admin";
+            }}
+          >
+            ← 관리자
+          </button>
           <p>MATSPU SOS</p>
           <h1>문제은행</h1>
           <span>등록 문항 {items.length}개 · 검색 결과 {filtered.length}개</span>
@@ -360,5 +370,6 @@ export default function ProblemBankPage() {
         @media(max-width:1400px){.bank-layout{grid-template-columns:340px minmax(0,1fr)}.problem-detail{grid-template-columns:minmax(450px,1fr) minmax(390px,.85fr)}}@media(max-width:900px){.filter-bar{display:grid;grid-template-columns:1fr 1fr}.filter-bar label,.filter-bar label.filter-search,.filter-bar label:nth-child(2){min-width:0}.filter-bar label.filter-search,.filter-bar label:nth-child(2){grid-column:1/-1}.filter-reset{width:100%}}@media(max-width:560px){.filter-bar{grid-template-columns:1fr}.filter-bar label.filter-search,.filter-bar label:nth-child(2){grid-column:auto}}
       `}</style>
     </main>
+    </AdminPortalShell>
   );
 }

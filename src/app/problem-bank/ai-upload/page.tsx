@@ -17,6 +17,7 @@ import {
   type DocumentAnchors,
   type QuestionAnchor,
 } from "@/lib/crop/question-anchors";
+import AdminPortalShell from "@/components/admin-portal-sidebar";
 
 type SourceFile = {
   id: string;
@@ -2090,6 +2091,7 @@ export default function AnalysisWorkspacePage() {
   }
 
   return (
+    <AdminPortalShell current="problem-analysis" defaultCollapsed>
     <main className="analysis-page">
       <header className="page-header">
         <div>
@@ -2611,5 +2613,6 @@ export default function AnalysisWorkspacePage() {
         @media(max-width:1000px){.pipeline-bar{align-items:stretch;flex-wrap:wrap}.pipeline-counts{margin-left:0}.pending-toolbar{grid-template-columns:46px 1fr}.pending-toolbar>button{grid-column:1/-1;width:100%}}@media(max-width:760px){section.workspace-grid.recognition-mode{grid-template-columns:1fr}section.all-crops-grid.crop-three-grid{grid-template-columns:1fr}.pending-toolbar{grid-template-columns:1fr;text-align:center}.pending-icon{margin:auto}.pending-toolbar>button{grid-column:auto;min-width:0}.pipeline-counts{width:100%}}
       `}</style>
     </main>
+    </AdminPortalShell>
   );
 }

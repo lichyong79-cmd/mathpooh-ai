@@ -269,7 +269,8 @@ export default function Home() {
       recommend: "sos-learning",
       results: "student-results",
     };
-    const stored = window.localStorage.getItem("matspu-admin-menu");
+    const queryMenu = new URLSearchParams(window.location.search).get("menu");
+    const stored = queryMenu || window.localStorage.getItem("matspu-admin-menu");
     if (stored === "analysis") {
       window.location.replace("/problem-bank/ai-upload");
       return;
