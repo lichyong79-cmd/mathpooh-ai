@@ -594,10 +594,10 @@ export default function StudentHome() {
           <button className={activeSection === "analysis" ? "active" : ""} onClick={() => moveSection("analysis")}>학습분석</button>
         </nav>
         <div className="mp-header-actions">
-          <button className="mp-apply-button" onClick={() => moveSection("apply")}>SOS 신청하기</button>
+          <button className="mp-apply-button" onClick={() => moveSection("apply")}><span aria-hidden="true">＋</span>SOS 신청</button>
           <div className="mp-profile-wrap">
             <button className="mp-profile-button" onClick={() => setProfileOpen((value) => !value)} aria-expanded={profileOpen}>
-              <span className="mp-user-mark">{portal.student.name.slice(0, 1)}</span>
+              <span className="mp-user-mark" aria-hidden="true"><span className="mp-user-head" /><span className="mp-user-body" /></span>
               <strong>{portal.student.name}</strong>
               <i>⌄</i>
             </button>
@@ -628,11 +628,6 @@ export default function StudentHome() {
       </div> : null}
       {activeSection === "home" ? (
         <>
-          <SosLandmarkMap
-            data={landmark}
-            studentName={portal.student.name}
-            onSelect={setSelectedTower}
-          />
           {todayTask ? (
             <section className={`student-today-task task-${todayTask.kind}`}>
               <div className="student-task-icon" aria-hidden="true">
@@ -646,6 +641,11 @@ export default function StudentHome() {
               <button onClick={() => moveSection(todayTask.section)}>{todayTask.action}</button>
             </section>
           ) : null}
+          <SosLandmarkMap
+            data={landmark}
+            studentName={portal.student.name}
+            onSelect={setSelectedTower}
+          />
         </>
       ) : null}
       {selectedTower ? (

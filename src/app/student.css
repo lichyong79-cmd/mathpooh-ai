@@ -91,3 +91,37 @@
 .student-today-task.task-training .student-task-icon,.student-today-task.task-training>button{background:#365f82}
 @media(max-width:900px){.mp-site-header{grid-template-columns:auto 1fr auto}.mp-site-header>.mp-menu-button{display:grid}.mp-main-nav{display:none}.mp-site-brand strong{display:none}.mp-header-actions{gap:7px}.mp-profile-button strong,.mp-profile-button i{display:none}.mp-profile-button{padding:0}.mp-apply-button{padding:0 12px}.student-today-task{grid-template-columns:50px 1fr}.student-task-icon{width:50px;height:50px}.student-today-task>button{grid-column:2;justify-self:start}}
 @media(max-width:620px){.mp-site-header{height:76px;padding:0 16px;margin:0 -24px}.mp-apply-button{font-size:12px;height:38px}.student-today-task{margin-top:14px;padding:18px;gap:14px}.student-task-copy h2{font-size:19px}.student-task-copy p{font-size:13px}.student-today-task>button{width:100%}}
+
+/* SOS139: compact header actions + clear profile identity */
+.mp-header-actions{gap:8px}
+.mp-apply-button{height:38px;padding:0 13px;border:1px solid #d9c07a;border-radius:999px;background:#fffaf0;color:#755513;display:inline-flex;align-items:center;gap:5px;font-size:13px;font-weight:900;box-shadow:none}
+.mp-apply-button span{font-size:17px;line-height:1;font-weight:700}
+.mp-apply-button:hover{background:#f8edcf;border-color:#caa84e;color:#5e430e}
+.mp-profile-button{height:42px;padding:0 10px 0 6px;border:1px solid #e0e5e0;border-radius:999px;background:#fff;display:flex;align-items:center;gap:8px;color:#232623;box-shadow:0 3px 10px rgba(25,45,28,.05)}
+.mp-profile-button:hover{border-color:#b8ccb9;background:#f8fbf8}
+.mp-profile-button strong{font-size:14px;font-weight:900;white-space:nowrap}
+.mp-profile-button i{font-style:normal;color:#7a817b;font-size:13px;transform:translateY(-1px)}
+.mp-user-mark{position:relative;width:30px;height:30px;border-radius:50%;display:block;background:linear-gradient(145deg,#e7f0e8,#d5e5d7);color:transparent;overflow:hidden}
+.mp-user-head{position:absolute;left:50%;top:6px;width:9px;height:9px;border-radius:50%;background:#47714d;transform:translateX(-50%)}
+.mp-user-body{position:absolute;left:50%;bottom:3px;width:17px;height:10px;border-radius:10px 10px 5px 5px;background:#47714d;transform:translateX(-50%)}
+.mp-profile-menu{top:calc(100% + 10px);right:0;min-width:155px;padding:7px;border:1px solid #dfe5df;border-radius:14px;background:#fff;box-shadow:0 14px 34px rgba(19,37,22,.16)}
+.mp-profile-menu button{width:100%;height:40px;padding:0 12px;border:0;border-radius:9px;background:transparent;text-align:left;color:#303530;font-size:13px;font-weight:800}
+.mp-profile-menu button:hover{background:#f1f6f1}
+.mp-profile-menu button.logout{color:#b44141}
+
+/* Home priority: today's action first, landmark second */
+.student-today-task{margin:24px 0 18px}
+.student-today-task + .slm,.student-today-task + .landmark-map{margin-top:0}
+
+@media(max-width:900px){
+  .mp-profile-button{width:40px;height:40px;padding:4px}
+  .mp-profile-button strong,.mp-profile-button i{display:none}
+  .mp-user-mark{width:30px;height:30px}
+  .mp-apply-button{height:38px;padding:0 11px;font-size:12px}
+}
+@media(max-width:620px){
+  .mp-header-actions{gap:5px}
+  .mp-apply-button{padding:0 9px}
+  .mp-apply-button span{display:none}
+  .student-today-task{margin-top:16px;margin-bottom:14px}
+}
