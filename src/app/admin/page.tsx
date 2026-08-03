@@ -90,6 +90,8 @@ type ExamQuestionAnalysis = {
     summary?: string;
     test_page_no?: number;
     solution_page_no?: number;
+    test_bbox?: [number, number, number, number];
+    solution_bbox?: [number, number, number, number];
   };
   updated_at?: string;
 };
@@ -4124,17 +4126,21 @@ function ExamsPage({
             <div className="analysis-preview-body">
               {analysisPreviewTab === "question" ? (
                 analysisReviewFiles.testUrl ? (
-                  <iframe
-                    title={`${analysisPreviewItem.question_no}번 문제`}
-                    src={`${analysisReviewFiles.testUrl}#page=${Math.max(1, Number(analysisPreviewItem.analysis_data?.test_page_no || 1))}&view=FitH`}
+                  <PdfRegionPreview
+                    url={analysisReviewFiles.testUrl}
+                    pageNo={Math.max(1, Number(analysisPreviewItem.analysis_data?.test_page_no || 1))}
+                    bbox={analysisPreviewItem.analysis_data?.test_bbox}
+                    label={`${analysisPreviewItem.question_no}번 문제`}
                   />
                 ) : (
                   <div className="analysis-preview-empty">등록된 시험지 PDF가 없습니다.</div>
                 )
-              ) : analysisReviewFiles.solutionUrl ? (
-                <iframe
-                  title={`${analysisPreviewItem.question_no}번 공식 해설`}
-                  src={`${analysisReviewFiles.solutionUrl}#page=${Math.max(1, Number(analysisPreviewItem.analysis_data?.solution_page_no || 1))}&view=FitH`}
+              ) : analysisReviewFiles.solutionUrl && Number(analysisPreviewItem.analysis_data?.solution_page_no || 0) > 0 ? (
+                <PdfRegionPreview
+                  url={analysisReviewFiles.solutionUrl}
+                  pageNo={Math.max(1, Number(analysisPreviewItem.analysis_data?.solution_page_no || 1))}
+                  bbox={analysisPreviewItem.analysis_data?.solution_bbox}
+                  label={`${analysisPreviewItem.question_no}번 공식 해설`}
                 />
               ) : (
                 <div className="analysis-preview-empty">등록된 공식 해설 PDF가 없습니다.</div>
@@ -4157,6 +4163,93 @@ function ExamsPage({
       ) : null}
     </>
   );
+}
+
+function PdfRegionPreview({
+  url,
+  pageNo,
+  bbox,
+  label,
+}: {
+  url: string;
+  pageNo: number;
+  bbox?: [number, number, number, number];
+  label: string;
+}) {
+  const [imageUrl, setImageUrl] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let disposed = false;
+    let objectUrl = "";
+    setLoading(true);
+    setError("");
+    setImageUrl("");
+
+    void (async () => {
+      try {
+        if (!bbox || bbox.length !== 4) {
+          throw new Error("문항 영역 좌표가 없습니다. 이 문항을 재분석해 주세요.");
+        }
+        const [rawX, rawY, rawWidth, rawHeight] = bbox.map(Number);
+        const x = Math.max(0, Math.min(1, rawX));
+        const y = Math.max(0, Math.min(1, rawY));
+        const width = Math.max(0.01, Math.min(1 - x, rawWidth));
+        const height = Math.max(0.01, Math.min(1 - y, rawHeight));
+
+        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+          "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+          import.meta.url,
+        ).toString();
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) throw new Error("PDF를 불러오지 못했습니다.");
+        const pdf = await pdfjs.getDocument({
+          data: new Uint8Array(await response.arrayBuffer()),
+        }).promise;
+        const page = await pdf.getPage(Math.min(Math.max(1, pageNo), pdf.numPages));
+        const viewport = page.getViewport({ scale: 2 });
+        const source = document.createElement("canvas");
+        source.width = Math.ceil(viewport.width);
+        source.height = Math.ceil(viewport.height);
+        const sourceContext = source.getContext("2d", { alpha: false });
+        if (!sourceContext) throw new Error("문항 이미지를 만들 수 없습니다.");
+        await page.render({ canvasContext: sourceContext, viewport }).promise;
+
+        const padding = 18;
+        const sx = Math.max(0, Math.floor(x * source.width) - padding);
+        const sy = Math.max(0, Math.floor(y * source.height) - padding);
+        const sw = Math.min(source.width - sx, Math.ceil(width * source.width) + padding * 2);
+        const sh = Math.min(source.height - sy, Math.ceil(height * source.height) + padding * 2);
+        const output = document.createElement("canvas");
+        output.width = Math.max(1, sw);
+        output.height = Math.max(1, sh);
+        const outputContext = output.getContext("2d", { alpha: false });
+        if (!outputContext) throw new Error("문항 이미지를 자를 수 없습니다.");
+        outputContext.fillStyle = "#ffffff";
+        outputContext.fillRect(0, 0, output.width, output.height);
+        outputContext.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+        const blob = await new Promise<Blob | null>((resolve) => output.toBlob(resolve, "image/png"));
+        if (!blob) throw new Error("문항 이미지를 저장하지 못했습니다.");
+        objectUrl = URL.createObjectURL(blob);
+        if (!disposed) setImageUrl(objectUrl);
+      } catch (caught) {
+        if (!disposed) setError(caught instanceof Error ? caught.message : "미리보기를 만들지 못했습니다.");
+      } finally {
+        if (!disposed) setLoading(false);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url, pageNo, bbox?.join(",")]);
+
+  if (loading) return <div className="analysis-preview-empty">문항 영역을 불러오는 중입니다…</div>;
+  if (error) return <div className="analysis-preview-empty">{error}</div>;
+  return <div className="analysis-region-image"><img src={imageUrl} alt={label} /></div>;
 }
 
 function HtmlPrintPreviewModal({

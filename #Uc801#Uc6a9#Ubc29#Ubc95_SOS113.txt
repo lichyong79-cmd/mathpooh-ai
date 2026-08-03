@@ -1,0 +1,18 @@
+SOS113 적용 방법
+
+1. ZIP을 현재 프로젝트에 덮어씁니다.
+2. Supabase SQL Editor에서 supabase-v3.0-site-posters.sql을 한 번 실행합니다.
+3. git add .
+4. git commit -m "SOS113 MathPooh UI and poster manager"
+5. git push
+
+확인 위치
+- 관리자 페이지 > 포스터 관리
+- 학생 페이지 홈 > 매쓰푸 소식
+
+포스터 기능
+- 이미지 등록: PNG/JPG/WEBP/GIF, 최대 10MB
+- 학생 공개/숨김
+- 표시 순서 변경
+- 연결 주소 등록
+- 삭제 안전 확인창
