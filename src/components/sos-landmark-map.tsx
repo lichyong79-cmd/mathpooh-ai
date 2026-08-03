@@ -390,10 +390,19 @@ function Tower({
     >
       <span className="slm-city-base" aria-hidden="true">
         <span className="slm-ground-shadow" />
+        <span className="slm-island">
+          <span className="slm-island-top" />
+          <span className="slm-island-front" />
+          <span className="slm-island-side" />
+        </span>
+        <span className="slm-water-plane" />
         <span className="slm-road-strip">
           <i className="slm-car car-a" />
           <i className="slm-car car-b" />
         </span>
+        <span className="slm-mini-block block-a" />
+        <span className="slm-mini-block block-b" />
+        <span className="slm-mini-block block-c" />
         <span className="slm-trees">
           <i /><i /><i /><i /><i />
         </span>
@@ -583,6 +592,14 @@ export default function SosLandmarkMap({ data, studentName, onSelect }: Props) {
                   strokeWidth="5"
                   vectorEffect="non-scaling-stroke"
                 />
+              </g>
+
+              {/* 태백산맥 입체 지형: 동해안을 따라 솟는 능선 면 */}
+              <g className="slm-taebaek-terrain" aria-hidden="true">
+                <path className="slm-taebaek-shadow" d="M594 154 L632 214 L616 244 L666 292 L645 328 L701 378 L677 418 L724 468 L696 510 L735 558 L704 604 L739 652 L707 698 L731 752 L696 790 L676 742 L684 690 L660 650 L678 604 L650 558 L671 512 L642 466 L660 420 L632 374 L651 330 L620 286 L637 244 Z" />
+                <path className="slm-taebaek-east" d="M606 146 L642 211 L627 241 L679 288 L657 326 L714 375 L691 416 L738 466 L710 508 L749 556 L718 603 L752 651 L719 698 L744 750 L708 791 L690 742 L698 690 L674 648 L692 603 L664 556 L685 510 L656 464 L674 418 L646 372 L665 328 L634 284 L651 240 Z" />
+                <path className="slm-taebaek-west" d="M606 146 L594 154 L632 214 L616 244 L666 292 L645 328 L701 378 L677 418 L724 468 L696 510 L735 558 L704 604 L739 652 L707 698 L731 752 L696 790 L708 791 L744 750 L719 698 L752 651 L718 603 L749 556 L710 508 L738 466 L691 416 L714 375 L657 326 L679 288 L627 241 L642 211 Z" />
+                <path className="slm-taebaek-ridge" d="M606 146 L642 211 L627 241 L679 288 L657 326 L714 375 L691 416 L738 466 L710 508 L749 556 L718 603 L752 651 L719 698 L744 750" />
               </g>
 
               {/* 산맥: 태백 · 소백 · 노령 · 차령 */}

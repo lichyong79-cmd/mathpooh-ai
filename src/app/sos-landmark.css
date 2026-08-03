@@ -853,3 +853,181 @@
 @media (prefers-reduced-motion: reduce) {
   .slm-car { animation: none; }
 }
+
+/* ── SOS136 Isometric Terrain: 3D 지형판과 태백산맥 ─────────────────── */
+.slm-taebaek-terrain { opacity: 0.92; }
+.slm-taebaek-shadow {
+  fill: rgba(0, 9, 13, 0.68);
+  filter: blur(8px);
+  transform: translate(-8px, 12px);
+}
+.slm-taebaek-east {
+  fill: url(#slm-land);
+  opacity: 0.92;
+  filter: drop-shadow(0 8px 8px rgba(0, 8, 12, 0.5));
+}
+.slm-taebaek-west { fill: rgba(43, 117, 91, 0.78); }
+.slm-taebaek-ridge {
+  fill: none;
+  stroke: rgba(168, 236, 191, 0.72);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 5px rgba(114, 224, 166, 0.34));
+}
+
+.slm-city-base {
+  bottom: -5%;
+  width: 310%;
+  height: 34%;
+  perspective: 260px;
+  transform: translateX(-50%);
+  transform-style: preserve-3d;
+}
+.slm-ground-shadow {
+  bottom: -4%;
+  width: 86%;
+  height: 34%;
+  filter: blur(5px);
+  transform: translateX(-50%) rotate(-4deg);
+}
+.slm-island {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  bottom: 4%;
+  width: 78%;
+  height: 56%;
+  transform: translateX(-50%) rotateX(58deg) rotateZ(-8deg);
+  transform-style: preserve-3d;
+}
+.slm-island-top,
+.slm-island-front,
+.slm-island-side {
+  position: absolute;
+  display: block;
+}
+.slm-island-top {
+  inset: 0;
+  border: 1px solid rgba(126, 211, 194, 0.26);
+  border-radius: 18% 26% 22% 28%;
+  background:
+    linear-gradient(150deg, rgba(37, 104, 85, 0.9), rgba(10, 46, 48, 0.94) 62%, rgba(6, 31, 38, 0.98));
+  box-shadow: inset 0 1px rgba(185, 245, 219, 0.2), 0 9px 14px rgba(0, 8, 12, 0.55);
+}
+.slm-island-front {
+  left: 5%;
+  right: 4%;
+  top: 88%;
+  height: 20%;
+  border-radius: 0 0 18px 18px;
+  background: linear-gradient(180deg, #133b3c, #061c26);
+  transform: rotateX(-90deg);
+  transform-origin: top;
+}
+.slm-island-side {
+  top: 8%;
+  right: -8%;
+  width: 13%;
+  height: 82%;
+  background: linear-gradient(90deg, #0c3035, #051a23);
+  transform: rotateY(90deg);
+  transform-origin: left;
+}
+.slm-water-plane {
+  position: absolute;
+  z-index: 0;
+  left: 50%;
+  bottom: -5%;
+  width: 94%;
+  height: 46%;
+  border: 1px solid rgba(92, 192, 225, 0.24);
+  border-radius: 50%;
+  background:
+    repeating-linear-gradient(170deg, transparent 0 7px, rgba(151, 230, 250, 0.07) 8px, transparent 9px 15px),
+    linear-gradient(180deg, rgba(44, 141, 176, 0.38), rgba(3, 35, 55, 0.74));
+  box-shadow: inset 0 1px rgba(189, 242, 255, 0.28), 0 0 14px rgba(54, 177, 220, 0.18);
+  transform: translateX(-50%) rotate(-6deg);
+}
+.slm-lotte .slm-water-plane { width: 55%; height: 30%; bottom: 2%; }
+
+.slm-road-strip {
+  z-index: 4;
+  left: 18%;
+  right: 12%;
+  bottom: 24%;
+  height: 19%;
+  min-height: 6px;
+  border: 1px solid rgba(180, 215, 222, 0.14);
+  border-radius: 2px;
+  background: linear-gradient(180deg, #31434a, #121f26);
+  box-shadow: 0 3px 0 #07131a, 0 7px 10px rgba(0, 5, 10, 0.45);
+  transform: rotate(-8deg) skewX(-18deg);
+}
+.slm-road-strip:after { top: 48%; }
+.slm-car { transform: skewX(18deg); }
+.car-a { animation-name: slm-car-iso-a; }
+.car-b { animation-name: slm-car-iso-b; }
+@keyframes slm-car-iso-a { from { transform: skewX(18deg) translateX(-8px); } to { transform: skewX(18deg) translateX(56px); } }
+@keyframes slm-car-iso-b { from { transform: skewX(18deg) scaleX(-1) translateX(-8px); } to { transform: skewX(18deg) scaleX(-1) translateX(56px); } }
+
+.slm-mini-block {
+  position: absolute;
+  z-index: 3;
+  bottom: 29%;
+  width: 12%;
+  height: 26%;
+  background: linear-gradient(90deg, #153647 0 72%, #0a2230 72%);
+  border-top: 2px solid rgba(131, 213, 222, 0.35);
+  box-shadow: 4px 5px 0 rgba(2, 12, 18, 0.8), 0 0 8px rgba(70, 190, 205, 0.12);
+  transform: skewY(-18deg);
+}
+.slm-mini-block:after {
+  content: "";
+  position: absolute;
+  inset: 22% 18%;
+  background: repeating-linear-gradient(180deg, rgba(255, 225, 135, 0.6) 0 1px, transparent 1px 4px);
+  opacity: calc(0.14 + var(--completion, 0%) * 0.006);
+}
+.block-a { left: 18%; height: 20%; }
+.block-b { right: 19%; width: 10%; height: 31%; }
+.block-c { right: 34%; width: 8%; height: 17%; }
+
+.slm-trees {
+  z-index: 5;
+  left: 12%;
+  right: 12%;
+  bottom: 27%;
+  transform: rotate(-7deg);
+}
+.slm-trees i {
+  width: 8px;
+  height: 10px;
+  border-radius: 50% 50% 42% 42%;
+  background: radial-gradient(circle at 32% 26%, #56c58a, #1d7653 52%, #0a3d31 76%);
+  box-shadow: 3px 3px 0 rgba(1, 20, 17, 0.7), 0 0 6px rgba(75, 220, 157, 0.24);
+  transform: skewY(-8deg);
+}
+.slm-trees i:before {
+  content: "";
+  position: absolute;
+  left: 52%;
+  top: 62%;
+  width: 5px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(1, 14, 13, 0.5);
+  transform: translateX(-50%) skewY(8deg);
+}
+.slm-trees i:after { top: 76%; height: 6px; }
+.slm-lamps { z-index: 6; bottom: 28%; transform: rotate(-7deg); }
+
+.slm-sixtythree .slm-city-base:before,
+.slm-lct .slm-city-base:before,
+.slm-lotte .slm-city-base:before { display: none; }
+
+@media (max-width: 900px) {
+  .slm-city-base { width: 285%; height: 31%; }
+  .slm-mini-block { min-width: 5px; }
+}
