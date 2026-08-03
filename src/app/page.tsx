@@ -6,6 +6,7 @@ import "./student.css";
 import "./exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
+import SosTower from "@/components/sos-tower";
 
 type Attempt = {
   id: string;
@@ -214,6 +215,7 @@ export default function StudentHome() {
   const [error, setError] = useState("");
   const [resultExam, setResultExam] = useState<Exam | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [selectedTower, setSelectedTower] = useState<"대수" | "미적분1" | "확률과통계" | null>(null);
   const [activeSection, setActiveSection] = useState<StudentSection>("apply");
   const load = useCallback(async () => {
     const response = await fetch("/api/student/portal", { cache: "no-store" });
@@ -367,6 +369,37 @@ export default function StudentHome() {
         : 0,
     [activeExam, answers],
   );
+  const towerData = useMemo(() => {
+    const result = {
+      대수: new Set<number>(),
+      미적분1: new Set<number>(),
+      확률과통계: new Set<number>(),
+    };
+    for (const exam of portal?.exams ?? []) {
+      if (exam.attempt?.status !== "submitted") continue;
+      const subjectText = `${exam.subject ?? ""} ${exam.title ?? ""}`;
+      const subject = subjectText.includes("미적분")
+        ? "미적분1"
+        : subjectText.includes("확률") || subjectText.includes("통계") || subjectText.includes("확통")
+          ? "확률과통계"
+          : subjectText.includes("대수")
+            ? "대수"
+            : null;
+      if (!subject) continue;
+      const keys = exam.official_answers ?? [];
+      for (let floor = 1; floor <= Math.min(10, exam.question_count); floor += 1) {
+        const answer = String(exam.attempt.answers?.[floor] ?? exam.attempt.answers?.[String(floor)] ?? "").trim();
+        const key = String(keys[floor - 1] ?? "").trim();
+        if (answer && key && answer === key) result[subject].add(floor);
+      }
+    }
+    return {
+      대수: [...result.대수].sort((a, b) => a - b),
+      미적분1: [...result.미적분1].sort((a, b) => a - b),
+      확률과통계: [...result.확률과통계].sort((a, b) => a - b),
+    };
+  }, [portal]);
+  const totalTowerConquest = towerData.대수.length + towerData.미적분1.length + towerData.확률과통계.length;
   const changeAnswer = (no: number, value: string) => {
     setAnswers((prev) => ({ ...prev, [no]: value }));
     setSaveState("저장 대기");
@@ -525,26 +558,41 @@ export default function StudentHome() {
           <button className="mp-menu-logout" onClick={() => void signOut()}>로그아웃</button>
         </aside>
       </div> : null}
-      <section className="sos-world" aria-label="SOS 월드">
-        <div className="sos-world-copy">
-          <small>SOS WORLD</small>
-          <h1>{portal.student.name}의 SOS 월드</h1>
-          <p>오늘의 시험과 성장 기록을 확인하고 필요한 훈련으로 바로 이동하세요.</p>
-          <div className="sos-world-actions">
-            <button onClick={() => moveSection("exams")}><b>실전모의고사</b><span>시험 신청·응시</span></button>
-            <button onClick={() => moveSection("strategy")}><b>SOS 공략실</b><span>취약 유형 훈련</span></button>
-            <button onClick={() => moveSection("analysis")}><b>성장 분석실</b><span>성적·취약 단원</span></button>
-            <button onClick={() => moveSection("apply")}><b>SOS 광장</b><span>프로그램 안내</span></button>
+      <section className="sos-tower-zone" aria-label="SOS 타워">
+        <div className="sos-tower-heading">
+          <div>
+            <small>MATHPOOH</small>
+            <h1>SOS TOWER</h1>
+            <p>수능을 한 층씩 정복하라.</p>
+          </div>
+          <div className="sos-tower-total">
+            <span>전체 정복도</span>
+            <b>{totalTowerConquest}<em>/ 30</em></b>
           </div>
         </div>
-        <div className="sos-world-scene" aria-hidden="true">
-          <i className="sos-world-sun" />
-          <div className="sos-world-building"><span>SOS</span><b>AI CAMPUS</b></div>
-          <div className="sos-world-tree"><i /><i /><i /><b>성장나무</b></div>
-          <img src="/characters/mathpooh-student.png" alt="" />
-          <span className="sos-world-path" />
+        <div className="sos-tower-city">
+          <SosTower title="대수" accent="blue" conqueredFloors={towerData.대수} onOpen={() => setSelectedTower("대수")} />
+          <SosTower title="미적분1" accent="gold" conqueredFloors={towerData.미적분1} onOpen={() => setSelectedTower("미적분1")} />
+          <SosTower title="확률과통계" accent="green" conqueredFloors={towerData.확률과통계} onOpen={() => setSelectedTower("확률과통계")} />
         </div>
       </section>
+      {selectedTower ? (
+        <div className="sos-tower-modal-backdrop" onMouseDown={() => setSelectedTower(null)}>
+          <section className="sos-tower-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <div><small>SOS TOWER</small><h2>{selectedTower}</h2></div>
+              <button onClick={() => setSelectedTower(null)}>×</button>
+            </header>
+            <div className="sos-floor-grid">
+              {Array.from({ length: 10 }, (_, index) => index + 1).map((floor) => {
+                const active = towerData[selectedTower].includes(floor);
+                return <button key={floor} className={active ? "conquered" : "locked"} onClick={() => moveSection("analysis")}><b>{floor}층</b><span>{active ? "정복 완료" : "미정복"}</span></button>;
+              })}
+            </div>
+            <p>정복 완료 층은 제출한 시험에서 해당 번호를 맞힌 기록을 기준으로 표시됩니다.</p>
+          </section>
+        </div>
+      ) : null}
       <header className={`student-hero section-${activeSection}`}>
         <div>
           <small>{activeSection === "apply" ? "SOS PROGRAM" : activeSection === "exams" ? "PRACTICE EXAM" : activeSection === "strategy" ? "SOS STRATEGY" : "LEARNING ANALYSIS"}</small>
