@@ -22,6 +22,8 @@ const questionSchema = {
     "confidence",
     "answer",
     "summary",
+    "test_page_no",
+    "solution_page_no",
   ],
   properties: {
     question_no: { type: "integer", minimum: 1, maximum: 100 },
@@ -38,6 +40,8 @@ const questionSchema = {
     confidence: { type: "number", minimum: 0, maximum: 1 },
     answer: { type: "string" },
     summary: { type: "string" },
+    test_page_no: { type: "integer", minimum: 1, maximum: 200 },
+    solution_page_no: { type: "integer", minimum: 0, maximum: 200 },
   },
 } as const;
 
@@ -91,7 +95,27 @@ export async function GET(request: Request) {
     acc[item.exam_id] = (acc[item.exam_id] ?? 0) + 1;
     return acc;
   }, {});
-  return NextResponse.json({ items: data ?? [], counts });
+  let files: { testUrl?: string; solutionUrl?: string } = {};
+  if (examId) {
+    const examResult = await ctx.supabase
+      .from("exams")
+      .select("test_file_path,solution_file_path")
+      .eq("id", examId)
+      .maybeSingle();
+    if (examResult.data?.test_file_path) {
+      const signed = await ctx.supabase.storage
+        .from("exam-files")
+        .createSignedUrl(examResult.data.test_file_path, 60 * 30);
+      if (!signed.error) files.testUrl = signed.data.signedUrl;
+    }
+    if (examResult.data?.solution_file_path) {
+      const signed = await ctx.supabase.storage
+        .from("exam-files")
+        .createSignedUrl(examResult.data.solution_file_path, 60 * 30);
+      if (!signed.error) files.solutionUrl = signed.data.signedUrl;
+    }
+  }
+  return NextResponse.json({ items: data ?? [], counts, files });
 }
 
 export async function POST(request: Request) {
@@ -153,7 +177,7 @@ export async function POST(request: Request) {
   const targetDescription = requestedQuestionNo
     ? `${requestedQuestionNo}번 문항 하나만`
     : `1번부터 ${count}번까지 모든 문항을`;
-  const prompt = `실전모의고사 PDF에서 ${targetDescription} 번호별로 분석하라. 시험명=${exam.title}, 과목=${exam.subject}, 범위=${exam.exam_range}. 문제은행 등록이 아니라 시험 결과 진단용 메타데이터다. 지정한 문항을 빠짐없이 한 번씩 반환한다. 단원은 교육과정 기준 대/중/소단원과 세부주제를 구분한다. problem_types는 계산형, 조건해석형, 추론형, 그래프해석형, 도형구조형 등 실제 성격을 기록한다. 해설지 PDF가 함께 제공되면 answer에는 해당 문항의 공식 정답만, summary에는 핵심 풀이와 발상을 2문장 이내로 기록한다. 난이도는 SOS Problem DNA 기준을 그대로 적용한다: 수능 2점=1, 수능 3점=2, 쉬운·보통 4점=3, 어려운 4점·쉬운 준킬러=4, 어려운 준킬러·킬러=5. 모든 문항을 2로 몰아넣지 말고 발상·계산·시간 부담을 비교하라.`;
+  const prompt = `실전모의고사 PDF에서 ${targetDescription} 번호별로 분석하라. 시험명=${exam.title}, 과목=${exam.subject}, 범위=${exam.exam_range}. 문제은행 등록이 아니라 시험 결과 진단용 메타데이터다. 지정한 문항을 빠짐없이 한 번씩 반환한다. 단원은 교육과정 기준 대/중/소단원과 세부주제를 구분한다. problem_types는 계산형, 조건해석형, 추론형, 그래프해석형, 도형구조형 등 실제 성격을 기록한다. test_page_no에는 시험지 PDF에서 문항이 시작되는 실제 페이지 번호를 기록한다. 해설지 PDF가 함께 제공되면 solution_page_no에는 해당 공식 해설이 시작되는 실제 페이지 번호, answer에는 해당 문항의 공식 정답만, summary에는 핵심 풀이와 발상을 2문장 이내로 기록한다. 해설지가 없으면 solution_page_no는 0으로 기록한다. 난이도는 SOS Problem DNA 기준을 그대로 적용한다: 수능 2점=1, 수능 3점=2, 쉬운·보통 4점=3, 어려운 4점·쉬운 준킬러=4, 어려운 준킬러·킬러=5. 모든 문항을 2로 몰아넣지 말고 발상·계산·시간 부담을 비교하라.`;
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {

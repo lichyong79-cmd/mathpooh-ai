@@ -85,7 +85,12 @@ type ExamQuestionAnalysis = {
   difficulty: number;
   confidence: number;
   analysis_version?: string;
-  analysis_data?: { answer?: string; summary?: string };
+  analysis_data?: {
+    answer?: string;
+    summary?: string;
+    test_page_no?: number;
+    solution_page_no?: number;
+  };
   updated_at?: string;
 };
 
@@ -2421,6 +2426,15 @@ function ExamsPage({
   >([]);
   const [analysisReviewLoading, setAnalysisReviewLoading] = useState(false);
   const [reanalyzingQuestionNo, setReanalyzingQuestionNo] = useState(0);
+  const [analysisReviewFiles, setAnalysisReviewFiles] = useState<{
+    testUrl?: string;
+    solutionUrl?: string;
+  }>({});
+  const [analysisPreviewItem, setAnalysisPreviewItem] =
+    useState<ExamQuestionAnalysis | null>(null);
+  const [analysisPreviewTab, setAnalysisPreviewTab] = useState<
+    "question" | "solution"
+  >("question");
 
   // 시험 입력 화면은 임시 작업 화면이므로 새로고침 후 복원하지 않습니다.
   // F5를 누르면 항상 안전한 시험 목록에서 시작합니다.
@@ -2471,6 +2485,7 @@ function ExamsPage({
       if (!response.ok)
         throw new Error(result.message || "분석 결과를 불러오지 못했습니다.");
       setAnalysisReviewItems(result.items ?? []);
+      setAnalysisReviewFiles(result.files ?? {});
     } catch (error) {
       alert(error instanceof Error ? error.message : "분석 결과 조회 실패");
     } finally {
@@ -4024,7 +4039,16 @@ function ExamsPage({
                 </div>
                 {analysisReviewItems.map((item) => (
                   <div className="analysis-result-row" key={item.question_no}>
-                    <strong>{item.question_no}번</strong>
+                    <button
+                      type="button"
+                      className="analysis-question-open"
+                      onClick={() => {
+                        setAnalysisPreviewItem(item);
+                        setAnalysisPreviewTab("question");
+                      }}
+                    >
+                      {item.question_no}번 보기
+                    </button>
                     <span title={[item.major_unit, item.middle_unit, item.minor_unit].filter(Boolean).join(" > ")}>
                       {[item.major_unit, item.middle_unit, item.minor_unit]
                         .filter(Boolean)
@@ -4060,6 +4084,74 @@ function ExamsPage({
                 ) : null}
               </div>
             )}
+          </section>
+        </div>
+      ) : null}
+      {analysisPreviewItem ? (
+        <div
+          className="analysis-preview-backdrop"
+          onMouseDown={() => setAnalysisPreviewItem(null)}
+        >
+          <section
+            className="analysis-preview-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header>
+              <div>
+                <small>{analysisReviewExam?.title}</small>
+                <h2>{analysisPreviewItem.question_no}번 문항 · 공식 해설</h2>
+              </div>
+              <button type="button" onClick={() => setAnalysisPreviewItem(null)}>
+                닫기 ×
+              </button>
+            </header>
+            <nav className="analysis-preview-tabs">
+              <button
+                type="button"
+                className={analysisPreviewTab === "question" ? "active" : ""}
+                onClick={() => setAnalysisPreviewTab("question")}
+              >
+                문제 보기
+              </button>
+              <button
+                type="button"
+                className={analysisPreviewTab === "solution" ? "active" : ""}
+                onClick={() => setAnalysisPreviewTab("solution")}
+              >
+                공식 해설 보기
+              </button>
+            </nav>
+            <div className="analysis-preview-body">
+              {analysisPreviewTab === "question" ? (
+                analysisReviewFiles.testUrl ? (
+                  <iframe
+                    title={`${analysisPreviewItem.question_no}번 문제`}
+                    src={`${analysisReviewFiles.testUrl}#page=${Math.max(1, Number(analysisPreviewItem.analysis_data?.test_page_no || 1))}&view=FitH`}
+                  />
+                ) : (
+                  <div className="analysis-preview-empty">등록된 시험지 PDF가 없습니다.</div>
+                )
+              ) : analysisReviewFiles.solutionUrl ? (
+                <iframe
+                  title={`${analysisPreviewItem.question_no}번 공식 해설`}
+                  src={`${analysisReviewFiles.solutionUrl}#page=${Math.max(1, Number(analysisPreviewItem.analysis_data?.solution_page_no || 1))}&view=FitH`}
+                />
+              ) : (
+                <div className="analysis-preview-empty">등록된 공식 해설 PDF가 없습니다.</div>
+              )}
+            </div>
+            <footer>
+              <span>
+                정답 <b>{analysisPreviewItem.analysis_data?.answer || "-"}</b>
+              </span>
+              <p>{analysisPreviewItem.analysis_data?.summary || "AI 핵심 풀이가 아직 없습니다."}</p>
+              {!analysisPreviewItem.analysis_data?.test_page_no ? (
+                <small>
+                  기존 분석 문항은 페이지 정보가 없습니다. ‘이 문항 재분석’을 하면
+                  해당 문항·해설 페이지로 바로 열립니다.
+                </small>
+              ) : null}
+            </footer>
           </section>
         </div>
       ) : null}
