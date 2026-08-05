@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   const email = `${phone}@student.matspu.local`;
   let authUserId = student.auth_user_id as string | null;
   if (authUserId) {
-    const updated = await supabase.auth.admin.updateUserById(authUserId, { password: authPassword, user_metadata: { role: "student", student_id: student.id, name: student.name } });
+    const updated = await supabase.auth.admin.updateUserById(authUserId, { email, email_confirm: true, password: authPassword, user_metadata: { role: "student", student_id: student.id, name: student.name } });
     if (updated.error) return NextResponse.json({ message: updated.error.message }, { status: 400 });
   } else {
     const created = await supabase.auth.admin.createUser({ email, password: authPassword, email_confirm: true, user_metadata: { role: "student", student_id: student.id, name: student.name } });

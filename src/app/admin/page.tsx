@@ -665,6 +665,9 @@ function StudentsPage({
         prev.map((s) => (s.id === editing.id ? result.student : s)),
       );
       setSelected((prev) => (prev?.id === editing.id ? result.student : prev));
+      if (result.loginIdChanged) {
+        alert(`전화번호와 학생 로그인 아이디가 함께 변경되었습니다.\n새 아이디: ${result.loginId}\n기존 비밀번호는 그대로입니다.`);
+      }
     } else {
       const response = await fetch("/api/admin/students", {
         method: "POST",
