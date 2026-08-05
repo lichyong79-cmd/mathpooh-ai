@@ -77,7 +77,7 @@ export async function GET() {
   const { data: exams, error } = await supabase
     .from("exams")
     .select(
-      "id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,status,student_open,open_at,close_at,answer_keys",
+      "id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,solution_file_path,status,student_open,open_at,close_at,answer_keys",
     )
     .eq("student_open", true)
     .order("exam_date", { ascending: false });
@@ -118,8 +118,16 @@ export async function GET() {
               .createSignedUrl(exam.test_file_path, 60 * 60 * 3)
           ).data?.signedUrl ?? "";
       const attempt = attemptMap.get(exam.id) ?? null;
-      const { answer_keys, ...safeExam } = exam;
       const submitted = attempt?.status === "submitted";
+      let solutionUrl = "";
+      if (submitted && exam.solution_file_path)
+        solutionUrl =
+          (
+            await supabase.storage
+              .from("exam-files")
+              .createSignedUrl(exam.solution_file_path, 60 * 60 * 3)
+          ).data?.signedUrl ?? "";
+      const { answer_keys, solution_file_path, ...safeExam } = exam;
       const questionMetadata = submitted
         ? await loadQuestionMetadata(supabase, exam.id)
         : [];
@@ -127,6 +135,7 @@ export async function GET() {
         ...safeExam,
         application_status: applicationStatus,
         test_url: testUrl,
+        solution_url: solutionUrl,
         download_available: downloadAvailable,
         download_available_at: downloadAvailableAt,
         official_answers:

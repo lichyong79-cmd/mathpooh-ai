@@ -39,6 +39,7 @@ type Exam = {
   objective_count: number;
   short_answer_count: number;
   test_url: string;
+  solution_url?: string;
   available: boolean;
   download_available: boolean;
   download_available_at?: string | null;
@@ -206,7 +207,19 @@ function StudentResultModal({
             })}
           </div>
         </div>
-        <footer>
+        <footer className="student-result-actions">
+          {exam.solution_url ? (
+            <a
+              className="student-solution-button"
+              href={exam.solution_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              해설지 보기
+            </a>
+          ) : (
+            <span className="student-solution-missing">등록된 해설지가 없습니다.</span>
+          )}
           <button onClick={onClose}>닫기</button>
         </footer>
       </section>
