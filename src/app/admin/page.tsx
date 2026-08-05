@@ -1884,6 +1884,9 @@ function AdminResultModal({
     ...(row.attempt?.answers ?? {}),
   });
   const [saving, setSaving] = useState(false);
+  const [manualScore, setManualScore] = useState(
+    String(row.attempt?.score ?? ""),
+  );
   const keys: string[] = Array.isArray(exam?.answer_keys)
     ? exam.answer_keys.map(String)
     : [];
@@ -1895,6 +1898,11 @@ function AdminResultModal({
   );
   const saveResult = async () => {
     if (!row.attempt) return;
+    const parsedScore = Number(manualScore);
+    const totalScore = Number(exam?.total_score ?? 100);
+    if (!Number.isFinite(parsedScore) || parsedScore < 0 || parsedScore > totalScore) {
+      return alert(`점수는 0점부터 ${totalScore}점 사이로 입력해 주세요.`);
+    }
     setSaving(true);
     const response = await fetch("/api/admin/exam-monitor", {
       method: "PATCH",
@@ -1904,6 +1912,7 @@ function AdminResultModal({
         examId,
         attemptId: row.attempt.id,
         answers,
+        manualScore: parsedScore,
       }),
     });
     const result = await response.json();
@@ -1911,7 +1920,7 @@ function AdminResultModal({
     if (!response.ok)
       return alert(result.message || "시험 결과를 수정하지 못했습니다.");
     onSaved(result.attempt);
-    alert("답안을 수정하고 점수를 다시 계산했습니다.");
+    alert("답안과 수동 점수를 저장했습니다.");
   };
   return (
     <div className="result-modal-backdrop" onMouseDown={onClose}>
@@ -1932,10 +1941,20 @@ function AdminResultModal({
                 : "-"}
             </p>
           </div>
-          <div className="result-score">
-            <b>{row.attempt?.score ?? 0}</b>
-            <span>점</span>
-          </div>
+          <label className="result-score result-score-manual">
+            <small>최종 점수</small>
+            <span>
+              <input
+                type="number"
+                min="0"
+                max={Number(exam?.total_score ?? 100)}
+                step="1"
+                value={manualScore}
+                onChange={(event) => setManualScore(event.target.value)}
+              />
+              <b>점</b>
+            </span>
+          </label>
           <button className="result-close" onClick={onClose}>
             ×
           </button>
@@ -2044,7 +2063,7 @@ function AdminResultModal({
             onClick={() => void saveResult()}
             disabled={saving}
           >
-            {saving ? "재채점 중..." : "수정 저장 · 재채점"}
+            {saving ? "저장 중..." : "답안 · 점수 저장"}
           </button>
         </footer>
       </section>

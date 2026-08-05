@@ -521,6 +521,44 @@
   color: #9fbe9f;
   font-size: 38px;
 }
+
+.result-score-manual {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.result-score-manual > small {
+  color: #bec9d9;
+  font-size: 11px;
+  font-weight: 800;
+}
+.result-score-manual > span {
+  align-items: baseline;
+  display: flex;
+  gap: 5px;
+}
+.result-score-manual input {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 28px;
+  font-weight: 900;
+  outline: none;
+  padding: 5px 8px;
+  text-align: right;
+  width: 84px;
+}
+.result-score-manual input:focus {
+  border-color: #9fbe9f;
+  box-shadow: 0 0 0 3px rgba(159, 190, 159, 0.18);
+}
+.result-score-manual b {
+  color: #9fbe9f;
+  font-size: 18px !important;
+}
+
 .result-close,
 .student-result-modal header > button {
   background: transparent;

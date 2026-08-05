@@ -205,10 +205,19 @@ export async function PATCH(request: Request) {
         correct++;
       else wrong.push(no);
     }
-    const score = Math.round(
-      (correct / Math.max(1, Number(currentExam.question_count))) *
-        Number(currentExam.total_score),
-    );
+    const requestedScore = Number(body.manualScore);
+    const totalScore = Number(currentExam.total_score ?? 100);
+    if (
+      !Number.isFinite(requestedScore) ||
+      requestedScore < 0 ||
+      requestedScore > totalScore
+    ) {
+      return NextResponse.json(
+        { message: `점수는 0점부터 ${totalScore}점 사이로 입력해 주세요.` },
+        { status: 400 },
+      );
+    }
+    const score = requestedScore;
     const gradedAt = new Date().toISOString();
     const { data, error } = await ctx.supabase
       .from("exam_attempts")
