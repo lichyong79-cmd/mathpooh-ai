@@ -82,7 +82,7 @@ export function buildStudentPerformance(
       examDate: exam.exam_date ?? "",
       submittedAt: attempt.submitted_at ?? "",
       score: Number(attempt.score ?? Math.round((recomputedCorrect / Math.max(1, questionCount)) * Number(exam.total_score ?? 100))),
-      correct: Number(attempt.correct_count ?? recomputedCorrect),
+      correct: recomputedCorrect,
       questionCount,
     });
   }

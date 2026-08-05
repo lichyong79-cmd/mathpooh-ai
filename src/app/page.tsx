@@ -45,6 +45,8 @@ type Exam = {
   download_available_at?: string | null;
   open_at?: string | null;
   close_at?: string | null;
+  paused_at?: string | null;
+  paused_remaining_seconds?: number | null;
   official_answers?: string[];
   question_metadata?: QuestionMetadata[];
   application_status: "none" | "requested" | "assigned";
@@ -267,6 +269,7 @@ export default function StudentHome() {
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [remaining, setRemaining] = useState(0);
+  const [examPaused, setExamPaused] = useState(false);
   const [busy, setBusy] = useState("");
   const [saveState, setSaveState] = useState("저장됨");
   const [error, setError] = useState("");
@@ -335,12 +338,15 @@ export default function StudentHome() {
     if (!response.ok)
       return alert(data.message || "시험을 시작하지 못했습니다.");
     setActiveExam(exam);
+    setExamPaused(Boolean(exam.paused_at));
     setAttempt(data.attempt);
     setAnswers(data.attempt.answers ?? {});
     const end = exam.close_at
       ? new Date(exam.close_at).getTime()
       : new Date(data.attempt.started_at).getTime() + exam.time_limit * 60_000;
-    setRemaining(Math.max(0, Math.ceil((end - Date.now()) / 1000)));
+    setRemaining(exam.paused_at
+      ? Number(exam.paused_remaining_seconds ?? 0)
+      : Math.max(0, Math.ceil((end - Date.now()) / 1000)));
   };
 
   const changeApplication = async (
@@ -372,7 +378,7 @@ export default function StudentHome() {
 
   const save = useCallback(
     async (silent = true) => {
-      if (!activeExam || !attempt || attempt.status !== "in_progress") return;
+      if (!activeExam || !attempt || attempt.status !== "in_progress" || examPaused) return;
       setSaveState("저장 중...");
       const response = await fetch("/api/student/portal", {
         method: "POST",
@@ -386,13 +392,13 @@ export default function StudentHome() {
       setSaveState(response.ok ? "자동 저장됨" : "저장 실패 · 다시 시도");
       if (!response.ok && !silent) alert("답안 저장에 실패했습니다.");
     },
-    [activeExam, answers, attempt],
+    [activeExam, answers, attempt, examPaused],
   );
 
   useEffect(() => {
     if (!activeExam || !attempt) return;
     const timer = window.setInterval(
-      () => setRemaining((value) => Math.max(0, value - 1)),
+      () => { if (!examPaused) setRemaining((value) => Math.max(0, value - 1)); },
       1000,
     );
     const autosave = window.setInterval(() => void save(), 10000);
@@ -400,7 +406,7 @@ export default function StudentHome() {
       clearInterval(timer);
       clearInterval(autosave);
     };
-  }, [activeExam, attempt, save]);
+  }, [activeExam, attempt, save, examPaused]);
 
   const submit = useCallback(
     async (forced = false) => {
@@ -439,8 +445,34 @@ export default function StudentHome() {
     [activeExam, answers, attempt, busy, load],
   );
   useEffect(() => {
-    if (activeExam && attempt && remaining === 0) void submit(true);
-  }, [activeExam, attempt, remaining, submit]);
+    if (!activeExam || !attempt) return;
+    const sync = window.setInterval(async () => {
+      const response = await fetch("/api/student/portal", { cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      const current = (data.exams ?? []).find((exam: Exam) => exam.id === activeExam.id);
+      if (!current) return;
+      if (current.attempt?.status === "submitted") {
+        window.clearInterval(sync);
+        alert("관리자에 의해 시험이 종료되어 현재 답안이 제출되었습니다.");
+        setActiveExam(null);
+        setAttempt(null);
+        setExamPaused(false);
+        setPortal(data);
+        return;
+      }
+      const paused = Boolean(current.paused_at);
+      setExamPaused(paused);
+      setActiveExam(current);
+      if (paused) setRemaining(Number(current.paused_remaining_seconds ?? remaining));
+      else if (current.close_at) setRemaining(Math.max(0, Math.ceil((new Date(current.close_at).getTime() - Date.now()) / 1000)));
+    }, 3000);
+    return () => window.clearInterval(sync);
+  }, [activeExam?.id, attempt?.id]);
+
+  useEffect(() => {
+    if (activeExam && attempt && !examPaused && remaining === 0) void submit(true);
+  }, [activeExam, attempt, examPaused, remaining, submit]);
 
   const answered = useMemo(
     () =>
@@ -526,6 +558,7 @@ export default function StudentHome() {
     };
   }, [portal]);
   const changeAnswer = (no: number, value: string) => {
+    if (examPaused) return;
     setAnswers((prev) => ({ ...prev, [no]: value }));
     setSaveState("저장 대기");
   };
@@ -549,7 +582,15 @@ export default function StudentHome() {
     );
   if (activeExam && attempt)
     return (
-      <main className="exam-room">
+      <main className={`exam-room ${examPaused ? "is-paused" : ""}`}>
+        {examPaused ? (
+          <div className="exam-pause-overlay">
+            <section>
+              <strong>시험이 일시정지되었습니다.</strong>
+              <p>관리자가 시험을 재개할 때까지 기다려 주세요. 남은 시간과 입력한 답안은 그대로 유지됩니다.</p>
+            </section>
+          </div>
+        ) : null}
         {busy ? (
           <MATHPOOHLoader
             title={busy}
@@ -571,8 +612,8 @@ export default function StudentHome() {
           </div>
           <div className="save-box">
             <span>{saveState}</span>
-            <button onClick={() => void save(false)}>지금 저장</button>
-            <button className="submit-exam" onClick={() => void submit()}>
+            <button onClick={() => void save(false)} disabled={examPaused}>지금 저장</button>
+            <button className="submit-exam" onClick={() => void submit()} disabled={examPaused}>
               최종 제출
             </button>
           </div>
@@ -614,6 +655,7 @@ export default function StudentHome() {
                               answers[no] === String(choice) ? "selected" : ""
                             }
                             onClick={() => changeAnswer(no, String(choice))}
+                            disabled={examPaused}
                           >
                             {choice}
                           </button>
@@ -632,6 +674,7 @@ export default function StudentHome() {
                           )
                         }
                         placeholder="정답"
+                        disabled={examPaused}
                       />
                     )}
                   </div>

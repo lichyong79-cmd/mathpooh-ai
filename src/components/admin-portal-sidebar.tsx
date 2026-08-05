@@ -34,7 +34,7 @@ const groups: { label: string; items: Item[] }[] = [
   ] },
   { label: "SOS 운영", items: [
     { id: "sos-bank", label: "SOS 문제은행", icon: "▣", href: "/problem-bank" },
-    { id: "sos-learning", label: "SOS 학습관리", icon: "◎" },
+    { id: "sos-learning", label: "SOS 학습운영", icon: "◎" },
   ] },
   { label: "분석", items: [
     { id: "exam-results", label: "시험성적 분석", icon: "▥" },

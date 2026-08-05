@@ -129,7 +129,7 @@ const menus: MenuItem[] = [
   { id: "problem-sources", label: "문제등록", icon: "▦" },
   { id: "problem-analysis", label: "AI 분석", icon: "✦", badge: 12 },
   { id: "sos-bank", label: "SOS 문제은행", icon: "▣" },
-  { id: "sos-learning", label: "SOS 학습관리", icon: "◎", badge: 7 },
+  { id: "sos-learning", label: "SOS 학습운영", icon: "◎", badge: 7 },
   { id: "exam-results", label: "시험성적 분석", icon: "▥" },
   { id: "student-results", label: "학생성적 분석", icon: "↗" },
   { id: "learning-analysis", label: "학생학습 분석", icon: "◫" },
@@ -1858,6 +1858,9 @@ type MonitorAttempt = {
   correct_count?: number;
   wrong_numbers?: number[];
   unanswered_numbers?: number[];
+  score_source?: "auto" | "manual";
+  solution_override?: boolean | null;
+  mathpooh_comment?: string;
 };
 type MonitorRow = {
   student: {
@@ -1890,6 +1893,7 @@ function AdminResultModal({
   const [manualScore, setManualScore] = useState(
     String(row.attempt?.score ?? ""),
   );
+  const [mathpoohComment, setMathpoohComment] = useState(String(row.attempt?.mathpooh_comment ?? ""));
   const keys: string[] = Array.isArray(exam?.answer_keys)
     ? exam.answer_keys.map(String)
     : [];
@@ -1916,6 +1920,7 @@ function AdminResultModal({
         attemptId: row.attempt.id,
         answers,
         manualScore: parsedScore,
+        mathpoohComment,
       }),
     });
     const result = await response.json();
@@ -1976,6 +1981,10 @@ function AdminResultModal({
             Array.isArray(exam?.question_metadata) ? exam.question_metadata : []
           }
         />
+        <div className="mathpooh-comment-editor">
+          <label>매쓰푸의 코멘트</label>
+          <textarea value={mathpoohComment} onChange={(event) => setMathpoohComment(event.target.value)} placeholder="학생 성적표에 표시할 코멘트를 입력하세요." rows={4} />
+        </div>
         <div className="result-answer-table-wrap">
           <div className="result-answer-table">
             <div className="result-answer-table-head">
@@ -2150,6 +2159,55 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
     setStudentOpen(true);
   };
 
+  const controlExam = async (action: "pause" | "resume" | "force-end") => {
+    if (!examId) return;
+    const message = action === "pause"
+      ? "시험을 일시정지할까요? 학생 화면의 타이머와 답안 입력이 멈춥니다."
+      : action === "resume"
+        ? "시험을 재개할까요? 남은 시간부터 다시 진행됩니다."
+        : "시험을 지금 강제 종료할까요? 진행 중인 학생 답안이 즉시 제출됩니다.";
+    if (!window.confirm(message)) return;
+    setBusy(true);
+    const response = await fetch("/api/admin/exam-monitor", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action, examId }),
+    });
+    const result = await response.json();
+    setBusy(false);
+    if (!response.ok) return alert(result.message || "시험 제어에 실패했습니다.");
+    setExamInfo(result.exam);
+    setClock(Date.now());
+    await loadMonitor(true);
+  };
+
+  const setGlobalSolution = async (open: boolean) => {
+    if (!examId) return;
+    setBusy(true);
+    const response = await fetch("/api/admin/exam-monitor", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "solution-global", examId, open }),
+    });
+    const result = await response.json();
+    setBusy(false);
+    if (!response.ok) return alert(result.message || "해설 공개 설정에 실패했습니다.");
+    setExamInfo((current: any) => ({ ...current, solution_open: open }));
+  };
+
+  const setStudentSolution = async (attemptId: string, override: boolean | null) => {
+    const response = await fetch("/api/admin/exam-monitor", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "solution-student", examId, attemptId, override }),
+    });
+    const result = await response.json();
+    if (!response.ok) return alert(result.message || "학생별 해설 설정에 실패했습니다.");
+    setRows((current) => current.map((row) => row.attempt?.id === attemptId
+      ? { ...row, attempt: { ...row.attempt, solution_override: override } }
+      : row));
+  };
+
   const startExamTimer = async () => {
     if (!examId || !openAt)
       return alert("먼저 시작 예정 시각을 입력하고 타이머를 생성해 주세요.");
@@ -2189,12 +2247,14 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
           minute: "2-digit",
         })
       : "-";
-  const timerSeconds = examInfo?.close_at
-    ? Math.max(
-        0,
-        Math.ceil((new Date(examInfo.close_at).getTime() - clock) / 1000),
-      )
-    : null;
+  const isPaused = Boolean(examInfo?.paused_at);
+  const isRunning = Boolean(examInfo?.close_at) && !isPaused &&
+    new Date(examInfo.close_at).getTime() > clock;
+  const timerSeconds = isPaused
+    ? Number(examInfo?.paused_remaining_seconds ?? 0)
+    : examInfo?.close_at
+      ? Math.max(0, Math.ceil((new Date(examInfo.close_at).getTime() - clock) / 1000))
+      : null;
   const timerText =
     timerSeconds === null
       ? `${examInfo?.time_limit ?? 100}:00`
@@ -2239,23 +2299,27 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
             </b>
           </div>
           <div
-            className={`monitor-time-note ${examInfo?.close_at ? "running" : studentOpen && openAt ? "ready" : ""}`}
+            className={`monitor-time-note ${isRunning ? "running" : isPaused ? "paused" : studentOpen && openAt ? "ready" : ""}`}
           >
             <b>{timerText}</b>
             <span>
-              {examInfo?.close_at
-                ? "전체 시험 타이머 작동 중"
+              {isPaused
+                ? "전체 시험 일시정지 중"
+                : isRunning
+                  ? "전체 시험 타이머 작동 중"
                 : studentOpen && openAt
                   ? "✓ 타이머 준비 완료"
                   : `전체 학생 공통 ${examInfo?.time_limit ?? 100}분`}
             </span>
           </div>
           <div
-            className={`monitor-ready-card ${examInfo?.close_at ? "running" : studentOpen && openAt ? "ready" : "waiting"}`}
+            className={`monitor-ready-card ${isRunning ? "running" : isPaused ? "paused" : studentOpen && openAt ? "ready" : "waiting"}`}
           >
             <strong>
-              {examInfo?.close_at
-                ? "시험 진행 중"
+              {isPaused
+                ? "시험 일시정지"
+                : isRunning
+                  ? "시험 진행 중"
                 : studentOpen && openAt
                   ? "타이머 생성 완료"
                   : "타이머 생성 전"}
@@ -2269,7 +2333,7 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
           <button
             className="secondary-button"
             onClick={() => void saveSchedule()}
-            disabled={busy || !openAt}
+            disabled={busy || !openAt || isRunning || isPaused}
           >
             {busy
               ? "처리 중..."
@@ -2284,11 +2348,26 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
               busy ||
               !openAt ||
               !studentOpen ||
-              Boolean(examInfo?.close_at && timerSeconds && timerSeconds > 0)
+              isRunning || isPaused
             }
           >
             시험 시작
           </button>
+          {isRunning ? (
+            <button className="secondary-button exam-pause-button" onClick={() => void controlExam("pause")} disabled={busy}>
+              일시정지
+            </button>
+          ) : null}
+          {isPaused ? (
+            <button className="primary-button exam-resume-button" onClick={() => void controlExam("resume")} disabled={busy}>
+              시험 재개
+            </button>
+          ) : null}
+          {(isRunning || isPaused) ? (
+            <button className="danger-button exam-force-end-button" onClick={() => void controlExam("force-end")} disabled={busy}>
+              강제종료
+            </button>
+          ) : null}
         </div>
       </section>
       <section className="student-stat-grid monitor-stats">
@@ -2315,9 +2394,14 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
         />
       </section>
       <section className="panel monitor-table-panel">
-        <div className="list-summary">
-          <strong>{examInfo?.title ?? "시험 진행관리"}</strong>
-          <span>진행 중인 학생은 15초마다 자동 갱신됩니다.</span>
+        <div className="list-summary exam-result-summary">
+          <div><strong>{examInfo?.title ?? "시험 진행관리"}</strong><span>진행 중인 학생은 15초마다 자동 갱신됩니다.</span></div>
+          <div className="solution-publish-actions">
+            <b>전체 해설 {examInfo?.solution_open ? "공개 중" : "비공개"}</b>
+            <button className={examInfo?.solution_open ? "secondary-button" : "primary-button"} disabled={busy} onClick={() => void setGlobalSolution(!examInfo?.solution_open)}>
+              {examInfo?.solution_open ? "전체 해설 닫기" : "제출자 전체 해설 공개"}
+            </button>
+          </div>
         </div>
         <div className="data-table monitor-list">
           <div className="table-head">
@@ -2364,12 +2448,18 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
                 <span>{formatTime(attempt?.last_saved_at)}</span>
                 <span>{formatTime(attempt?.submitted_at)}</span>
                 {attempt?.status === "submitted" ? (
-                  <button
-                    className="result-detail-button"
-                    onClick={() => setSelectedResult(row)}
-                  >
-                    {attempt.score ?? 0}점 · 결과
-                  </button>
+                  <div className="monitor-result-actions">
+                    <button className="result-detail-button" onClick={() => setSelectedResult(row)}>
+                      {attempt.score ?? 0}점 · 결과
+                    </button>
+                    <button
+                      className={`solution-student-button ${(attempt.solution_override ?? examInfo?.solution_open) ? "open" : "closed"}`}
+                      title="이 학생의 해설 공개 상태"
+                      onClick={() => void setStudentSolution(attempt.id, (attempt.solution_override ?? examInfo?.solution_open) ? false : true)}
+                    >
+                      {(attempt.solution_override ?? examInfo?.solution_open) ? "해설 공개" : "해설 비공개"}
+                    </button>
+                  </div>
                 ) : (
                   <strong>-</strong>
                 )}
@@ -2660,6 +2750,8 @@ function ExamsPage({
         set("answers", answersForSave);
       }
       const formForSave = { ...form, answers: answersForSave };
+      const previousAnswers = editingId ? (exams.find((item) => item.id === editingId)?.answers ?? []) : [];
+      const answersChanged = Boolean(editingId) && JSON.stringify(previousAnswers.map(String)) !== JSON.stringify(answersForSave.map(String));
       let examId = editingId;
       if (!examId) {
         const createResponse = await fetch(`${config.url}/rest/v1/exams`, {
@@ -2721,8 +2813,19 @@ function ExamsPage({
         ...prev,
         [savedExam.id]: { ...prev[savedExam.id], ...draftFiles },
       }));
+      let reanalysisNote = "";
+      if (answersChanged) {
+        const response = await fetch("/api/admin/exam-reanalyze", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ examId: savedExam.id }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.message || "정답은 저장했지만 결과 재분석에 실패했습니다.");
+        reanalysisNote = `\n제출 완료 ${result.updated ?? 0}명의 점수·정오·취약 분석을 갱신했습니다.${result.manualPreserved ? ` (수동점수 ${result.manualPreserved}명 유지)` : ""}`;
+      }
       alert(
-        `시험 자료를 저장했습니다. 정답 ${savedExam.answers.filter(Boolean).length}/${savedExam.questionCount}개가 입력되었습니다.`,
+        `시험 자료를 저장했습니다. 정답 ${savedExam.answers.filter(Boolean).length}/${savedExam.questionCount}개가 입력되었습니다.${reanalysisNote}`,
       );
       setEditingId(null);
       setDraftFiles({});

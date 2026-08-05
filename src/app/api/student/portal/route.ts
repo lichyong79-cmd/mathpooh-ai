@@ -5,6 +5,7 @@ import {
   buildLandmarkSummary,
   clampPercentile,
   classifyLandmarkSubject,
+  classifyLandmarkQuestionSubject,
   cohortPercentile,
   estimatePercentile,
   type LandmarkBasis,
@@ -77,7 +78,7 @@ export async function GET() {
   const { data: exams, error } = await supabase
     .from("exams")
     .select(
-      "id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,solution_file_path,status,student_open,open_at,close_at,answer_keys",
+      "id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,solution_file_path,status,student_open,open_at,close_at,paused_at,paused_remaining_seconds,answer_keys,solution_open",
     )
     .eq("student_open", true)
     .order("exam_date", { ascending: false });
@@ -120,7 +121,8 @@ export async function GET() {
       const attempt = attemptMap.get(exam.id) ?? null;
       const submitted = attempt?.status === "submitted";
       let solutionUrl = "";
-      if (submitted && exam.solution_file_path)
+      const solutionAllowed = submitted && ((attempt?.solution_override ?? exam.solution_open) === true);
+      if (solutionAllowed && exam.solution_file_path)
         solutionUrl =
           (
             await supabase.storage
@@ -144,8 +146,11 @@ export async function GET() {
             : [],
         question_metadata: questionMetadata,
         attempt,
+        mathpooh_comment: submitted ? String(attempt?.mathpooh_comment ?? "") : "",
+        solution_open: solutionAllowed,
         available:
           applicationStatus === "assigned" &&
+          !exam.paused_at &&
           Boolean(exam.close_at) &&
           (!exam.open_at || exam.open_at <= now) &&
           exam.close_at >= now,
@@ -194,16 +199,37 @@ export async function GET() {
       cohort ?? estimatePercentile(score, Number(item.total_score ?? 100)),
     );
     const basis: LandmarkBasis = cohort === null ? "estimated" : "cohort";
-    const subject = classifyLandmarkSubject(item.subject, item.title);
-    if (subject)
+    const answers = (item.attempt?.answers ?? {}) as Record<string, unknown>;
+    const keys = Array.isArray(item.official_answers) ? item.official_answers.map(String) : [];
+    const buckets = new Map<string, { total: number; correct: number }>();
+    for (const meta of item.question_metadata ?? []) {
+      const no = Number(meta.question_no);
+      const subject = classifyLandmarkQuestionSubject(
+        meta.major_unit, meta.middle_unit, meta.minor_unit, meta.detailed_topic,
+      );
+      if (!subject) continue;
+      const row = buckets.get(subject) ?? { total: 0, correct: 0 };
+      row.total += 1;
+      const answer = String(answers[no] ?? answers[String(no)] ?? "").trim();
+      const key = String(keys[no - 1] ?? "").trim();
+      if (key && answer === key) row.correct += 1;
+      buckets.set(subject, row);
+    }
+    if (!buckets.size) {
+      const subject = classifyLandmarkSubject(item.subject, item.title);
+      if (subject) buckets.set(subject, { total: Number(item.question_count ?? 1), correct: Number(item.attempt.correct_count ?? 0) });
+    }
+    for (const [subject, bucket] of buckets) {
+      const subjectScore = Math.round((bucket.correct / Math.max(1, bucket.total)) * 100);
       landmarkRecords.push({
-        subject,
-        percentile,
-        basis,
-        score,
+        subject: subject as any,
+        percentile: estimatePercentile(subjectScore, 100),
+        basis: "estimated",
+        score: subjectScore,
         title: item.title ?? "",
         date: item.attempt.submitted_at ?? item.exam_date ?? "",
       });
+    }
     return {
       ...item,
       percentile,
@@ -332,6 +358,7 @@ export async function POST(request: Request) {
   if (
     action === "start" &&
     ((exam.open_at && exam.open_at > now) ||
+      exam.paused_at ||
       !exam.close_at ||
       exam.close_at <= now)
   ) {
@@ -355,7 +382,7 @@ export async function POST(request: Request) {
     if (existing) return NextResponse.json({ attempt: existing });
     const { data, error } = await supabase
       .from("exam_attempts")
-      .insert({ exam_id: examId, student_id: student.id })
+      .insert({ exam_id: examId, student_id: student.id, started_at: new Date().toISOString(), last_saved_at: new Date().toISOString() })
       .select()
       .single();
     return error
@@ -366,6 +393,11 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { message: "진행 중인 시험이 없습니다." },
       { status: 409 },
+    );
+  if (exam.paused_at)
+    return NextResponse.json(
+      { message: "시험이 일시정지되었습니다. 재개될 때까지 기다려 주세요." },
+      { status: 423 },
     );
   const answers =
     typeof body.answers === "object" && body.answers ? body.answers : {};
@@ -427,6 +459,7 @@ export async function POST(request: Request) {
         wrong_numbers: wrong,
         unanswered_numbers: unanswered,
         graded_at: submittedAt,
+        score_source: "auto",
       })
       .eq("id", existing.id);
     return error

@@ -146,6 +146,22 @@ export function percentileFloors(percentile: number): number {
   return Math.max(0, Math.min(10, Math.round(clampPercentile(percentile) / 10)));
 }
 
+
+/** 문항 분석 단원명으로 교육과정 과목을 판별합니다. */
+export function classifyLandmarkQuestionSubject(
+  ...parts: (string | null | undefined)[]
+): LandmarkSubject | null {
+  const text = parts.filter(Boolean).join(" ").replace(/\s+/g, " ");
+  if (!text) return null;
+  if (/경우의\s*수|순열|조합|확률|통계|확률분포|이항분포|정규분포|표본/.test(text))
+    return "확률과통계";
+  if (/수열|등차|등비|시그마|귀납|지수|로그|삼각함수/.test(text))
+    return "대수";
+  if (/함수의\s*극한|연속|미분|도함수|접선|적분|부정적분|정적분|속도|가속도/.test(text))
+    return "미적분1";
+  return classifyLandmarkSubject(text);
+}
+
 /** 시험 제목·과목명에서 랜드마크 과목을 판별합니다. */
 export function classifyLandmarkSubject(
   ...parts: (string | null | undefined)[]

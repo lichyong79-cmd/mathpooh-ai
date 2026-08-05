@@ -441,3 +441,6 @@ body{font-size:16px;line-height:1.5}
 .mathpooh-runway.is-admin .mathpooh-shadow{width:62px}
 .mathpooh-loader.is-compact .mathpooh-runner{width:74px;height:66px}
 .mathpooh-loader.is-compact .mathpooh-runway.is-admin .mathpooh-runner{width:62px;height:70px}
+
+/* SOS 146 · 결과/해설 운영 */
+.mathpooh-comment-editor{display:grid;gap:8px;padding:18px 22px;border-bottom:1px solid #e4ebe5}.mathpooh-comment-editor label{font-weight:800;color:#245f36}.mathpooh-comment-editor textarea{width:100%;resize:vertical;border:1px solid #cad8cd;border-radius:12px;padding:12px 14px;font:inherit}.exam-result-summary{display:flex;align-items:center;justify-content:space-between;gap:20px}.exam-result-summary>div:first-child{display:grid;gap:4px}.solution-publish-actions,.monitor-result-actions{display:flex;align-items:center;gap:8px}.solution-publish-actions b{font-size:13px;color:#55705d}.solution-student-button{border:1px solid #cbd8cd;border-radius:9px;padding:7px 9px;background:#fff;font-size:12px;font-weight:800;white-space:nowrap}.solution-student-button.open{background:#e8f6ec;color:#24683a;border-color:#9fcaaa}.solution-student-button.closed{color:#777}.monitor-result-actions{justify-content:flex-end}@media(max-width:900px){.exam-result-summary{align-items:flex-start;flex-direction:column}.solution-publish-actions{width:100%;justify-content:space-between}}
