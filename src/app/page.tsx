@@ -91,7 +91,17 @@ function StudentResultModal({
       item,
     ]),
   );
+  const [solutionGuideOpen, setSolutionGuideOpen] = useState(false);
+  const [solutionAgreed, setSolutionAgreed] = useState(false);
   if (!attempt) return null;
+
+  const openSolution = () => {
+    if (!exam.solution_url || !solutionAgreed) return;
+    window.open(exam.solution_url, "_blank", "noopener,noreferrer");
+    setSolutionGuideOpen(false);
+    setSolutionAgreed(false);
+  };
+
   return (
     <div className="student-result-backdrop" onMouseDown={onClose}>
       <section
@@ -209,19 +219,43 @@ function StudentResultModal({
         </div>
         <footer className="student-result-actions">
           {exam.solution_url ? (
-            <a
+            <button
+              type="button"
               className="student-solution-button"
-              href={exam.solution_url}
-              target="_blank"
-              rel="noreferrer"
+              onClick={() => {
+                setSolutionAgreed(false);
+                setSolutionGuideOpen(true);
+              }}
             >
               해설지 보기
-            </a>
+            </button>
           ) : (
             <span className="student-solution-missing">등록된 해설지가 없습니다.</span>
           )}
           <button onClick={onClose}>닫기</button>
         </footer>
+        {solutionGuideOpen ? (
+          <div className="student-consent-backdrop" onMouseDown={() => setSolutionGuideOpen(false)}>
+            <section className="student-consent-modal" onMouseDown={(event) => event.stopPropagation()}>
+              <div className="student-consent-icon">📖</div>
+              <small>해설 확인 안내</small>
+              <h3>해설을 보기 전에 스스로 다시 풀어보세요.</h3>
+              <p>본 해설은 복습을 위한 자료입니다. 외부 도움이나 자료를 이용하기 전에 자신의 힘으로 다시 한번 해결해 보시기 바랍니다.</p>
+              <label className="student-consent-check">
+                <input
+                  type="checkbox"
+                  checked={solutionAgreed}
+                  onChange={(event) => setSolutionAgreed(event.target.checked)}
+                />
+                <span>위 내용을 확인했으며, 스스로 다시 풀어본 후 해설을 확인하겠습니다.</span>
+              </label>
+              <div className="student-consent-actions">
+                <button type="button" className="secondary" onClick={() => setSolutionGuideOpen(false)}>취소</button>
+                <button type="button" disabled={!solutionAgreed} onClick={openSolution}>동의하고 해설 보기</button>
+              </div>
+            </section>
+          </div>
+        ) : null}
       </section>
     </div>
   );
@@ -241,6 +275,8 @@ export default function StudentHome() {
   const [selectedTower, setSelectedTower] = useState<LandmarkSubject | null>(null);
   const [activeSection, setActiveSection] = useState<StudentSection>("home");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [examConsent, setExamConsent] = useState<Exam | null>(null);
+  const [examConsentChecked, setExamConsentChecked] = useState(false);
   const load = useCallback(async () => {
     const response = await fetch("/api/student/portal", { cache: "no-store" });
     if (response.status === 403) return window.location.replace("/admin");
@@ -261,6 +297,29 @@ export default function StudentHome() {
     setMenuOpen(false);
     window.localStorage.setItem("matspu-student-section", section);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const requestStartExam = (exam: Exam) => {
+    if (exam.attempt) {
+      void startExam(exam);
+      return;
+    }
+    const consentKey = `mathpooh-exam-consent:${exam.id}`;
+    if (window.sessionStorage.getItem(consentKey) === "yes") {
+      void startExam(exam);
+      return;
+    }
+    setExamConsentChecked(false);
+    setExamConsent(exam);
+  };
+
+  const confirmStartExam = () => {
+    if (!examConsent || !examConsentChecked) return;
+    window.sessionStorage.setItem(`mathpooh-exam-consent:${examConsent.id}`, "yes");
+    const exam = examConsent;
+    setExamConsent(null);
+    setExamConsentChecked(false);
+    void startExam(exam);
   };
 
   const startExam = async (exam: Exam) => {
@@ -797,7 +856,7 @@ export default function StudentHome() {
                   ) : null}
                   <button
                     disabled={!exam.available || !exam.test_url}
-                    onClick={() => void startExam(exam)}
+                    onClick={() => requestStartExam(exam)}
                   >
                     {exam.attempt
                       ? "이어서 풀기"
@@ -828,6 +887,34 @@ export default function StudentHome() {
         <div className="analysis-exam-list">{portal.exams.filter((exam) => exam.attempt?.status === "submitted").map((exam) => <button key={exam.id} onClick={() => setResultExam(exam)}><div><small>{exam.exam_date} · {exam.subject}</small><strong>{exam.title}</strong><span>{exam.attempt?.correct_count ?? 0}/{exam.question_count}문항 정답</span></div><b>{exam.attempt?.score ?? 0}점</b><i>상세 분석 →</i></button>)}</div>
         {!portal.exams.some((exam) => exam.attempt?.status === "submitted") ? <div className="student-section-empty"><b>아직 분석할 시험 결과가 없습니다.</b><span>실전모의고사를 제출하면 결과와 취약 영역이 자동으로 표시됩니다.</span><button onClick={() => moveSection("exams")}>시험 보러 가기</button></div> : null}
       </section> : null}
+      {examConsent ? (
+        <div className="student-consent-backdrop" onMouseDown={() => setExamConsent(null)}>
+          <section className="student-consent-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="student-consent-icon">✓</div>
+            <small>실전모의고사 응시 안내</small>
+            <h3>현재 실력을 정확하게 확인하기 위한 시험입니다.</h3>
+            <ul>
+              <li>외부 도움이나 자료를 이용하지 않고 본인의 힘으로 응시합니다.</li>
+              <li>다른 사람의 도움을 받지 않습니다.</li>
+              <li>인터넷 검색이나 참고자료를 이용하지 않습니다.</li>
+              <li>현재 자신의 실력을 확인하기 위해 성실하게 응시합니다.</li>
+            </ul>
+            <p className="student-consent-warning">외부 도움을 이용하거나 응시 과정의 신뢰성이 확보되지 않는 경우, 시험 결과는 무효 처리되거나 재응시 대상이 될 수 있습니다.</p>
+            <label className="student-consent-check">
+              <input
+                type="checkbox"
+                checked={examConsentChecked}
+                onChange={(event) => setExamConsentChecked(event.target.checked)}
+              />
+              <span>위 내용을 확인하였으며 이에 동의합니다.</span>
+            </label>
+            <div className="student-consent-actions">
+              <button type="button" className="secondary" onClick={() => setExamConsent(null)}>취소</button>
+              <button type="button" disabled={!examConsentChecked} onClick={confirmStartExam}>동의하고 시험 시작</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
       {resultExam ? (
         <StudentResultModal
           exam={resultExam}
