@@ -459,8 +459,10 @@ export default function Home() {
               setExamFiles={setExamFiles}
               students={students}
             />
-          ) : active === "student-results" || active === "learning-analysis" ? (
-            <ResultsPage students={students} />
+          ) : active === "student-results" ? (
+            <StudentResultsPage />
+          ) : active === "learning-analysis" ? (
+            <LearningAnalysisPage students={students} />
           ) : active === "posters" ? (
             <PostersPage />
           ) : active === "sos-learning" ? (
@@ -1250,7 +1252,97 @@ function StudentDrawer({
   );
 }
 
-function ResultsPage({ students }: { students: Student[] }) {
+
+function StudentResultsPage() {
+  const [rows, setRows] = useState<any[]>([]);
+  const [search, setSearch] = useState("");
+  const [selectedStudentId, setSelectedStudentId] = useState("");
+  const [selectedAttemptId, setSelectedAttemptId] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetch("/api/admin/student-performance", { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "학생 성적을 불러오지 못했습니다.");
+        if (!alive) return;
+        const students = data.students ?? [];
+        setRows(students);
+        const first = students.find((item: any) => item.performance?.history?.length) ?? students[0];
+        setSelectedStudentId(String(first?.id ?? ""));
+        setSelectedAttemptId(String(first?.performance?.history?.[0]?.attemptId ?? ""));
+      })
+      .catch((error) => alert(error instanceof Error ? error.message : "학생 성적 조회 실패"))
+      .finally(() => alive && setLoading(false));
+    return () => { alive = false; };
+  }, []);
+
+  const filtered = rows.filter((student) => `${student.name} ${student.school} ${student.grade}`.toLowerCase().includes(search.toLowerCase()));
+  const selectedStudent = rows.find((student) => String(student.id) === selectedStudentId) ?? filtered[0];
+  const history = selectedStudent?.performance?.history ?? [];
+  const selectedReport = history.find((item: any) => String(item.attemptId) === selectedAttemptId) ?? history[0];
+
+  const selectStudent = (student: any) => {
+    setSelectedStudentId(String(student.id));
+    setSelectedAttemptId(String(student.performance?.history?.[0]?.attemptId ?? ""));
+  };
+
+  return <>
+    <section className="page-title-row">
+      <div><h2>학생성적 분석</h2><p>학생을 검색한 뒤 응시한 시험별 개인 성적표를 확인합니다.</p></div>
+      <button className="secondary-button" onClick={() => window.print()}>성적표 인쇄</button>
+    </section>
+    <section className="student-report-layout">
+      <aside className="panel student-report-search">
+        <label className="global-search large"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="학생 이름·학교 검색" /></label>
+        <div className="student-report-count">{loading ? "불러오는 중..." : `${filtered.length}명`}</div>
+        <div className="student-report-students">
+          {filtered.map((student) => <button key={student.id} className={String(student.id) === String(selectedStudent?.id) ? "selected" : ""} onClick={() => selectStudent(student)}>
+            <i>{student.name.slice(0,1)}</i><span><strong>{student.name}</strong><small>{student.school} · {student.grade}</small></span><b>{student.performance?.summary?.latestScore === null ? "-" : `${student.performance?.summary?.latestScore}점`}</b>
+          </button>)}
+        </div>
+      </aside>
+      <div className="student-report-main">
+        {selectedStudent ? <>
+          <section className="panel student-report-profile">
+            <div><span className="student-report-avatar">{selectedStudent.name.slice(0,1)}</span><div><h3>{selectedStudent.name}</h3><p>{selectedStudent.school} · {selectedStudent.grade}</p></div></div>
+            <div><small>응시</small><b>{selectedStudent.performance?.summary?.examCount ?? 0}회</b></div>
+            <div><small>평균</small><b>{selectedStudent.performance?.summary?.averageScore ?? "-"}점</b></div>
+            <div><small>최고</small><b>{selectedStudent.performance?.summary?.bestScore ?? "-"}점</b></div>
+          </section>
+          <section className="panel student-report-exams">
+            <div className="student-report-section-head"><div><h3>시험별 성적표</h3><p>시험을 선택하면 아래 성적표가 바뀝니다.</p></div></div>
+            {history.length ? <div className="student-report-exam-list">{history.map((exam: any) => <button key={exam.attemptId} className={String(exam.attemptId) === String(selectedReport?.attemptId) ? "selected" : ""} onClick={() => setSelectedAttemptId(String(exam.attemptId))}>
+              <span><strong>{exam.title}</strong><small>{exam.examDate || exam.submittedAt?.slice(0,10)}</small></span><b>{exam.score}점</b><em>{exam.correct}/{exam.questionCount}</em>
+            </button>)}</div> : <div className="student-report-empty">제출한 시험이 없습니다.</div>}
+          </section>
+          {selectedReport ? <section className="panel official-score-report">
+            <header><div><span>MATHPOOH SOS</span><h2>실전모의고사 성적표</h2><p>{selectedReport.title} · {selectedReport.examDate}</p></div><div className="official-score"><small>총점</small><strong>{selectedReport.score}</strong><span>점</span></div></header>
+            <div className="official-score-summary">
+              <div><small>정답</small><b>{selectedReport.correct}문항</b></div><div><small>오답</small><b>{selectedReport.wrongNumbers.length}문항</b></div><div><small>미응답</small><b>{selectedReport.unansweredNumbers.length}문항</b></div><div><small>채점</small><b>{selectedReport.scoreSource === "manual" ? "수동점수" : "자동채점"}</b></div>
+            </div>
+            <div className="official-subject-grid">
+              {selectedReport.subjectResults.length ? selectedReport.subjectResults.map((item: any) => <div key={item.label}><div><strong>{item.label}</strong><b>{item.correct}/{item.total}</b></div><i><em style={{width:`${item.rate}%`}} /></i><small>{item.rate}%</small></div>) : <p>영역별 분석 데이터가 없습니다.</p>}
+            </div>
+            <div className="official-answer-summary">
+              <div><h4>오답 문항</h4><p>{selectedReport.wrongNumbers.length ? selectedReport.wrongNumbers.join(", ") : "없음"}</p></div>
+              <div><h4>미응답 문항</h4><p>{selectedReport.unansweredNumbers.length ? selectedReport.unansweredNumbers.join(", ") : "없음"}</p></div>
+            </div>
+            <div className="official-question-grid">
+              {selectedReport.questionResults.map((item: any) => <div key={item.no} className={item.correct ? "correct" : item.unanswered ? "unanswered" : "wrong"}><b>{item.no}</b><span>{item.correct ? "정답" : item.unanswered ? "미응답" : "오답"}</span><small>{item.subject}</small></div>)}
+            </div>
+            <div className="mathpooh-report-comment"><h4>매쓰푸의 코멘트</h4><p>{selectedReport.mathpoohComment || "아직 등록된 코멘트가 없습니다."}</p></div>
+            <footer><span>해설지 {selectedReport.solutionVisible ? "공개" : "비공개"}</span><small>응시 완료: {selectedReport.submittedAt ? new Date(selectedReport.submittedAt).toLocaleString("ko-KR") : "-"}</small></footer>
+          </section> : null}
+        </> : <section className="panel student-report-empty">검색된 학생이 없습니다.</section>}
+      </div>
+    </section>
+  </>;
+}
+
+function LearningAnalysisPage({ students }: { students: Student[] }) {
   const [search, setSearch] = useState("");
   const [grade, setGrade] = useState("전체");
   const [rows, setRows] = useState<any[]>([]);

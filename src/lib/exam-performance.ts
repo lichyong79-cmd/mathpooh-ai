@@ -14,6 +14,13 @@ export type PerformanceHistory = {
   score: number;
   correct: number;
   questionCount: number;
+  wrongNumbers: number[];
+  unansweredNumbers: number[];
+  mathpoohComment: string;
+  scoreSource: string;
+  solutionVisible: boolean;
+  subjectResults: Array<{ label: string; correct: number; total: number; rate: number }>;
+  questionResults: Array<{ no: number; answer: string; correctAnswer: string; correct: boolean; unanswered: boolean; subject: string; unit: string; type: string; difficulty: number | null }>;
 };
 
 const answerAt = (answers: unknown, no: number) => {
@@ -60,21 +67,42 @@ export function buildStudentPerformance(
     const keys = Array.isArray(exam.answer_keys) ? exam.answer_keys.map(String) : [];
     const questionCount = Number(exam.question_count ?? keys.length ?? 0);
     let recomputedCorrect = 0;
+    const questionResults: PerformanceHistory["questionResults"] = [];
+    const subjectCounter = new Map<string, { correct: number; total: number }>();
     for (let no = 1; no <= questionCount; no += 1) {
-      const correct = Boolean(keys[no - 1]) && answerAt(attempt.answers, no) === String(keys[no - 1]).trim();
+      const studentAnswer = answerAt(attempt.answers, no);
+      const correctAnswer = String(keys[no - 1] ?? "").trim();
+      const correct = Boolean(correctAnswer) && studentAnswer === correctAnswer;
+      const unanswered = !studentAnswer;
       if (correct) recomputedCorrect += 1;
       const info = metadataMap.get(`${exam.id}:${no}`);
       const unit = info?.middle_unit || info?.major_unit || info?.minor_unit || "미분류";
       const problemTypes = Array.isArray(info?.problem_types) ? info.problem_types : [];
       const type = problemTypes[0] || info?.detailed_topic || info?.question_type || "미분류";
-      const difficulty = Number(info?.difficulty);
+      const difficultyValue = Number(info?.difficulty);
+      const difficulty = difficultyValue >= 1 && difficultyValue <= 5 ? difficultyValue : null;
+      const sourceText = `${info?.major_unit ?? ""} ${info?.middle_unit ?? ""} ${info?.minor_unit ?? ""} ${info?.detailed_topic ?? ""}`;
+      const subject = /확률|통계|경우의 수|순열|조합/.test(sourceText)
+        ? "확률과통계"
+        : /미분|적분|극한|도함수/.test(sourceText)
+          ? "미적분1"
+          : /지수|로그|삼각함수|수열/.test(sourceText)
+            ? "대수"
+            : String(exam.subject ?? "기타");
+      const subjectValue = subjectCounter.get(subject) ?? { correct: 0, total: 0 };
+      subjectValue.total += 1;
+      if (correct) subjectValue.correct += 1;
+      subjectCounter.set(subject, subjectValue);
       units.push({ label: unit, correct });
       types.push({ label: type, correct });
       difficulties.push({
-        label: difficulty >= 1 && difficulty <= 5 ? `${difficulty}단계` : "미분류",
+        label: difficulty ? `${difficulty}단계` : "미분류",
         correct,
       });
+      questionResults.push({ no, answer: studentAnswer, correctAnswer, correct, unanswered, subject, unit, type, difficulty });
     }
+    const wrongNumbers = questionResults.filter((item) => !item.correct && !item.unanswered).map((item) => item.no);
+    const unansweredNumbers = questionResults.filter((item) => item.unanswered).map((item) => item.no);
     history.push({
       attemptId: String(attempt.id),
       examId: String(exam.id),
@@ -84,6 +112,13 @@ export function buildStudentPerformance(
       score: Number(attempt.score ?? Math.round((recomputedCorrect / Math.max(1, questionCount)) * Number(exam.total_score ?? 100))),
       correct: recomputedCorrect,
       questionCount,
+      wrongNumbers,
+      unansweredNumbers,
+      mathpoohComment: String(attempt.mathpooh_comment ?? ""),
+      scoreSource: String(attempt.score_source ?? "auto"),
+      solutionVisible: attempt.solution_override === true || (attempt.solution_override !== false && exam.solution_open === true),
+      subjectResults: [...subjectCounter.entries()].map(([label, value]) => ({ label, ...value, rate: Math.round((value.correct / Math.max(1, value.total)) * 100) })),
+      questionResults,
     });
   }
   history.sort((a, b) => (b.submittedAt || b.examDate).localeCompare(a.submittedAt || a.examDate));

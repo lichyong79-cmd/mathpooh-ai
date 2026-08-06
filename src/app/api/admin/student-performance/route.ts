@@ -19,13 +19,13 @@ export async function GET(request: Request) {
 
   const { data: attempts, error: attemptError } = await supabase
     .from("exam_attempts")
-    .select("id,student_id,exam_id,status,answers,submitted_at,score,correct_count")
+    .select("id,student_id,exam_id,status,answers,submitted_at,score,correct_count,wrong_numbers,unanswered_numbers,mathpooh_comment,score_source,solution_override")
     .in("student_id", studentIds)
     .eq("status", "submitted");
   if (attemptError) return NextResponse.json({ message: attemptError.message }, { status: 400 });
   const examIds = [...new Set((attempts ?? []).map((attempt) => attempt.exam_id))];
   const examsResult = examIds.length
-    ? await supabase.from("exams").select("id,title,exam_date,question_count,total_score,answer_keys").in("id", examIds)
+    ? await supabase.from("exams").select("id,title,exam_date,question_count,total_score,answer_keys,subject,solution_open,solution_file_path").in("id", examIds)
     : { data: [], error: null };
   const metadataResult = examIds.length
     ? await supabase.from("exam_question_analysis").select("exam_id,question_no,major_unit,middle_unit,minor_unit,detailed_topic,question_type,problem_types,difficulty").in("exam_id", examIds)
