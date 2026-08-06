@@ -56,6 +56,7 @@ type Exam = {
   percentile?: number | null;
   percentile_basis?: "cohort" | "estimated" | null;
   participants?: number;
+  mathpooh_comment?: string;
 };
 type QuestionMetadata = {
   question_no: number;
@@ -99,6 +100,29 @@ function StudentResultModal({
   const [solutionAgreed, setSolutionAgreed] = useState(false);
   if (!attempt) return null;
 
+  const questionRows = Array.from({ length: exam.question_count }, (_, index) => {
+    const no = index + 1;
+    const answer = String(attempt.answers?.[no] ?? attempt.answers?.[String(no)] ?? "");
+    const key = String(keys[index] ?? "");
+    const info = metadata.get(no);
+    const difficulty = Number(info?.difficulty ?? 0) || null;
+    const correct = Boolean(answer) && answer === key;
+    const unanswered = !answer;
+    const rawType = info?.problem_types?.join(", ") || info?.detailed_topic || info?.question_type || "정보 없음";
+    const type = rawType.replace(/마코프\s*(체인|상태전이)?/gi, "상태변화 확률").replace(/Markov\s*(Chain|Transition)?/gi, "상태변화 확률").replace(/베이즈\s*(추론|네트워크)?/gi, "조건부확률");
+    return { no, answer, key, info, difficulty, correct, unanswered, type };
+  });
+  const weights: Record<number, number> = { 1: 1, 2: 1.15, 3: 1.35, 4: 1.65, 5: 2 };
+  const totalWeight = questionRows.reduce((sum, item) => sum + (weights[item.difficulty ?? 0] ?? 1.2), 0);
+  const earnedWeight = questionRows.reduce((sum, item) => sum + (item.correct ? (weights[item.difficulty ?? 0] ?? 1.2) : 0), 0);
+  const weightedMastery = totalWeight ? (earnedWeight / totalWeight) * 100 : Number(attempt.score ?? 0);
+  const abilityIndex = Math.max(0, Math.min(100, Number(attempt.score ?? 0) * 0.62 + weightedMastery * 0.38));
+  const predictedPercentile = Math.max(1, Math.min(99, Math.round(100 / (1 + Math.exp(-(abilityIndex - 55) / 12)))));
+  const predictedGrade = predictedPercentile >= 96 ? 1 : predictedPercentile >= 89 ? 2 : predictedPercentile >= 77 ? 3 : predictedPercentile >= 60 ? 4 : predictedPercentile >= 40 ? 5 : predictedPercentile >= 23 ? 6 : predictedPercentile >= 11 ? 7 : predictedPercentile >= 4 ? 8 : 9;
+  const displayPercentile = Math.round(exam.percentile ?? predictedPercentile);
+  const topRate = Math.max(1, 100 - displayPercentile);
+  const recommended = questionRows.filter((item) => !item.correct).sort((a, b) => (a.difficulty ?? 99) - (b.difficulty ?? 99) || a.no - b.no).slice(0, 5);
+
   const openSolution = () => {
     if (!exam.solution_url || !solutionAgreed) return;
     window.open(exam.solution_url, "_blank", "noopener,noreferrer");
@@ -109,7 +133,7 @@ function StudentResultModal({
   return (
     <div className="student-result-backdrop" onMouseDown={onClose}>
       <section
-        className="student-result-modal"
+        className="student-result-modal premium"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header>
@@ -128,6 +152,17 @@ function StudentResultModal({
           </div>
           <button onClick={onClose}>×</button>
         </header>
+        <section className="student-premium-overview">
+          <div className="student-premium-score"><small>총점</small><b>{attempt.score ?? 0}</b><span>점</span></div>
+          <div><small>전국 예상등급</small><b>{predictedGrade}등급</b><span>백분위 {displayPercentile}</span></div>
+          <div><small>전국 예상 위치</small><b>상위 약 {topRate}%</b><span>난이도 보정 추정</span></div>
+          <div><small>응시자</small><b>{exam.participants ?? "-"}</b><span>명</span></div>
+        </section>
+        <section className="student-percentile-card">
+          <div><span>전국단위 예상 백분위</span><strong>{displayPercentile}</strong><p>예상 {predictedGrade}등급 · 상위 약 {topRate}%</p></div>
+          <i><em style={{ width: `${displayPercentile}%` }} /></i>
+          <small>※ 공식 전국 통계가 아닌 총점·문항 난이도 기반 추정치입니다.</small>
+        </section>
         <div className="student-result-summary">
           <div>
             <span>정답</span>
@@ -148,6 +183,10 @@ function StudentResultModal({
           keys={keys}
           metadata={exam.question_metadata ?? []}
         />
+        <section className="student-recommend-card">
+          <div><small>NEXT REVIEW</small><h3>우선 복습 추천 5문항</h3><p>오답·미응답 중 쉬운 순서대로 제시합니다.</p></div>
+          {recommended.length ? <div className="student-recommend-list">{recommended.map((item, index) => <article key={item.no}><span>{index + 1}</span><b>{item.no}번</b><strong>{item.info?.minor_unit || item.info?.middle_unit || item.info?.major_unit || "단원 미분류"}</strong><small>{item.type}</small><em>{item.difficulty ? `${item.difficulty}단계` : "난이도 미분류"}</em></article>)}</div> : <p className="student-perfect-message">추천할 오답 문항이 없습니다.</p>}
+        </section>
         <div className="student-result-table-wrap">
           <div className="student-result-table">
             <div className="student-result-table-head">
@@ -195,10 +234,7 @@ function StudentResultModal({
                       info?.question_type
                     }
                   >
-                    {info?.problem_types?.join(", ") ||
-                      info?.detailed_topic ||
-                      info?.question_type ||
-                      "정보 없음"}
+                    {questionRows[no - 1]?.type || "정보 없음"}
                   </span>
                   <span>
                     <i
@@ -221,6 +257,7 @@ function StudentResultModal({
             })}
           </div>
         </div>
+        <section className="student-mathpooh-comment"><small>MATHPOOH COMMENT</small><h3>매쓰푸의 코멘트</h3><p>{exam.mathpooh_comment || "아직 등록된 코멘트가 없습니다."}</p></section>
         <footer className="student-result-actions">
           {exam.solution_url && exam.solution_open ? (
             <button
