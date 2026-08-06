@@ -79,7 +79,7 @@ type Portal = {
   landmark?: LandmarkSummary;
   posters: { id: string; title: string; image_url: string; link_url: string; sort_order: number }[];
 };
-type StudentSection = "home" | "apply" | "exams" | "strategy" | "analysis";
+type StudentSection = "home" | "apply" | "exams" | "strategy" | "scores" | "learning";
 
 function StudentResultModal({
   exam,
@@ -336,7 +336,7 @@ export default function StudentHome() {
   }, [load]);
   useEffect(() => {
     const saved = window.localStorage.getItem("matspu-student-section") as StudentSection | null;
-    if (saved && ["home", "apply", "exams", "strategy", "analysis"].includes(saved)) setActiveSection(saved);
+    if (saved && ["home", "apply", "exams", "strategy", "scores", "learning"].includes(saved)) setActiveSection(saved);
   }, []);
   const moveSection = (section: StudentSection) => {
     setActiveSection(section);
@@ -668,6 +668,23 @@ export default function StudentHome() {
       section: "strategy" as StudentSection,
     };
   }, [portal]);
+  const submittedExams = useMemo(() =>
+    (portal?.exams ?? [])
+      .filter((exam) => exam.attempt?.status === "submitted")
+      .sort((a, b) => String(b.attempt?.submitted_at ?? b.exam_date).localeCompare(String(a.attempt?.submitted_at ?? a.exam_date))),
+    [portal],
+  );
+  const scoreAverage = submittedExams.length
+    ? Math.round(submittedExams.reduce((sum, exam) => sum + Number(exam.attempt?.score ?? 0), 0) / submittedExams.length)
+    : 0;
+  const recentScore = Number(submittedExams[0]?.attempt?.score ?? 0);
+  const bestScore = submittedExams.length ? Math.max(...submittedExams.map((exam) => Number(exam.attempt?.score ?? 0))) : 0;
+  const subjectCards = (["대수", "미적분1", "확률과통계"] as LandmarkSubject[]).map((subject) => ({
+    subject,
+    floor: landmark.subjects?.[subject]?.floor ?? 0,
+    best: landmark.subjects?.[subject]?.best ?? 0,
+    attempts: landmark.subjects?.[subject]?.attempts ?? 0,
+  }));
   const changeAnswer = (no: number, value: string) => {
     if (examPaused) return;
     setAnswers((prev) => ({ ...prev, [no]: value }));
@@ -831,7 +848,8 @@ export default function StudentHome() {
           <button className={activeSection === "home" ? "active" : ""} onClick={() => moveSection("home")}>나의SOS</button>
           <button className={activeSection === "exams" ? "active" : ""} onClick={() => moveSection("exams")}>실전모의고사</button>
           <button className={activeSection === "strategy" ? "active" : ""} onClick={() => moveSection("strategy")}>SOS 공략</button>
-          <button className={activeSection === "analysis" ? "active" : ""} onClick={() => moveSection("analysis")}>학습분석</button>
+          <button className={activeSection === "scores" ? "active" : ""} onClick={() => moveSection("scores")}>성적분석</button>
+          <button className={activeSection === "learning" ? "active" : ""} onClick={() => moveSection("learning")}>학습분석</button>
         </nav>
         <div className="mp-header-actions">
           <button className="mp-apply-button" onClick={() => moveSection("apply")}><span aria-hidden="true">＋</span>SOS 신청</button>
@@ -860,7 +878,8 @@ export default function StudentHome() {
             <button className={activeSection === "home" ? "active" : ""} onClick={() => moveSection("home")}>나의SOS</button>
             <button className={activeSection === "exams" ? "active" : ""} onClick={() => moveSection("exams")}>실전모의고사</button>
             <button className={activeSection === "strategy" ? "active" : ""} onClick={() => moveSection("strategy")}>SOS 공략</button>
-            <button className={activeSection === "analysis" ? "active" : ""} onClick={() => moveSection("analysis")}>학습분석</button>
+            <button className={activeSection === "scores" ? "active" : ""} onClick={() => moveSection("scores")}>성적분석</button>
+          <button className={activeSection === "learning" ? "active" : ""} onClick={() => moveSection("learning")}>학습분석</button>
             <button onClick={() => { setMenuOpen(false); window.location.href = "/password"; }}>비밀번호 변경</button>
           </nav>
           <button className="mp-menu-logout" onClick={() => void signOut()}>로그아웃</button>
@@ -881,6 +900,20 @@ export default function StudentHome() {
               <button onClick={() => moveSection(todayTask.section)}>{todayTask.action}</button>
             </section>
           ) : null}
+          <section className="student-home-grid">
+            <article className="student-home-card recent-score-card">
+              <div><small>RECENT SCORE</small><h3>최근 성적</h3></div>
+              {submittedExams.length ? <><strong>{recentScore}<span>점</span></strong><p>평균 {scoreAverage}점 · 최고 {bestScore}점</p><button onClick={() => moveSection("scores")}>성적표 확인</button></> : <><strong>-</strong><p>첫 시험을 완료하면 성적이 표시됩니다.</p><button onClick={() => moveSection("exams")}>시험 확인</button></>}
+            </article>
+            <article className="student-home-card progress-card">
+              <div><small>MY PROGRESS</small><h3>나의 성장</h3></div>
+              <strong>{submittedExams.length}<span>회</span></strong><p>완료한 실전모의고사</p><button onClick={() => moveSection("learning")}>성장 리포트</button>
+            </article>
+            <article className="student-home-card strategy-card">
+              <div><small>NEXT MISSION</small><h3>다음 공략</h3></div>
+              <strong>{todayTask?.kind === "exam" ? "시험" : todayTask?.kind === "diagnosis" ? "진단" : "훈련"}</strong><p>{todayTask?.title ?? "오늘의 학습을 확인하세요."}</p><button onClick={() => moveSection(todayTask?.section ?? "strategy")}>바로 시작</button>
+            </article>
+          </section>
           <SosLandmarkMap
             data={landmark}
             studentName={portal.student.name}
@@ -923,10 +956,10 @@ export default function StudentHome() {
       ) : null}
       {activeSection !== "home" ? <header className={`student-hero section-${activeSection}`}>
         <div>
-          <small>{activeSection === "apply" ? "SOS PROGRAM" : activeSection === "exams" ? "PRACTICE EXAM" : activeSection === "strategy" ? "SOS STRATEGY" : "LEARNING ANALYSIS"}</small>
-          <h1>{activeSection === "apply" ? "SOS 신청하기" : activeSection === "exams" ? "실전모의고사" : activeSection === "strategy" ? "SOS 공략" : "학습분석"}</h1>
+          <small>{activeSection === "apply" ? "SOS PROGRAM" : activeSection === "exams" ? "PRACTICE EXAM" : activeSection === "strategy" ? "SOS STRATEGY" : activeSection === "scores" ? "SCORE REPORT" : "LEARNING ANALYSIS"}</small>
+          <h1>{activeSection === "apply" ? "SOS 신청하기" : activeSection === "exams" ? "실전모의고사" : activeSection === "strategy" ? "SOS 공략" : activeSection === "scores" ? "성적분석" : "학습분석"}</h1>
           <p>
-            {activeSection === "apply" ? "필요한 SOS 프로그램과 새로운 안내를 확인하세요." : activeSection === "exams" ? "신청·배정된 실전모의고사를 확인하고 응시하세요." : activeSection === "strategy" ? "시험 결과를 바탕으로 나에게 필요한 공략을 훈련합니다." : "시험별 결과와 취약 단원, 성장 흐름을 확인합니다."}
+            {activeSection === "apply" ? "필요한 SOS 프로그램과 새로운 안내를 확인하세요." : activeSection === "exams" ? "신청·배정된 실전모의고사를 확인하고 응시하세요." : activeSection === "strategy" ? "시험 결과를 바탕으로 나에게 필요한 공략을 훈련합니다." : activeSection === "scores" ? "시험별 성적표와 예상등급, 추천문항을 확인합니다." : "진단·훈련·시험의 누적 성장 흐름을 확인합니다."}
           </p>
         </div>
       </header> : null}
@@ -1049,11 +1082,35 @@ export default function StudentHome() {
         </div>
         <div className="student-section-empty strategy"><b>진단 3문항 → 부족하면 추가 3문항 → 훈련 10문항</b><span>관리자가 공략 문항을 배정하면 이곳에 문항과 진행률이 표시됩니다.</span><button onClick={() => moveSection("exams")}>실전모의고사 확인</button></div>
       </section> : null}
-      {activeSection === "analysis" ? <section className="student-analysis-page">
-        <div className="student-list-heading"><div><i /><div><small>SOS RESULT</small><h2>학습분석</h2></div></div><span>{portal.exams.filter((exam) => exam.attempt?.status === "submitted").length}회 응시</span></div>
-        <div className="analysis-overview"><article><span>응시 완료</span><b>{portal.exams.filter((exam) => exam.attempt?.status === "submitted").length}회</b></article><article><span>평균 점수</span><b>{(() => { const done = portal.exams.filter((exam) => exam.attempt?.status === "submitted"); return done.length ? `${Math.round(done.reduce((sum, exam) => sum + Number(exam.attempt?.score ?? 0), 0) / done.length)}점` : "-"; })()}</b></article><article><span>최근 점수</span><b>{portal.exams.find((exam) => exam.attempt?.status === "submitted")?.attempt?.score ?? "-"}{portal.exams.some((exam) => exam.attempt?.status === "submitted") ? "점" : ""}</b></article></div>
-        <div className="analysis-exam-list">{portal.exams.filter((exam) => exam.attempt?.status === "submitted").map((exam) => <button key={exam.id} onClick={() => setResultExam(exam)}><div><small>{exam.exam_date} · {exam.subject}</small><strong>{exam.title}</strong><span>{exam.attempt?.correct_count ?? 0}/{exam.question_count}문항 정답</span></div><b>{exam.attempt?.score ?? 0}점</b><i>상세 분석 →</i></button>)}</div>
-        {!portal.exams.some((exam) => exam.attempt?.status === "submitted") ? <div className="student-section-empty"><b>아직 분석할 시험 결과가 없습니다.</b><span>실전모의고사를 제출하면 결과와 취약 영역이 자동으로 표시됩니다.</span><button onClick={() => moveSection("exams")}>시험 보러 가기</button></div> : null}
+      {activeSection === "scores" ? <section className="student-score-page student-app-page">
+        <div className="student-page-intro"><div><small>PREMIUM SCORE REPORT</small><h2>나의 시험별 성적표</h2><p>시험을 선택하면 총점, 예상등급, 영역별 분석과 추천문항을 확인할 수 있습니다.</p></div><div className="student-kpi"><span>응시 완료</span><b>{submittedExams.length}</b><em>회</em></div></div>
+        <div className="student-score-summary">
+          <article><span>최근 점수</span><b>{submittedExams.length ? recentScore : "-"}{submittedExams.length ? <small>점</small> : null}</b></article>
+          <article><span>전체 평균</span><b>{submittedExams.length ? scoreAverage : "-"}{submittedExams.length ? <small>점</small> : null}</b></article>
+          <article><span>최고 점수</span><b>{submittedExams.length ? bestScore : "-"}{submittedExams.length ? <small>점</small> : null}</b></article>
+        </div>
+        <div className="student-score-cards">{submittedExams.map((exam) => <button key={exam.id} onClick={() => setResultExam(exam)}>
+          <div className="score-card-date"><b>{new Date(exam.exam_date).getDate()}</b><span>{new Date(exam.exam_date).toLocaleDateString("ko-KR", { month: "short" })}</span></div>
+          <div className="score-card-copy"><small>{exam.exam_code} · {exam.subject}</small><h3>{exam.title}</h3><p>{exam.attempt?.correct_count ?? 0}/{exam.question_count} 정답 · 오답 {(exam.attempt?.wrong_numbers ?? []).length} · 미응답 {(exam.attempt?.unanswered_numbers ?? []).length}</p></div>
+          <div className="score-card-score"><strong>{exam.attempt?.score ?? 0}<span>점</span></strong><em>성적표 보기 →</em></div>
+        </button>)}</div>
+        {!submittedExams.length ? <div className="student-section-empty"><b>아직 성적표가 없습니다.</b><span>실전모의고사를 제출하면 이곳에 시험별 성적표가 생성됩니다.</span><button onClick={() => moveSection("exams")}>시험 확인하기</button></div> : null}
+      </section> : null}
+      {activeSection === "learning" ? <section className="student-learning-page student-app-page">
+        <div className="student-page-intro learning"><div><small>LONG-TERM LEARNING REPORT</small><h2>나의 학습 성장 리포트</h2><p>시험 점수만이 아니라 진단·훈련·완성도의 장기 변화를 확인합니다.</p></div><div className="student-kpi"><span>현재 성장지수</span><b>{Math.round((scoreAverage + Math.min(100, submittedExams.length * 8)) / 2) || 0}</b><em>LV</em></div></div>
+        <div className="student-learning-hero">
+          <article><small>누적 응시</small><strong>{submittedExams.length}<span>회</span></strong><p>실전 데이터가 쌓일수록 분석이 정교해집니다.</p></article>
+          <article><small>최근 변화</small><strong>{submittedExams.length > 1 ? `${recentScore - Number(submittedExams[1]?.attempt?.score ?? 0) >= 0 ? "+" : ""}${recentScore - Number(submittedExams[1]?.attempt?.score ?? 0)}` : "-"}<span>{submittedExams.length > 1 ? "점" : ""}</span></strong><p>직전 시험 대비 변화</p></article>
+          <article><small>공략 준비</small><strong>{submittedExams.length ? "READY" : "WAIT"}</strong><p>{submittedExams.length ? "진단 3문항과 훈련 10문항을 연결할 수 있습니다." : "첫 시험 후 SOS 전략이 시작됩니다."}</p></article>
+        </div>
+        <section className="student-mastery-panel"><div className="panel-title"><div><small>SUBJECT MASTERY</small><h3>과목별 완성도</h3></div><span>랜드마크 데이터 연동</span></div>
+          <div className="mastery-list">{subjectCards.map((item) => <article key={item.subject}><div><b>{item.subject}</b><span>{item.attempts}회 응시</span></div><div className="mastery-track"><i style={{ width: `${Math.min(100, item.best)}%` }} /></div><strong>{item.best}<small>%</small></strong></article>)}</div>
+        </section>
+        <section className="student-growth-panel"><div className="panel-title"><div><small>SCORE HISTORY</small><h3>최근 시험 흐름</h3></div><button onClick={() => moveSection("scores")}>성적표 보기</button></div>
+          <div className="growth-bars">{submittedExams.slice(0, 8).reverse().map((exam) => <article key={exam.id}><div><i style={{ height: `${Math.max(8, Number(exam.attempt?.score ?? 0))}%` }} /></div><b>{exam.attempt?.score ?? 0}</b><span>{new Date(exam.exam_date).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })}</span></article>)}</div>
+          {!submittedExams.length ? <p className="empty-growth">시험 결과가 쌓이면 점수 변화 그래프가 표시됩니다.</p> : null}
+        </section>
+        <section className="student-next-plan"><div><small>NEXT STRATEGY</small><h3>다음 학습 전략</h3><p>{submittedExams.length ? "최근 오답 중 쉬운 문항부터 진단하고, 확인된 취약 유형을 10문항 훈련으로 연결하세요." : "실전모의고사를 먼저 응시해 현재 위치를 확인하세요."}</p></div><button onClick={() => moveSection(submittedExams.length ? "strategy" : "exams")}>{submittedExams.length ? "SOS 공략으로 이동" : "시험 확인"}</button></section>
       </section> : null}
       {examConsent ? (
         <div className="student-consent-backdrop" onMouseDown={() => setExamConsent(null)}>
