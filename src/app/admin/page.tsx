@@ -2292,12 +2292,16 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
       ? `${examInfo?.time_limit ?? 100}:00`
       : `${String(Math.floor(timerSeconds / 60)).padStart(2, "0")}:${String(timerSeconds % 60).padStart(2, "0")}`;
 
-  const saveComment = async (attemptId: string) => {
+  const saveComment = async (attemptId: string, value?: string) => {
+    const mathpoohComment = value ?? commentDrafts[attemptId] ?? "";
     setBusy(true);
-    const response = await fetch("/api/admin/exam-monitor", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "update-comment", examId, attemptId, mathpoohComment: commentDrafts[attemptId] ?? "" }) });
+    const response = await fetch("/api/admin/exam-monitor", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "update-comment", examId, attemptId, mathpoohComment }) });
     const result = await response.json();
     setBusy(false);
     if (!response.ok) return alert(result.message || "코멘트를 저장하지 못했습니다.");
+    setRows((current) => current.map((row) => row.attempt?.id === attemptId
+      ? { ...row, attempt: { ...row.attempt, mathpooh_comment: mathpoohComment } }
+      : row));
   };
 
   const submittedRows = rows.filter((row) => row.attempt?.status === "submitted");
@@ -2343,15 +2347,15 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
         <div className="solution-publish-actions"><b>전체 해설 {examInfo?.solution_open ? "공개 중" : "비공개"}</b><button className={examInfo?.solution_open ? "secondary-button" : "primary-button"} disabled={busy} onClick={() => void setGlobalSolution(!examInfo?.solution_open)}>{examInfo?.solution_open ? "전체 해설 닫기" : "제출자 전체 해설 공개"}</button></div>
       </section>
       <section className="panel results-board-table">
-        <div className="results-board-row results-board-header"><span>학생</span><span>총점</span><span>영역별 점수(정답 수)</span><span>오답 문항</span><span>매쓰푸의 코멘트</span><span>해설</span></div>
+        <div className="results-board-row results-board-header"><span>학생</span><span>총점</span><span>영역별 점수(정답 수)</span><span>오답·미응답 문항</span><span>매쓰푸의 코멘트</span><span>해설</span></div>
         {submittedRows.map((row) => {
           const attempt = row.attempt!; const area = calculateAreaResult(examInfo, attempt);
           return <div className="results-board-row" key={row.student.id}>
             <div className="student-name"><i>{row.student.name.slice(0,1)}</i><div><strong>{row.student.name}</strong><small>{row.student.school} · {row.student.grade}</small></div></div>
             <button className="result-detail-button" onClick={() => setSelectedResult(row)}>{attempt.score ?? 0}점</button>
             <div className="area-score-cells"><b>대수 {area.대수.correct}/{area.대수.total}</b><b>미적1 {area.미적1.correct}/{area.미적1.total}</b><b>확통 {area.확통.correct}/{area.확통.total}</b></div>
-            <span className="wrong-number-list">{attempt.wrong_numbers?.length ? attempt.wrong_numbers.join(", ") : "없음"}</span>
-            <div className="inline-comment"><textarea rows={2} value={commentDrafts[attempt.id] ?? ""} onChange={(event) => setCommentDrafts((prev) => ({ ...prev, [attempt.id]: event.target.value }))} placeholder="매쓰푸의 코멘트"/><button onClick={() => void saveComment(attempt.id)} disabled={busy}>저장</button></div>
+            <span className="wrong-number-list">{attempt.wrong_numbers?.length ? `오답 ${attempt.wrong_numbers.join(", ")}` : "오답 없음"}{attempt.unanswered_numbers?.length ? <><br/><em>미응답 {attempt.unanswered_numbers.join(", ")}</em></> : null}</span>
+            <div className="inline-comment"><textarea rows={2} value={commentDrafts[attempt.id] ?? ""} onChange={(event) => setCommentDrafts((prev) => ({ ...prev, [attempt.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void saveComment(attempt.id, event.currentTarget.value); } }} placeholder="코멘트 입력 후 Enter로 저장 (줄바꿈: Shift+Enter)" title="Enter 저장 · Shift+Enter 줄바꿈"/></div>
             <button className={`solution-student-button ${(attempt.solution_override ?? examInfo?.solution_open) ? "open" : "closed"}`} onClick={() => void setStudentSolution(attempt.id, (attempt.solution_override ?? examInfo?.solution_open) ? false : true)}>{(attempt.solution_override ?? examInfo?.solution_open) ? "공개" : "비공개"}</button>
           </div>;
         })}
@@ -2553,13 +2557,6 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
                   <div className="monitor-result-actions">
                     <button className="result-detail-button" onClick={() => setSelectedResult(row)}>
                       <strong>{attempt.score ?? 0}점</strong><span>결과보기</span>
-                    </button>
-                    <button
-                      className={`solution-student-button ${(attempt.solution_override ?? examInfo?.solution_open) ? "open" : "closed"}`}
-                      title="이 학생의 해설 공개 상태"
-                      onClick={() => void setStudentSolution(attempt.id, (attempt.solution_override ?? examInfo?.solution_open) ? false : true)}
-                    >
-                      {(attempt.solution_override ?? examInfo?.solution_open) ? "해설 공개" : "해설 비공개"}
                     </button>
                   </div>
                 ) : (
