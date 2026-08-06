@@ -681,7 +681,7 @@ export default function StudentHome() {
   const bestScore = submittedExams.length ? Math.max(...submittedExams.map((exam) => Number(exam.attempt?.score ?? 0))) : 0;
   const subjectCards = (["대수", "미적분1", "확률과통계"] as LandmarkSubject[]).map((subject) => ({
     subject,
-    floor: landmark.subjects?.[subject]?.floor ?? 0,
+    floor: landmark.subjects?.[subject]?.floors ?? 0,
     best: landmark.subjects?.[subject]?.best ?? 0,
     attempts: landmark.subjects?.[subject]?.attempts ?? 0,
   }));
