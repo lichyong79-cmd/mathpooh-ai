@@ -46,8 +46,10 @@ export async function GET() {
       if (difficulty >= 1 && difficulty <= 3) score += 10;
       return { ...problem, matchScore: score, reasons };
     }).filter((item) => item.matchScore > 0).sort((a, b) => b.matchScore - a.matchScore).slice(0, 12);
-    return { ...student, performance, weakUnits, weakTypes, candidates };
-  });
+    const latestExam = performance.history[0] ?? null;
+    const missedCount = latestExam ? latestExam.wrongNumbers.length + latestExam.unansweredNumbers.length : 0;
+    return { ...student, performance, weakUnits, weakTypes, candidates, latestExam, missedCount };
+  }).filter((student) => student.performance.summary.examCount > 0);
   return NextResponse.json({ students: rows, problemCount: problems?.length ?? 0 });
 }
 
