@@ -285,6 +285,16 @@ export default function Home() {
   const [active, setActive] = useState<AdminMenu>("students");
   const [collapsed, setCollapsed] = useState(false);
 
+  const moveToMenu = useCallback((menu: AdminMenu, mode: "push" | "replace" = "push") => {
+    setActive(menu);
+    window.localStorage.setItem("matspu-admin-menu", menu);
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("menu", menu);
+    if (mode === "replace") window.history.replaceState({ menu }, "", url);
+    else window.history.pushState({ menu }, "", url);
+  }, []);
+
   useEffect(() => {
     const legacyMenu: Record<string, AdminMenu> = {
       exams: "exam-list",
@@ -300,12 +310,22 @@ export default function Home() {
       return;
     }
     const saved = (stored && legacyMenu[stored] ? legacyMenu[stored] : stored) as AdminMenu | null;
-    if (saved && menus.some((menu) => menu.id === saved)) setActive(saved);
-  }, []);
+    if (saved && menus.some((menu) => menu.id === saved)) {
+      moveToMenu(saved, "replace");
+    } else {
+      moveToMenu("students", "replace");
+    }
 
-  useEffect(() => {
-    window.localStorage.setItem("matspu-admin-menu", active);
-  }, [active]);
+    const handlePopState = () => {
+      const menuFromUrl = new URLSearchParams(window.location.search).get("menu") as AdminMenu | null;
+      if (menuFromUrl && menus.some((menu) => menu.id === menuFromUrl)) {
+        setActive(menuFromUrl);
+        window.localStorage.setItem("matspu-admin-menu", menuFromUrl);
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [moveToMenu]);
   const [students, setStudents] = useState<Student[]>(initialStudents);
   const [practiceExams, setPracticeExams] =
     useState<PracticeExam[]>(initialPracticeExams);
@@ -392,7 +412,7 @@ export default function Home() {
                     window.location.href = "/problem-bank/ai-upload";
                     return;
                   }
-                  setActive(menu.id);
+                  moveToMenu(menu.id);
                 }}
               >
                 <i>{menu.icon}</i>
@@ -409,7 +429,7 @@ export default function Home() {
               <button
                 key={menu.id}
                 className={active === menu.id ? "active" : ""}
-                onClick={() => setActive(menu.id)}
+                onClick={() => moveToMenu(menu.id)}
               >
                 <i>{menu.icon}</i>
                 <span>{menu.label}</span>
@@ -435,7 +455,7 @@ export default function Home() {
             {["exam-list", "exam-input"].includes(active) ? (
               <button
                 className="primary-button"
-                onClick={() => setActive("exam-input")}
+                onClick={() => moveToMenu("exam-input")}
               >
                 ＋ 새 시험 만들기
               </button>
@@ -482,9 +502,9 @@ export default function Home() {
               }}
             />
           ) : active === "dashboard" ? (
-            <Dashboard students={students} onMove={setActive} />
+            <Dashboard students={students} onMove={moveToMenu} />
           ) : (
-            <ComingSoon title={title} onMove={setActive} />
+            <ComingSoon title={title} onMove={moveToMenu} />
           )}
         </div>
       </section>
