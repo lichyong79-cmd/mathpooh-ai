@@ -1283,6 +1283,15 @@ function StudentResultsPage() {
   const selectedStudent = rows.find((student) => String(student.id) === selectedStudentId) ?? filtered[0];
   const history = selectedStudent?.performance?.history ?? [];
   const selectedReport = history.find((item: any) => String(item.attemptId) === selectedAttemptId) ?? history[0];
+  const sameExamScores = selectedReport
+    ? rows.flatMap((student) => student.performance?.history ?? []).filter((item: any) => String(item.examId) === String(selectedReport.examId)).map((item: any) => Number(item.score ?? 0))
+    : [];
+  const participantCount = sameExamScores.length;
+  const examAverage = participantCount ? Math.round(sameExamScores.reduce((sum, value) => sum + value, 0) / participantCount) : null;
+  const examBest = participantCount ? Math.max(...sameExamScores) : null;
+  const selectedRank = selectedReport && participantCount >= 20
+    ? 1 + sameExamScores.filter((value) => value > Number(selectedReport.score ?? 0)).length
+    : null;
 
   const selectStudent = (student: any) => {
     setSelectedStudentId(String(student.id));
@@ -1320,8 +1329,18 @@ function StudentResultsPage() {
           </section>
           {selectedReport ? <section className="panel official-score-report">
             <header><div><span>MATHPOOH SOS</span><h2>실전모의고사 성적표</h2><p>{selectedReport.title} · {selectedReport.examDate}</p></div><div className="official-score"><small>총점</small><strong>{selectedReport.score}</strong><span>점</span></div></header>
-            <div className="official-score-summary">
-              <div><small>정답</small><b>{selectedReport.correct}문항</b></div><div><small>오답</small><b>{selectedReport.wrongNumbers.length}문항</b></div><div><small>미응답</small><b>{selectedReport.unansweredNumbers.length}문항</b></div><div><small>채점</small><b>{selectedReport.scoreSource === "manual" ? "수동점수" : "자동채점"}</b></div>
+            <div className="official-score-summary six-cells">
+              <div><small>예상등급</small><b>산출 전</b></div>
+              <div><small>전체 평균</small><b>{examAverage === null ? "-" : `${examAverage}점`}</b></div>
+              <div><small>최고점</small><b>{examBest === null ? "-" : `${examBest}점`}</b></div>
+              <div><small>응시 인원</small><b>{participantCount}명</b></div>
+              <div><small>석차</small><b>{participantCount < 20 ? "미산출" : `${selectedRank}위`}</b></div>
+              <div><small>채점</small><b>{selectedReport.scoreSource === "manual" ? "수동점수" : "자동채점"}</b></div>
+            </div>
+            <div className="official-score-summary compact-counts">
+              <div><small>정답</small><b>{selectedReport.correct}문항</b></div>
+              <div><small>오답</small><b>{selectedReport.wrongNumbers.length}문항</b></div>
+              <div><small>미응답</small><b>{selectedReport.unansweredNumbers.length}문항</b></div>
             </div>
             <div className="official-subject-grid">
               {selectedReport.subjectResults.length ? selectedReport.subjectResults.map((item: any) => <div key={item.label}><div><strong>{item.label}</strong><b>{item.correct}/{item.total}</b></div><i><em style={{width:`${item.rate}%`}} /></i><small>{item.rate}%</small></div>) : <p>영역별 분석 데이터가 없습니다.</p>}
@@ -1347,125 +1366,90 @@ function LearningAnalysisPage({ students }: { students: Student[] }) {
   const [grade, setGrade] = useState("전체");
   const [rows, setRows] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     let active = true;
     setLoading(true);
-    fetch("/api/admin/student-performance")
+    fetch("/api/admin/student-performance", { cache: "no-store" })
       .then(async (response) => {
         const data = await response.json();
-        if (!response.ok) throw new Error(data.message || "성적을 불러오지 못했습니다.");
-        if (active) {
-          setRows(data.students ?? []);
-          setSelectedId((current) => current || String(data.students?.[0]?.id ?? ""));
-        }
+        if (!response.ok) throw new Error(data.message || "학습 데이터를 불러오지 못했습니다.");
+        if (!active) return;
+        setRows(data.students ?? []);
+        setSelectedId((current) => current || String(data.students?.[0]?.id ?? ""));
       })
-      .catch((error) => alert(error instanceof Error ? error.message : "성적 조회 실패"))
+      .catch((error) => alert(error instanceof Error ? error.message : "학습 분석 조회 실패"))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
   }, []);
-  const filtered = rows.filter(
-    (student) =>
-      `${student.name} ${student.school}`
-        .toLowerCase()
-        .includes(search.toLowerCase()) &&
-      (grade === "전체" || student.grade === grade),
+
+  useEffect(() => {
+    if (!selectedId) return setSessions([]);
+    let active = true;
+    fetch(`/api/admin/training-engine?studentId=${encodeURIComponent(selectedId)}`, { cache: "no-store" })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "SOS 운영 이력을 불러오지 못했습니다.");
+        if (active) setSessions(data.sessions ?? []);
+      })
+      .catch(() => active && setSessions([]));
+    return () => { active = false; };
+  }, [selectedId]);
+
+  const filtered = rows.filter((student) =>
+    `${student.name} ${student.school}`.toLowerCase().includes(search.toLowerCase()) &&
+    (grade === "전체" || student.grade === grade),
   );
   const selected = rows.find((student) => String(student.id) === selectedId) ?? filtered[0];
-  const summary = selected?.performance?.summary;
-  const groups: Array<[string, any[]]> = [
-    ["누적 단원 성취도", selected?.performance?.units ?? []],
-    ["누적 유형 성취도", selected?.performance?.types ?? []],
-    ["누적 난이도 성취도", selected?.performance?.difficulties ?? []],
-  ];
+  const summary = selected?.performance?.summary ?? {};
+  const history = selected?.performance?.history ?? [];
+  const diagnosisSessions = sessions.filter((session) => session.phase === "DIAGNOSIS");
+  const trainingSessions = sessions.filter((session) => session.phase === "TRAINING");
+  const completedDiagnosisItems = diagnosisSessions.flatMap((session) => session.sos_training_items ?? []);
+  const completedTrainingItems = trainingSessions.flatMap((session) => session.sos_training_items ?? []);
+  const diagnosisAnswered = completedDiagnosisItems.filter((item: any) => item.is_correct !== null && item.is_correct !== undefined);
+  const trainingAnswered = completedTrainingItems.filter((item: any) => item.is_correct !== null && item.is_correct !== undefined);
+  const diagnosisRate = diagnosisAnswered.length ? Math.round(diagnosisAnswered.filter((item: any) => item.is_correct).length / diagnosisAnswered.length * 100) : null;
+  const trainingRate = trainingAnswered.length ? Math.round(trainingAnswered.filter((item: any) => item.is_correct).length / trainingAnswered.length * 100) : null;
+  const latestSubjects = history[0]?.subjectResults ?? [];
+  const completionRows = latestSubjects.length ? latestSubjects : (selected?.performance?.units ?? []).slice(0, 6);
+  const improvement = history.length > 1 ? Number(history[0].score ?? 0) - Number(history[history.length - 1].score ?? 0) : null;
+  const latestSession = sessions[0];
 
-  return (
-    <>
-      <section className="page-title-row">
-        <div>
-          <h2>성적 관리</h2>
-          <p>시험 운영과 분리된 학생별 누적 성적·성취도 화면입니다.</p>
-        </div>
-      </section>
-      <section className="student-stat-grid">
-        <MiniStat
-          label="성적 등록 학생"
-          value={`${rows.filter((s) => s.performance?.summary?.examCount > 0).length}명`}
-          note="1회 이상 제출"
-        />
-        <MiniStat
-          label="누적 응시"
-          value={`${rows.reduce((sum, s) => sum + Number(s.performance?.summary?.examCount ?? 0), 0)}회`}
-          note="제출 완료 기준"
-        />
-        <MiniStat
-          label="전체 평균"
-          value={`${Math.round(rows.filter((s) => s.performance?.summary?.averageScore !== null).reduce((sum, s) => sum + s.performance.summary.averageScore, 0) / Math.max(1, rows.filter((s) => s.performance?.summary?.averageScore !== null).length))}점`}
-          note="학생 평균의 평균"
-          emphasis
-        />
-        <MiniStat
-          label="미응시"
-          value={`${rows.filter((s) => !s.performance?.summary?.examCount).length}명`}
-          note="제출 결과 없음"
-        />
-      </section>
-      <section className="panel student-panel">
-        <div className="student-toolbar">
-          <label className="global-search large">
-            <span>⌕</span>
-            <input
-              placeholder="학생 이름, 학교 검색"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </label>
-          <select value={grade} onChange={(e) => setGrade(e.target.value)}>
-            <option>전체</option>
-            <option>중3</option>
-            <option>고1</option>
-            <option>고2</option>
-            <option>고3</option>
-          </select>
-        </div>
-        <div className="list-summary">
-          <strong>{loading ? "성적 불러오는 중" : `학생 ${filtered.length}명`}</strong>
-          <span>학생을 선택하면 누적 분석과 시험별 추이를 확인합니다.</span>
-        </div>
-        <div className="data-table results-list">
-          <div className="table-head">
-            <span>학생</span>
-            <span>학교 / 학년</span>
-            <span>최근 점수</span><span>평균</span><span>응시</span><span>추이</span>
-          </div>
-          {filtered.map((student) => (
-            <button className={`table-row performance-student-row ${String(student.id) === String(selected?.id) ? "selected" : ""}`} key={student.id} onClick={() => setSelectedId(String(student.id))}>
-              <div className="student-name">
-                <i>{student.name.slice(0, 1)}</i>
-                <div>
-                  <strong>{student.name}</strong>
-                  <small>{student.phone}</small>
-                </div>
-              </div>
-              <span>
-                {student.school} · {student.grade}
-              </span>
-              <b className="score-cell">{student.performance.summary.latestScore === null ? "-" : `${student.performance.summary.latestScore}점`}</b>
-              <span>{student.performance.summary.averageScore === null ? "-" : `${student.performance.summary.averageScore}점`}</span>
-              <span>{student.performance.summary.examCount}회</span>
-              <span>{student.performance.summary.scoreChange === null ? "-" : `${student.performance.summary.scoreChange >= 0 ? "+" : ""}${student.performance.summary.scoreChange}점`}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-      {selected ? <section className="panel cumulative-performance-panel">
-        <div className="performance-heading"><div><h3>{selected.name} 누적 성적</h3><p>{selected.school} · {selected.grade}</p></div><strong>{summary.latestScore ?? "-"}점</strong></div>
-        <div className="performance-summary"><div><small>응시</small><b>{summary.examCount}회</b></div><div><small>평균</small><b>{summary.averageScore ?? "-"}점</b></div><div><small>최고</small><b>{summary.bestScore ?? "-"}점</b></div><div><small>직전 대비</small><b>{summary.scoreChange === null ? "-" : `${summary.scoreChange >= 0 ? "+" : ""}${summary.scoreChange}점`}</b></div></div>
-        <div className="performance-history"><h4>시험별 성적</h4>{selected.performance.history.length ? selected.performance.history.map((item: any) => <div key={item.attemptId}><span>{item.examDate} · {item.title}</span><b>{item.score}점</b><small>{item.correct}/{item.questionCount}문항</small></div>) : <p>제출된 시험이 없습니다.</p>}</div>
-        <div className="performance-groups">{groups.map(([title, items]) => <div key={title}><h4>{title}</h4>{items.length ? items.map((item: any) => <div className="performance-bar" key={item.label}><span>{item.label}</span><i><em style={{ width: `${item.rate}%` }} /></i><b>{item.correct}/{item.total} · {item.rate}%</b></div>) : <p>분석 데이터가 없습니다.</p>}</div>)}</div>
-      </section> : null}
-    </>
-  );
+  return <>
+    <section className="page-title-row">
+      <div><h2>학생학습 분석</h2><p>학생의 전략·과정·성과를 장기적으로 확인합니다.</p></div>
+    </section>
+    <section className="student-learning-layout">
+      <aside className="panel student-learning-search">
+        <label className="global-search large"><span>⌕</span><input placeholder="학생 이름·학교 검색" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+        <select value={grade} onChange={(event) => setGrade(event.target.value)}><option>전체</option><option>중3</option><option>고1</option><option>고2</option><option>고3</option></select>
+        <div className="student-report-count">{loading ? "불러오는 중..." : `${filtered.length}명`}</div>
+        <div className="student-report-students">{filtered.map((student) => <button key={student.id} className={String(student.id) === String(selected?.id) ? "selected" : ""} onClick={() => setSelectedId(String(student.id))}><i>{student.name.slice(0,1)}</i><span><strong>{student.name}</strong><small>{student.school} · {student.grade}</small></span><b>{student.performance?.summary?.latestScore === null ? "-" : `${student.performance?.summary?.latestScore}점`}</b></button>)}</div>
+      </aside>
+      <div className="student-learning-main">
+        {selected ? <>
+          <section className="panel learning-hero"><div><span className="student-report-avatar">{selected.name.slice(0,1)}</span><div><h3>{selected.name}</h3><p>{selected.school} · {selected.grade}</p></div></div><div><small>최근 점수</small><b>{summary.latestScore ?? "-"}점</b></div><div><small>누적 응시</small><b>{summary.examCount ?? 0}회</b></div><div><small>첫 시험 대비</small><b>{improvement === null ? "-" : `${improvement >= 0 ? "+" : ""}${improvement}점`}</b></div></section>
+
+          <section className="learning-three-columns">
+            <div className="panel learning-card strategy"><span>STRATEGY</span><h3>현재 전략</h3><strong>{latestSession ? (latestSession.phase === "DIAGNOSIS" ? `진단 ${latestSession.round_no ?? 1}차 진행` : "훈련 10문항 진행") : "SOS 전략 설정 전"}</strong><p>{latestSession?.target_snapshot?.units?.map((item: any) => item.label).filter(Boolean).join(" · ") || "시험 결과를 바탕으로 공략 단원을 정합니다."}</p></div>
+            <div className="panel learning-card process"><span>PROCESS</span><h3>학습 과정</h3><strong>진단 {diagnosisSessions.length}회 · 훈련 {trainingSessions.length}회</strong><p>진단 3문항 → 훈련 10문항 → 추가훈련 여부를 누적 관리합니다.</p></div>
+            <div className="panel learning-card achievement"><span>ACHIEVEMENT</span><h3>현재 성과</h3><strong>{trainingRate === null ? "성과 집계 전" : `훈련 정답률 ${trainingRate}%`}</strong><p>{improvement === null ? "두 번 이상 시험을 응시하면 득점 전환을 확인합니다." : `첫 시험 대비 ${improvement >= 0 ? "+" : ""}${improvement}점 변화`}</p></div>
+          </section>
+
+          <section className="panel learning-process-panel"><div className="student-report-section-head"><h3>진단·훈련 과정</h3><p>3문항 진단과 10문항 훈련의 누적 진행 현황입니다.</p></div><div className="learning-process-stats"><div><small>진단 횟수</small><b>{diagnosisSessions.length}회</b><span>{diagnosisRate === null ? "채점 전" : `정답률 ${diagnosisRate}%`}</span></div><div><small>훈련 횟수</small><b>{trainingSessions.length}회</b><span>{trainingRate === null ? "채점 전" : `정답률 ${trainingRate}%`}</span></div><div><small>추가 진단</small><b>{Math.max(0, diagnosisSessions.length - 1)}회</b><span>경계 수준 재확인</span></div><div><small>최근 상태</small><b>{latestSession?.status ?? "미진행"}</b><span>{latestSession ? new Date(latestSession.created_at).toLocaleDateString("ko-KR") : "-"}</span></div></div></section>
+
+          <section className="panel learning-completion-panel"><div className="student-report-section-head"><h3>과목·단원 완성도</h3><p>최근 시험과 누적 정오 데이터를 기준으로 표시합니다.</p></div><div className="learning-completion-grid">{completionRows.length ? completionRows.map((item: any) => <div key={item.label}><div><strong>{item.label}</strong><b>{item.rate}%</b></div><i><em style={{ width: `${item.rate}%` }} /></i><small>{item.correct}/{item.total}문항</small></div>) : <p>완성도 데이터가 아직 없습니다.</p>}</div></section>
+
+          <section className="panel learning-trend-panel"><div className="student-report-section-head"><h3>모의고사 득점 변화</h3><p>SOS 학습이 실제 시험 점수로 전환되는지 확인합니다.</p></div>{history.length ? <div className="learning-score-trend">{[...history].reverse().map((item: any, index: number) => <div key={item.attemptId}><span>{item.examDate || `${index + 1}회`}</span><i><em style={{ height: `${Math.max(8, Math.min(100, item.score))}%` }} /></i><b>{item.score}점</b><small>{item.title}</small></div>)}</div> : <p>제출한 시험이 없습니다.</p>}</section>
+
+          <section className="panel next-strategy-panel"><div><span>다음 추천 전략</span><h3>{trainingRate !== null && trainingRate >= 80 ? "다음 모의고사에서 득점 전환을 검증하세요." : diagnosisSessions.length ? "진단 결과에 맞춘 훈련 10문항을 완료하세요." : "취약 문항을 선택하고 진단 3문항부터 시작하세요."}</h3><p>세부 배정과 피드백은 SOS학습운영에서 진행합니다.</p></div></section>
+        </> : <section className="panel student-report-empty">검색된 학생이 없습니다.</section>}
+      </div>
+    </section>
+  </>;
 }
 
 function RecommendPage() {
@@ -3585,6 +3569,7 @@ function ExamsPage({
           }
         }
       `}</style>
+      {tab !== "monitor-results" ? <>
       <section className="page-title-row">
         <div>
           <h2>{tab === "analysis" ? "실전모의고사 AI 문항분석" : "실전 모의고사"}</h2>
@@ -3595,39 +3580,13 @@ function ExamsPage({
         </button> : null}
       </section>
       <div className="student-tabs">
-        <button
-          className={tab === "list" ? "active" : ""}
-          onClick={() => setTab("list")}
-        >
-          시험 목록
-        </button>
-        <button
-          className={tab === "analysis" ? "active" : ""}
-          onClick={() => setTab("analysis")}
-        >
-          AI 문항분석
-        </button>
-        <button
-          className={tab === "assignment" ? "active" : ""}
-          onClick={() => setTab("assignment")}
-        >
-          학생 시험배정
-        </button>
-        <button
-          className={tab === "monitor" ? "active" : ""}
-          onClick={() => setTab("monitor")}
-        >
-          시험 진행관리
-        </button>
-        <button
-          className={tab === "input" ? "active" : ""}
-          onClick={() => {
-            if (tab !== "input") startNew();
-          }}
-        >
-          {editingId ? "시험 수정" : "실전모의고사 입력"}
-        </button>
+        <button className={tab === "list" ? "active" : ""} onClick={() => setTab("list")}>시험 목록</button>
+        <button className={tab === "analysis" ? "active" : ""} onClick={() => setTab("analysis")}>AI 문항분석</button>
+        <button className={tab === "assignment" ? "active" : ""} onClick={() => setTab("assignment")}>학생 시험배정</button>
+        <button className={tab === "monitor" ? "active" : ""} onClick={() => setTab("monitor")}>시험 진행관리</button>
+        <button className={tab === "input" ? "active" : ""} onClick={() => { if (tab !== "input") startNew(); }}>{editingId ? "시험 수정" : "실전모의고사 입력"}</button>
       </div>
+      </> : null}
       {tab === "list" || tab === "analysis" ? (
         <>
           <section className="student-stat-grid">
