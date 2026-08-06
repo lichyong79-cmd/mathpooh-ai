@@ -138,6 +138,7 @@ export async function GET() {
         application_status: applicationStatus,
         test_url: testUrl,
         solution_url: solutionUrl,
+        solution_registered: Boolean(exam.solution_file_path),
         download_available: downloadAvailable,
         download_available_at: downloadAvailableAt,
         official_answers:
@@ -295,6 +296,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true });
   }
   const examId = String(body.examId ?? "");
+  if (action === "activity-log") {
+    const eventType = String(body.eventType ?? "activity").slice(0, 60);
+    const detail = String(body.detail ?? "").slice(0, 300);
+    const { data: attemptRow } = await supabase
+      .from("exam_attempts")
+      .select("id")
+      .eq("exam_id", examId)
+      .eq("student_id", student.id)
+      .maybeSingle();
+    const { error } = await supabase.from("exam_activity_logs").insert({
+      exam_id: examId, student_id: student.id, attempt_id: attemptRow?.id ?? null,
+      event_type: eventType, detail, occurred_at: new Date().toISOString(),
+    });
+    return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ success: true });
+  }
   if (action === "request") {
     const { data: exam } = await supabase
       .from("exams")

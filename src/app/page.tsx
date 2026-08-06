@@ -40,6 +40,8 @@ type Exam = {
   short_answer_count: number;
   test_url: string;
   solution_url?: string;
+  solution_open?: boolean;
+  solution_registered?: boolean;
   available: boolean;
   download_available: boolean;
   download_available_at?: string | null;
@@ -220,7 +222,7 @@ function StudentResultModal({
           </div>
         </div>
         <footer className="student-result-actions">
-          {exam.solution_url ? (
+          {exam.solution_url && exam.solution_open ? (
             <button
               type="button"
               className="student-solution-button"
@@ -232,7 +234,10 @@ function StudentResultModal({
               해설지 보기
             </button>
           ) : (
-            <span className="student-solution-missing">등록된 해설지가 없습니다.</span>
+            <div className="student-solution-locked">
+              <button type="button" className="student-solution-button" disabled>해설지 보기</button>
+              <span>{exam.solution_registered ? "관리자가 아직 해설을 공개하지 않았습니다." : "등록된 해설지가 없습니다."}</span>
+            </div>
           )}
           <button onClick={onClose}>닫기</button>
         </footer>
@@ -280,6 +285,7 @@ export default function StudentHome() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [examConsent, setExamConsent] = useState<Exam | null>(null);
   const [examConsentChecked, setExamConsentChecked] = useState(false);
+  const [waitingExam, setWaitingExam] = useState<Exam | null>(null);
   const load = useCallback(async () => {
     const response = await fetch("/api/student/portal", { cache: "no-store" });
     if (response.status === 403) return window.location.replace("/admin");
@@ -309,7 +315,8 @@ export default function StudentHome() {
     }
     const consentKey = `mathpooh-exam-consent:${exam.id}`;
     if (window.sessionStorage.getItem(consentKey) === "yes") {
-      void startExam(exam);
+      if (!exam.close_at) setWaitingExam(exam);
+      else void startExam(exam);
       return;
     }
     setExamConsentChecked(false);
@@ -322,6 +329,10 @@ export default function StudentHome() {
     const exam = examConsent;
     setExamConsent(null);
     setExamConsentChecked(false);
+    if (!exam.close_at) {
+      setWaitingExam(exam);
+      return;
+    }
     void startExam(exam);
   };
 
@@ -348,6 +359,25 @@ export default function StudentHome() {
       ? Number(exam.paused_remaining_seconds ?? 0)
       : Math.max(0, Math.ceil((end - Date.now()) / 1000)));
   };
+
+  useEffect(() => {
+    if (!waitingExam) return;
+    const check = async () => {
+      const response = await fetch("/api/student/portal", { cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      const current = (data.exams ?? []).find((item: Exam) => item.id === waitingExam.id);
+      if (!current) return;
+      setPortal(data);
+      if (current.close_at && !current.paused_at && new Date(current.close_at).getTime() > Date.now()) {
+        setWaitingExam(null);
+        void startExam(current);
+      }
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 2000);
+    return () => window.clearInterval(timer);
+  }, [waitingExam?.id]);
 
   const changeApplication = async (
     exam: Exam,
@@ -474,6 +504,38 @@ export default function StudentHome() {
     if (activeExam && attempt && !examPaused && remaining === 0) void submit(true);
   }, [activeExam, attempt, examPaused, remaining, submit]);
 
+  useEffect(() => {
+    if (!activeExam || !attempt || attempt.status !== "in_progress") return;
+    let hiddenAt = 0;
+    const log = (eventType: string, detail = "") => {
+      void fetch("/api/student/portal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "activity-log", examId: activeExam.id, eventType, detail }),
+        keepalive: true,
+      });
+    };
+    const onVisibility = () => {
+      if (document.hidden) { hiddenAt = Date.now(); log("page_hidden", "시험 화면 이탈"); }
+      else {
+        const seconds = hiddenAt ? Math.max(1, Math.round((Date.now() - hiddenAt) / 1000)) : 0;
+        log("page_visible", seconds ? `${seconds}초 후 복귀` : "시험 화면 복귀");
+        hiddenAt = 0;
+      }
+    };
+    const onBlur = () => log("window_blur", "브라우저 포커스 이탈");
+    const onFocus = () => log("window_focus", "브라우저 포커스 복귀");
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    log("exam_room_open", "응시 화면 진입");
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [activeExam?.id, attempt?.id]);
+
   const answered = useMemo(
     () =>
       activeExam
@@ -578,6 +640,20 @@ export default function StudentHome() {
     return (
       <main className="student-loading">
         <MATHPOOHLoader title="학생 페이지를 준비하고 있습니다..." kind="loading" compact />
+      </main>
+    );
+  if (waitingExam)
+    return (
+      <main className="exam-waiting-room">
+        <section>
+          <div className="waiting-pulse"><i /><i /><i /></div>
+          <small>MATHPOOH SOS · 시험 대기실</small>
+          <h1>{waitingExam.title}</h1>
+          <strong>시험 시작을 기다리고 있습니다.</strong>
+          <p>관리자가 시험을 시작하면 별도의 새로고침 없이 자동으로 시험 화면이 열립니다.</p>
+          <div><span>응시 동의 완료</span><b>대기 중</b></div>
+          <button type="button" onClick={() => setWaitingExam(null)}>시험 목록으로 돌아가기</button>
+        </section>
       </main>
     );
   if (activeExam && attempt)

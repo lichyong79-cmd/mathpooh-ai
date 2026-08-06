@@ -452,7 +452,7 @@ export default function Home() {
             />
           ) : ["exam-list", "exam-input", "exam-analysis", "exam-assignment", "exam-progress", "exam-results"].includes(active) ? (
             <ExamsPage key={active}
-              initialTab={active === "exam-input" ? "input" : active === "exam-analysis" ? "analysis" : active === "exam-assignment" ? "assignment" : active === "exam-progress" || active === "exam-results" ? "monitor" : "list"}
+              initialTab={active === "exam-input" ? "input" : active === "exam-analysis" ? "analysis" : active === "exam-assignment" ? "assignment" : active === "exam-progress" ? "monitor" : active === "exam-results" ? "monitor-results" : "list"}
               exams={practiceExams}
               setExams={setPracticeExams}
               examFiles={examFiles}
@@ -1847,6 +1847,29 @@ function ExamAssignmentPanel({
   );
 }
 
+function inferExamArea(info: any, examSubject = "") {
+  const text = [info?.major_unit, info?.middle_unit, info?.minor_unit, info?.detailed_topic, ...(info?.problem_types ?? [])].filter(Boolean).join(" ");
+  if (/확률|통계|경우의 수|순열|조합|이항분포|정규분포/.test(text)) return "확통";
+  if (/수열|지수|로그|삼각함수/.test(text)) return "대수";
+  if (/극한|미분|적분|도함수|접선|변화율/.test(text)) return "미적1";
+  if (/확통|확률/.test(examSubject)) return "확통";
+  if (/대수/.test(examSubject)) return "대수";
+  return "미적1";
+}
+
+function calculateAreaResult(exam: any, attempt: MonitorAttempt | null) {
+  const keys = Array.isArray(exam?.answer_keys) ? exam.answer_keys.map(String) : [];
+  const metadata = new Map((exam?.question_metadata ?? []).map((item: any) => [Number(item.question_no), item]));
+  const result: Record<string, { correct: number; total: number }> = { 대수: { correct: 0, total: 0 }, 미적1: { correct: 0, total: 0 }, 확통: { correct: 0, total: 0 } };
+  for (let no = 1; no <= Number(exam?.question_count ?? 0); no++) {
+    const area = inferExamArea(metadata.get(no), String(exam?.subject ?? ""));
+    result[area].total += 1;
+    const answer = String(attempt?.answers?.[no] ?? attempt?.answers?.[String(no)] ?? "").trim();
+    if (answer && answer === String(keys[no - 1] ?? "").trim()) result[area].correct += 1;
+  }
+  return result;
+}
+
 type MonitorAttempt = {
   id: string;
   status: string;
@@ -2083,7 +2106,7 @@ function AdminResultModal({
   );
 }
 
-function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
+function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[]; mode?: "progress" | "results" }) {
   const [examId, setExamId] = useState(exams[0]?.id ?? "");
   const [rows, setRows] = useState<MonitorRow[]>([]);
   const [examInfo, setExamInfo] = useState<any>(null);
@@ -2092,6 +2115,9 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
   const [busy, setBusy] = useState(false);
   const [clock, setClock] = useState(Date.now());
   const [selectedResult, setSelectedResult] = useState<MonitorRow | null>(null);
+  const [activityLogs, setActivityLogs] = useState<any[]>([]);
+  const [accuracyOpen, setAccuracyOpen] = useState(false);
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
 
   const toLocalInput = (value?: string | null) =>
     value
@@ -2113,6 +2139,12 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
         return alert(result.message || "시험 진행상황을 불러오지 못했습니다.");
       setRows(result.rows ?? []);
       setExamInfo(result.exam);
+      setActivityLogs(result.activity_logs ?? []);
+      setCommentDrafts((prev) => {
+        const next = { ...prev };
+        for (const row of result.rows ?? []) if (row.attempt?.id && next[row.attempt.id] === undefined) next[row.attempt.id] = String(row.attempt.mathpooh_comment ?? "");
+        return next;
+      });
       if (!silent) {
         setStudentOpen(Boolean(result.exam?.student_open));
         setOpenAt(toLocalInput(result.exam?.open_at));
@@ -2259,6 +2291,48 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
     timerSeconds === null
       ? `${examInfo?.time_limit ?? 100}:00`
       : `${String(Math.floor(timerSeconds / 60)).padStart(2, "0")}:${String(timerSeconds % 60).padStart(2, "0")}`;
+
+  const saveComment = async (attemptId: string) => {
+    setBusy(true);
+    const response = await fetch("/api/admin/exam-monitor", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "update-comment", examId, attemptId, mathpoohComment: commentDrafts[attemptId] ?? "" }) });
+    const result = await response.json();
+    setBusy(false);
+    if (!response.ok) return alert(result.message || "코멘트를 저장하지 못했습니다.");
+  };
+
+  const submittedRows = rows.filter((row) => row.attempt?.status === "submitted");
+  const questionAccuracy = Array.from({ length: Number(examInfo?.question_count ?? 0) }, (_, index) => {
+    const no = index + 1;
+    const key = String(examInfo?.answer_keys?.[index] ?? "").trim();
+    const correct = submittedRows.filter((row) => String(row.attempt?.answers?.[no] ?? row.attempt?.answers?.[String(no)] ?? "").trim() === key).length;
+    return { no, correct, total: submittedRows.length, rate: submittedRows.length ? Math.round(correct / submittedRows.length * 100) : 0 };
+  });
+
+  if (mode === "results") return (
+    <div className="exam-results-board">
+      <section className="panel results-board-head">
+        <div><span className="section-kicker">시험 결과 전광판</span><select value={examId} onChange={(event) => setExamId(event.target.value)}>{exams.map((exam) => <option key={exam.id} value={exam.id}>{exam.round}회 · {exam.title}</option>)}</select></div>
+        <div className="solution-publish-actions"><b>전체 해설 {examInfo?.solution_open ? "공개 중" : "비공개"}</b><button className={examInfo?.solution_open ? "secondary-button" : "primary-button"} disabled={busy} onClick={() => void setGlobalSolution(!examInfo?.solution_open)}>{examInfo?.solution_open ? "전체 해설 닫기" : "제출자 전체 해설 공개"}</button></div>
+      </section>
+      <section className="panel results-board-table">
+        <div className="results-board-row results-board-header"><span>학생</span><span>총점</span><span>영역별 점수(정답 수)</span><span>오답 문항</span><span>매쓰푸의 코멘트</span><span>해설</span></div>
+        {submittedRows.map((row) => {
+          const attempt = row.attempt!; const area = calculateAreaResult(examInfo, attempt);
+          return <div className="results-board-row" key={row.student.id}>
+            <div className="student-name"><i>{row.student.name.slice(0,1)}</i><div><strong>{row.student.name}</strong><small>{row.student.school} · {row.student.grade}</small></div></div>
+            <button className="result-detail-button" onClick={() => setSelectedResult(row)}>{attempt.score ?? 0}점</button>
+            <div className="area-score-cells"><b>대수 {area.대수.correct}/{area.대수.total}</b><b>미적1 {area.미적1.correct}/{area.미적1.total}</b><b>확통 {area.확통.correct}/{area.확통.total}</b></div>
+            <span className="wrong-number-list">{attempt.wrong_numbers?.length ? attempt.wrong_numbers.join(", ") : "없음"}</span>
+            <div className="inline-comment"><textarea rows={2} value={commentDrafts[attempt.id] ?? ""} onChange={(event) => setCommentDrafts((prev) => ({ ...prev, [attempt.id]: event.target.value }))} placeholder="매쓰푸의 코멘트"/><button onClick={() => void saveComment(attempt.id)} disabled={busy}>저장</button></div>
+            <button className={`solution-student-button ${(attempt.solution_override ?? examInfo?.solution_open) ? "open" : "closed"}`} onClick={() => void setStudentSolution(attempt.id, (attempt.solution_override ?? examInfo?.solution_open) ? false : true)}>{(attempt.solution_override ?? examInfo?.solution_open) ? "공개" : "비공개"}</button>
+          </div>;
+        })}
+        {!submittedRows.length ? <div className="empty-list">제출 완료된 학생이 없습니다.</div> : null}
+      </section>
+      <section className="panel question-accuracy-panel"><button className="small-accuracy-button" onClick={() => setAccuracyOpen((value) => !value)}>문항별 정답률 {accuracyOpen ? "접기" : "보기"}</button>{accuracyOpen ? <div className="question-accuracy-grid">{questionAccuracy.map((item) => <div key={item.no}><b>{item.no}번</b><strong>{item.rate}%</strong><span>{item.correct}/{item.total}명</span></div>)}</div> : null}</section>
+      {selectedResult?.attempt ? <AdminResultModal examId={examId} exam={examInfo} row={selectedResult} onClose={() => setSelectedResult(null)} onSaved={(attempt) => { setRows((prev) => prev.map((item) => item.student.id === selectedResult.student.id ? { ...item, attempt } : item)); setSelectedResult((prev) => prev ? { ...prev, attempt } : prev); }} /> : null}
+    </div>
+  );
   return (
     <div className="exam-monitor-layout">
       <section className="panel monitor-control">
@@ -2396,12 +2470,6 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
       <section className="panel monitor-table-panel">
         <div className="list-summary exam-result-summary">
           <div><strong>{examInfo?.title ?? "시험 진행관리"}</strong><span>진행 중인 학생은 15초마다 자동 갱신됩니다.</span></div>
-          <div className="solution-publish-actions">
-            <b>전체 해설 {examInfo?.solution_open ? "공개 중" : "비공개"}</b>
-            <button className={examInfo?.solution_open ? "secondary-button" : "primary-button"} disabled={busy} onClick={() => void setGlobalSolution(!examInfo?.solution_open)}>
-              {examInfo?.solution_open ? "전체 해설 닫기" : "제출자 전체 해설 공개"}
-            </button>
-          </div>
         </div>
         <div className="data-table monitor-list">
           <div className="table-head">
@@ -2473,6 +2541,10 @@ function ExamMonitorPanel({ exams }: { exams: PracticeExam[] }) {
           ) : null}
         </div>
       </section>
+      <section className="panel activity-log-panel">
+        <div className="list-summary"><div><strong>웹 응시 로그</strong><span>시험 화면 이탈·복귀와 브라우저 포커스 변화를 기록합니다.</span></div></div>
+        <div className="activity-log-list">{activityLogs.slice(0,80).map((log) => { const student = rows.find((row) => row.student.id === log.student_id)?.student; return <div key={log.id}><b>{student?.name ?? "학생"}</b><span>{log.event_type === "page_hidden" ? "화면 이탈" : log.event_type === "page_visible" ? "화면 복귀" : log.event_type === "window_blur" ? "창 포커스 이탈" : log.event_type === "window_focus" ? "창 포커스 복귀" : "응시 화면 진입"}</span><small>{log.detail}</small><time>{formatTime(log.occurred_at)}</time></div>; })}{!activityLogs.length ? <div className="empty-list">기록된 웹 로그가 없습니다.</div> : null}</div>
+      </section>
       {selectedResult?.attempt ? (
         <AdminResultModal
           examId={examId}
@@ -2503,7 +2575,7 @@ function ExamsPage({
   setExamFiles,
   students,
 }: {
-  initialTab?: "list" | "input" | "analysis" | "assignment" | "monitor";
+  initialTab?: "list" | "input" | "analysis" | "assignment" | "monitor" | "monitor-results";
   exams: PracticeExam[];
   setExams: React.Dispatch<React.SetStateAction<PracticeExam[]>>;
   examFiles: Record<string, ExamFileBundle>;
@@ -2512,7 +2584,7 @@ function ExamsPage({
   >;
   students: Student[];
 }) {
-  const [tab, setTab] = useState<"list" | "input" | "analysis" | "assignment" | "monitor">(
+  const [tab, setTab] = useState<"list" | "input" | "analysis" | "assignment" | "monitor" | "monitor-results">(
     initialTab,
   );
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -3595,8 +3667,8 @@ function ExamsPage({
         </>
       ) : tab === "assignment" ? (
         <ExamAssignmentPanel exams={exams} students={students} />
-      ) : tab === "monitor" ? (
-        <ExamMonitorPanel exams={exams} />
+      ) : tab === "monitor" || tab === "monitor-results" ? (
+        <ExamMonitorPanel exams={exams} mode={tab === "monitor-results" ? "results" : "progress"} />
       ) : (
         <form className="exam-input-layout" onSubmit={save}>
           <section className="panel exam-form-panel">

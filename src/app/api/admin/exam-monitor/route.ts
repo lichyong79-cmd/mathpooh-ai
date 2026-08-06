@@ -75,6 +75,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       exam: { ...exam, question_metadata: questionMetadata },
       rows: [],
+      activity_logs: [],
     });
   const [
     { data: students, error: studentError },
@@ -92,6 +93,12 @@ export async function GET(request: Request) {
       .eq("exam_id", examId)
       .in("student_id", studentIds),
   ]);
+  const { data: activityLogs } = await ctx.supabase
+    .from("exam_activity_logs")
+    .select("id,student_id,event_type,detail,occurred_at")
+    .eq("exam_id", examId)
+    .order("occurred_at", { ascending: false })
+    .limit(300);
   if (studentError || attemptError)
     return NextResponse.json(
       { message: studentError?.message || attemptError?.message },
@@ -159,6 +166,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     exam: { ...exam, question_metadata: questionMetadata },
     rows,
+    activity_logs: activityLogs ?? [],
   });
 }
 
@@ -277,6 +285,18 @@ export async function PATCH(request: Request) {
       .eq("id", attemptId)
       .eq("exam_id", examId)
       .select("id,solution_override")
+      .single();
+    return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ attempt: data });
+  }
+
+  if (action === "update-comment") {
+    const attemptId = String(body.attemptId ?? "");
+    const { data, error } = await ctx.supabase
+      .from("exam_attempts")
+      .update({ mathpooh_comment: String(body.mathpoohComment ?? "") })
+      .eq("id", attemptId)
+      .eq("exam_id", examId)
+      .select("id,mathpooh_comment")
       .single();
     return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ attempt: data });
   }
