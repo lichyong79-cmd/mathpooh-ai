@@ -1292,6 +1292,33 @@ function StudentResultsPage() {
   const selectedRank = selectedReport && participantCount >= 20
     ? 1 + sameExamScores.filter((value) => value > Number(selectedReport.score ?? 0)).length
     : null;
+  const scoreGap = selectedReport && examAverage !== null
+    ? Number(selectedReport.score ?? 0) - examAverage
+    : null;
+  const subjectResults = selectedReport?.subjectResults ?? [];
+  const strongestSubject = subjectResults.length
+    ? [...subjectResults].sort((a: any, b: any) => b.rate - a.rate || b.correct - a.correct)[0]
+    : null;
+  const weakestSubject = subjectResults.length
+    ? [...subjectResults].sort((a: any, b: any) => a.rate - b.rate || a.correct - b.correct)[0]
+    : null;
+  const difficultyResults = selectedReport
+    ? [1, 2, 3, 4, 5].map((level) => {
+        const items = selectedReport.questionResults.filter((item: any) => item.difficulty === level);
+        const correct = items.filter((item: any) => item.correct).length;
+        return { level, total: items.length, correct, rate: items.length ? Math.round(correct / items.length * 100) : null };
+      }).filter((item) => item.total > 0)
+    : [];
+  const recommendedQuestions = selectedReport
+    ? selectedReport.questionResults
+        .filter((item: any) => !item.correct)
+        .sort((a: any, b: any) => {
+          const aDifficulty = a.difficulty ?? 99;
+          const bDifficulty = b.difficulty ?? 99;
+          return aDifficulty - bDifficulty || a.no - b.no;
+        })
+        .slice(0, 5)
+    : [];
 
   const selectStudent = (student: any) => {
     setSelectedStudentId(String(student.id));
@@ -1342,15 +1369,43 @@ function StudentResultsPage() {
               <div><small>오답</small><b>{selectedReport.wrongNumbers.length}문항</b></div>
               <div><small>미응답</small><b>{selectedReport.unansweredNumbers.length}문항</b></div>
             </div>
+            <div className="official-report-insights">
+              <div className="insight-card primary"><small>평균 대비</small><b>{scoreGap === null ? "-" : `${scoreGap >= 0 ? "+" : ""}${scoreGap}점`}</b><p>{scoreGap === null ? "비교 데이터 없음" : scoreGap >= 0 ? "전체 평균보다 높습니다." : "평균까지 보완이 필요합니다."}</p></div>
+              <div className="insight-card"><small>강점 영역</small><b>{strongestSubject?.label ?? "-"}</b><p>{strongestSubject ? `${strongestSubject.correct}/${strongestSubject.total} · ${strongestSubject.rate}%` : "영역 데이터 없음"}</p></div>
+              <div className="insight-card warning"><small>우선 보완 영역</small><b>{weakestSubject?.label ?? "-"}</b><p>{weakestSubject ? `${weakestSubject.correct}/${weakestSubject.total} · ${weakestSubject.rate}%` : "영역 데이터 없음"}</p></div>
+            </div>
             <div className="official-subject-grid">
               {selectedReport.subjectResults.length ? selectedReport.subjectResults.map((item: any) => <div key={item.label}><div><strong>{item.label}</strong><b>{item.correct}/{item.total}</b></div><i><em style={{width:`${item.rate}%`}} /></i><small>{item.rate}%</small></div>) : <p>영역별 분석 데이터가 없습니다.</p>}
+            </div>
+            <div className="official-difficulty-section">
+              <div className="official-section-title"><div><h4>난이도별 성취</h4><p>문항 난이도에 따른 해결력을 확인합니다.</p></div></div>
+              <div className="official-difficulty-grid">
+                {difficultyResults.length ? difficultyResults.map((item: any) => <div key={item.level}><span>{item.level}단계</span><b>{item.correct}/{item.total}</b><i><em style={{width:`${item.rate ?? 0}%`}} /></i><small>{item.rate}%</small></div>) : <p>난이도 분석 데이터가 없습니다.</p>}
+              </div>
             </div>
             <div className="official-answer-summary">
               <div><h4>오답 문항</h4><p>{selectedReport.wrongNumbers.length ? selectedReport.wrongNumbers.join(", ") : "없음"}</p></div>
               <div><h4>미응답 문항</h4><p>{selectedReport.unansweredNumbers.length ? selectedReport.unansweredNumbers.join(", ") : "없음"}</p></div>
             </div>
+            <div className="official-recommend-section">
+              <div className="official-section-title"><div><h4>우선 복습 추천 5문항</h4><p>오답·미응답 중 쉬운 문항부터 최대 5개를 제시합니다.</p></div></div>
+              {recommendedQuestions.length ? <div className="official-recommend-list">{recommendedQuestions.map((item: any, index: number) => <div key={item.no}>
+                <span className="recommend-order">{index + 1}</span>
+                <b>{item.no}번</b>
+                <div><strong>{item.unit || "단원 미분류"}</strong><small>{item.type || "유형 미분류"} · {item.subject}</small></div>
+                <em>{item.difficulty ? `${item.difficulty}단계` : "난이도 미분류"}</em>
+                <i className={item.unanswered ? "unanswered" : "wrong"}>{item.unanswered ? "미응답" : "오답"}</i>
+              </div>)}</div> : <div className="official-perfect-message">추천할 오답 문항이 없습니다. 모든 문항을 해결했습니다.</div>}
+            </div>
+            <div className="official-section-title question-title"><div><h4>문항별 채점 결과</h4><p>학생 답안과 정답, 영역 정보를 함께 확인합니다.</p></div></div>
             <div className="official-question-grid">
               {selectedReport.questionResults.map((item: any) => <div key={item.no} className={item.correct ? "correct" : item.unanswered ? "unanswered" : "wrong"}><b>{item.no}</b><span>{item.correct ? "정답" : item.unanswered ? "미응답" : "오답"}</span><small>{item.subject}</small></div>)}
+            </div>
+            <div className="official-question-detail-table">
+              <div className="detail-head"><span>문항</span><span>학생 답</span><span>정답</span><span>영역 / 단원</span><span>유형</span><span>난이도</span><span>결과</span></div>
+              {selectedReport.questionResults.map((item: any) => <div key={item.no} className={item.correct ? "correct" : item.unanswered ? "unanswered" : "wrong"}>
+                <b>{item.no}번</b><span>{item.answer || "-"}</span><span>{item.correctAnswer || "-"}</span><span><strong>{item.subject}</strong><small>{item.unit}</small></span><span>{item.type}</span><span>{item.difficulty ? `${item.difficulty}단계` : "-"}</span><em>{item.correct ? "정답" : item.unanswered ? "미응답" : "오답"}</em>
+              </div>)}
             </div>
             <div className="mathpooh-report-comment"><h4>매쓰푸의 코멘트</h4><p>{selectedReport.mathpoohComment || "아직 등록된 코멘트가 없습니다."}</p></div>
             <footer><span>해설지 {selectedReport.solutionVisible ? "공개" : "비공개"}</span><small>응시 완료: {selectedReport.submittedAt ? new Date(selectedReport.submittedAt).toLocaleString("ko-KR") : "-"}</small></footer>
