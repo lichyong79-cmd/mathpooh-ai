@@ -323,13 +323,25 @@ export default function StudentHome() {
     setExamConsent(exam);
   };
 
-  const confirmStartExam = () => {
+  const confirmStartExam = async () => {
     if (!examConsent || !examConsentChecked) return;
-    window.sessionStorage.setItem(`mathpooh-exam-consent:${examConsent.id}`, "yes");
     const exam = examConsent;
+    window.sessionStorage.setItem(`mathpooh-exam-consent:${exam.id}`, "yes");
+    await fetch("/api/student/portal", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "activity-log", examId: exam.id, eventType: "exam_consent", detail: "응시 안내 동의" }),
+      keepalive: true,
+    });
     setExamConsent(null);
     setExamConsentChecked(false);
     if (!exam.close_at) {
+      await fetch("/api/student/portal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "activity-log", examId: exam.id, eventType: "exam_waiting", detail: "관리자 시험 시작 대기" }),
+        keepalive: true,
+      });
       setWaitingExam(exam);
       return;
     }

@@ -44,6 +44,24 @@ async function context() {
   return { user, student, supabase };
 }
 
+async function writeActivityLog(
+  supabase: ReturnType<typeof createServerSupabase>,
+  examId: string,
+  studentId: string,
+  attemptId: string | null,
+  eventType: string,
+  detail: string,
+) {
+  await supabase.from("exam_activity_logs").insert({
+    exam_id: examId,
+    student_id: studentId,
+    attempt_id: attemptId,
+    event_type: eventType,
+    detail,
+    occurred_at: new Date().toISOString(),
+  });
+}
+
 async function loadQuestionMetadata(
   supabase: ReturnType<typeof createServerSupabase>,
   examId: string,
@@ -395,12 +413,16 @@ export async function POST(request: Request) {
         { message: "이미 제출한 시험입니다." },
         { status: 409 },
       );
-    if (existing) return NextResponse.json({ attempt: existing });
+    if (existing) {
+      await writeActivityLog(supabase, examId, student.id, existing.id, "exam_started", "시험 응시 시작");
+      return NextResponse.json({ attempt: existing });
+    }
     const { data, error } = await supabase
       .from("exam_attempts")
       .insert({ exam_id: examId, student_id: student.id, started_at: new Date().toISOString(), last_saved_at: new Date().toISOString() })
       .select()
       .single();
+    if (!error && data) await writeActivityLog(supabase, examId, student.id, data.id, "exam_started", "시험 응시 시작");
     return error
       ? NextResponse.json({ message: error.message }, { status: 400 })
       : NextResponse.json({ attempt: data });
@@ -431,17 +453,25 @@ export async function POST(request: Request) {
         { message: "시험 시간이 종료되어 답안이 마감되었습니다." },
         { status: 409 },
       );
+    const savedAt = new Date().toISOString();
     const { error } = await supabase
       .from("exam_attempts")
       .update({
         answers,
         answer_changes: changes,
-        last_saved_at: new Date().toISOString(),
+        last_saved_at: savedAt,
       })
       .eq("id", existing.id);
+    const answerChanged = Object.keys(answers).some(
+      (key) => String(previous[key] ?? "") !== String(answers[key] ?? ""),
+    );
+    if (!error && answerChanged) {
+      const answeredCount = Object.values(answers).filter((value) => String(value ?? "").trim()).length;
+      await writeActivityLog(supabase, examId, student.id, existing.id, "answer_saved", `답안 ${answeredCount}개 저장`);
+    }
     return error
       ? NextResponse.json({ message: error.message }, { status: 400 })
-      : NextResponse.json({ success: true, savedAt: new Date().toISOString() });
+      : NextResponse.json({ success: true, savedAt });
   }
   if (action === "submit") {
     const keys = Array.isArray(exam.answer_keys)
@@ -478,6 +508,7 @@ export async function POST(request: Request) {
         score_source: "auto",
       })
       .eq("id", existing.id);
+    if (!error) await writeActivityLog(supabase, examId, student.id, existing.id, "exam_submitted", `제출 완료 · ${score}점`);
     return error
       ? NextResponse.json({ message: error.message }, { status: 400 })
       : NextResponse.json({ success: true, score, correct, wrong, unanswered });

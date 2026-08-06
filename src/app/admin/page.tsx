@@ -2308,6 +2308,34 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
     return { no, correct, total: submittedRows.length, rate: submittedRows.length ? Math.round(correct / submittedRows.length * 100) : 0 };
   });
 
+  const activitySummary = useMemo(() => {
+    const map = new Map<string, { consentAt?: string; hiddenCount: number; hiddenSeconds: number }>();
+    for (const log of [...activityLogs].reverse()) {
+      const current = map.get(log.student_id) ?? { hiddenCount: 0, hiddenSeconds: 0 };
+      if (log.event_type === "exam_consent" && !current.consentAt) current.consentAt = log.occurred_at;
+      if (log.event_type === "page_hidden") current.hiddenCount += 1;
+      if (log.event_type === "page_visible") {
+        const matched = String(log.detail ?? "").match(/(\d+)초/);
+        if (matched) current.hiddenSeconds += Number(matched[1]);
+      }
+      map.set(log.student_id, current);
+    }
+    return map;
+  }, [activityLogs]);
+
+  const activityLabel = (eventType: string) => ({
+    exam_consent: "응시 동의",
+    exam_waiting: "시험 대기",
+    exam_started: "시험 시작",
+    answer_saved: "답안 저장",
+    exam_submitted: "제출 완료",
+    page_hidden: "화면 이탈",
+    page_visible: "화면 복귀",
+    window_blur: "창 포커스 이탈",
+    window_focus: "창 포커스 복귀",
+    exam_room_open: "응시 화면 진입",
+  } as Record<string, string>)[eventType] ?? eventType;
+
   if (mode === "results") return (
     <div className="exam-results-board">
       <section className="panel results-board-head">
@@ -2476,9 +2504,10 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
             <span>학생</span>
             <span>학교 / 학년</span>
             <span>상태</span>
-            <span>시작 시각</span>
+            <span>응시 동의</span>
             <span>답안 입력</span>
             <span>최근 저장</span>
+            <span>웹 이탈</span>
             <span>제출 시각</span>
             <span>점수</span>
           </div>
@@ -2511,14 +2540,19 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
                 >
                   {status}
                 </span>
-                <span>{formatTime(attempt?.started_at)}</span>
+                <span>{formatTime(activitySummary.get(row.student.id)?.consentAt)}</span>
                 <strong>{answered}개</strong>
                 <span>{formatTime(attempt?.last_saved_at)}</span>
+                <span className={activitySummary.get(row.student.id)?.hiddenCount ? "activity-warning" : "activity-clean"}>
+                  {activitySummary.get(row.student.id)?.hiddenCount
+                    ? `${activitySummary.get(row.student.id)?.hiddenCount}회 · ${activitySummary.get(row.student.id)?.hiddenSeconds ?? 0}초`
+                    : "없음"}
+                </span>
                 <span>{formatTime(attempt?.submitted_at)}</span>
                 {attempt?.status === "submitted" ? (
                   <div className="monitor-result-actions">
                     <button className="result-detail-button" onClick={() => setSelectedResult(row)}>
-                      {attempt.score ?? 0}점 · 결과
+                      <strong>{attempt.score ?? 0}점</strong><span>결과보기</span>
                     </button>
                     <button
                       className={`solution-student-button ${(attempt.solution_override ?? examInfo?.solution_open) ? "open" : "closed"}`}
@@ -2543,7 +2577,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
       </section>
       <section className="panel activity-log-panel">
         <div className="list-summary"><div><strong>웹 응시 로그</strong><span>시험 화면 이탈·복귀와 브라우저 포커스 변화를 기록합니다.</span></div></div>
-        <div className="activity-log-list">{activityLogs.slice(0,80).map((log) => { const student = rows.find((row) => row.student.id === log.student_id)?.student; return <div key={log.id}><b>{student?.name ?? "학생"}</b><span>{log.event_type === "page_hidden" ? "화면 이탈" : log.event_type === "page_visible" ? "화면 복귀" : log.event_type === "window_blur" ? "창 포커스 이탈" : log.event_type === "window_focus" ? "창 포커스 복귀" : "응시 화면 진입"}</span><small>{log.detail}</small><time>{formatTime(log.occurred_at)}</time></div>; })}{!activityLogs.length ? <div className="empty-list">기록된 웹 로그가 없습니다.</div> : null}</div>
+        <div className="activity-log-list">{activityLogs.slice(0,120).map((log) => { const student = rows.find((row) => row.student.id === log.student_id)?.student; return <div key={log.id}><b>{student?.name ?? "학생"}</b><span>{activityLabel(log.event_type)}</span><small>{log.detail}</small><time>{formatTime(log.occurred_at)}</time></div>; })}{!activityLogs.length ? <div className="empty-list">기록된 웹 로그가 없습니다.</div> : null}</div>
       </section>
       {selectedResult?.attempt ? (
         <AdminResultModal
