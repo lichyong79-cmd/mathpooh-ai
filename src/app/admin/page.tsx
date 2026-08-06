@@ -1319,6 +1319,18 @@ function StudentResultsPage() {
         })
         .slice(0, 5)
     : [];
+  const nationalEstimate = (() => {
+    if (!selectedReport) return null;
+    const weights: Record<number, number> = { 1: 1, 2: 1.15, 3: 1.35, 4: 1.65, 5: 2 };
+    const questions = selectedReport.questionResults ?? [];
+    const totalWeight = questions.reduce((sum: number, item: any) => sum + (weights[item.difficulty] ?? 1.2), 0);
+    const earnedWeight = questions.reduce((sum: number, item: any) => sum + (item.correct ? (weights[item.difficulty] ?? 1.2) : 0), 0);
+    const weightedMastery = totalWeight ? (earnedWeight / totalWeight) * 100 : Number(selectedReport.score ?? 0);
+    const abilityIndex = Math.max(0, Math.min(100, Number(selectedReport.score ?? 0) * 0.62 + weightedMastery * 0.38));
+    const percentile = Math.max(1, Math.min(99, Math.round(100 / (1 + Math.exp(-(abilityIndex - 55) / 12)))));
+    const grade = percentile >= 96 ? 1 : percentile >= 89 ? 2 : percentile >= 77 ? 3 : percentile >= 60 ? 4 : percentile >= 40 ? 5 : percentile >= 23 ? 6 : percentile >= 11 ? 7 : percentile >= 4 ? 8 : 9;
+    return { percentile, grade, topRate: Math.max(1, 100 - percentile), abilityIndex: Math.round(abilityIndex) };
+  })();
 
   const selectStudent = (student: any) => {
     setSelectedStudentId(String(student.id));
@@ -1356,13 +1368,26 @@ function StudentResultsPage() {
           </section>
           {selectedReport ? <section className="panel official-score-report">
             <header><div><span>MATHPOOH SOS</span><h2>실전모의고사 성적표</h2><p>{selectedReport.title} · {selectedReport.examDate}</p></div><div className="official-score"><small>총점</small><strong>{selectedReport.score}</strong><span>점</span></div></header>
-            <div className="official-score-summary six-cells">
-              <div><small>예상등급</small><b>산출 전</b></div>
+            <div className="official-score-summary seven-cells">
+              <div><small>전국 예상등급</small><b>{nationalEstimate ? `${nationalEstimate.grade}등급` : "-"}</b></div>
+              <div><small>전국 예상 백분위</small><b>{nationalEstimate ? nationalEstimate.percentile : "-"}</b></div>
               <div><small>전체 평균</small><b>{examAverage === null ? "-" : `${examAverage}점`}</b></div>
               <div><small>최고점</small><b>{examBest === null ? "-" : `${examBest}점`}</b></div>
               <div><small>응시 인원</small><b>{participantCount}명</b></div>
               <div><small>석차</small><b>{participantCount < 20 ? "미산출" : `${selectedRank}위`}</b></div>
               <div><small>채점</small><b>{selectedReport.scoreSource === "manual" ? "수동점수" : "자동채점"}</b></div>
+            </div>
+            <div className="national-estimate-card">
+              <div className="national-estimate-copy">
+                <span>전국단위 예상 위치</span>
+                <strong>{nationalEstimate ? `백분위 ${nationalEstimate.percentile} · ${nationalEstimate.grade}등급` : "산출 불가"}</strong>
+                <p>{nationalEstimate ? `전국 상위 약 ${nationalEstimate.topRate}% 수준으로 추정됩니다.` : "문항 분석 데이터가 부족합니다."}</p>
+              </div>
+              <div className="national-percentile-track" aria-label="전국 예상 백분위">
+                <i><em style={{width:`${nationalEstimate?.percentile ?? 0}%`}} /></i>
+                <div><span>0</span><b>{nationalEstimate?.percentile ?? "-"}</b><span>100</span></div>
+              </div>
+              <small>※ 총점과 문항 난이도를 이용한 모형 추정치이며, 공식 전국 응시 통계가 아닙니다.</small>
             </div>
             <div className="official-score-summary compact-counts">
               <div><small>정답</small><b>{selectedReport.correct}문항</b></div>
