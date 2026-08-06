@@ -2193,6 +2193,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
   const [selectedResult, setSelectedResult] = useState<MonitorRow | null>(null);
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
   const [accuracyOpen, setAccuracyOpen] = useState(false);
+  const [expandedLogStudentId, setExpandedLogStudentId] = useState<string | null>(null);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
 
   const toLocalInput = (value?: string | null) =>
@@ -2428,7 +2429,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
           const attempt = row.attempt!; const area = calculateAreaResult(examInfo, attempt);
           return <div className="results-board-row" key={row.student.id}>
             <div className="student-name"><i>{row.student.name.slice(0,1)}</i><div><strong>{row.student.name}</strong><small>{row.student.school} · {row.student.grade}</small></div></div>
-            <button className="result-detail-button" onClick={() => setSelectedResult(row)}>{attempt.score ?? 0}점</button>
+            <button className="result-detail-button result-board-score" onClick={() => setSelectedResult(row)}><strong>{attempt.score ?? 0}점</strong><span>결과보기</span></button>
             <div className="area-score-cells"><b>대수 {area.대수.correct}/{area.대수.total}</b><b>미적1 {area.미적1.correct}/{area.미적1.total}</b><b>확통 {area.확통.correct}/{area.확통.total}</b></div>
             <span className="wrong-number-list">{attempt.wrong_numbers?.length ? `오답 ${attempt.wrong_numbers.join(", ")}` : "오답 없음"}{attempt.unanswered_numbers?.length ? <><br/><em>미응답 {attempt.unanswered_numbers.join(", ")}</em></> : null}</span>
             <div className="inline-comment"><textarea rows={2} value={commentDrafts[attempt.id] ?? ""} onChange={(event) => setCommentDrafts((prev) => ({ ...prev, [attempt.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void saveComment(attempt.id, event.currentTarget.value); } }} placeholder="코멘트 입력 후 Enter로 저장 (줄바꿈: Shift+Enter)" title="Enter 저장 · Shift+Enter 줄바꿈"/></div>
@@ -2586,10 +2587,8 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
             <span>상태</span>
             <span>응시 동의</span>
             <span>답안 입력</span>
-            <span>최근 저장</span>
-            <span>웹 이탈</span>
             <span>제출 시각</span>
-            <span>점수</span>
+            <span>로그</span>
           </div>
           {rows.map((row) => {
             const attempt = row.attempt;
@@ -2603,41 +2602,41 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
                   String(answer).trim(),
                 ).length
               : 0;
+            const studentLogs = activityLogs.filter((log) => log.student_id === row.student.id);
+            const isLogOpen = expandedLogStudentId === row.student.id;
             return (
-              <div className="table-row" key={row.student.id}>
-                <div className="student-name">
-                  <i>{row.student.name.slice(0, 1)}</i>
-                  <div>
-                    <strong>{row.student.name}</strong>
-                    <small>{row.student.phone}</small>
+              <div className="monitor-row-wrap" key={row.student.id}>
+                <div className="table-row">
+                  <div className="student-name">
+                    <i>{row.student.name.slice(0, 1)}</i>
+                    <div>
+                      <strong>{row.student.name}</strong>
+                      <small>{row.student.phone}</small>
+                    </div>
                   </div>
+                  <span>{row.student.school} · {row.student.grade}</span>
+                  <span className={`monitor-state ${attempt?.status ?? "waiting"}`}>{status}</span>
+                  <span>{formatTime(activitySummary.get(row.student.id)?.consentAt)}</span>
+                  <strong>{answered}개</strong>
+                  <span>{formatTime(attempt?.submitted_at)}</span>
+                  <button
+                    className={`student-log-button ${isLogOpen ? "open" : ""}`}
+                    onClick={() => setExpandedLogStudentId(isLogOpen ? null : row.student.id)}
+                  >
+                    로그 {studentLogs.length}건 {isLogOpen ? "▲" : "▼"}
+                  </button>
                 </div>
-                <span>
-                  {row.student.school} · {row.student.grade}
-                </span>
-                <span
-                  className={`monitor-state ${attempt?.status ?? "waiting"}`}
-                >
-                  {status}
-                </span>
-                <span>{formatTime(activitySummary.get(row.student.id)?.consentAt)}</span>
-                <strong>{answered}개</strong>
-                <span>{formatTime(attempt?.last_saved_at)}</span>
-                <span className={activitySummary.get(row.student.id)?.hiddenCount ? "activity-warning" : "activity-clean"}>
-                  {activitySummary.get(row.student.id)?.hiddenCount
-                    ? `${activitySummary.get(row.student.id)?.hiddenCount}회 · ${activitySummary.get(row.student.id)?.hiddenSeconds ?? 0}초`
-                    : "없음"}
-                </span>
-                <span>{formatTime(attempt?.submitted_at)}</span>
-                {attempt?.status === "submitted" ? (
-                  <div className="monitor-result-actions">
-                    <button className="result-detail-button" onClick={() => setSelectedResult(row)}>
-                      <strong>{attempt.score ?? 0}점</strong><span>결과보기</span>
-                    </button>
+                {isLogOpen ? (
+                  <div className="student-log-detail">
+                    {studentLogs.length ? studentLogs.map((log) => (
+                      <div key={log.id}>
+                        <time>{formatTime(log.occurred_at)}</time>
+                        <b>{activityLabel(log.event_type)}</b>
+                        <span>{log.detail || "-"}</span>
+                      </div>
+                    )) : <div className="empty-list">기록된 로그가 없습니다.</div>}
                   </div>
-                ) : (
-                  <strong>-</strong>
-                )}
+                ) : null}
               </div>
             );
           })}
@@ -2647,10 +2646,6 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
             </div>
           ) : null}
         </div>
-      </section>
-      <section className="panel activity-log-panel">
-        <div className="list-summary"><div><strong>웹 응시 로그</strong><span>시험 화면 이탈·복귀와 브라우저 포커스 변화를 기록합니다.</span></div></div>
-        <div className="activity-log-list">{activityLogs.slice(0,120).map((log) => { const student = rows.find((row) => row.student.id === log.student_id)?.student; return <div key={log.id}><b>{student?.name ?? "학생"}</b><span>{activityLabel(log.event_type)}</span><small>{log.detail}</small><time>{formatTime(log.occurred_at)}</time></div>; })}{!activityLogs.length ? <div className="empty-list">기록된 웹 로그가 없습니다.</div> : null}</div>
       </section>
       {selectedResult?.attempt ? (
         <AdminResultModal
