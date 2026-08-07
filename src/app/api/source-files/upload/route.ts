@@ -112,9 +112,8 @@ export async function POST(request: NextRequest) {
         grade: grade || null,
         subject: subject || null,
         content_role: contentRole === "REFERENCE" ? "REFERENCE" : "TRAINING",
-        // 훈련 단계는 문제 등록 시 정하지 않습니다.
-        // SOS 학습관리/추천 단계에서 문항 DNA를 기준으로 별도 분류합니다.
-        training_course: null,
+        // training_course는 DB 기본값(대표유형)을 사용합니다.
+        // source_files.training_course가 NOT NULL이므로 null을 직접 보내면 등록이 실패합니다.
         storage_path: examPdfPath,
         hwp_path: hwpPath,
         exam_pdf_path: examPdfPath,
