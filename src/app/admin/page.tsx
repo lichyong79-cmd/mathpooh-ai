@@ -4841,6 +4841,10 @@ type SourceFile = {
   error_message: string | null;
   content_role?: "TRAINING" | "REFERENCE";
   training_course?: string;
+  analysis_status?: string | null;
+  analysis_progress?: number;
+  analysis_total_questions?: number;
+  bank_count?: number;
 };
 
 const sourceStatusLabel: Record<string, string> = {
@@ -4853,6 +4857,35 @@ const sourceStatusLabel: Record<string, string> = {
 };
 
 type UploadFileKind = "hwp" | "exam" | "solution";
+
+type SourceWorkflowTone = "new" | "running" | "ready" | "error" | "review";
+
+function getSourceWorkflow(item: SourceFile): { label: string; detail: string; tone: SourceWorkflowTone } {
+  const bankCount = Number(item.bank_count || 0);
+  const total = Number(item.analysis_total_questions || 0);
+  const analysisStatus = String(item.analysis_status || "").toUpperCase();
+  const sourceStatus = String(item.status || "").toLowerCase();
+
+  if (analysisStatus === "FAILED" || sourceStatus === "failed") {
+    return { label: "분석오류", detail: "오류 확인 필요", tone: "error" };
+  }
+  if (["RUNNING", "WAITING"].includes(analysisStatus) || ["splitting", "pages_created", "analyzing"].includes(sourceStatus)) {
+    const progress = Math.max(0, Math.min(100, Number(item.analysis_progress || 0)));
+    return { label: "분석중", detail: progress ? `${progress}% 진행` : "AI 분석 진행", tone: "running" };
+  }
+  if (bankCount > 0) {
+    const complete = total > 0 && bankCount >= total;
+    return {
+      label: complete || analysisStatus === "DONE" ? "문제은행 등록완료" : "문제은행 등록중",
+      detail: total > 0 ? `${bankCount}/${total}문항` : `${bankCount}문항`,
+      tone: complete || analysisStatus === "DONE" ? "ready" : "review",
+    };
+  }
+  if (["REVIEW", "DONE"].includes(analysisStatus) || sourceStatus === "completed") {
+    return { label: "분석완료·등록대기", detail: total > 0 ? `${total}문항 검토` : "문제은행 등록 대기", tone: "review" };
+  }
+  return { label: "신규", detail: "AI 분석 전", tone: "new" };
+}
 
 function ProblemsPage({
   onOpenAnalysis,
@@ -4910,15 +4943,35 @@ function ProblemsPage({
         "content_role",
         "training_course",
       ].join(",");
-      const response = await fetch(
-        `${config.url}/rest/v1/source_files?select=${fields}&order=created_at.desc`,
-        {
-          headers: { ...(await authHeaders()) },
-          cache: "no-store",
-        },
-      );
-      if (!response.ok) throw new Error(await response.text());
-      setItems((await response.json()) as SourceFile[]);
+      const headers = { ...(await authHeaders()) };
+      const [sourceResponse, analysisResponse, bankResponse] = await Promise.all([
+        fetch(`${config.url}/rest/v1/source_files?select=${fields}&order=created_at.desc`, { headers, cache: "no-store" }),
+        fetch(`${config.url}/rest/v1/source_analysis?select=source_file_id,status,progress,total_questions`, { headers, cache: "no-store" }),
+        fetch(`${config.url}/rest/v1/problem_bank_questions?select=source_file_id,status`, { headers, cache: "no-store" }),
+      ]);
+      if (!sourceResponse.ok) throw new Error(await sourceResponse.text());
+      const sourceRows = (await sourceResponse.json()) as SourceFile[];
+      const analysisRows = analysisResponse.ok
+        ? (await analysisResponse.json()) as Array<{ source_file_id: string; status: string; progress: number; total_questions: number }>
+        : [];
+      const bankRows = bankResponse.ok
+        ? (await bankResponse.json()) as Array<{ source_file_id: string; status: string }>
+        : [];
+
+      const analysisMap = new Map(analysisRows.map((row) => [row.source_file_id, row]));
+      const bankCountMap = new Map<string, number>();
+      for (const row of bankRows) bankCountMap.set(row.source_file_id, (bankCountMap.get(row.source_file_id) || 0) + 1);
+
+      setItems(sourceRows.map((row) => {
+        const analysis = analysisMap.get(row.id);
+        return {
+          ...row,
+          analysis_status: analysis?.status ?? null,
+          analysis_progress: analysis?.progress ?? 0,
+          analysis_total_questions: analysis?.total_questions ?? 0,
+          bank_count: bankCountMap.get(row.id) ?? 0,
+        };
+      }));
     } catch (error) {
       setErrorMessage(
         `목록 조회 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`,
@@ -5301,6 +5354,19 @@ function ProblemsPage({
       </form>
 
       <section className="panel source-file-panel">
+        <div className="source-workflow-summary">
+          {[
+            { label: "신규", count: items.filter((item) => getSourceWorkflow(item).tone === "new").length, tone: "new" },
+            { label: "분석중", count: items.filter((item) => getSourceWorkflow(item).tone === "running").length, tone: "running" },
+            { label: "등록대기", count: items.filter((item) => getSourceWorkflow(item).tone === "review").length, tone: "review" },
+            { label: "문제은행 등록완료", count: items.filter((item) => getSourceWorkflow(item).tone === "ready").length, tone: "ready" },
+            { label: "분석오류", count: items.filter((item) => getSourceWorkflow(item).tone === "error").length, tone: "error" },
+          ].map((stat) => (
+            <div key={stat.label} className={`source-workflow-stat ${stat.tone}`}>
+              <span>{stat.label}</span><strong>{stat.count}</strong>
+            </div>
+          ))}
+        </div>
         <div className="source-file-title">
           <div>
             <strong>등록된 시험지 세트</strong>
@@ -5326,7 +5392,7 @@ function ProblemsPage({
               <span>시험지명</span>
               <span>학년·과목</span>
               <span>파일 구성</span>
-              <span>상태</span>
+              <span>진행 상태</span>
               <span>관리</span>
             </div>
             {items.map((item) =>
@@ -5422,9 +5488,15 @@ function ProblemsPage({
                       해설지
                     </span>
                   </div>
-                  <Status
-                    text={sourceStatusLabel[item.status] ?? item.status}
-                  />
+                  {(() => {
+                    const workflow = getSourceWorkflow(item);
+                    return (
+                      <div className={`source-workflow-badge ${workflow.tone}`}>
+                        <strong>{workflow.label}</strong>
+                        <small>{workflow.detail}</small>
+                      </div>
+                    );
+                  })()}
                   <div className="source-action-buttons">
                     <button
                       className="analysis-open-button"
