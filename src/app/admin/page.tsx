@@ -4912,6 +4912,7 @@ function ProblemsPage({
   const [editSubject, setEditSubject] = useState("공통수학1");
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [replacingFile, setReplacingFile] = useState<{ id: string; kind: UploadFileKind } | null>(null);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -5147,6 +5148,49 @@ function ProblemsPage({
       );
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const replaceBundleFile = async (item: SourceFile, kind: UploadFileKind, file: File | null) => {
+    if (!file) return;
+
+    const lowerName = file.name.toLowerCase();
+    const valid =
+      kind === "hwp"
+        ? lowerName.endsWith(".hwp") || lowerName.endsWith(".hwpx") || lowerName.endsWith(".pdf")
+        : file.type === "application/pdf" || lowerName.endsWith(".pdf");
+
+    if (!valid) {
+      setErrorMessage(kind === "hwp" ? "원본은 HWP/HWPX/PDF만 교체할 수 있습니다." : "PDF 파일만 교체할 수 있습니다.");
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      setErrorMessage("파일 크기는 50MB 이하여야 합니다.");
+      return;
+    }
+
+    const label = kind === "hwp" ? "원본 파일" : kind === "exam" ? "문제 PDF" : "해설 PDF";
+    if (!window.confirm(`${item.title}의 ${label}을 교체할까요?\n기존 시험지/문항 ID는 유지됩니다.`)) return;
+
+    setReplacingFile({ id: item.id, kind });
+    setMessage("");
+    setErrorMessage("");
+    try {
+      const formData = new FormData();
+      formData.append("kind", kind);
+      formData.append("file", file);
+      const response = await fetch(`/api/source-files/${encodeURIComponent(item.id)}/replace`, {
+        method: "POST",
+        body: formData,
+      });
+      const result = (await response.json()) as { success?: boolean; message?: string };
+      if (!response.ok || !result.success) throw new Error(result.message || `${label} 교체에 실패했습니다.`);
+      setMessage(result.message || `${label}을 교체했습니다.`);
+      await loadFiles();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : `${label} 교체에 실패했습니다.`);
+    } finally {
+      setReplacingFile(null);
     }
   };
 
@@ -5445,6 +5489,36 @@ function ProblemsPage({
                         <option>확률과 통계</option>
                       </select>
                     </label>
+                  </div>
+                  <div className="source-file-replace-box">
+                    <strong>파일만 교체</strong>
+                    <span>시험지 세트와 기존 문항 연결은 유지됩니다.</span>
+                    <div className="source-file-replace-grid">
+                      {[
+                        { kind: "hwp" as UploadFileKind, label: "원본 HWP/PDF 교체", accept: ".hwp,.hwpx,.pdf" },
+                        { kind: "exam" as UploadFileKind, label: "문제 PDF 교체", accept: ".pdf,application/pdf" },
+                        { kind: "solution" as UploadFileKind, label: "해설 PDF 교체", accept: ".pdf,application/pdf" },
+                      ].map((entry) => (
+                        <label key={entry.kind} className="source-replace-button">
+                          {replacingFile?.id === item.id && replacingFile.kind === entry.kind ? "교체 중..." : entry.label}
+                          <input
+                            type="file"
+                            accept={entry.accept}
+                            disabled={Boolean(replacingFile)}
+                            onChange={(event) => {
+                              const file = event.target.files?.[0] ?? null;
+                              void replaceBundleFile(item, entry.kind, file);
+                              event.currentTarget.value = "";
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    {Number(item.bank_count || 0) > 0 ? (
+                      <a className="source-open-bank" href={`/problem-bank?source=${encodeURIComponent(item.id)}`}>
+                        문항별 교체 · 문제은행에서 열기
+                      </a>
+                    ) : null}
                   </div>
                   <div className="source-file-edit-actions">
                     <button
