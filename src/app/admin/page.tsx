@@ -1720,6 +1720,8 @@ function RecommendPage() {
   const [saving, setSaving] = useState(false);
   const [problemCount, setProblemCount] = useState(0);
   const [sessions, setSessions] = useState<any[]>([]);
+  const [rejectedTargetIds, setRejectedTargetIds] = useState<string[]>([]);
+  const [targetCursor, setTargetCursor] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
