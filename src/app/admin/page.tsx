@@ -5113,9 +5113,11 @@ function ProblemsPage({
       return;
     }
 
-    if (selected.size > 50 * 1024 * 1024) {
+    // 300문항급 대형 자료까지 받도록 각 파일 250MB까지 허용합니다.
+    // 실제 파일은 Vercel API를 거치지 않고 Supabase Storage로 직접 업로드합니다.
+    if (selected.size > 250 * 1024 * 1024) {
       event.target.value = "";
-      setErrorMessage("파일 크기는 각 50MB 이하여야 합니다.");
+      setErrorMessage("파일 크기는 각 250MB 이하여야 합니다.");
       return;
     }
 
@@ -5140,24 +5142,78 @@ function ProblemsPage({
 
     setUploading(true);
     try {
-      const formData = new FormData();
-      formData.append("title", title.trim());
-      formData.append("source", source.trim());
-      formData.append("grade", grade);
-      formData.append("subject", subject);
-      formData.append("contentRole", contentRole);
-      formData.append("hwpFile", hwpFile);
-      formData.append("examPdf", examPdf);
-      formData.append("solutionPdf", solutionPdf);
+      const config = getSupabaseConfig();
+      if (!config) throw new Error("Supabase 설정을 불러오지 못했습니다.");
+
+      // 300문항급 대용량 자료는 Vercel API로 파일 자체를 보내지 않습니다.
+      // 브라우저 → Supabase Storage 직행으로 업로드한 뒤, 경로만 서버에 commit합니다.
+      const folder = `${new Date().getFullYear()}/${crypto.randomUUID()}`;
+      const lowerOriginal = hwpFile.name.toLowerCase();
+      const hwpExtension = lowerOriginal.endsWith(".pdf")
+        ? "pdf"
+        : lowerOriginal.endsWith(".hwpx")
+          ? "hwpx"
+          : "hwp";
+
+      const directUpload = async (file: File, fileName: string, contentType: string) => {
+        const path = `${folder}/${fileName}`;
+        const headers = await authHeaders();
+        const response = await fetch(
+          `${config.url}/storage/v1/object/exam-pdf/${encodeURI(path)}`,
+          {
+            method: "POST",
+            headers: {
+              ...headers,
+              "Content-Type": contentType,
+              "x-upsert": "false",
+            },
+            body: file,
+          },
+        );
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`${file.name} Storage 업로드 실패: ${text.slice(0, 500)}`);
+        }
+        return path;
+      };
+
+      // 세 파일은 서로 독립적이므로 동시에 올립니다.
+      const [hwpPath, examPdfPath, solutionPdfPath] = await Promise.all([
+        directUpload(
+          hwpFile,
+          `source.${hwpExtension}`,
+          hwpFile.type || (hwpExtension === "pdf" ? "application/pdf" : "application/octet-stream"),
+        ),
+        directUpload(examPdf, "exam.pdf", "application/pdf"),
+        directUpload(solutionPdf, "solution.pdf", "application/pdf"),
+      ]);
 
       const response = await fetch("/api/source-files/upload", {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "direct",
+          title: title.trim(),
+          source: source.trim(),
+          grade,
+          subject,
+          contentRole,
+          folder,
+          hwpPath,
+          examPdfPath,
+          solutionPdfPath,
+          originalHwpName: hwpFile.name,
+          examPdfName: examPdf.name,
+          solutionPdfName: solutionPdf.name,
+        }),
       });
-      const result = (await response.json()) as {
-        success: boolean;
-        message: string;
-      };
+      const raw = await response.text();
+      let result: { success: boolean; message: string };
+      try {
+        result = raw ? JSON.parse(raw) : { success: false, message: "서버 응답이 비어 있습니다." };
+      } catch {
+        throw new Error(`시험지 등록 응답이 JSON이 아닙니다. HTTP ${response.status} · ${raw.slice(0, 240)}`);
+      }
       if (!response.ok || !result.success)
         throw new Error(result.message || "시험지 등록에 실패했습니다.");
 

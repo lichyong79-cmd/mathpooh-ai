@@ -3,7 +3,10 @@ import { requireUser } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+// 레거시 multipart 업로드 호환용 한도입니다.
+ // 대용량(300문항급) 신규 등록은 브라우저에서 Supabase Storage로 직접 올린 뒤
+ // 이 API에는 경로만 전달하므로 Vercel 요청 본문 제한을 우회합니다.
+const MAX_FILE_SIZE = 250 * 1024 * 1024;
 
 function isPdf(file: File) {
   return file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
@@ -14,9 +17,120 @@ function isOriginal(file: File) {
   return lower.endsWith(".hwp") || lower.endsWith(".hwpx") || lower.endsWith(".pdf");
 }
 
+
+type DirectUploadCommit = {
+  mode?: "direct";
+  title?: string;
+  source?: string;
+  grade?: string;
+  subject?: string;
+  contentRole?: string;
+  folder?: string;
+  hwpPath?: string;
+  examPdfPath?: string;
+  solutionPdfPath?: string;
+  originalHwpName?: string;
+  examPdfName?: string;
+  solutionPdfName?: string;
+};
+
+function safeStoragePath(value: unknown) {
+  const path = String(value ?? "").trim();
+  if (!path || path.includes("..") || path.startsWith("/") || !/^[A-Za-z0-9_./-]+$/.test(path)) {
+    throw new Error("Storage 경로가 올바르지 않습니다.");
+  }
+  return path;
+}
+
+async function commitDirectUpload(request: NextRequest) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) {
+    return NextResponse.json({ success: false, message: "Supabase 환경변수가 없습니다." }, { status: 500 });
+  }
+
+  const body = (await request.json()) as DirectUploadCommit;
+  const title = String(body.title ?? "").trim();
+  const source = String(body.source ?? "").trim();
+  const grade = String(body.grade ?? "").trim();
+  const subject = String(body.subject ?? "").trim();
+  const contentRole = String(body.contentRole ?? "TRAINING").trim();
+
+  if (!title) {
+    return NextResponse.json({ success: false, message: "시험지명을 입력해 주세요." }, { status: 400 });
+  }
+
+  const hwpPath = safeStoragePath(body.hwpPath);
+  const examPdfPath = safeStoragePath(body.examPdfPath);
+  const solutionPdfPath = safeStoragePath(body.solutionPdfPath);
+
+  const commonHeaders = { apikey: key, Authorization: `Bearer ${key}` };
+
+  // 실제로 세 파일이 Storage에 올라갔는지 먼저 확인합니다.
+  const verify = async (path: string) => {
+    const response = await fetch(`${url}/storage/v1/object/info/exam-pdf/${encodeURI(path)}`, {
+      headers: commonHeaders,
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`업로드 확인 실패: ${path}`);
+    }
+  };
+  await Promise.all([verify(hwpPath), verify(examPdfPath), verify(solutionPdfPath)]);
+
+  const dbResponse = await fetch(`${url}/rest/v1/source_files`, {
+    method: "POST",
+    headers: {
+      ...commonHeaders,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify({
+      title,
+      source: source || null,
+      grade: grade || null,
+      subject: subject || null,
+      content_role: contentRole === "REFERENCE" ? "REFERENCE" : "TRAINING",
+      storage_path: examPdfPath,
+      hwp_path: hwpPath,
+      exam_pdf_path: examPdfPath,
+      solution_pdf_path: solutionPdfPath,
+      original_hwp_name: String(body.originalHwpName ?? "source"),
+      exam_pdf_name: String(body.examPdfName ?? "exam.pdf"),
+      solution_pdf_name: String(body.solutionPdfName ?? "solution.pdf"),
+      page_count: 0,
+      status: "uploaded",
+      error_message: null,
+    }),
+  });
+
+  if (!dbResponse.ok) {
+    throw new Error(`DB 등록 실패: ${await dbResponse.text()}`);
+  }
+  const rows = await dbResponse.json();
+
+  return NextResponse.json({
+    success: true,
+    message: "대용량 직접 업로드 완료 · 원본, 시험지 PDF, 해설지 PDF가 등록되었습니다.",
+    data: rows[0],
+  });
+}
+
 export async function POST(request: NextRequest) {
   const denied = await requireUser();
   if (denied) return denied;
+
+  // JSON이면 파일 바이트가 아니라 Storage 경로만 받는 대용량 직접 업로드 commit 요청입니다.
+  if ((request.headers.get("content-type") ?? "").includes("application/json")) {
+    try {
+      return await commitDirectUpload(request);
+    } catch (error) {
+      return NextResponse.json(
+        { success: false, message: error instanceof Error ? error.message : "대용량 시험지 등록 중 오류가 발생했습니다." },
+        { status: 500 },
+      );
+    }
+  }
 
   const uploadedPaths: string[] = [];
 
@@ -57,7 +171,7 @@ export async function POST(request: NextRequest) {
     for (const file of [hwpFile, examPdf, solutionPdf]) {
       if (file.size > MAX_FILE_SIZE) {
         return NextResponse.json(
-          { success: false, message: `${file.name} 파일이 50MB를 초과합니다.` },
+          { success: false, message: `${file.name} 파일이 250MB를 초과합니다.` },
           { status: 400 }
         );
       }
