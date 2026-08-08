@@ -4983,6 +4983,30 @@ function ProblemsPage({
   const [replacingFile, setReplacingFile] = useState<{ id: string; kind: UploadFileKind } | null>(null);
   const [replacementRefresh, setReplacementRefresh] = useState<ReplacementRefreshState | null>(null);
   const [refreshingReplacement, setRefreshingReplacement] = useState(false);
+  const [pdfPreview, setPdfPreview] = useState<{ title: string; url: string } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState<string | null>(null);
+
+  const openSourcePdfPreview = async (item: SourceFile, kind: "exam" | "solution") => {
+    const path = kind === "exam" ? item.exam_pdf_path : item.solution_pdf_path;
+    if (!path) {
+      setErrorMessage(kind === "exam" ? "등록된 시험지 PDF가 없습니다." : "등록된 해설지 PDF가 없습니다.");
+      return;
+    }
+    setPreviewLoading(`${item.id}:${kind}`);
+    setErrorMessage("");
+    try {
+      const response = await fetch(`/api/source-files/${encodeURIComponent(item.id)}/signed-urls`, { cache: "no-store" });
+      const payload = await response.json() as { success?: boolean; examUrl?: string | null; solutionUrl?: string | null; message?: string };
+      if (!response.ok || !payload.success) throw new Error(payload.message || "PDF 미리보기 주소를 만들지 못했습니다.");
+      const url = kind === "exam" ? payload.examUrl : payload.solutionUrl;
+      if (!url) throw new Error(kind === "exam" ? "시험지 PDF 주소가 없습니다." : "해설지 PDF 주소가 없습니다.");
+      setPdfPreview({ title: `${item.title} · ${kind === "exam" ? "시험지" : "해설지"}`, url });
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "PDF 미리보기를 열지 못했습니다.");
+    } finally {
+      setPreviewLoading(null);
+    }
+  };
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -5825,15 +5849,25 @@ function ProblemsPage({
                       "-"}
                   </span>
                   <div className="file-badges">
-                    <span className={item.hwp_path ? "ok" : "missing"}>
-                      HWP
-                    </span>
-                    <span className={item.exam_pdf_path ? "ok" : "missing"}>
-                      시험지
-                    </span>
-                    <span className={item.solution_pdf_path ? "ok" : "missing"}>
-                      해설지
-                    </span>
+                    <span className={item.hwp_path ? "ok" : "missing"}>HWP</span>
+                    <button
+                      type="button"
+                      className={`${item.exam_pdf_path ? "ok" : "missing"} source-pdf-preview-button`}
+                      disabled={!item.exam_pdf_path || previewLoading === `${item.id}:exam`}
+                      onClick={() => void openSourcePdfPreview(item, "exam")}
+                      title={item.exam_pdf_path ? "시험지 PDF 미리보기" : "시험지 PDF 없음"}
+                    >
+                      {previewLoading === `${item.id}:exam` ? "여는 중" : "시험지"}
+                    </button>
+                    <button
+                      type="button"
+                      className={`${item.solution_pdf_path ? "ok" : "missing"} source-pdf-preview-button`}
+                      disabled={!item.solution_pdf_path || previewLoading === `${item.id}:solution`}
+                      onClick={() => void openSourcePdfPreview(item, "solution")}
+                      title={item.solution_pdf_path ? "해설지 PDF 미리보기" : "해설지 PDF 없음"}
+                    >
+                      {previewLoading === `${item.id}:solution` ? "여는 중" : "해설지"}
+                    </button>
                   </div>
                   {(() => {
                     const workflow = getSourceWorkflow(item);
@@ -5878,6 +5912,44 @@ function ProblemsPage({
           </div>
         )}
       </section>
+
+      {pdfPreview ? (
+        <div className="source-pdf-preview-backdrop" onMouseDown={() => setPdfPreview(null)}>
+          <section className="source-pdf-preview-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <div><small>MATHPOOH SOS · PDF PREVIEW</small><strong>{pdfPreview.title}</strong></div>
+              <div className="source-pdf-preview-actions">
+                <button type="button" onClick={() => window.open(pdfPreview.url, "_blank", "noopener,noreferrer")}>새 창 열기</button>
+                <button type="button" className="close" onClick={() => setPdfPreview(null)}>닫기 ×</button>
+              </div>
+            </header>
+            <div className="source-pdf-preview-frame">
+              <iframe src={`${pdfPreview.url}#view=FitH&toolbar=1&navpanes=0`} title={pdfPreview.title} />
+            </div>
+            <footer>PDF 상단 도구에서 페이지 이동 · 확대/축소 · 인쇄를 사용할 수 있습니다.</footer>
+          </section>
+        </div>
+      ) : null}
+
+      <style jsx global>{`
+        .file-badges .source-pdf-preview-button{border:0;font:inherit;cursor:pointer;transition:.16s ease;line-height:1}
+        .file-badges .source-pdf-preview-button.ok:hover{transform:translateY(-1px);box-shadow:0 4px 10px rgba(39,104,55,.16);filter:saturate(1.15)}
+        .file-badges .source-pdf-preview-button:disabled{cursor:default;transform:none;box-shadow:none}
+        .source-pdf-preview-backdrop{position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.62);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:24px}
+        .source-pdf-preview-modal{width:min(1180px,96vw);height:min(900px,94vh);background:#fff;border-radius:22px;box-shadow:0 30px 90px rgba(0,0,0,.28);overflow:hidden;display:flex;flex-direction:column;border:1px solid rgba(255,255,255,.55)}
+        .source-pdf-preview-modal header{min-height:74px;padding:14px 18px 14px 22px;display:flex;align-items:center;justify-content:space-between;gap:18px;border-bottom:1px solid #e6eaf0;background:linear-gradient(90deg,#f8fbf8,#fff)}
+        .source-pdf-preview-modal header>div:first-child{min-width:0;display:flex;flex-direction:column;gap:4px}
+        .source-pdf-preview-modal header small{font-size:11px;font-weight:800;letter-spacing:.08em;color:#6d8a73}
+        .source-pdf-preview-modal header strong{font-size:16px;color:#17351f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .source-pdf-preview-actions{display:flex;gap:8px;flex:0 0 auto}
+        .source-pdf-preview-actions button{height:40px;padding:0 15px;border-radius:10px;border:1px solid #d8e0da;background:#fff;color:#285f35;font-weight:800;cursor:pointer}
+        .source-pdf-preview-actions button:hover{background:#f1f7f2}
+        .source-pdf-preview-actions .close{background:#2f6d3b;color:#fff;border-color:#2f6d3b}
+        .source-pdf-preview-frame{flex:1;min-height:0;background:#e9edf1;padding:10px}
+        .source-pdf-preview-frame iframe{width:100%;height:100%;border:0;border-radius:10px;background:#fff}
+        .source-pdf-preview-modal footer{padding:9px 18px;text-align:center;font-size:11px;color:#788397;background:#fafbfc;border-top:1px solid #e6eaf0}
+        @media(max-width:760px){.source-pdf-preview-backdrop{padding:8px}.source-pdf-preview-modal{width:100%;height:96vh;border-radius:14px}.source-pdf-preview-modal header{align-items:flex-start;flex-direction:column}.source-pdf-preview-actions{width:100%}.source-pdf-preview-actions button{flex:1}}
+      `}</style>
     </>
   );
 }
