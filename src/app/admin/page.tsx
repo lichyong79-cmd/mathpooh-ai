@@ -1724,6 +1724,7 @@ function RecommendPage() {
   const [targetCursor, setTargetCursor] = useState(0);
   const [targetImageUrl, setTargetImageUrl] = useState<string | null>(null);
   const [targetImageLoading, setTargetImageLoading] = useState(false);
+  const [assignedTarget, setAssignedTarget] = useState<any | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1817,6 +1818,7 @@ function RecommendPage() {
   useEffect(() => {
     setRejectedTargetIds([]);
     setTargetCursor(0);
+    setAssignedTarget(null);
   }, [selectedId]);
 
   const rejectCurrentTarget = () => {
@@ -1911,6 +1913,14 @@ function RecommendPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "추천 저장 실패");
       alert(assign ? "SOS 공략문항 1개를 학생에게 배정했습니다." : "SOS 공략문항을 저장했습니다.");
+      if (assign && target.targetProblem) {
+        setAssignedTarget({
+          problemId: target.targetProblem.id,
+          sosNo: 1,
+          assignedAt: new Date().toISOString(),
+          title: target.targetProblem.title || target.targetProblem.summary || target.targetProblem.topic || "공략문항",
+        });
+      }
     } catch (error) {
       alert(error instanceof Error ? error.message : "추천 저장 실패");
     } finally {
@@ -2068,27 +2078,80 @@ function RecommendPage() {
                     문제 크게 보기
                   </button>
                 ) : null}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10}}>
-                  <button
-                    className="secondary-button"
-                    disabled={saving || !target.targetProblem}
-                    onClick={rejectCurrentTarget}
-                    title="현재 후보를 제외하고 다음 순위 후보를 SOS_NO1으로 올립니다."
-                  >
-                    NO · 다음 후보
-                  </button>
-                  <button
-                    className="primary-button"
-                    disabled={saving || !target.targetProblem}
-                    onClick={() => void save(true)}
-                    title="현재 문항을 SOS_NO1으로 확정하고 학생에게 배정합니다."
-                  >
-                    YES · SOS_NO1 확정
-                  </button>
-                </div>
-                <div style={{marginTop:8,fontSize:11,color:"#98a2b3",textAlign:"center"}}>
-                  NO 처리한 문항은 현재 검토 중 다시 제시하지 않습니다. 남은 후보 {Math.max(0, visibleCandidates.length - 1)}개
-                </div>
+
+                {assignedTarget ? (
+                  <div style={{
+                    marginTop:12,
+                    padding:14,
+                    border:"1px solid #b7d7bf",
+                    borderRadius:14,
+                    background:"#f0f8f2"
+                  }}>
+                    <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center"}}>
+                      <div>
+                        <div style={{fontWeight:900,color:"#25633a",fontSize:16}}>✓ SOS_NO1 배정 완료</div>
+                        <div style={{marginTop:5,fontSize:12,color:"#667085"}}>
+                          학생에게 전송됨 · {new Date(assignedTarget.assignedAt).toLocaleString("ko-KR")}
+                        </div>
+                      </div>
+                      <span style={{
+                        padding:"7px 10px",
+                        borderRadius:999,
+                        background:"#2f6f3e",
+                        color:"#fff",
+                        fontSize:12,
+                        fontWeight:900
+                      }}>응시 대기</span>
+                    </div>
+                    <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid #d7e8db",fontSize:13,color:"#344054"}}>
+                      현재 상태: <b>SOS_NO1 응시 대기</b><br/>
+                      학생이 SOS_NO1을 풀면 결과에 따라 실수 판정 · 후속 진단 · 다음 공략문항으로 진행합니다.
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:12}}>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => setAssignedTarget(null)}
+                      >
+                        배정 취소
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => {
+                          setAssignedTarget(null);
+                          rejectCurrentTarget();
+                        }}
+                      >
+                        다른 문항으로 변경
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10}}>
+                      <button
+                        className="secondary-button"
+                        disabled={saving || !target.targetProblem}
+                        onClick={rejectCurrentTarget}
+                        title="현재 후보를 제외하고 다음 순위 후보를 SOS_NO1으로 올립니다."
+                      >
+                        NO · 다음 후보
+                      </button>
+                      <button
+                        className="primary-button"
+                        disabled={saving || !target.targetProblem}
+                        onClick={() => void save(true)}
+                        title="현재 문항을 SOS_NO1으로 확정하고 학생에게 배정합니다."
+                      >
+                        YES · SOS_NO1 확정
+                      </button>
+                    </div>
+                    <div style={{marginTop:8,fontSize:11,color:"#98a2b3",textAlign:"center"}}>
+                      NO 처리한 문항은 현재 검토 중 다시 제시하지 않습니다. 남은 후보 {Math.max(0, visibleCandidates.length - 1)}개
+                    </div>
+                  </>
+                )}
               </div>
             </div> : <div className="recommendation-empty" style={{marginTop:18}}>
               <b>현재 공략문항을 선정할 수 없습니다.</b>
