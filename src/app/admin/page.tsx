@@ -1470,8 +1470,6 @@ function LearningAnalysisPage({ students }: { students: Student[] }) {
   const [sessions, setSessions] = useState<any[]>([]);
   const [rejectedTargetIds, setRejectedTargetIds] = useState<string[]>([]);
   const [targetCursor, setTargetCursor] = useState(0);
-  const [targetImageUrl, setTargetImageUrl] = useState<string | null>(null);
-  const [targetImageLoading, setTargetImageLoading] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1724,6 +1722,8 @@ function RecommendPage() {
   const [sessions, setSessions] = useState<any[]>([]);
   const [rejectedTargetIds, setRejectedTargetIds] = useState<string[]>([]);
   const [targetCursor, setTargetCursor] = useState(0);
+  const [targetImageUrl, setTargetImageUrl] = useState<string | null>(null);
+  const [targetImageLoading, setTargetImageLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
