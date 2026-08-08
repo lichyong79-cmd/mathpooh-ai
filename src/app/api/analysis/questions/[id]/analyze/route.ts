@@ -134,17 +134,20 @@ async function requestDna(args: {
 }) {
   const content: Array<Record<string, unknown>> = [
     { type: "input_text", text: args.prompt },
-    { type: "input_image", image_url: args.questionImageUrl, detail: "high" },
+    // 자르기 완료된 문항 이미지는 이미 문항 영역만 포함하므로 auto로 전송해
+    // 불필요한 고해상도 비전 처리 지연을 줄인다. DNA 항목/프롬프트는 그대로 유지한다.
+    { type: "input_image", image_url: args.questionImageUrl, detail: "auto" },
   ];
   if (args.solutionImageUrl) {
-    content.push({ type: "input_image", image_url: args.solutionImageUrl, detail: "high" });
+    content.push({ type: "input_image", image_url: args.solutionImageUrl, detail: "auto" });
   }
 
   const body: Record<string, unknown> = {
     model: args.model,
     input: [{ role: "user", content }],
     reasoning: { effort: "low" },
-    max_output_tokens: 12000,
+    // Problem DNA 전체 스키마는 유지하되 과도한 출력 여유만 줄여 응답 지연을 낮춘다.
+    max_output_tokens: 9000,
     store: false,
   };
 
@@ -225,17 +228,19 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       return NextResponse.json({ success: false, message: "문항 이미지가 없습니다. 먼저 문항 자르기를 저장해 주세요." }, { status: 400 });
     }
 
-    const signed = await supabase.storage.from("question-images").createSignedUrl(question.question_image_path, 60 * 10);
-    if (signed.error) throw signed.error;
-
     const source = sourceResult.data;
     const solutionImagePath = String(question.ai_result?.official_solution_image_path ?? "").trim();
-    let solutionImageUrl: string | null = null;
-    if (solutionImagePath) {
-      const solutionSigned = await supabase.storage.from("question-images").createSignedUrl(solutionImagePath, 60 * 10);
-      if (solutionSigned.error) throw solutionSigned.error;
-      solutionImageUrl = solutionSigned.data.signedUrl;
-    }
+
+    // 문제/해설 signed URL은 서로 독립적이므로 동시에 만든다.
+    const [signed, solutionSigned] = await Promise.all([
+      supabase.storage.from("question-images").createSignedUrl(question.question_image_path, 60 * 10),
+      solutionImagePath
+        ? supabase.storage.from("question-images").createSignedUrl(solutionImagePath, 60 * 10)
+        : Promise.resolve(null),
+    ]);
+    if (signed.error) throw signed.error;
+    if (solutionSigned?.error) throw solutionSigned.error;
+    const solutionImageUrl = solutionSigned?.data?.signedUrl ?? null;
     const prompt = `당신은 한국 중고등 수학 문항을 직접 풀고 교육적으로 분류하는 MATHPOOH Problem DNA 엔진입니다.
 첫 번째 첨부는 분석할 한 문항 이미지입니다.${solutionImageUrl ? " 두 번째 첨부는 같은 문항번호의 공식 해설 이미지만 잘라낸 것입니다." : " 해당 문항의 공식 해설 이미지는 첨부되지 않았습니다."}
 문항 이미지와 공식 해설을 함께 확인하여 ${PROBLEM_DNA_VERSION} JSON을 생성하세요.

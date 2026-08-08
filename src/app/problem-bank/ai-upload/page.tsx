@@ -1884,7 +1884,10 @@ export default function AnalysisWorkspacePage() {
     setMessage("");
     setQueueProgress({ done: 0, total: analysisTargets.length });
 
-    const concurrency = Math.min(6, analysisTargets.length);
+    // 3단계 AI 문항분석만 제한 병렬화한다.
+    // 인식 → 자르기 → 분석 순서는 그대로 유지하며, 한 문항의 Problem DNA 내용도 줄이지 않는다.
+    // 8개 워커는 30문항 기준 대기열을 줄이면서도 과도한 동시호출을 피하는 균형값이다.
+    const concurrency = Math.min(8, analysisTargets.length);
     const failures: Array<{ questionNo: number; message: string }> = [];
     let cursor = 0;
     let done = 0;
@@ -1908,10 +1911,8 @@ export default function AnalysisWorkspacePage() {
         throw new Error(payload?.message || `${target.question_no}번 분석 실패`);
       }
 
-      setWorkspace((current) => current ? {
-        ...current,
-        questions: current.questions.map((item) => item.id === target.id ? payload.question : item),
-      } : current);
+      // 큐 실행 중 매 문항마다 전체 questions 배열을 다시 그리지 않는다.
+      // runAutoPipeline 종료 시 loadWorkspace()가 최신 결과를 한 번에 반영한다.
     }
 
     async function worker() {
