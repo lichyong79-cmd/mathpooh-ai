@@ -1470,6 +1470,8 @@ function LearningAnalysisPage({ students }: { students: Student[] }) {
   const [sessions, setSessions] = useState<any[]>([]);
   const [rejectedTargetIds, setRejectedTargetIds] = useState<string[]>([]);
   const [targetCursor, setTargetCursor] = useState(0);
+  const [targetImageUrl, setTargetImageUrl] = useState<string | null>(null);
+  const [targetImageLoading, setTargetImageLoading] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1783,6 +1785,36 @@ function RecommendPage() {
   }), [baseTarget, currentTargetProblem]);
 
   useEffect(() => {
+    let alive = true;
+    const problemId = String(target.targetProblem?.id ?? "");
+    if (!problemId) {
+      setTargetImageUrl(null);
+      setTargetImageLoading(false);
+      return () => { alive = false; };
+    }
+
+    setTargetImageLoading(true);
+    setTargetImageUrl(null);
+    fetch(`/api/problem-bank/questions/${encodeURIComponent(problemId)}/image?ts=${Date.now()}`, {
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        const data = await response.json() as { success?: boolean; imageUrl?: string; message?: string };
+        if (!response.ok || !data.success) throw new Error(data.message || "문항 이미지를 불러오지 못했습니다.");
+        if (alive) setTargetImageUrl(data.imageUrl ?? null);
+      })
+      .catch((error) => {
+        console.error("SOS_NO1 이미지 로드 실패", error);
+        if (alive) setTargetImageUrl(null);
+      })
+      .finally(() => {
+        if (alive) setTargetImageLoading(false);
+      });
+
+    return () => { alive = false; };
+  }, [target.targetProblem?.id]);
+
+  useEffect(() => {
     setRejectedTargetIds([]);
     setTargetCursor(0);
   }, [selectedId]);
@@ -1971,6 +2003,37 @@ function RecommendPage() {
                 <div style={{fontSize:22,fontWeight:900,margin:"4px 0"}}>
                   "SOS_NO1"
                 </div>
+                <div style={{
+                  margin:"14px 0 16px",
+                  minHeight:260,
+                  border:"1px solid #dfe7e2",
+                  borderRadius:14,
+                  background:"#fff",
+                  display:"flex",
+                  alignItems:"center",
+                  justifyContent:"center",
+                  overflow:"hidden",
+                  padding:14
+                }}>
+                  {targetImageLoading ? (
+                    <div style={{color:"#667085",fontWeight:800}}>문제 불러오는 중...</div>
+                  ) : targetImageUrl ? (
+                    <img
+                      src={targetImageUrl}
+                      alt="SOS_NO1 공략문항"
+                      style={{
+                        display:"block",
+                        width:"100%",
+                        maxHeight:520,
+                        objectFit:"contain"
+                      }}
+                    />
+                  ) : (
+                    <div style={{color:"#b42318",fontWeight:800}}>
+                      문제 이미지를 불러오지 못했습니다.
+                    </div>
+                  )}
+                </div>
                 <div style={{fontWeight:800}}>
                   {target.targetProblem.title || target.targetProblem.summary || target.targetProblem.topic || "공략문항"}
                 </div>
@@ -1995,7 +2058,17 @@ function RecommendPage() {
                   <div><span style={{color:"#667085"}}>오답 난이도</span><b style={{float:"right"}}>{target.sourceQuestion?.difficulty ? `${target.sourceQuestion.difficulty}단계` : "-"}</b></div>
                   <div><span style={{color:"#667085"}}>확인 목표난도</span><b style={{float:"right"}}>{target.diagnosticDifficulty}단계</b></div>
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:14}}>
+                {targetImageUrl ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    style={{width:"100%",marginTop:14}}
+                    onClick={() => window.open(targetImageUrl, "_blank", "noopener,noreferrer")}
+                  >
+                    문제 크게 보기
+                  </button>
+                ) : null}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10}}>
                   <button
                     className="secondary-button"
                     disabled={saving || !target.targetProblem}
