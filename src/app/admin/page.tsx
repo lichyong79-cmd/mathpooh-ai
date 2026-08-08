@@ -1553,6 +1553,163 @@ function LearningAnalysisPage({ students }: { students: Student[] }) {
   </>;
 }
 
+type SosTargetDecision = {
+  sourceQuestion: any | null;
+  targetProblem: any | null;
+  priority: number;
+  verdict: "실수 의심" | "취약 의심" | "명확한 취약" | "판정 대기";
+  reason: string[];
+  diagnosticDifficulty: number;
+};
+
+function sosDifficulty(value: any) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(1, Math.min(5, Math.round(number))) : 3;
+}
+
+function sosExpectedMaxDifficulty(score: number) {
+  if (score >= 95) return 5;
+  if (score >= 88) return 4;
+  if (score >= 78) return 3;
+  if (score >= 65) return 2;
+  return 1;
+}
+
+function sameText(a: any, b: any) {
+  const left = String(a ?? "").trim().toLowerCase();
+  const right = String(b ?? "").trim().toLowerCase();
+  return Boolean(left && right && (left === right || left.includes(right) || right.includes(left)));
+}
+
+/**
+ * SOS 핵심 엔진 1단계
+ * "이 학생이 지금 딱 하나만 해결한다면 무엇인가?"
+ *
+ * 1) 최근 실전모고 오답 전체를 본다.
+ * 2) 전체점수 + 오답 난이도 + 동일 단원/유형 반복 + 더 어려운 문항 정답 여부로
+ *    실수 가능성과 실제 취약 가능성을 분리한다.
+ * 3) 가장 공략가치가 큰 오답의 학습 DNA를 기준으로 문제은행 후보 중 딱 1문항을 고른다.
+ */
+function selectSosTargetQuestion(student: any): SosTargetDecision {
+  if (!student) {
+    return { sourceQuestion: null, targetProblem: null, priority: 0, verdict: "판정 대기", reason: [], diagnosticDifficulty: 2 };
+  }
+
+  const score = Number(student.performance?.summary?.latestScore ?? student.latestExam?.score ?? 0);
+  const latestHistory = student.performance?.history?.[0] ?? student.latestExam ?? {};
+  const results = Array.isArray(latestHistory.questionResults)
+    ? latestHistory.questionResults
+    : Array.isArray(student.questionResults)
+      ? student.questionResults
+      : [];
+
+  const wrongs = results.filter((item: any) => !item.correct);
+  const expectedMax = sosExpectedMaxDifficulty(score);
+
+  const rankedWrongs = wrongs.map((item: any) => {
+    const difficulty = sosDifficulty(item.difficulty);
+    const unit = String(item.unit ?? item.minorUnit ?? item.middleUnit ?? item.subject ?? "").trim();
+    const type = String(item.type ?? item.topic ?? item.detailedTopic ?? "").trim();
+
+    const sameUnit = results.filter((other: any) => unit && sameText(other.unit ?? other.minorUnit ?? other.middleUnit ?? other.subject, unit));
+    const sameType = results.filter((other: any) => type && sameText(other.type ?? other.topic ?? other.detailedTopic, type));
+    const unitWrong = sameUnit.filter((other: any) => !other.correct).length;
+    const typeWrong = sameType.filter((other: any) => !other.correct).length;
+
+    const harderCorrect = results.filter((other: any) =>
+      other.correct &&
+      sosDifficulty(other.difficulty) > difficulty &&
+      ((unit && sameText(other.unit ?? other.minorUnit ?? other.middleUnit ?? other.subject, unit)) ||
+       (type && sameText(other.type ?? other.topic ?? other.detailedTopic, type)))
+    ).length;
+
+    // "맞혔어야 할 난이도" 안에서 틀린 문제일수록 신호가 강하다.
+    const expectedMiss = difficulty <= expectedMax ? 20 + (expectedMax - difficulty) * 4 : Math.max(0, 10 - (difficulty - expectedMax) * 4);
+
+    // 반복오답은 실제 구멍의 가장 강한 신호.
+    const repeatSignal = Math.min(30, Math.max(0, unitWrong - 1) * 12 + Math.max(0, typeWrong - 1) * 10);
+
+    // 쉬운 한 문제만 틀렸는데 같은 영역의 더 어려운 문제를 맞혔다면 실수 가능성 감점.
+    const mistakePenalty = Math.min(28, harderCorrect * 12 + (score >= 90 && difficulty <= 2 && unitWrong <= 1 && typeWrong <= 1 ? 12 : 0));
+
+    // 낮은 난이도 오답 자체는 중요하지만 전체 성적과 결합해서만 사용.
+    const baseDifficultySignal = { 1: 24, 2: 21, 3: 16, 4: 10, 5: 6 }[difficulty] ?? 12;
+    const unansweredPenalty = item.unanswered ? -2 : 0;
+
+    const priority = Math.max(0, Math.min(100,
+      28 + expectedMiss + repeatSignal + baseDifficultySignal + unansweredPenalty - mistakePenalty
+    ));
+
+    let verdict: SosTargetDecision["verdict"] = "취약 의심";
+    if (mistakePenalty >= 18 && repeatSignal < 10) verdict = "실수 의심";
+    if (repeatSignal >= 20 || (difficulty <= expectedMax && unitWrong >= 2)) verdict = "명확한 취약";
+
+    const reasons: string[] = [];
+    reasons.push(`최근 성적 ${score || "-"}점에서 ${difficulty}단계 오답`);
+    if (difficulty <= expectedMax) reasons.push(`현재 실력 기준 맞혔어야 할 난도`);
+    if (unitWrong >= 2) reasons.push(`동일 단원 ${unitWrong}문항 오답`);
+    if (typeWrong >= 2) reasons.push(`동일 유형 ${typeWrong}문항 오답`);
+    if (harderCorrect > 0) reasons.push(`같은 영역의 더 어려운 문항 ${harderCorrect}개 정답 → 실수 가능성 반영`);
+    if (item.unanswered) reasons.push("미응답은 개념취약과 시간부족을 추가 진단");
+
+    return { item, difficulty, unit, type, priority, verdict, reasons, unitWrong, typeWrong };
+  }).sort((a: any, b: any) => b.priority - a.priority || a.difficulty - b.difficulty || Number(a.item.no ?? 999) - Number(b.item.no ?? 999));
+
+  const source = rankedWrongs[0] ?? null;
+
+  // 오답 세부데이터가 아직 없는 경우 기존 취약도 1순위를 출발점으로 사용.
+  const fallbackUnit = String(student.weakUnits?.[0]?.label ?? "").trim();
+  const fallbackType = String(student.weakTypes?.[0]?.label ?? "").trim();
+  const targetUnit = source?.unit || fallbackUnit;
+  const targetType = source?.type || fallbackType;
+  const sourceDifficulty = source?.difficulty ?? 3;
+
+  // 진단은 원오답 난이도를 중심으로 "바로 아래~같은 난도"에서 가장 정보량이 높은 한 문제를 선택.
+  const diagnosticDifficulty =
+    sourceDifficulty <= 1 ? 1 :
+    sourceDifficulty === 2 ? 2 :
+    sourceDifficulty === 3 ? 2 :
+    sourceDifficulty === 4 ? 3 : 4;
+
+  const candidates = Array.isArray(student.candidates) ? student.candidates : [];
+  const rankedCandidates = candidates.map((problem: any) => {
+    const difficulty = sosDifficulty(problem.difficulty);
+    const unitMatch = targetUnit && sameText(problem.unit, targetUnit);
+    const typeMatch = targetType && sameText(problem.topic ?? problem.type, targetType);
+    const distance = Math.abs(difficulty - diagnosticDifficulty);
+
+    let scoreValue = Number(problem.matchScore ?? 0);
+    if (unitMatch) scoreValue += 34;
+    if (typeMatch) scoreValue += 30;
+    if (unitMatch && typeMatch) scoreValue += 14;
+    scoreValue += Math.max(0, 24 - distance * 10);
+
+    // 원오답보다 지나치게 어려운 문제는 첫 공략문항에서 제외 성격의 감점.
+    if (difficulty > sourceDifficulty) scoreValue -= (difficulty - sourceDifficulty) * 14;
+
+    return { problem, scoreValue, distance, unitMatch, typeMatch };
+  }).sort((a: any, b: any) =>
+    b.scoreValue - a.scoreValue ||
+    a.distance - b.distance ||
+    Number(a.problem.difficulty ?? 9) - Number(b.problem.difficulty ?? 9)
+  );
+
+  const targetProblem = rankedCandidates[0]?.problem ?? null;
+  const reasons = source?.reasons ?? [
+    targetUnit ? `취약 단원 1순위: ${targetUnit}` : "최근 시험 오답 세부정보 확인 필요",
+    targetType ? `취약 유형 1순위: ${targetType}` : "유형 데이터 보강 필요",
+  ];
+
+  return {
+    sourceQuestion: source?.item ?? null,
+    targetProblem,
+    priority: Math.round(source?.priority ?? Number(targetProblem?.matchScore ?? 0)),
+    verdict: source?.verdict ?? (targetProblem ? "취약 의심" : "판정 대기"),
+    reason: reasons,
+    diagnosticDifficulty,
+  };
+}
+
 function RecommendPage() {
   const [rows, setRows] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -1561,6 +1718,7 @@ function RecommendPage() {
   const [saving, setSaving] = useState(false);
   const [problemCount, setProblemCount] = useState(0);
   const [sessions, setSessions] = useState<any[]>([]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -1570,12 +1728,23 @@ function RecommendPage() {
       setRows(data.students ?? []);
       setProblemCount(Number(data.problemCount ?? 0));
       setSelectedId((value) => value || String(data.students?.[0]?.id ?? ""));
-    } catch (error) { alert(error instanceof Error ? error.message : "추천 조회 실패"); }
-    finally { setLoading(false); }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "추천 조회 실패");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
   useEffect(() => { void load(); }, [load]);
+
   const selected = rows.find((item) => String(item.id) === selectedId) ?? rows[0];
-  useEffect(() => { setChecked([]); }, [selectedId]);
+  const target = useMemo(() => selectSosTargetQuestion(selected), [selected]);
+
+  // 학생을 바꾸면 SOS 엔진이 선택한 "딱 한 문항"을 자동 선택한다.
+  useEffect(() => {
+    setChecked(target.targetProblem?.id ? [String(target.targetProblem.id)] : []);
+  }, [selectedId, target.targetProblem?.id]);
+
   const loadSessions = useCallback(async (studentId: string) => {
     if (!studentId) return setSessions([]);
     const response = await fetch(`/api/admin/training-engine?studentId=${encodeURIComponent(studentId)}`, { cache: "no-store" });
@@ -1583,43 +1752,247 @@ function RecommendPage() {
     if (response.ok) setSessions(data.sessions ?? []);
   }, []);
   useEffect(() => { void loadSessions(selectedId); }, [selectedId, loadSessions]);
+
   const generate = async (action: "generate-diagnosis" | "additional-diagnosis" | "generate-training") => {
     if (!selected) return;
     const latestDiagnosis = sessions.find((item) => item.phase === "DIAGNOSIS");
     let diagnosticCorrect = 0;
     if (action === "generate-training") {
-      if (!latestDiagnosis) return alert("먼저 진단 3문항을 생성해 주세요.");
+      if (!latestDiagnosis) return alert("먼저 공략문항을 확인한 뒤 진단을 진행해 주세요.");
       const value = window.prompt("가장 최근 진단의 정답 수를 입력하세요. (0~3)", String(latestDiagnosis.correct_count ?? 0));
       if (value === null) return;
       diagnosticCorrect = Math.max(0, Math.min(3, Number(value)));
     }
     setSaving(true);
     try {
-      const response = await fetch("/api/admin/training-engine", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, studentId: selected.id, parentSessionId: latestDiagnosis?.id, diagnosticCorrect, target: { units: selected.weakUnits, types: selected.weakTypes } }) });
+      const response = await fetch("/api/admin/training-engine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          studentId: selected.id,
+          parentSessionId: latestDiagnosis?.id,
+          diagnosticCorrect,
+          target: {
+            units: selected.weakUnits,
+            types: selected.weakTypes,
+            sourceQuestionNo: target.sourceQuestion?.no ?? null,
+            sourceDifficulty: target.sourceQuestion?.difficulty ?? null,
+            targetProblemId: target.targetProblem?.id ?? null,
+            targetDifficulty: target.diagnosticDifficulty,
+            priority: target.priority,
+            verdict: target.verdict,
+          },
+        }),
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "문항 생성 실패");
       await loadSessions(String(selected.id));
       alert(action === "generate-training" ? "훈련 10문항을 생성했습니다." : action === "additional-diagnosis" ? "중복 없는 추가 진단 3문항을 생성했습니다." : "진단 3문항을 생성했습니다.");
-    } catch (error) { alert(error instanceof Error ? error.message : "문항 생성 실패"); }
-    finally { setSaving(false); }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "문항 생성 실패");
+    } finally {
+      setSaving(false);
+    }
   };
+
   const save = async (assign: boolean) => {
-    if (!selected || !checked.length) return alert("추천할 문항을 선택해 주세요.");
+    if (!selected || !checked.length) return alert("공략문항을 선택해 주세요.");
     setSaving(true);
     try {
-      const response = await fetch("/api/admin/recommendations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ studentId: selected.id, problemIds: checked, assign, weakness: { units: selected.weakUnits, types: selected.weakTypes } }) });
+      const response = await fetch("/api/admin/recommendations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          studentId: selected.id,
+          problemIds: checked.slice(0, 1),
+          assign,
+          weakness: {
+            units: selected.weakUnits,
+            types: selected.weakTypes,
+            sosTarget: {
+              sourceQuestionNo: target.sourceQuestion?.no ?? null,
+              sourceDifficulty: target.sourceQuestion?.difficulty ?? null,
+              targetProblemId: target.targetProblem?.id ?? null,
+              priority: target.priority,
+              verdict: target.verdict,
+              reasons: target.reason,
+            },
+          },
+        }),
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "추천 저장 실패");
-      alert(assign ? "학생에게 훈련을 배정했습니다." : "추천안을 저장했습니다.");
-    } catch (error) { alert(error instanceof Error ? error.message : "추천 저장 실패"); }
-    finally { setSaving(false); }
+      alert(assign ? "SOS 공략문항 1개를 학생에게 배정했습니다." : "SOS 공략문항을 저장했습니다.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "추천 저장 실패");
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const verdictColor =
+    target.verdict === "명확한 취약" ? "#b42318" :
+    target.verdict === "실수 의심" ? "#b54708" :
+    target.verdict === "취약 의심" ? "#175cd3" : "#667085";
+
   return <>
-    <section className="page-title-row"><div><h2>SOS 학습운영</h2><p>실전모의고사 결과에서 취약점을 찾아 진단 3문항과 훈련 10문항을 운영합니다.</p></div><button className="secondary-button" onClick={() => void load()}>새로고침</button></section>
-    <section className="student-stat-grid"><MiniStat label="운영 대상" value={`${rows.length}명`} note="제출 완료 학생" /><MiniStat label="훈련 문항" value={`${problemCount}문항`} note="문제은행 ACTIVE" /><MiniStat label="매칭 가능" value={`${rows.filter((item) => item.candidates.length).length}명`} note="후보 1개 이상" emphasis /><MiniStat label="문항 부족" value={`${rows.filter((item) => item.performance.summary.examCount && !item.candidates.length).length}명`} note="추가 등록 필요" /></section>
+    <section className="page-title-row">
+      <div>
+        <h2>SOS 학습운영</h2>
+        <p>전체 성적·오답 난이도·동일 단원/유형 수행을 종합해 학생이 지금 해결할 딱 한 문항을 선정합니다.</p>
+      </div>
+      <button className="secondary-button" onClick={() => void load()}>새로고침</button>
+    </section>
+
+    <section className="student-stat-grid">
+      <MiniStat label="운영 대상" value={`${rows.length}명`} note="제출 완료 학생" />
+      <MiniStat label="문제은행" value={`${problemCount}문항`} note="ACTIVE" />
+      <MiniStat label="공략 가능" value={`${rows.filter((item) => selectSosTargetQuestion(item).targetProblem).length}명`} note="딱 1문항 선정 가능" emphasis />
+      <MiniStat label="문항 부족" value={`${rows.filter((item) => item.performance?.summary?.examCount && !selectSosTargetQuestion(item).targetProblem).length}명`} note="문제은행 보강 필요" />
+    </section>
+
     <section className="panel recommendation-layout">
-      <aside className="recommendation-students"><h3>학생별 SOS 대상</h3>{loading ? <p>불러오는 중...</p> : rows.map((item) => <button key={item.id} className={String(item.id) === String(selected?.id) ? "selected" : ""} onClick={() => setSelectedId(String(item.id))}><strong>{item.name}</strong><span>{item.latestExam?.title || `${item.performance.summary.examCount}회 응시`} · {item.performance.summary.latestScore ?? "-"}점</span><small>오답·미응답 {item.missedCount ?? 0}문항 · {item.weakUnits[0]?.label || "취약 단원 분석 전"}</small></button>)}</aside>
-      <div className="recommendation-main">{selected ? <><div className="sos-source-summary"><span>분석 원본</span><strong>{selected.latestExam?.title || "최근 실전모의고사"}</strong><b>{selected.performance.summary.latestScore ?? "-"}점 · 오답/미응답 {selected.missedCount ?? 0}문항</b><small>시험 결과 → 취약점 → 진단 3문항 → 훈련 10문항</small></div><div className="recommendation-head"><div><h3>{selected.name} 훈련 후보</h3><p>취약 단원: {selected.weakUnits.map((item: any) => `${item.label} ${item.rate}%`).join(" · ") || "없음"}</p><p>취약 유형: {selected.weakTypes.map((item: any) => `${item.label} ${item.rate}%`).join(" · ") || "없음"}</p></div><div className="engine-actions"><button className="diagnosis-button" disabled={saving} onClick={() => void generate("generate-diagnosis")}>진단 3문항</button><button className="diagnosis-more-button" disabled={saving || !sessions.some((item) => item.phase === "DIAGNOSIS")} onClick={() => void generate("additional-diagnosis")}>추가 진단 3문항</button><button className="training-button" disabled={saving || !sessions.some((item) => item.phase === "DIAGNOSIS")} onClick={() => void generate("generate-training")}>훈련 10문항</button></div></div><div className="training-session-summary"><b>진단·훈련 생성 이력</b>{sessions.length ? sessions.map((session) => <span key={session.id} className={session.phase === "DIAGNOSIS" ? "diagnosis" : "training"}>{session.phase === "DIAGNOSIS" ? `진단 ${session.round_no}차 · 3문항` : "훈련 · 10문항"} · {session.status}</span>) : <span>아직 생성된 문항이 없습니다.</span>}</div>{selected.candidates.length ? <div className="recommendation-candidates">{selected.candidates.map((problem: any) => <label key={problem.id}><input type="checkbox" checked={checked.includes(problem.id)} onChange={(event) => setChecked((current) => event.target.checked ? [...current, problem.id] : current.filter((id) => id !== problem.id))} /><div><strong>{problem.problem_code || problem.title}</strong><span>{problem.unit} · {problem.topic} · {problem.difficulty}단계</span><small>{problem.reasons.join(" / ")} · 매칭 {problem.matchScore}점</small></div></label>)}</div> : <div className="recommendation-empty"><b>현재 매칭되는 훈련 문항이 없습니다.</b><p>문제은행에 취약 단원·유형 문항을 등록하면 이곳에 자동으로 나타납니다.</p><button className="primary-button" onClick={() => { window.location.href = "/problem-bank/ai-upload"; }}>훈련 문항 등록하기</button></div>}</> : <div className="recommendation-empty"><b>학생 데이터가 없습니다.</b></div>}</div>
+      <aside className="recommendation-students">
+        <h3>학생별 SOS 대상</h3>
+        {loading ? <p>불러오는 중...</p> : rows.map((item) => {
+          const itemTarget = selectSosTargetQuestion(item);
+          return <button
+            key={item.id}
+            className={String(item.id) === String(selected?.id) ? "selected" : ""}
+            onClick={() => setSelectedId(String(item.id))}
+          >
+            <strong>{item.name}</strong>
+            <span>{item.latestExam?.title || `${item.performance.summary.examCount}회 응시`} · {item.performance.summary.latestScore ?? "-"}점</span>
+            <small>{itemTarget.verdict} · 공략우선도 {itemTarget.priority} · {itemTarget.sourceQuestion ? `${itemTarget.sourceQuestion.no}번 오답 출발` : (item.weakUnits[0]?.label || "분석 대기")}</small>
+          </button>;
+        })}
+      </aside>
+
+      <div className="recommendation-main">
+        {selected ? <>
+          <div className="sos-source-summary">
+            <span>분석 원본</span>
+            <strong>{selected.latestExam?.title || "최근 실전모의고사"}</strong>
+            <b>{selected.performance.summary.latestScore ?? "-"}점 · 오답/미응답 {selected.missedCount ?? 0}문항</b>
+            <small>전체 성적 → 오답 난이도 → 반복 취약/실수 판정 → 딱 한 공략문항</small>
+          </div>
+
+          <section style={{
+            margin: "18px 0",
+            padding: "22px",
+            border: "2px solid #1f7a4d",
+            borderRadius: 18,
+            background: "linear-gradient(135deg,#f3fbf6,#ffffff)",
+            boxShadow: "0 8px 24px rgba(31,122,77,.08)"
+          }}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:16,alignItems:"flex-start",flexWrap:"wrap"}}>
+              <div>
+                <span style={{fontSize:12,fontWeight:900,letterSpacing:1.2,color:"#1f7a4d"}}>SOS ONE TARGET</span>
+                <h3 style={{margin:"6px 0 4px",fontSize:24}}>
+                  {selected.name} · 지금 공략할 딱 한 문항
+                </h3>
+                <p style={{margin:0,color:"#667085"}}>
+                  원시험 오답의 의미를 먼저 판정한 뒤 가장 정보량이 높은 문제은행 문항 1개를 고릅니다.
+                </p>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <span style={{display:"block",fontSize:12,color:"#667085"}}>공략 우선도</span>
+                <b style={{fontSize:30,color:"#1f7a4d"}}>{target.priority}</b>
+                <span style={{display:"block",fontWeight:900,color:verdictColor}}>{target.verdict}</span>
+              </div>
+            </div>
+
+            {target.targetProblem ? <div style={{
+              display:"grid",
+              gridTemplateColumns:"minmax(0,1.4fr) minmax(220px,.6fr)",
+              gap:18,
+              marginTop:18,
+              paddingTop:18,
+              borderTop:"1px solid #dbe8df"
+            }}>
+              <div>
+                <small style={{fontWeight:800,color:"#667085"}}>선정 공략문항</small>
+                <div style={{fontSize:22,fontWeight:900,margin:"4px 0"}}>
+                  {target.targetProblem.problem_code || target.targetProblem.title || `문항 ${target.targetProblem.id}`}
+                </div>
+                <div style={{fontWeight:800}}>
+                  {target.targetProblem.unit || "단원 미지정"} · {target.targetProblem.topic || "유형 미지정"} · {target.targetProblem.difficulty || "-"}단계
+                </div>
+                <div style={{marginTop:12,display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {target.reason.map((reason, index) => <span key={index} style={{
+                    padding:"6px 9px",
+                    borderRadius:999,
+                    background:"#e8f5ed",
+                    color:"#216e45",
+                    fontSize:12,
+                    fontWeight:800
+                  }}>{reason}</span>)}
+                </div>
+              </div>
+
+              <div style={{padding:"14px",borderRadius:14,background:"#fff",border:"1px solid #e4e7ec"}}>
+                <div style={{display:"grid",gap:8,fontSize:13}}>
+                  <div><span style={{color:"#667085"}}>출발 오답</span><b style={{float:"right"}}>{target.sourceQuestion ? `${target.sourceQuestion.no}번` : "-"}</b></div>
+                  <div><span style={{color:"#667085"}}>오답 난이도</span><b style={{float:"right"}}>{target.sourceQuestion?.difficulty ? `${target.sourceQuestion.difficulty}단계` : "-"}</b></div>
+                  <div><span style={{color:"#667085"}}>확인 목표난도</span><b style={{float:"right"}}>{target.diagnosticDifficulty}단계</b></div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:14}}>
+                  <button className="secondary-button" disabled={saving} onClick={() => void save(false)}>공략 저장</button>
+                  <button className="primary-button" disabled={saving} onClick={() => void save(true)}>학생 배정</button>
+                </div>
+              </div>
+            </div> : <div className="recommendation-empty" style={{marginTop:18}}>
+              <b>현재 공략문항을 선정할 수 없습니다.</b>
+              <p>해당 학생의 취약 단원·유형과 맞는 문제은행 문항을 더 등록해 주세요.</p>
+            </div>}
+          </section>
+
+          <div className="recommendation-head">
+            <div>
+              <h3>다음 단계</h3>
+              <p>공략문항 결과로 실수 여부를 확인하고 필요할 때만 진단·훈련으로 확장합니다.</p>
+              <p>취약 단원: {selected.weakUnits.map((item: any) => `${item.label} ${item.rate}%`).join(" · ") || "없음"}</p>
+            </div>
+            <div className="engine-actions">
+              <button className="diagnosis-button" disabled={saving || !target.targetProblem} onClick={() => void generate("generate-diagnosis")}>후속 진단 3문항</button>
+              <button className="diagnosis-more-button" disabled={saving || !sessions.some((item) => item.phase === "DIAGNOSIS")} onClick={() => void generate("additional-diagnosis")}>추가 진단 3문항</button>
+              <button className="training-button" disabled={saving || !sessions.some((item) => item.phase === "DIAGNOSIS")} onClick={() => void generate("generate-training")}>훈련 10문항</button>
+            </div>
+          </div>
+
+          <div className="training-session-summary">
+            <b>진단·훈련 생성 이력</b>
+            {sessions.length ? sessions.map((session) =>
+              <span key={session.id} className={session.phase === "DIAGNOSIS" ? "diagnosis" : "training"}>
+                {session.phase === "DIAGNOSIS" ? `진단 ${session.round_no}차 · 3문항` : "훈련 · 10문항"} · {session.status}
+              </span>
+            ) : <span>아직 생성된 후속 훈련이 없습니다.</span>}
+          </div>
+
+          {selected.candidates.length ? <>
+            <div style={{margin:"20px 0 8px"}}>
+              <b>대체 후보</b>
+              <span style={{marginLeft:8,color:"#667085",fontSize:12}}>엔진 선정이 마음에 들지 않을 때만 다른 1문항으로 교체</span>
+            </div>
+            <div className="recommendation-candidates">
+              {selected.candidates.map((problem: any) => <label key={problem.id}>
+                <input
+                  type="radio"
+                  name={`sos-target-${selected.id}`}
+                  checked={checked.includes(String(problem.id))}
+                  onChange={() => setChecked([String(problem.id)])}
+                />
+                <div>
+                  <strong>{problem.problem_code || problem.title}</strong>
+                  <span>{problem.unit} · {problem.topic} · {problem.difficulty}단계</span>
+                  <small>{problem.reasons.join(" / ")} · 기존 매칭 {problem.matchScore}점</small>
+                </div>
+              </label>)}
+            </div>
+          </> : null}
+        </> : <div className="recommendation-empty"><b>학생 데이터가 없습니다.</b></div>}
+      </div>
     </section>
   </>;
 }
