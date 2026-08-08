@@ -180,7 +180,7 @@ async function requestDna(args: {
   return parseJsonObject(outputText);
 }
 
-export async function POST(_: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const denied = await requireUser();
   if (denied) return denied;
 
@@ -199,10 +199,18 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
     if (questionResult.error || !questionResult.data) throw questionResult.error ?? new Error("문항을 찾을 수 없습니다.");
 
     const question = questionResult.data as any;
-    if (question.review_result?.bank_status === "REGISTERED") {
+    let forceBankRefresh = false;
+    try {
+      const body = await request.json() as { forceBankRefresh?: boolean };
+      forceBankRefresh = body.forceBankRefresh === true;
+    } catch {
+      forceBankRefresh = false;
+    }
+    const wasRegistered = question.review_result?.bank_status === "REGISTERED";
+    if (wasRegistered && !forceBankRefresh) {
       return NextResponse.json({
         success: false,
-        message: "문제은행 등록완료 문항은 바로 재분석할 수 없습니다. 문제은행에서 해당 문항을 삭제한 뒤 재분석해 주세요.",
+        message: "문제은행 등록완료 문항은 바로 재분석할 수 없습니다. 시험지 수정에서 '이미지 + AI 분석 갱신'을 사용해 주세요.",
       }, { status: 409 });
     }
     const analysisResult = await supabase.from("source_analysis").select("source_file_id").eq("id", question.analysis_id).single();
@@ -342,7 +350,13 @@ export async function POST(_: NextRequest, context: { params: Promise<{ id: stri
 
     const patch: Record<string, unknown> = {
       ai_result: aiResult,
-      review_result: cropOnlyReviewResult(question.review_result),
+      review_result: forceBankRefresh && wasRegistered
+        ? {
+            ...cropOnlyReviewResult(question.review_result),
+            bank_status: "REGISTERED",
+            bank_registered_at: question.review_result?.bank_registered_at ?? null,
+          }
+        : cropOnlyReviewResult(question.review_result),
       confidence: normalizedConfidence,
       status: autoPass ? "AUTO_REGISTERED" : "REVIEW",
       review_reason: autoPass ? null : (uniqueReviewReasons.join(" · ") || "자동 판정 기준을 통과하지 못해 검토대상으로 보류되었습니다."),

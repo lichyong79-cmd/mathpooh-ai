@@ -14,6 +14,7 @@ import AccountBox from "../AccountBox";
 import "../exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
+import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
 
 type AdminMenu =
   | "dashboard"
@@ -4887,6 +4888,73 @@ function getSourceWorkflow(item: SourceFile): { label: string; detail: string; t
   return { label: "신규", detail: "AI 분석 전", tone: "new" };
 }
 
+
+type RefreshQuestion = {
+  id: string;
+  question_no: number;
+  page_no: number | null;
+  crop_x: number | null;
+  crop_y: number | null;
+  crop_width: number | null;
+  crop_height: number | null;
+};
+
+type ReplacementRefreshState = {
+  sourceId: string;
+  title: string;
+  kind: "exam" | "solution";
+  analysisId: string;
+  questions: RefreshQuestion[];
+  selected: number[];
+  mode: "image" | "analysis";
+};
+
+async function loadPdfDocument(url: string) {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
+    import.meta.url,
+  ).toString();
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error("교체된 PDF를 불러오지 못했습니다.");
+  const data = new Uint8Array(await response.arrayBuffer());
+  return pdfjs.getDocument({ data }).promise;
+}
+
+async function renderPdfPage(pdf: any, pageNo: number) {
+  const page = await pdf.getPage(pageNo);
+  const baseViewport = page.getViewport({ scale: 1 });
+  const scale = Math.max(1.7, 1800 / Math.max(1, baseViewport.width));
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("PDF 렌더링 화면을 만들지 못했습니다.");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: context, viewport }).promise;
+  return canvas;
+}
+
+async function cropCanvasToWebp(canvas: HTMLCanvasElement, rect: { x: number; y: number; width: number; height: number }) {
+  const sx = Math.max(0, Math.floor((canvas.width * rect.x) / 100));
+  const sy = Math.max(0, Math.floor((canvas.height * rect.y) / 100));
+  const sw = Math.max(1, Math.min(canvas.width - sx, Math.ceil((canvas.width * rect.width) / 100)));
+  const sh = Math.max(1, Math.min(canvas.height - sy, Math.ceil((canvas.height * rect.height) / 100)));
+  const output = document.createElement("canvas");
+  output.width = sw;
+  output.height = sh;
+  const context = output.getContext("2d");
+  if (!context) throw new Error("문항 이미지를 만들지 못했습니다.");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, sw, sh);
+  context.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+  return new Promise<Blob>((resolve, reject) => {
+    output.toBlob((blob) => blob ? resolve(blob) : reject(new Error("이미지 변환에 실패했습니다.")), "image/webp", .92);
+  });
+}
+
 function ProblemsPage({
   onOpenAnalysis,
 }: {
@@ -4913,6 +4981,8 @@ function ProblemsPage({
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [replacingFile, setReplacingFile] = useState<{ id: string; kind: UploadFileKind } | null>(null);
+  const [replacementRefresh, setReplacementRefresh] = useState<ReplacementRefreshState | null>(null);
+  const [refreshingReplacement, setRefreshingReplacement] = useState(false);
 
   const loadFiles = useCallback(async () => {
     setLoading(true);
@@ -5151,6 +5221,33 @@ function ProblemsPage({
     }
   };
 
+  const prepareReplacementRefresh = async (item: SourceFile, kind: "exam" | "solution") => {
+    const response = await fetch("/api/problem-bank/materialize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceFileId: item.id, allowEmptyCrop: true }),
+    });
+    const payload = await response.json() as {
+      success?: boolean;
+      message?: string;
+      analysisId?: string;
+      questions?: RefreshQuestion[];
+    };
+    if (!response.ok || !payload.success || !payload.analysisId) {
+      throw new Error(payload.message || "교체할 문항 목록을 불러오지 못했습니다.");
+    }
+    const questions = (payload.questions ?? []).sort((a, b) => a.question_no - b.question_no);
+    setReplacementRefresh({
+      sourceId: item.id,
+      title: item.title,
+      kind,
+      analysisId: payload.analysisId,
+      questions,
+      selected: [],
+      mode: "image",
+    });
+  };
+
   const replaceBundleFile = async (item: SourceFile, kind: UploadFileKind, file: File | null) => {
     if (!file) return;
 
@@ -5173,6 +5270,7 @@ function ProblemsPage({
     if (!window.confirm(`${item.title}의 ${label}을 교체할까요?\n기존 시험지/문항 ID는 유지됩니다.`)) return;
 
     setReplacingFile({ id: item.id, kind });
+    setReplacementRefresh(null);
     setMessage("");
     setErrorMessage("");
     try {
@@ -5185,12 +5283,126 @@ function ProblemsPage({
       });
       const result = (await response.json()) as { success?: boolean; message?: string };
       if (!response.ok || !result.success) throw new Error(result.message || `${label} 교체에 실패했습니다.`);
-      setMessage(result.message || `${label}을 교체했습니다.`);
       await loadFiles();
+
+      if (kind === "exam" || kind === "solution") {
+        await prepareReplacementRefresh(item, kind);
+        setMessage(`${label} 교체 완료 · 아래에서 다시 가져올 문항만 선택해 주세요.`);
+      } else {
+        setMessage(result.message || `${label}을 교체했습니다.`);
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : `${label} 교체에 실패했습니다.`);
     } finally {
       setReplacingFile(null);
+    }
+  };
+
+  const applyReplacementRefresh = async () => {
+    const refresh = replacementRefresh;
+    if (!refresh || refresh.selected.length === 0) {
+      setErrorMessage("다시 가져올 문항을 선택해 주세요.");
+      return;
+    }
+
+    setRefreshingReplacement(true);
+    setErrorMessage("");
+    setMessage("");
+    try {
+      const signedResponse = await fetch(`/api/source-files/${encodeURIComponent(refresh.sourceId)}/signed-urls`, { cache: "no-store" });
+      const signedPayload = await signedResponse.json() as { success?: boolean; examUrl?: string | null; solutionUrl?: string | null; message?: string };
+      if (!signedResponse.ok || !signedPayload.success) throw new Error(signedPayload.message || "교체 PDF 주소를 만들지 못했습니다.");
+
+      const selectedQuestions = refresh.questions.filter((question) => refresh.selected.includes(question.question_no));
+      if (refresh.kind === "exam") {
+        if (!signedPayload.examUrl) throw new Error("교체된 문제 PDF가 없습니다.");
+        const pdf = await loadPdfDocument(signedPayload.examUrl);
+        for (const question of selectedQuestions) {
+          const pageNo = Number(question.page_no);
+          const rect = {
+            x: Number(question.crop_x),
+            y: Number(question.crop_y),
+            width: Number(question.crop_width),
+            height: Number(question.crop_height),
+          };
+          if (!(pageNo >= 1) || !Number.isFinite(rect.x) || !Number.isFinite(rect.y) || !(rect.width > 0) || !(rect.height > 0)) {
+            throw new Error(`${question.question_no}번의 기존 Crop 좌표가 없어 자동 교체할 수 없습니다. AI 분석관리에서 먼저 Crop을 잡아 주세요.`);
+          }
+          const canvas = await renderPdfPage(pdf, pageNo);
+          const blob = await cropCanvasToWebp(canvas, rect);
+          const form = new FormData();
+          form.append("image", blob, `${String(question.question_no).padStart(3, "0")}.webp`);
+          form.append("analysisId", refresh.analysisId);
+          form.append("sourceFileId", refresh.sourceId);
+          form.append("questionId", question.id);
+          form.append("questionNo", String(question.question_no));
+          form.append("pageNo", String(pageNo));
+          form.append("cropX", String(rect.x));
+          form.append("cropY", String(rect.y));
+          form.append("cropWidth", String(rect.width));
+          form.append("cropHeight", String(rect.height));
+          const upload = await fetch("/api/problem-bank/materialize", { method: "POST", body: form });
+          const uploaded = await upload.json() as { success?: boolean; message?: string };
+          if (!upload.ok || !uploaded.success) throw new Error(uploaded.message || `${question.question_no}번 이미지 교체 실패`);
+
+          if (refresh.mode === "analysis") {
+            const analyzed = await fetch(`/api/analysis/questions/${encodeURIComponent(question.id)}/analyze`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ forceBankRefresh: true }),
+            });
+            const analyzedPayload = await analyzed.json() as { success?: boolean; message?: string };
+            if (!analyzed.ok || !analyzedPayload.success) throw new Error(analyzedPayload.message || `${question.question_no}번 AI 재분석 실패`);
+          }
+        }
+
+        if (refresh.mode === "analysis") {
+          const registered = await fetch("/api/problem-bank/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ analysisId: refresh.analysisId, questionIds: selectedQuestions.map((question) => question.id) }),
+          });
+          const registeredPayload = await registered.json() as { success?: boolean; message?: string };
+          if (!registered.ok || !registeredPayload.success) throw new Error(registeredPayload.message || "재분석 문항의 문제은행 갱신에 실패했습니다.");
+        }
+      } else {
+        if (!signedPayload.solutionUrl) throw new Error("교체된 해설 PDF가 없습니다.");
+        const pdf = await loadPdfDocument(signedPayload.solutionUrl);
+        const anchors = await buildDocumentAnchors(pdf);
+        if (!anchors.hasTextLayer) throw new Error("새 해설 PDF에서 문항번호 텍스트를 찾을 수 없습니다.");
+
+        for (const question of selectedQuestions) {
+          const anchor = anchors.byQuestionNo.get(Number(question.question_no));
+          if (!anchor) throw new Error(`${question.question_no}번 해설 위치를 새 PDF에서 찾지 못했습니다.`);
+          const canvas = await renderPdfPage(pdf, anchor.page);
+          const top = Math.max(0, anchor.topPct - 0.45);
+          const rect = {
+            x: Math.max(0, anchor.columnLeftPct),
+            y: top,
+            width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct),
+            height: Math.max(1, Math.min(100, anchor.bottomPct) - top),
+          };
+          const blob = await cropCanvasToWebp(canvas, rect);
+          const form = new FormData();
+          form.append("image", blob, `solution-${String(question.question_no).padStart(3, "0")}.webp`);
+          form.append("analysisId", refresh.analysisId);
+          form.append("sourceFileId", refresh.sourceId);
+          form.append("questionId", question.id);
+          form.append("questionNo", String(question.question_no));
+          form.append("pageNo", String(anchor.page));
+          const upload = await fetch("/api/problem-bank/materialize-solution", { method: "POST", body: form });
+          const uploaded = await upload.json() as { success?: boolean; message?: string };
+          if (!upload.ok || !uploaded.success) throw new Error(uploaded.message || `${question.question_no}번 해설 교체 실패`);
+        }
+      }
+
+      setMessage(`${refresh.selected.join(", ")}번 ${refresh.kind === "exam" ? (refresh.mode === "analysis" ? "문제 이미지·AI 분석" : "문제 이미지") : "해설 이미지"} 갱신 완료`);
+      setReplacementRefresh(null);
+      await loadFiles();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "선택 문항 갱신에 실패했습니다.");
+    } finally {
+      setRefreshingReplacement(false);
     }
   };
 
@@ -5491,8 +5703,8 @@ function ProblemsPage({
                     </label>
                   </div>
                   <div className="source-file-replace-box">
-                    <strong>파일만 교체</strong>
-                    <span>시험지 세트와 기존 문항 연결은 유지됩니다.</span>
+                    <strong>원본 파일 관리</strong>
+                    <span>파일을 교체해도 기존 시험지·문항 ID는 유지됩니다. 문제/해설 PDF 교체 후 필요한 문항만 다시 가져올 수 있습니다.</span>
                     <div className="source-file-replace-grid">
                       {[
                         { kind: "hwp" as UploadFileKind, label: "원본 HWP/PDF 교체", accept: ".hwp,.hwpx,.pdf" },
@@ -5504,7 +5716,7 @@ function ProblemsPage({
                           <input
                             type="file"
                             accept={entry.accept}
-                            disabled={Boolean(replacingFile)}
+                            disabled={Boolean(replacingFile) || refreshingReplacement}
                             onChange={(event) => {
                               const file = event.target.files?.[0] ?? null;
                               void replaceBundleFile(item, entry.kind, file);
@@ -5514,10 +5726,71 @@ function ProblemsPage({
                         </label>
                       ))}
                     </div>
-                    {Number(item.bank_count || 0) > 0 ? (
-                      <a className="source-open-bank" href={`/problem-bank?source=${encodeURIComponent(item.id)}`}>
-                        문항별 교체 · 문제은행에서 열기
-                      </a>
+
+                    {replacementRefresh?.sourceId === item.id ? (
+                      <div className="replacement-refresh-panel">
+                        <div className="replacement-refresh-head">
+                          <div>
+                            <b>{replacementRefresh.kind === "exam" ? "새 문제 PDF에서 다시 가져오기" : "새 해설 PDF에서 다시 가져오기"}</b>
+                            <span>수정한 문항만 선택하면 나머지 문제은행 데이터는 건드리지 않습니다.</span>
+                          </div>
+                          <button type="button" onClick={() => setReplacementRefresh(null)} disabled={refreshingReplacement}>닫기</button>
+                        </div>
+                        <div className="replacement-question-tools">
+                          <button
+                            type="button"
+                            onClick={() => setReplacementRefresh((current) => current ? { ...current, selected: current.questions.map((question) => question.question_no) } : current)}
+                            disabled={refreshingReplacement}
+                          >전체 선택</button>
+                          <button
+                            type="button"
+                            onClick={() => setReplacementRefresh((current) => current ? { ...current, selected: [] } : current)}
+                            disabled={refreshingReplacement}
+                          >선택 해제</button>
+                          <span>선택 {replacementRefresh.selected.length}문항</span>
+                        </div>
+                        <div className="replacement-question-grid">
+                          {replacementRefresh.questions.map((question) => {
+                            const checked = replacementRefresh.selected.includes(question.question_no);
+                            return (
+                              <button
+                                type="button"
+                                key={question.id}
+                                className={checked ? "selected" : ""}
+                                disabled={refreshingReplacement}
+                                onClick={() => setReplacementRefresh((current) => current ? {
+                                  ...current,
+                                  selected: checked
+                                    ? current.selected.filter((no) => no !== question.question_no)
+                                    : [...current.selected, question.question_no].sort((a, b) => a - b),
+                                } : current)}
+                              >{question.question_no}</button>
+                            );
+                          })}
+                        </div>
+                        {replacementRefresh.kind === "exam" ? (
+                          <div className="replacement-mode-grid">
+                            <label className={replacementRefresh.mode === "image" ? "selected" : ""}>
+                              <input type="radio" checked={replacementRefresh.mode === "image"} onChange={() => setReplacementRefresh((current) => current ? { ...current, mode: "image" } : current)} />
+                              <b>이미지만 교체</b>
+                              <span>오타·수식·그림 수정용 · 기존 정답/단원/유형/DNA 유지</span>
+                            </label>
+                            <label className={replacementRefresh.mode === "analysis" ? "selected" : ""}>
+                              <input type="radio" checked={replacementRefresh.mode === "analysis"} onChange={() => setReplacementRefresh((current) => current ? { ...current, mode: "analysis" } : current)} />
+                              <b>이미지 + AI 분석 갱신</b>
+                              <span>문제 내용 자체가 바뀐 경우 · 선택 문항만 다시 분석</span>
+                            </label>
+                          </div>
+                        ) : (
+                          <div className="replacement-solution-note">선택한 문항의 해설 이미지만 새 해설 PDF에서 다시 가져옵니다.</div>
+                        )}
+                        <div className="replacement-refresh-actions">
+                          <small>{replacementRefresh.selected.length ? `${replacementRefresh.selected.join(", ")}번만 갱신됩니다.` : "갱신할 문항을 선택해 주세요."}</small>
+                          <button className="primary-button" type="button" onClick={() => void applyReplacementRefresh()} disabled={refreshingReplacement || replacementRefresh.selected.length === 0}>
+                            {refreshingReplacement ? "선택 문항 갱신 중..." : `${replacementRefresh.selected.length || "선택"}문항 적용`}
+                          </button>
+                        </div>
+                      </div>
                     ) : null}
                   </div>
                   <div className="source-file-edit-actions">
