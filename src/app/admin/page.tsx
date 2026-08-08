@@ -1472,6 +1472,8 @@ function LearningAnalysisPage({ students }: { students: Student[] }) {
   const [targetCursor, setTargetCursor] = useState(0);
   const [targetImageUrl, setTargetImageUrl] = useState<string | null>(null);
   const [targetImageLoading, setTargetImageLoading] = useState(false);
+  const [targetImageUrl, setTargetImageUrl] = useState<string | null>(null);
+  const [targetImageLoading, setTargetImageLoading] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
