@@ -128,9 +128,9 @@ const menus: MenuItem[] = [
   { id: "exam-assignment", label: "시험지 배정", icon: "↗" },
   { id: "exam-progress", label: "실전모의고사 진행", icon: "▶" },
   { id: "problem-sources", label: "문제등록", icon: "▦" },
-  { id: "problem-analysis", label: "AI 분석", icon: "✦", badge: 12 },
+  { id: "problem-analysis", label: "AI 분석", icon: "✦" },
   { id: "sos-bank", label: "SOS 문제은행", icon: "▣" },
-  { id: "sos-learning", label: "SOS 학습운영", icon: "◎", badge: 7 },
+  { id: "sos-learning", label: "SOS 학습운영", icon: "◎" },
   { id: "exam-results", label: "시험성적 분석", icon: "▥" },
   { id: "student-results", label: "학생성적 분석", icon: "↗" },
   { id: "learning-analysis", label: "학생학습 분석", icon: "◫" },
@@ -1468,6 +1468,8 @@ function LearningAnalysisPage({ students }: { students: Student[] }) {
   const [rows, setRows] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [sessions, setSessions] = useState<any[]>([]);
+  const [rejectedTargetIds, setRejectedTargetIds] = useState<string[]>([]);
+  const [targetCursor, setTargetCursor] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1738,7 +1740,57 @@ function RecommendPage() {
   useEffect(() => { void load(); }, [load]);
 
   const selected = rows.find((item) => String(item.id) === selectedId) ?? rows[0];
-  const target = useMemo(() => selectSosTargetQuestion(selected), [selected]);
+  const baseTarget = useMemo(() => selectSosTargetQuestion(selected), [selected]);
+
+  const sosRankedCandidates = useMemo(() => {
+    if (!selected) return [];
+    const source = baseTarget.sourceQuestion;
+    const sourceDifficulty = sosDifficulty(source?.difficulty ?? 3);
+    const targetDifficulty = baseTarget.diagnosticDifficulty;
+    const sourceUnit = String(source?.unit ?? source?.minorUnit ?? selected.weakUnits?.[0]?.label ?? "").trim();
+    const sourceType = String(source?.type ?? source?.topic ?? source?.detailedTopic ?? selected.weakTypes?.[0]?.label ?? "").trim();
+
+    return [...(selected.candidates ?? [])]
+      .map((problem: any) => {
+        const difficulty = sosDifficulty(problem.difficulty);
+        const unitMatch = sourceUnit && sameText(problem.unit, sourceUnit);
+        const typeMatch = sourceType && sameText(problem.topic ?? problem.type, sourceType);
+        const distance = Math.abs(difficulty - targetDifficulty);
+        let rank = Number(problem.matchScore ?? 0);
+        if (unitMatch) rank += 34;
+        if (typeMatch) rank += 30;
+        if (unitMatch && typeMatch) rank += 14;
+        rank += Math.max(0, 24 - distance * 10);
+        if (difficulty > sourceDifficulty) rank -= (difficulty - sourceDifficulty) * 14;
+        return { problem, rank, distance };
+      })
+      .sort((a: any, b: any) => b.rank - a.rank || a.distance - b.distance)
+      .map((entry: any) => entry.problem);
+  }, [selected, baseTarget.sourceQuestion, baseTarget.diagnosticDifficulty]);
+
+  const visibleCandidates = useMemo(
+    () => sosRankedCandidates.filter((problem: any) => !rejectedTargetIds.includes(String(problem.id))),
+    [sosRankedCandidates, rejectedTargetIds]
+  );
+
+  const currentTargetProblem = visibleCandidates[targetCursor] ?? visibleCandidates[0] ?? null;
+
+  const target = useMemo(() => ({
+    ...baseTarget,
+    targetProblem: currentTargetProblem,
+  }), [baseTarget, currentTargetProblem]);
+
+  useEffect(() => {
+    setRejectedTargetIds([]);
+    setTargetCursor(0);
+  }, [selectedId]);
+
+  const rejectCurrentTarget = () => {
+    if (!target.targetProblem?.id) return;
+    const rejectedId = String(target.targetProblem.id);
+    setRejectedTargetIds((prev) => prev.includes(rejectedId) ? prev : [...prev, rejectedId]);
+    setTargetCursor(0);
+  };
 
   // 학생을 바꾸면 SOS 엔진이 선택한 "딱 한 문항"을 자동 선택한다.
   useEffect(() => {
@@ -1779,6 +1831,7 @@ function RecommendPage() {
             sourceQuestionNo: target.sourceQuestion?.no ?? null,
             sourceDifficulty: target.sourceQuestion?.difficulty ?? null,
             targetProblemId: target.targetProblem?.id ?? null,
+              sosNo: 1,
             targetDifficulty: target.diagnosticDifficulty,
             priority: target.priority,
             verdict: target.verdict,
@@ -1890,7 +1943,7 @@ function RecommendPage() {
               <div>
                 <span style={{fontSize:12,fontWeight:900,letterSpacing:1.2,color:"#1f7a4d"}}>SOS ONE TARGET</span>
                 <h3 style={{margin:"6px 0 4px",fontSize:24}}>
-                  {selected.name} · 지금 공략할 딱 한 문항
+                  {selected.latestExam?.title || "SOS"} · SOS_NO1
                 </h3>
                 <p style={{margin:0,color:"#667085"}}>
                   원시험 오답의 의미를 먼저 판정한 뒤 가장 정보량이 높은 문제은행 문항 1개를 고릅니다.
@@ -1914,9 +1967,12 @@ function RecommendPage() {
               <div>
                 <small style={{fontWeight:800,color:"#667085"}}>선정 공략문항</small>
                 <div style={{fontSize:22,fontWeight:900,margin:"4px 0"}}>
-                  {target.targetProblem.problem_code || target.targetProblem.title || `문항 ${target.targetProblem.id}`}
+                  "SOS_NO1"
                 </div>
                 <div style={{fontWeight:800}}>
+                  {target.targetProblem.title || target.targetProblem.summary || target.targetProblem.topic || "공략문항"}
+                </div>
+                <div style={{marginTop:4,color:"#667085",fontSize:13}}>
                   {target.targetProblem.unit || "단원 미지정"} · {target.targetProblem.topic || "유형 미지정"} · {target.targetProblem.difficulty || "-"}단계
                 </div>
                 <div style={{marginTop:12,display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -1938,8 +1994,25 @@ function RecommendPage() {
                   <div><span style={{color:"#667085"}}>확인 목표난도</span><b style={{float:"right"}}>{target.diagnosticDifficulty}단계</b></div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:14}}>
-                  <button className="secondary-button" disabled={saving} onClick={() => void save(false)}>공략 저장</button>
-                  <button className="primary-button" disabled={saving} onClick={() => void save(true)}>학생 배정</button>
+                  <button
+                    className="secondary-button"
+                    disabled={saving || !target.targetProblem}
+                    onClick={rejectCurrentTarget}
+                    title="현재 후보를 제외하고 다음 순위 후보를 SOS_NO1으로 올립니다."
+                  >
+                    NO · 다음 후보
+                  </button>
+                  <button
+                    className="primary-button"
+                    disabled={saving || !target.targetProblem}
+                    onClick={() => void save(true)}
+                    title="현재 문항을 SOS_NO1으로 확정하고 학생에게 배정합니다."
+                  >
+                    YES · SOS_NO1 확정
+                  </button>
+                </div>
+                <div style={{marginTop:8,fontSize:11,color:"#98a2b3",textAlign:"center"}}>
+                  NO 처리한 문항은 현재 검토 중 다시 제시하지 않습니다. 남은 후보 {Math.max(0, visibleCandidates.length - 1)}개
                 </div>
               </div>
             </div> : <div className="recommendation-empty" style={{marginTop:18}}>
@@ -1972,8 +2045,8 @@ function RecommendPage() {
 
           {selected.candidates.length ? <>
             <div style={{margin:"20px 0 8px"}}>
-              <b>대체 후보</b>
-              <span style={{marginLeft:8,color:"#667085",fontSize:12}}>엔진 선정이 마음에 들지 않을 때만 다른 1문항으로 교체</span>
+              <b>다음 후보 대기열</b>
+              <span style={{marginLeft:8,color:"#667085",fontSize:12}}>NO를 누르면 다음 순위 문항이 자동으로 SOS_NO1 자리에 올라옵니다.</span>
             </div>
             <div className="recommendation-candidates">
               {selected.candidates.map((problem: any) => <label key={problem.id}>
