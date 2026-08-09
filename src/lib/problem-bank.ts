@@ -32,6 +32,75 @@ function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeDuplicateText(value: unknown) {
+  return text(value)
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[“”‘’'"`´]/g, "")
+    .replace(/[·•]/g, "")
+    .replace(/[，]/g, ",")
+    .replace(/[＝]/g, "=")
+    .replace(/[−–—]/g, "-");
+}
+
+function duplicateKeyFromParts(parts: unknown[]) {
+  return parts.map(normalizeDuplicateText).join("|");
+}
+
+function duplicateKeyFromQuestion(question: AnalysisQuestion, source: SourceFile) {
+  const result = finalResult(question);
+  const dna = problemDna(result);
+  if (dna?.schema_version === PROBLEM_DNA_VERSION) {
+    return duplicateKeyFromParts([
+      dna.basic?.subject || source.subject,
+      dna.basic?.grade || source.grade,
+      dna.basic?.major_unit,
+      dna.basic?.middle_unit,
+      dna.basic?.minor_unit,
+      dna.basic?.detailed_topic,
+      dna.basic?.question_format,
+      dna.summary?.one_line,
+      question.answer,
+    ]);
+  }
+  return duplicateKeyFromParts([
+    result.subject || source.subject,
+    source.grade,
+    result.unit,
+    result.topic,
+    result.question_type,
+    result.summary,
+    question.answer,
+  ]);
+}
+
+function duplicateKeyFromBankRow(row: any) {
+  const dna = row.problem_dna && typeof row.problem_dna === "object" ? row.problem_dna as ProblemDNA : null;
+  if (dna?.schema_version === PROBLEM_DNA_VERSION) {
+    return duplicateKeyFromParts([
+      dna.basic?.subject || row.subject,
+      dna.basic?.grade || row.grade,
+      dna.basic?.major_unit,
+      dna.basic?.middle_unit,
+      dna.basic?.minor_unit,
+      dna.basic?.detailed_topic,
+      dna.basic?.question_format,
+      dna.summary?.one_line,
+      row.answer,
+    ]);
+  }
+  return duplicateKeyFromParts([
+    row.subject,
+    row.grade,
+    row.unit,
+    row.topic,
+    row.question_type,
+    row.summary,
+    row.answer,
+  ]);
+}
+
 function finalResult(question: AnalysisQuestion) {
   const ai = question.ai_result ?? {};
   const review = question.review_result ?? {};
@@ -74,9 +143,64 @@ export async function registerQuestions(
   source: SourceFile,
   questions: AnalysisQuestion[],
 ) {
-  if (questions.length === 0) return { registered: 0, embedded: 0 };
+  if (questions.length === 0) return { registered: 0, embedded: 0, registeredQuestionIds: [] as string[], duplicateQuestionIds: [] as string[], duplicates: [] as Array<{ questionId: string; existingProblemId: string; existingTitle: string }> };
 
-  const embeddingTexts = questions.map((question) => {
+  // v172: 추가 AI 호출 없이 이미 저장된 DNA/문항요약/정답을 이용해 동일문항을 걸러낸다.
+  // 같은 source_file_id + question_no 재등록은 기존 upsert 갱신으로 허용한다.
+  const existingQuery = await supabase
+    .from("problem_bank_questions")
+    .select("id,source_file_id,question_no,title,grade,subject,unit,topic,question_type,answer,summary,problem_dna,status");
+  if (existingQuery.error) throw new Error(`문제은행 중복검사 실패: ${existingQuery.error.message}`);
+
+  const existingByKey = new Map<string, any>();
+  for (const row of existingQuery.data ?? []) {
+    if (row.status === "DUPLICATE") continue;
+    const key = duplicateKeyFromBankRow(row);
+    if (key && !existingByKey.has(key)) existingByKey.set(key, row);
+  }
+
+  const batchByKey = new Map<string, AnalysisQuestion>();
+  const duplicates: Array<{ questionId: string; existingProblemId: string; existingTitle: string }> = [];
+  const uniqueQuestions: AnalysisQuestion[] = [];
+
+  for (const question of questions) {
+    const key = duplicateKeyFromQuestion(question, source);
+    const existing = key ? existingByKey.get(key) : null;
+    const sameExistingRow = existing && String(existing.source_file_id) === String(source.id) && Number(existing.question_no) === Number(question.question_no);
+    const batchExisting = key ? batchByKey.get(key) : null;
+
+    if (existing && !sameExistingRow) {
+      duplicates.push({
+        questionId: question.id,
+        existingProblemId: String(existing.id),
+        existingTitle: text(existing.title) || `기존 ${existing.question_no}번`,
+      });
+      continue;
+    }
+    if (batchExisting) {
+      duplicates.push({
+        questionId: question.id,
+        existingProblemId: batchExisting.id,
+        existingTitle: `${source.title} ${batchExisting.question_no}번`,
+      });
+      continue;
+    }
+
+    if (key) batchByKey.set(key, question);
+    uniqueQuestions.push(question);
+  }
+
+  if (uniqueQuestions.length === 0) {
+    return {
+      registered: 0,
+      embedded: 0,
+      registeredQuestionIds: [] as string[],
+      duplicateQuestionIds: duplicates.map((item) => item.questionId),
+      duplicates,
+    };
+  }
+
+  const embeddingTexts = uniqueQuestions.map((question) => {
     const result = finalResult(question);
     const dna = problemDna(result);
     if (dna?.schema_version === PROBLEM_DNA_VERSION) return problemDnaEmbeddingText(dna);
@@ -92,7 +216,7 @@ export async function registerQuestions(
 
   const embeddings = await createEmbeddings(embeddingTexts);
   const now = new Date().toISOString();
-  const rows = questions.map((question, index) => {
+  const rows = uniqueQuestions.map((question, index) => {
     const result = finalResult(question);
     const dna = problemDna(result);
     return {
@@ -143,5 +267,11 @@ export async function registerQuestions(
     throw err;
   }
 
-  return { registered: rows.length, embedded: embeddings.length };
+  return {
+    registered: rows.length,
+    embedded: embeddings.length,
+    registeredQuestionIds: uniqueQuestions.map((item) => item.id),
+    duplicateQuestionIds: duplicates.map((item) => item.questionId),
+    duplicates,
+  };
 }

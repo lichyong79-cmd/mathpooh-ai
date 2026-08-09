@@ -111,21 +111,38 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString();
 
     // analysis_questions.status는 AI 분석/검토 상태만 관리한다.
-    // DB check constraint에 REGISTERED가 없으므로 등록 여부는 review_result 안의
-    // bank_status / bank_registered_at으로 별도 기록한다.
-    // analysis_question_id 기반 upsert이므로 같은 작업을 다시 실행해도 중복 등록되지 않는다.
+    // 실제 등록 문항과 중복 제외 문항을 review_result.bank_status로 구분한다.
+    const registeredIds = new Set(result.registeredQuestionIds ?? []);
+    const duplicateMap = new Map((result.duplicates ?? []).map((item: any) => [item.questionId, item]));
+
     const registrationUpdates = await Promise.all(
       registerable.map(async (item) => {
-        const nextReviewResult = {
-          ...(item.review_result ?? {}),
-          bank_status: "REGISTERED",
-          bank_registered_at: now,
-        };
+        const duplicate = duplicateMap.get(item.id) as any;
+        const nextReviewResult = registeredIds.has(item.id)
+          ? {
+              ...(item.review_result ?? {}),
+              bank_status: "REGISTERED",
+              bank_registered_at: now,
+              duplicate_status: null,
+              duplicate_of: null,
+            }
+          : duplicate
+            ? {
+                ...(item.review_result ?? {}),
+                bank_status: "DUPLICATE_SKIPPED",
+                bank_registered_at: null,
+                duplicate_status: "EXACT",
+                duplicate_of: duplicate.existingProblemId,
+                duplicate_title: duplicate.existingTitle,
+                duplicate_checked_at: now,
+              }
+            : item.review_result ?? {};
+
         return supabase
           .from("analysis_questions")
           .update({
             review_result: nextReviewResult,
-            review_reason: null,
+            review_reason: duplicate ? `문제은행 완전중복 · 기존 문항: ${duplicate.existingTitle}` : null,
             updated_at: now,
           })
           .eq("id", item.id);
@@ -149,8 +166,10 @@ export async function POST(request: NextRequest) {
       success: true,
       registered: result.registered,
       embedded: result.embedded,
+      duplicates: result.duplicates?.length ?? 0,
+      duplicateItems: result.duplicates ?? [],
       blocked: rejected.length,
-      message: `${result.registered}개 문항을 문제은행에 등록했습니다.${rejected.length ? ` 분류 누락 ${rejected.length}문항은 보류했습니다.` : ""}`,
+      message: `${result.registered}개 문항을 문제은행에 등록했습니다.${result.duplicates?.length ? ` 완전중복 ${result.duplicates.length}문항은 기존 문항을 유지하고 추가 등록하지 않았습니다.` : ""}${rejected.length ? ` 분류 누락 ${rejected.length}문항은 보류했습니다.` : ""}`,
     });
   } catch (error: any) {
     console.error("[problem-bank/register]", error);
