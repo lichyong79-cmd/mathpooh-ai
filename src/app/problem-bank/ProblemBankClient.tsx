@@ -71,98 +71,6 @@ function confidencePercent(value: number | null) {
 function normalizeDifficulty(value: unknown) {
   const raw = String(value ?? "").trim();
 
-  async function regradeAllDifficulties() {
-    if (bulkRegradeRunning) return;
-    if (!window.confirm("문제은행 전체 문항의 난이도만 AI로 다시 판정할까요? 기존 단원·유형·정답·풀이 DNA는 유지됩니다.")) {
-      return;
-    }
-
-    setBulkRegradeRunning(true);
-    setBulkRegradeProgress({ total: 0, done: 0, success: 0, failed: 0 });
-    setBulkRegradeFailedIds([]);
-    setMessage("");
-    setError("");
-
-    try {
-      const listResponse = await fetch("/api/problem-bank/questions?status=ACTIVE&limit=5000", {
-        cache: "no-store",
-      });
-      const listResult = await listResponse.json().catch(() => ({}));
-      if (!listResponse.ok) {
-        throw new Error(listResult.message || "문제은행 문항 목록을 불러오지 못했습니다.");
-      }
-
-      const rows = Array.isArray(listResult.questions)
-        ? listResult.questions
-        : Array.isArray(listResult.items)
-          ? listResult.items
-          : [];
-
-      const ids = rows
-        .map((item: any) => String(item?.id ?? "").trim())
-        .filter(Boolean);
-
-      if (!ids.length) {
-        throw new Error("재판정할 ACTIVE 문제은행 문항이 없습니다.");
-      }
-
-      setBulkRegradeProgress({ total: ids.length, done: 0, success: 0, failed: 0 });
-
-      let success = 0;
-      let failed = 0;
-      const failedIds: string[] = [];
-
-      for (let index = 0; index < ids.length; index += 20) {
-        const batch = ids.slice(index, index + 20);
-        const response = await fetch("/api/problem-bank/regrade-difficulty-batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ problemIds: batch }),
-        });
-
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          failed += batch.length;
-          failedIds.push(...batch);
-        } else {
-          const results = Array.isArray(result.results) ? result.results : [];
-          for (const item of results) {
-            if (item?.ok) success += 1;
-            else {
-              failed += 1;
-              failedIds.push(String(item?.problemId ?? ""));
-            }
-          }
-
-          const missingCount = Math.max(0, batch.length - results.length);
-          if (missingCount) {
-            failed += missingCount;
-            failedIds.push(...batch.slice(results.length));
-          }
-        }
-
-        setBulkRegradeProgress({
-          total: ids.length,
-          done: Math.min(index + batch.length, ids.length),
-          success,
-          failed,
-        });
-      }
-
-      setBulkRegradeFailedIds(failedIds.filter(Boolean));
-      setMessage(
-        failedIds.length
-          ? `전체 난이도 재판정 완료: 성공 ${success}문항 / 실패 ${failedIds.length}문항`
-          : `전체 난이도 재판정 완료: ${success}문항`,
-      );
-
-      await loadProblems();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "전체 난이도 재판정에 실패했습니다.");
-    } finally {
-      setBulkRegradeRunning(false);
-    }
-  }
 
   return ({ A: "1", B: "2", C: "3", D: "4", E: "5", 하: "1", 중: "2", 상: "4", 최상: "5" } as Record<string, string>)[raw] ?? (/^[1-5]$/.test(raw) ? raw : "");
 }
@@ -484,6 +392,88 @@ export default function ProblemBankClient() {
       setReplacingImage(false);
     }
   };
+
+  async function regradeAllDifficulties() {
+    if (bulkRegradeRunning) return;
+    if (!window.confirm("문제은행 전체 문항의 난이도만 AI로 다시 판정할까요? 기존 단원·유형·정답·풀이 DNA는 유지됩니다.")) {
+      return;
+    }
+
+    setBulkRegradeRunning(true);
+    setBulkRegradeProgress({ total: 0, done: 0, success: 0, failed: 0 });
+    setBulkRegradeFailedIds([]);
+    setMessage("");
+    setError("");
+
+    try {
+      // loadProblems가 이미 1,000개 단위 pagination으로 전체 문제은행을 불러온 상태이므로
+      // 별도 목록 API를 추측해서 호출하지 않고 현재 전체 items에서 ACTIVE 문항만 사용한다.
+      const ids = items
+        .filter((item) => item.status === "ACTIVE")
+        .map((item) => String(item.id ?? "").trim())
+        .filter(Boolean);
+
+      if (!ids.length) {
+        throw new Error("재판정할 ACTIVE 문제은행 문항이 없습니다.");
+      }
+
+      setBulkRegradeProgress({ total: ids.length, done: 0, success: 0, failed: 0 });
+
+      let success = 0;
+      let failed = 0;
+      const failedIds: string[] = [];
+
+      for (let index = 0; index < ids.length; index += 20) {
+        const batch = ids.slice(index, index + 20);
+        const response = await fetch("/api/problem-bank/regrade-difficulty-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ problemIds: batch }),
+        });
+
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          failed += batch.length;
+          failedIds.push(...batch);
+        } else {
+          const results = Array.isArray(result.results) ? result.results : [];
+          for (const item of results) {
+            if (item?.ok) success += 1;
+            else {
+              failed += 1;
+              failedIds.push(String(item?.problemId ?? ""));
+            }
+          }
+
+          const missingCount = Math.max(0, batch.length - results.length);
+          if (missingCount) {
+            failed += missingCount;
+            failedIds.push(...batch.slice(results.length));
+          }
+        }
+
+        setBulkRegradeProgress({
+          total: ids.length,
+          done: Math.min(index + batch.length, ids.length),
+          success,
+          failed,
+        });
+      }
+
+      setBulkRegradeFailedIds(failedIds.filter(Boolean));
+      setMessage(
+        failedIds.length
+          ? `전체 난이도 재판정 완료: 성공 ${success}문항 / 실패 ${failedIds.length}문항`
+          : `전체 난이도 재판정 완료: ${success}문항`,
+      );
+
+      await loadProblems();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "전체 난이도 재판정에 실패했습니다.");
+    } finally {
+      setBulkRegradeRunning(false);
+    }
+  }
 
   return (
     <AdminPortalShell current="sos-bank">
