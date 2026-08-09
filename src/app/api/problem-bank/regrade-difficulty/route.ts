@@ -121,13 +121,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: "문항 이미지가 없어 난이도를 재판정할 수 없습니다." }, { status: 400 });
     }
 
-    const { data: signed, error: signedError } = await supabase.storage
+    // v177.2: OpenAI가 Supabase signed URL을 직접 내려받다가 timeout 나는 문제를 피한다.
+    // 서버가 question-images에서 이미지를 직접 다운로드한 뒤 base64 data URL로 전달한다.
+    const downloaded = await supabase.storage
       .from("question-images")
-      .createSignedUrl(problem.question_image_path, 600);
+      .download(problem.question_image_path);
 
-    if (signedError || !signed?.signedUrl) {
-      return NextResponse.json({ success: false, message: signedError?.message || `question-images에서 문항 이미지를 찾지 못했습니다: ${problem.question_image_path}` }, { status: 500 });
+    if (downloaded.error || !downloaded.data) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: downloaded.error?.message || `question-images에서 문항 이미지를 찾지 못했습니다: ${problem.question_image_path}`,
+        },
+        { status: 500 },
+      );
     }
+
+    const imageBytes = Buffer.from(await downloaded.data.arrayBuffer());
+    const contentType = downloaded.data.type || "image/webp";
+    const imageDataUrl = `data:${contentType};base64,${imageBytes.toString("base64")}`;
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -147,7 +159,7 @@ export async function POST(request: NextRequest) {
           role: "user",
           content: [
             { type: "input_text", text: difficultyPrompt(problem.problem_dna) },
-            { type: "input_image", image_url: signed.signedUrl },
+            { type: "input_image", image_url: imageDataUrl, detail: "high" },
           ],
         }],
         max_output_tokens: 500,
@@ -178,7 +190,7 @@ export async function POST(request: NextRequest) {
       reasons: [difficulty.reason],
       ai_regraded_at: new Date().toISOString(),
       ai_regrade_confidence: difficulty.confidence,
-      ai_regrade_version: "difficulty-v177",
+      ai_regrade_version: "difficulty-v177.2",
     };
 
     const { error: updateError } = await supabase
@@ -200,7 +212,7 @@ export async function POST(request: NextRequest) {
       difficulty: difficulty.final_grade,
       reason: difficulty.reason,
       confidence: difficulty.confidence,
-      version: "difficulty-v177",
+      version: "difficulty-v177.2",
     });
   } catch (error) {
     return NextResponse.json(
