@@ -122,11 +122,11 @@ export async function POST(request: NextRequest) {
     }
 
     const { data: signed, error: signedError } = await supabase.storage
-      .from("analysis-question-images")
+      .from("question-images")
       .createSignedUrl(problem.question_image_path, 600);
 
     if (signedError || !signed?.signedUrl) {
-      return NextResponse.json({ success: false, message: signedError?.message || "문항 이미지 URL 생성 실패" }, { status: 500 });
+      return NextResponse.json({ success: false, message: signedError?.message || `question-images에서 문항 이미지를 찾지 못했습니다: ${problem.question_image_path}` }, { status: 500 });
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
