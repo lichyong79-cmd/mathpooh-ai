@@ -118,12 +118,38 @@ export default function ProblemBankClient() {
         "grade", "subject", "unit", "topic", "difficulty", "question_type", "answer", "summary",
         "source_name", "confidence", "status", "content_role", "training_course", "created_at", "updated_at", "question_image_path", "page_no", "problem_dna", "analysis_version",
       ].join(",");
-      const response = await fetch(
-        `${config.url}/rest/v1/problem_bank_questions?select=${fields}&order=created_at.desc`,
-        { headers: { ...(await authHeaders()) }, cache: "no-store" },
-      );
-      if (!response.ok) throw new Error(await response.text());
-      const rows = ((await response.json()) as Problem[]).map((item) => ({ ...item, difficulty: normalizeDifficulty(item.difficulty) }));
+      // Supabase/PostgREST는 한 번의 요청에서 최대 1,000행만 반환될 수 있으므로
+      // 1,000개씩 페이지를 나누어 문제은행 전체를 끝까지 불러옵니다.
+      const pageSize = 1000;
+      const allRows: Problem[] = [];
+
+      for (let from = 0; ; from += pageSize) {
+        const to = from + pageSize - 1;
+        const response = await fetch(
+          `${config.url}/rest/v1/problem_bank_questions?select=${fields}&order=created_at.desc`,
+          {
+            headers: {
+              ...(await authHeaders()),
+              Range: `${from}-${to}`,
+            },
+            cache: "no-store",
+          },
+        );
+
+        if (!response.ok) throw new Error(await response.text());
+
+        const pageRows = (await response.json()) as Problem[];
+        allRows.push(...pageRows);
+
+        // 1,000개보다 적게 왔으면 마지막 페이지입니다.
+        if (pageRows.length < pageSize) break;
+      }
+
+      const rows = allRows.map((item) => ({
+        ...item,
+        difficulty: normalizeDifficulty(item.difficulty),
+      }));
+
       setItems(rows);
       setSelectedId((current) => rows.some((item) => item.id === current) ? current : rows[0]?.id ?? "");
     } catch (reason) {
