@@ -1698,6 +1698,8 @@ function RecommendPage() {
   const [saving, setSaving] = useState(false);
   const [problemCount, setProblemCount] = useState(0);
   const [sessions, setSessions] = useState<any[]>([]);
+  const [diagnosisReadyForNo1, setDiagnosisReadyForNo1] = useState(false);
+  const [diagnosisErrorForNo1, setDiagnosisErrorForNo1] = useState("");
   const [rejectedSourceKeys, setRejectedSourceKeys] = useState<string[]>([]);
   const [confirmedTarget, setConfirmedTarget] = useState<SosTargetDecision | null>(null);
 
@@ -1733,6 +1735,8 @@ function RecommendPage() {
   useEffect(() => {
     setRejectedSourceKeys([]);
     setConfirmedTarget(null);
+    setDiagnosisReadyForNo1(false);
+    setDiagnosisErrorForNo1("");
   }, [selectedId]);
 
   const allSourceCandidates = useMemo(
@@ -1755,6 +1759,17 @@ function RecommendPage() {
 
   const rejectCurrent = () => {
     if (!target) return;
+    setConfirmedTarget(null);
+    setDiagnosisReadyForNo1(false);
+    setDiagnosisErrorForNo1("");
+    setRejectedSourceKeys((current) => current.includes(target.key) ? current : [...current, target.key]);
+  };
+
+  const cancelConfirmedNo1AndMoveNext = () => {
+    if (!target) return;
+    setConfirmedTarget(null);
+    setDiagnosisReadyForNo1(false);
+    setDiagnosisErrorForNo1("");
     setRejectedSourceKeys((current) => current.includes(target.key) ? current : [...current, target.key]);
   };
 
@@ -1768,6 +1783,8 @@ function RecommendPage() {
 
     setSaving(true);
     setConfirmedTarget(target); // NO1 확정 자체는 문제은행 진단문항 수와 별개다.
+    setDiagnosisReadyForNo1(false);
+    setDiagnosisErrorForNo1("");
     try {
       const response = await fetch("/api/admin/training-engine", {
         method: "POST",
@@ -1792,10 +1809,15 @@ function RecommendPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "진단 3문항 생성 실패");
       await loadSessions(String(selected.id));
+      setDiagnosisReadyForNo1(true);
+      setDiagnosisErrorForNo1("");
       alert("SOS_NO1을 확정하고 진단 3문항을 생성했습니다.");
     } catch (error) {
-      // 문제은행이 아직 부족해 3문항이 안 나와도 NO1 선택 자체는 그대로 보여준다.
-      alert(error instanceof Error ? error.message : "진단 3문항을 생성하지 못했습니다.");
+      // 문제은행이 아직 부족하면 NO1은 보이되, 관리자가 즉시 취소하고 다음 실제 오답을 선택할 수 있다.
+      const message = error instanceof Error ? error.message : "진단 3문항을 생성하지 못했습니다.";
+      setDiagnosisReadyForNo1(false);
+      setDiagnosisErrorForNo1(message);
+      alert(message);
     } finally {
       setSaving(false);
     }
@@ -1925,8 +1947,30 @@ function RecommendPage() {
 
                 <div style={{padding:14,borderRadius:14,background:"#fff",border:"1px solid #e4e7ec"}}>
                   {confirmedTarget?.key === target.key ? <>
-                    <div style={{fontWeight:900,color:"#25633a",fontSize:16}}>✓ SOS_NO1 공략문항 확정 완료</div>
-                    <p style={{fontSize:13,color:"#667085",lineHeight:1.6}}>다음 단계는 이 원문항의 단원·유형·난이도를 기준으로 문제은행에서 진단 3문항을 찾는 것입니다.</p>
+                    <div style={{fontWeight:900,color: diagnosisReadyForNo1 ? "#25633a" : "#b54708",fontSize:16}}>
+                      {diagnosisReadyForNo1 ? "✓ SOS_NO1 확정 · 진단 3문항 생성 완료" : "SOS_NO1 확정 · 진단문항 확인 필요"}
+                    </div>
+                    {diagnosisReadyForNo1 ? (
+                      <p style={{fontSize:13,color:"#667085",lineHeight:1.6}}>이 원문항을 기준으로 진단 3문항이 준비되었습니다.</p>
+                    ) : (
+                      <>
+                        <p style={{fontSize:13,color:"#667085",lineHeight:1.6,marginBottom:8}}>
+                          {diagnosisErrorForNo1 || "현재 문제은행에서 진단 3문항을 충분히 찾지 못했습니다."}
+                        </p>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={saving}
+                          onClick={cancelConfirmedNo1AndMoveNext}
+                          style={{width:"100%"}}
+                        >
+                          NO1 확정 취소 · 다음 실제 오답 선택
+                        </button>
+                        <div style={{marginTop:8,fontSize:11,color:"#98a2b3",textAlign:"center"}}>
+                          현재 NO1을 제외하고 이 학생이 실제로 틀린 다음 실전모의고사 문항을 올립니다.
+                        </div>
+                      </>
+                    )}
                   </> : <>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                       <button className="secondary-button" disabled={saving} onClick={rejectCurrent}>NO · 다른 오답</button>
