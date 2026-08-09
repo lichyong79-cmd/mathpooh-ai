@@ -44,7 +44,7 @@ const emptyDraft: Draft = {
   subject: "",
   unit: "",
   topic: "",
-  difficulty: "2",
+  difficulty: "",
   question_type: "unknown",
   answer: "",
   summary: "",
@@ -70,7 +70,7 @@ function confidencePercent(value: number | null) {
 
 function normalizeDifficulty(value: unknown) {
   const raw = String(value ?? "").trim();
-  return ({ A: "1", B: "2", C: "3", D: "4", E: "5", 하: "1", 중: "2", 상: "4", 최상: "5" } as Record<string, string>)[raw] ?? (/^[1-5]$/.test(raw) ? raw : "2");
+  return ({ A: "1", B: "2", C: "3", D: "4", E: "5", 하: "1", 중: "2", 상: "4", 최상: "5" } as Record<string, string>)[raw] ?? (/^[1-5]$/.test(raw) ? raw : "");
 }
 
 function questionTypeLabel(value: string) {
@@ -473,7 +473,32 @@ export default function ProblemBankClient() {
 
             <form className="edit-panel" onSubmit={(event) => { event.preventDefault(); void save(); }}>
               <div className="edit-head"><div><strong>{selected.question_no}번 분석 정보</strong><span>신뢰도 {confidencePercent(selected.confidence)} · {selected.analysis_version || "legacy"}</span></div><code>{selected.problem_code}</code></div>
-              <div className="detail-tabs"><button type="button" className={detailTab === "basic" ? "active" : ""} onClick={() => setDetailTab("basic")}>기본정보 수정</button><button type="button" className={detailTab === "dna" ? "active" : ""} onClick={() => setDetailTab("dna")}>문항 DNA</button></div>
+              <div className="detail-tabs"><button type="button" className={detailTab === "basic" ? "active" : ""} onClick={() => setDetailTab("basic")}>기본정보 수정</button>
+<button
+  type="button"
+  onClick={async () => {
+    if (!selected?.id) return;
+    if (!window.confirm("이 문항의 난이도만 AI로 다시 판정할까요? 다른 DNA는 유지됩니다.")) return;
+    setMessage("");
+    setError("");
+    try {
+      const response = await fetch("/api/problem-bank/regrade-difficulty", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ problemId: selected.id }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.message || "난이도 재판정 실패");
+      setMessage(`AI 난이도 재판정 완료: ${result.difficulty}단계`);
+      await loadProblems();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "난이도 재판정 실패");
+    }
+  }}
+>
+  AI 난이도 재판정
+</button>
+<button type="button" className={detailTab === "dna" ? "active" : ""} onClick={() => setDetailTab("dna")}>문항 DNA</button></div>
               {detailTab === "basic" ? <div className="edit-grid">
                 <label className="wide"><span>문항명</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
                 <label><span>학년</span><input value={draft.grade} onChange={(event) => setDraft({ ...draft, grade: event.target.value })} /></label>

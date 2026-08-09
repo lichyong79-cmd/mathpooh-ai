@@ -112,6 +112,29 @@ function problemDna(result: Record<string, unknown>) {
   return value && typeof value === "object" ? value as ProblemDNA : null;
 }
 
+function normalizeDifficultyValue(value: unknown) {
+  const raw = text(value);
+  const mapped: Record<string, string> = {
+    "1": "1", "2": "2", "3": "3", "4": "4", "5": "5",
+    A: "1", B: "2", C: "3", D: "4", E: "5",
+    하: "1", 중: "2", 상: "4", 최상: "5",
+  };
+  return mapped[raw] ?? "";
+}
+
+function resolvedDifficulty(result: Record<string, unknown>) {
+  const dna = problemDna(result);
+  // v176: Problem DNA의 최종 난이도를 최우선으로 사용한다.
+  const dnaGrade = normalizeDifficultyValue((dna as any)?.difficulty?.final_grade);
+  if (dnaGrade) return dnaGrade;
+
+  const legacyGrade = normalizeDifficultyValue(result.difficulty);
+  if (legacyGrade) return legacyGrade;
+
+  // 난이도를 모르면 2로 위장하지 않는다. 등록 검증에서 확인할 수 있도록 빈 값 유지.
+  return "";
+}
+
 async function createEmbeddings(inputs: string[]) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || inputs.length === 0) return [] as number[][];
@@ -229,7 +252,7 @@ export async function registerQuestions(
       subject: text(result.subject) || text(source.subject),
       unit: text(result.unit),
       topic: text(result.topic),
-      difficulty: text(result.difficulty) || "2",
+      difficulty: resolvedDifficulty(result),
       question_type: text(result.question_type) || "unknown",
       answer: question.answer ?? "",
       summary: text(result.summary),
