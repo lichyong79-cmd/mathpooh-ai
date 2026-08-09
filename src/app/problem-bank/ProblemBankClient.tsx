@@ -395,81 +395,181 @@ export default function ProblemBankClient() {
 
   async function regradeAllDifficulties() {
     if (bulkRegradeRunning) return;
-    if (!window.confirm("문제은행 전체 문항의 난이도만 AI로 다시 판정할까요? 기존 단원·유형·정답·풀이 DNA는 유지됩니다.")) {
+    if (!window.confirm("문제은행 전체 문항의 난이도만 AI로 다시 판정할까요?\n이미 이번 작업에서 완료된 문항은 건너뛰고, 중간 오류가 나도 다음 배치로 계속 진행합니다.")) {
       return;
     }
 
     setBulkRegradeRunning(true);
-    setBulkRegradeProgress({ total: 0, done: 0, success: 0, failed: 0 });
     setBulkRegradeFailedIds([]);
     setMessage("");
     setError("");
 
+    // 브라우저가 닫히거나 fetch가 끊겨도 이어갈 수 있도록 성공 ID를 로컬에 저장합니다.
+    const storageKey = "mathpooh.problem-bank.difficulty-regrade.completed.v1";
+    const readCompletedIds = () => {
+      try {
+        const parsed = JSON.parse(window.localStorage.getItem(storageKey) || "[]");
+        return new Set<string>(Array.isArray(parsed) ? parsed.map(String) : []);
+      } catch {
+        return new Set<string>();
+      }
+    };
+    const saveCompletedIds = (completed: Set<string>) => {
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify(Array.from(completed)));
+      } catch {
+        // localStorage 실패는 전체 재판정을 중단시키지 않습니다.
+      }
+    };
+
     try {
-      // loadProblems가 이미 1,000개 단위 pagination으로 전체 문제은행을 불러온 상태이므로
-      // 별도 목록 API를 추측해서 호출하지 않고 현재 전체 items에서 ACTIVE 문항만 사용한다.
       const ids = items
         .filter((item) => item.status === "ACTIVE")
         .map((item) => String(item.id ?? "").trim())
         .filter(Boolean);
 
-      if (!ids.length) {
-        throw new Error("재판정할 ACTIVE 문제은행 문항이 없습니다.");
+      if (!ids.length) throw new Error("재판정할 ACTIVE 문제은행 문항이 없습니다.");
+
+      const validIdSet = new Set(ids);
+      const completed = readCompletedIds();
+      // 삭제된 문항 등 현재 문제은행에 없는 과거 기록은 제거합니다.
+      for (const id of Array.from(completed)) {
+        if (!validIdSet.has(id)) completed.delete(id);
       }
 
-      setBulkRegradeProgress({ total: ids.length, done: 0, success: 0, failed: 0 });
+      const pendingIds = ids.filter((id) => !completed.has(id));
+      const alreadyDone = ids.length - pendingIds.length;
 
-      let success = 0;
+      setBulkRegradeProgress({
+        total: ids.length,
+        done: alreadyDone,
+        success: alreadyDone,
+        failed: 0,
+      });
+
+      if (!pendingIds.length) {
+        setMessage(`전체 ${ids.length}문항이 이미 재판정 완료 상태입니다.`);
+        return;
+      }
+
+      let success = alreadyDone;
       let failed = 0;
       const failedIds: string[] = [];
 
-      for (let index = 0; index < ids.length; index += 20) {
-        const batch = ids.slice(index, index + 20);
-        const response = await fetch("/api/problem-bank/regrade-difficulty-batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ problemIds: batch }),
-        });
+      const runBatch = async (batch: string[]) => {
+        // 순간적인 Failed to fetch / 5xx를 위해 같은 배치를 최대 3회 시도합니다.
+        let lastError = "";
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            const response = await fetch("/api/problem-bank/regrade-difficulty-batch", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ problemIds: batch }),
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              lastError = String(result?.message || `HTTP ${response.status}`);
+              if (response.status < 500 && response.status !== 429) break;
+            } else {
+              return { ok: true as const, result };
+            }
+          } catch (reason) {
+            lastError = reason instanceof Error ? reason.message : "Failed to fetch";
+          }
+          if (attempt < 3) await new Promise((resolve) => window.setTimeout(resolve, attempt * 1500));
+        }
+        return { ok: false as const, error: lastError };
+      };
 
-        const result = await response.json().catch(() => ({}));
+      for (let index = 0; index < pendingIds.length; index += 20) {
+        const batch = pendingIds.slice(index, index + 20);
+        const response = await runBatch(batch);
+
         if (!response.ok) {
+          // 한 배치가 완전히 실패해도 전체 작업은 멈추지 않습니다.
           failed += batch.length;
           failedIds.push(...batch);
         } else {
-          const results = Array.isArray(result.results) ? result.results : [];
-          for (const item of results) {
-            if (item?.ok) success += 1;
-            else {
+          const results = Array.isArray(response.result?.results) ? response.result.results : [];
+          const returned = new Set<string>();
+
+          for (const result of results) {
+            const problemId = String(result?.problemId ?? "").trim();
+            if (problemId) returned.add(problemId);
+            if (result?.ok && problemId) {
+              completed.add(problemId);
+              success += 1;
+            } else if (problemId) {
               failed += 1;
-              failedIds.push(String(item?.problemId ?? ""));
+              failedIds.push(problemId);
             }
           }
 
-          const missingCount = Math.max(0, batch.length - results.length);
-          if (missingCount) {
-            failed += missingCount;
-            failedIds.push(...batch.slice(results.length));
+          // API가 일부 결과만 반환한 경우 누락 문항은 실패 목록으로 남깁니다.
+          for (const id of batch) {
+            if (!returned.has(id)) {
+              failed += 1;
+              failedIds.push(id);
+            }
           }
+          saveCompletedIds(completed);
         }
 
+        const processedThisRun = Math.min(index + batch.length, pendingIds.length);
         setBulkRegradeProgress({
           total: ids.length,
-          done: Math.min(index + batch.length, ids.length),
+          done: alreadyDone + processedThisRun,
           success,
           failed,
         });
       }
 
-      setBulkRegradeFailedIds(failedIds.filter(Boolean));
+      // 1차 실패 문항만 마지막에 한 번 더 재시도합니다.
+      const uniqueFailed = Array.from(new Set(failedIds.filter(Boolean))).filter((id) => !completed.has(id));
+      const stillFailed: string[] = [];
+      if (uniqueFailed.length) {
+        setMessage(`1차 완료. 실패 ${uniqueFailed.length}문항만 자동 재시도 중...`);
+        for (let index = 0; index < uniqueFailed.length; index += 20) {
+          const batch = uniqueFailed.slice(index, index + 20);
+          const response = await runBatch(batch);
+          if (!response.ok) {
+            stillFailed.push(...batch);
+            continue;
+          }
+          const results = Array.isArray(response.result?.results) ? response.result.results : [];
+          const returned = new Set<string>();
+          for (const result of results) {
+            const problemId = String(result?.problemId ?? "").trim();
+            if (problemId) returned.add(problemId);
+            if (result?.ok && problemId) {
+              completed.add(problemId);
+              success += 1;
+            } else if (problemId) {
+              stillFailed.push(problemId);
+            }
+          }
+          for (const id of batch) if (!returned.has(id)) stillFailed.push(id);
+          saveCompletedIds(completed);
+        }
+      }
+
+      const finalFailed = Array.from(new Set(stillFailed)).filter((id) => !completed.has(id));
+      setBulkRegradeFailedIds(finalFailed);
+      setBulkRegradeProgress({
+        total: ids.length,
+        done: ids.length,
+        success: completed.size,
+        failed: finalFailed.length,
+      });
       setMessage(
-        failedIds.length
-          ? `전체 난이도 재판정 완료: 성공 ${success}문항 / 실패 ${failedIds.length}문항`
-          : `전체 난이도 재판정 완료: ${success}문항`,
+        finalFailed.length
+          ? `난이도 재판정 진행 완료: 누적 완료 ${completed.size}/${ids.length} · 최종 실패 ${finalFailed.length}문항 (다시 누르면 실패/미완료만 이어서 처리)`
+          : `전체 난이도 재판정 완료: ${ids.length}문항`,
       );
 
       await loadProblems();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "전체 난이도 재판정에 실패했습니다.");
+      setError(`${reason instanceof Error ? reason.message : "전체 난이도 재판정에 실패했습니다."} · 다시 누르면 완료된 문항은 건너뛰고 이어서 진행합니다.`);
     } finally {
       setBulkRegradeRunning(false);
     }
