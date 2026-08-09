@@ -32,7 +32,13 @@ export async function POST(request: NextRequest) {
         cache: "no-store",
       });
 
-      const result = await response.json().catch(() => ({}));
+      const raw = await response.text();
+      let result: any = {};
+      try {
+        result = raw ? JSON.parse(raw) : {};
+      } catch {
+        result = { success: false, message: raw || `HTTP ${response.status}` };
+      }
       results.push({ problemId, ok: response.ok && result?.success, ...result });
     }
 

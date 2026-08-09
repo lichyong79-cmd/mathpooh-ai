@@ -41,12 +41,71 @@ function parseJson(text: string): DifficultyResult {
     .replace(/\s*```$/i, "")
     .trim();
 
-  const parsed = JSON.parse(cleaned) as DifficultyResult;
+  if (!cleaned) throw new Error("AI 난이도 결과가 비어 있습니다.");
+
+  let parsed: DifficultyResult;
+  try {
+    parsed = JSON.parse(cleaned) as DifficultyResult;
+  } catch (error) {
+    throw new Error(
+      `AI 난이도 JSON 파싱 실패: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
   if (!["1", "2", "3", "4", "5"].includes(String(parsed.final_grade))) {
     throw new Error("AI 난이도 결과가 1~5단계가 아닙니다.");
   }
+
+  const confidence = Number(parsed.confidence);
+  parsed.confidence = Number.isFinite(confidence)
+    ? Math.max(0, Math.min(1, confidence))
+    : 0;
+
   return parsed;
 }
+
+const difficultySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "final_grade",
+    "csat_point_equivalent",
+    "csat_difficulty_band",
+    "reason",
+    "confidence",
+  ],
+  properties: {
+    final_grade: {
+      type: "string",
+      enum: ["1", "2", "3", "4", "5"],
+    },
+    csat_point_equivalent: {
+      type: "integer",
+      enum: [2, 3, 4],
+    },
+    csat_difficulty_band: {
+      type: "string",
+      enum: [
+        "two_point",
+        "three_point",
+        "four_easy",
+        "four_medium",
+        "four_hard",
+        "semi_killer_easy",
+        "semi_killer_hard",
+        "killer",
+      ],
+    },
+    reason: {
+      type: "string",
+    },
+    confidence: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+    },
+  },
+} as const;
 
 function difficultyPrompt(existingDna: any) {
   const basic = existingDna?.basic ?? {};
@@ -162,7 +221,17 @@ export async function POST(request: NextRequest) {
             { type: "input_image", image_url: imageDataUrl, detail: "high" },
           ],
         }],
-        max_output_tokens: 500,
+        reasoning: { effort: "low" },
+        text: {
+          format: {
+            type: "json_schema",
+            name: "mathpooh_difficulty_v177_3",
+            strict: true,
+            schema: difficultySchema,
+          },
+        },
+        max_output_tokens: 1400,
+        store: false,
       }),
       signal: AbortSignal.timeout(180_000),
       cache: "no-store",
@@ -176,7 +245,18 @@ export async function POST(request: NextRequest) {
     }
 
     const payload = await response.json();
-    const difficulty = parseJson(extractOutputText(payload));
+    const outputText = extractOutputText(payload);
+
+    if (!outputText) {
+      const incompleteReason = payload?.incomplete_details?.reason;
+      throw new Error(
+        incompleteReason
+          ? `AI 난이도 응답이 완료되지 않았습니다: ${incompleteReason}`
+          : "AI 난이도 응답이 비어 있습니다."
+      );
+    }
+
+    const difficulty = parseJson(outputText);
 
     const dna = problem.problem_dna && typeof problem.problem_dna === "object"
       ? { ...(problem.problem_dna as Record<string, any>) }
@@ -190,7 +270,7 @@ export async function POST(request: NextRequest) {
       reasons: [difficulty.reason],
       ai_regraded_at: new Date().toISOString(),
       ai_regrade_confidence: difficulty.confidence,
-      ai_regrade_version: "difficulty-v177.2",
+      ai_regrade_version: "difficulty-v177.3",
     };
 
     const { error: updateError } = await supabase
@@ -212,7 +292,7 @@ export async function POST(request: NextRequest) {
       difficulty: difficulty.final_grade,
       reason: difficulty.reason,
       confidence: difficulty.confidence,
-      version: "difficulty-v177.2",
+      version: "difficulty-v177.3",
     });
   } catch (error) {
     return NextResponse.json(
