@@ -18,6 +18,7 @@ export async function POST(request: NextRequest) {
     }
 
     const dryRun = body?.dryRun === true;
+    const referenceIds = Array.isArray(body?.referenceIds) ? body.referenceIds.map((v: unknown) => String(v ?? "").trim()).filter(Boolean).slice(0, 24) : [];
     const targetIds = ids.slice(0, 20); // 한 번에 과도하게 호출하지 않도록 제한
     const origin = new URL(request.url).origin;
     const results: any[] = [];
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
           "Content-Type": "application/json",
           cookie: request.headers.get("cookie") ?? "",
         },
-        body: JSON.stringify({ problemId, dryRun }),
+        body: JSON.stringify({ problemId, dryRun, referenceIds }),
         cache: "no-store",
       });
 

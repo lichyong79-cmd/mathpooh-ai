@@ -172,26 +172,77 @@ export default function DifficultyManagementPage() {
 
   async function runAll() {
     if (running) return;
-    const ids = items.map(x=>x.id);
-    if (!ids.length) return;
-    if (!window.confirm(`ACTIVE ${ids.length}문항의 난이도를 전체 재판정하고 실제 DB에 반영합니다. 계속할까요?`)) return;
+
+    // 관리자가 직접 확정한 문항은 전체 재판정에서 절대 덮어쓰지 않는다.
+    const fixed = items.filter(x => x.problem_dna?.difficulty?.admin_fixed === true);
+    const targets = items.filter(x => x.problem_dna?.difficulty?.admin_fixed !== true);
+    const ids = targets.map(x => x.id);
+
+    if (!ids.length) {
+      setMessage(`재판정 대상이 없습니다. 관리자 확정 ${fixed.length}문항은 그대로 보존됩니다.`);
+      return;
+    }
+
+    // 새 8단계(sos8-v1)로 관리자가 확정한 문항만 AI 기준 예시로 사용한다.
+    // 과거 1~5 관리자 확정 데이터는 보존하지만 reference로는 사용하지 않는다.
+    const validFixed = fixed.filter(x => x.problem_dna?.difficulty?.scale_version === DIFFICULTY_SCALE_VERSION);
+    const referenceIds = DIFFICULTY_SCALE.flatMap(scale =>
+      validFixed
+        .filter(x => norm(x.difficulty, x.problem_dna) === scale.value)
+        .slice(0, 3)
+        .map(x => x.id)
+    );
+
+    if (!window.confirm(
+      `전체 8단계 난이도 재판정을 시작합니다.\n\n` +
+      `재판정 대상: ${ids.length}문항\n` +
+      `관리자 확정 보존: ${fixed.length}문항\n` +
+      `새 8단계 관리자 기준 샘플: ${referenceIds.length}문항\n\n` +
+      `관리자 확정 문항은 변경하지 않습니다. 계속할까요?`
+    )) return;
+
     setRunning(true); setMessage(""); setError("");
     let ok=0, fail=0;
     setProgress({ mode:"all", done:0, total:ids.length, ok:0, fail:0 });
+
     try {
       for (let i=0;i<ids.length;i+=20) {
         const batch=ids.slice(i,i+20);
-        const res=await fetch("/api/problem-bank/regrade-difficulty-batch", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({problemIds:batch,dryRun:false})});
+        const res=await fetch("/api/problem-bank/regrade-difficulty-batch", {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({problemIds:batch,dryRun:false,referenceIds})
+        });
         const data=await res.json().catch(()=>({}));
-        if (!res.ok) { fail += batch.length; }
-        else for (const r of (Array.isArray(data.results)?data.results:[])) r?.ok ? ok++ : fail++;
+
+        if (!res.ok) {
+          fail += batch.length;
+        } else {
+          const results = Array.isArray(data.results) ? data.results : [];
+          const resultMap = new Map(results.map((r:any)=>[String(r.problemId),r]));
+          for (const id of batch) {
+            const r:any = resultMap.get(String(id));
+            if (r?.ok || r?.success) ok++;
+            else fail++;
+          }
+        }
+
         const done=Math.min(i+20,ids.length);
         setProgress({ mode:"all", done, total:ids.length, ok, fail });
-        setMessage(`전체 8단계 난이도 측정 중 · ${done}/${ids.length} · 성공 ${ok} · 실패 ${fail}`);
+        setMessage(
+          `전체 8단계 재판정 중 · ${done}/${ids.length} · 성공 ${ok} · 실패 ${fail} · 관리자 확정 ${fixed.length} 제외`
+        );
       }
-      setMessage(`전체 8단계 난이도 측정 완료 · 성공 ${ok} · 실패 ${fail}`); await load();
-    } catch(e) { setError(e instanceof Error ? e.message : "전체 재판정에 실패했습니다."); }
-    finally { setRunning(false); setProgress(null); }
+
+      await load();
+      setMessage(
+        `전체 8단계 난이도 재판정 완료 · 성공 ${ok} · 실패 ${fail} · 관리자 확정 ${fixed.length}문항 보존`
+      );
+    } catch(e) {
+      setError(e instanceof Error ? e.message : "전체 재판정에 실패했습니다.");
+    } finally {
+      setRunning(false); setProgress(null);
+    }
   }
 
   return <AdminPortalShell current="sos-difficulty">
@@ -203,7 +254,7 @@ export default function DifficultyManagementPage() {
       </div>
 
       {progress && <div className="progress-card">
-        <div className="progress-copy"><b>{progress.mode === "test" ? "8단계 20문항 테스트 중입니다..." : "전체 8단계 난이도 측정 중입니다..."}</b><span>{progress.done}/{progress.total} · 성공 {progress.ok} · 실패 {progress.fail}</span></div>
+        <div className="progress-copy"><b>{progress.mode === "test" ? "8단계 20문항 테스트 중입니다..." : "전체 8단계 난이도 재판정 중입니다..."}</b><span>{progress.done}/{progress.total} · 성공 {progress.ok} · 실패 {progress.fail}</span></div>
         <div className="progress-track"><i style={{width:`${progress.total ? Math.round(progress.done/progress.total*100) : 0}%`}} /></div>
       </div>}
       {message && <div className="notice success">{message}</div>}
@@ -216,7 +267,7 @@ export default function DifficultyManagementPage() {
         <select value={subject} onChange={e=>setSubject(e.target.value)}>{subjects.map(x=><option key={x}>{x}</option>)}</select>
         <select value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option>전체</option>{DIFFICULTY_SCALE.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}</select>
         <button disabled={running} onClick={runTest20}>8단계 20문항 테스트</button>
-        <button disabled={running} onClick={runAll} className="primary">전체 재판정</button>
+        <button disabled={running} onClick={runAll} className="primary">전체 8단계 난이도 재판정</button>
       </div>
 
       {testResults.length>0 && <section className="test-section">
