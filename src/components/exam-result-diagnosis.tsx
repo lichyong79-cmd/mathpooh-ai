@@ -1,5 +1,6 @@
-import { difficultyLabel } from "@/lib/difficulty-scale";
+
 "use client";
+import { difficultyLabel } from "@/lib/difficulty-scale";
 
 type Metadata = {
   question_no: number;
