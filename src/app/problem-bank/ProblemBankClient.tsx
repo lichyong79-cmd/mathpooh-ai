@@ -103,6 +103,17 @@ export default function ProblemBankClient() {
   });
   const [bulkRegradeFailedIds, setBulkRegradeFailedIds] = useState<string[]>([]);
   const [testRegradeRunning, setTestRegradeRunning] = useState(false);
+  const [testRegradeResults, setTestRegradeResults] = useState<Array<{
+    id: string;
+    questionNo: number;
+    title: string;
+    problemCode: string;
+    before: string;
+    after: string;
+    reason: string;
+    ok: boolean;
+  }>>([]);
+
 
 
   const [error, setError] = useState("");
@@ -414,6 +425,7 @@ export default function ProblemBankClient() {
     )) return;
 
     setTestRegradeRunning(true);
+    setTestRegradeResults([]);
     setMessage("");
     setError("");
 
@@ -431,13 +443,33 @@ export default function ProblemBankClient() {
       const summary: Record<string, number> = {};
       let success = 0;
 
-      for (const item of results) {
-        if (item?.ok && item?.difficulty) {
+      const resultMap = new Map<string, any>(
+        results.map((item: any) => [String(item?.problemId ?? ""), item])
+      );
+
+      const visibleResults = targets.map((target) => {
+        const row = resultMap.get(String(target.id));
+        const ok = Boolean(row?.ok);
+        const after = ok ? String(row?.difficulty ?? target.difficulty) : "-";
+
+        if (ok) {
           success += 1;
-          const key = String(item.difficulty);
-          summary[key] = (summary[key] || 0) + 1;
+          summary[after] = (summary[after] || 0) + 1;
         }
-      }
+
+        return {
+          id: target.id,
+          questionNo: target.question_no,
+          title: target.title,
+          problemCode: target.problem_code,
+          before: String(target.difficulty || "-"),
+          after,
+          reason: String(row?.reason ?? row?.message ?? ""),
+          ok,
+        };
+      });
+
+      setTestRegradeResults(visibleResults);
 
       const failed = targets.length - success;
       setMessage(
@@ -598,6 +630,56 @@ export default function ProblemBankClient() {
 
       {message ? <div className="notice success">{message}</div> : null}
       {error ? <div className="notice error">{error}</div> : null}
+
+      {testRegradeResults.length ? (
+        <section style={{
+          maxWidth: 1920,
+          margin: "0 auto 12px",
+          padding: 14,
+          background: "#fff",
+          border: "1px solid #dfe5ec",
+          borderRadius: 14,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+            <strong style={{ color: "#294f31" }}>방금 보정 테스트한 20문항</strong>
+            <span style={{ fontSize: 12, color: "#7b8497" }}>문항을 누르면 오른쪽에서 바로 확인할 수 있습니다.</span>
+          </div>
+          <div style={{ display: "grid", gap: 6 }}>
+            {testRegradeResults.map((row) => (
+              <button
+                key={row.id}
+                type="button"
+                onClick={() => setSelectedId(row.id)}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "70px minmax(220px,1fr) 120px minmax(260px,1.4fr)",
+                  gap: 10,
+                  alignItems: "center",
+                  width: "100%",
+                  padding: "9px 11px",
+                  border: "1px solid #e6eaf0",
+                  borderRadius: 9,
+                  background: row.ok ? "#fbfcfe" : "#fff4f4",
+                  color: "#40506a",
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                <b>{row.questionNo}번</b>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {row.title} · {row.problemCode}
+                </span>
+                <strong style={{ color: row.ok ? "#2f6937" : "#b84451" }}>
+                  {row.ok ? `${row.before} → ${row.after}` : "실패"}
+                </strong>
+                <small style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#7b8497" }}>
+                  {row.reason || "-"}
+                </small>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="bank-layout">
         <aside className="problem-list">
