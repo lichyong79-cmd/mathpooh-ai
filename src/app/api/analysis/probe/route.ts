@@ -17,7 +17,7 @@ type ProbeResult = {
     subject: string;
     unit: string;
     topic: string;
-    difficulty: 1 | 2 | 3 | 4 | 5;
+    difficulty: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
     answer: string;
     confidence: number;
     summary: string;
@@ -51,7 +51,7 @@ const probeSchema = {
         subject: { type: "string" },
         unit: { type: "string" },
         topic: { type: "string" },
-        difficulty: { type: "integer", minimum: 1, maximum: 5 },
+        difficulty: { type: "integer", minimum: 1, maximum: 8 },
         answer: { type: "string" },
         confidence: { type: "number", minimum: 0, maximum: 1 },
         summary: { type: "string" },

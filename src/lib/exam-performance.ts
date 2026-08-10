@@ -1,3 +1,4 @@
+import { difficultyLabel } from "@/lib/difficulty-scale";
 export type PerformanceGroup = {
   label: string;
   total: number;
@@ -80,7 +81,7 @@ export function buildStudentPerformance(
       const problemTypes = Array.isArray(info?.problem_types) ? info.problem_types : [];
       const type = problemTypes[0] || info?.detailed_topic || info?.question_type || "미분류";
       const difficultyValue = Number(info?.difficulty);
-      const difficulty = difficultyValue >= 1 && difficultyValue <= 5 ? difficultyValue : null;
+      const difficulty = difficultyValue >= 1 && difficultyValue <= 8 ? difficultyValue : null;
       const sourceText = `${info?.major_unit ?? ""} ${info?.middle_unit ?? ""} ${info?.minor_unit ?? ""} ${info?.detailed_topic ?? ""}`;
       const subject = /확률|통계|경우의 수|순열|조합/.test(sourceText)
         ? "확률과통계"
@@ -96,7 +97,7 @@ export function buildStudentPerformance(
       units.push({ label: unit, correct });
       types.push({ label: type, correct });
       difficulties.push({
-        label: difficulty ? `${difficulty}단계` : "미분류",
+        label: difficulty ? difficultyLabel(difficulty) : "미분류",
         correct,
       });
       questionResults.push({ no, answer: studentAnswer, correctAnswer, correct, unanswered, subject, unit, type, difficulty });

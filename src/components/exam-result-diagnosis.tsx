@@ -1,3 +1,4 @@
+import { difficultyLabel } from "@/lib/difficulty-scale";
 "use client";
 
 type Metadata = {
@@ -122,19 +123,19 @@ export default function ExamResultDiagnosis({
       "미분류",
   );
   const difficulties = groupStats(rows, (info) =>
-    info?.difficulty ? `${info.difficulty}단계` : "미분류",
+    info?.difficulty ? difficultyLabel(info.difficulty) : "미분류",
   ).sort((a, b) => Number(a.label[0]) - Number(b.label[0]));
   const classifiedUnits = units.filter((item) => item.label !== "미분류");
   const classifiedTypes = types.filter((item) => item.label !== "미분류");
   const weakUnit = classifiedUnits[0];
   const weakType = classifiedTypes[0];
   const hardWrong = rows.filter(
-    (row) => !row.correct && Number(row.info?.difficulty ?? 0) >= 4,
+    (row) => !row.correct && Number(row.info?.difficulty ?? 0) >= 6,
   ).length;
   const guidance = blank
     ? `미응답 ${blank}문항을 먼저 줄이고, 시간 배분과 마지막 답안 확인 습관을 점검하세요.`
     : hardWrong >= 2
-      ? `4~5단계 오답 ${hardWrong}문항은 핵심 진입점과 조건 번역 과정을 중심으로 다시 풀어보세요.`
+      ? `어4 이상 오답 ${hardWrong}문항은 핵심 진입점과 조건 번역 과정을 중심으로 다시 풀어보세요.`
       : weakUnit
         ? `${weakUnit.label} 단원의 개념 확인 후 같은 유형을 2~3문항 연속 훈련하는 것이 좋습니다.`
         : "오답 문항의 풀이 과정을 다시 적고 정답 근거를 확인하세요.";

@@ -43,7 +43,7 @@ export async function GET() {
       if (unit) { score += 60; reasons.push(`취약 단원: ${unit.label}`); }
       if (type) { score += 30; reasons.push(`취약 유형: ${type.label}`); }
       const difficulty = Number(problem.difficulty);
-      if (difficulty >= 1 && difficulty <= 3) score += 10;
+      if (difficulty >= 1 && difficulty <= 4) score += 10;
       return { ...problem, matchScore: score, reasons };
     }).filter((item) => item.matchScore > 0).sort((a, b) => b.matchScore - a.matchScore).slice(0, 12);
     const latestExam = performance.history[0] ?? null;

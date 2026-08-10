@@ -115,9 +115,9 @@ function problemDna(result: Record<string, unknown>) {
 function normalizeDifficultyValue(value: unknown) {
   const raw = text(value);
   const mapped: Record<string, string> = {
-    "1": "1", "2": "2", "3": "3", "4": "4", "5": "5",
-    A: "1", B: "2", C: "3", D: "4", E: "5",
-    하: "1", 중: "2", 상: "4", 최상: "5",
+    "1":"1","2":"2","3":"3","4":"4","5":"5","6":"6","7":"7","8":"8",
+    A:"1",B:"2",C:"4",D:"6",E:"8",
+    하:"1",중:"2",상:"6",최상:"8",
   };
   return mapped[raw] ?? "";
 }

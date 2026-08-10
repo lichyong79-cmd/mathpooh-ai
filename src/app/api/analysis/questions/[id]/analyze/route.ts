@@ -263,8 +263,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 - solution은 대표/최단/정석/대안 풀이와 계산/개념/도형/대수/함수적 접근, 실제 풀이전략을 구분합니다.
 - abilities에는 개념이해, 조건해석, 표현전환, 관계추론, 식구성, 계산정확성/지속력, 경우분류, 그래프해석, 공간도형인식, 논리전개, 검산, 시간관리 중 실제 요구 능력을 기록합니다.
 - difficulty는 현재 문항을 같은 과목·교육과정의 수능 문항으로 환산해 판정합니다. 수능 문항이 아닌 교재·내신 문항도 수능 상당 배점과 난도를 추정합니다.
-- csat_point_equivalent는 2, 3, 4 중 하나입니다. csat_difficulty_band는 two_point, three_point, four_easy, four_medium, four_hard, semi_killer_easy, semi_killer_hard, killer 중 하나입니다.
-- 최종 1~5단계 기준은 고정입니다: 수능 2점 상당=1, 수능 3점 상당=2, 쉬운·보통 4점=3, 어려운 4점·쉬운 준킬러=4, 어려운 준킬러·킬러=5.
+- csat_point_equivalent는 2, 3, 4 중 하나입니다. csat_difficulty_band는 two_point, three_point, three_hard, four_easy, four_medium, four_hard, semi_killer, killer 중 하나입니다.
+- SOS 최종 난이도는 8단계만 사용합니다: 2점=1, 3점=2, 어려운3점=3, 쉬운4점=4, 적정4점=5, 어려운4점=6, 준킬러=7, 킬러=8.
 - csat_basis에는 해당 배점·난도로 본 결정적 근거를 구체적으로 기록합니다. 과목 범위 밖이라는 이유만으로 난이도를 올리지 말고, 해당 과목을 학습한 수능 응시생 기준으로 판정합니다.
 - 개념/조건해석/발상/계산/풀이길이/함정/시간부담/개념결합수/사고단계수도 독립적으로 평가합니다. 무조건 중간 단계로 몰아넣지 말고 문항 근거를 reasons에 기록합니다. 세부 점수는 0~100입니다.
 - errors와 traps는 실제 문항 근거가 있는 항목만 기록합니다.
@@ -301,7 +301,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         .filter((value) => /공식|해설|정답.*(?:불일치|충돌)|(?:불일치|충돌).*정답/.test(value)),
     ].filter(Boolean);
     const legacy = validation.valid && validation.dna ? legacyFieldsFromDNA(validation.dna) : {
-      question_type: "unknown", subject: source?.subject ?? "", unit: "", topic: "", difficulty: "2", summary: "",
+      question_type: "unknown", subject: source?.subject ?? "", unit: "", topic: "", difficulty: "", summary: "",
     };
     const aiResult = {
       ...(question.ai_result ?? {}),

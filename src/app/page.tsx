@@ -13,6 +13,7 @@ import {
   type LandmarkSubject,
   type LandmarkSummary,
 } from "@/lib/landmark";
+import { difficultyLabel } from "@/lib/difficulty-scale";
 
 type Attempt = {
   id: string;
@@ -112,7 +113,7 @@ function StudentResultModal({
     const type = rawType.replace(/마코프\s*(체인|상태전이)?/gi, "상태변화 확률").replace(/Markov\s*(Chain|Transition)?/gi, "상태변화 확률").replace(/베이즈\s*(추론|네트워크)?/gi, "조건부확률");
     return { no, answer, key, info, difficulty, correct, unanswered, type };
   });
-  const weights: Record<number, number> = { 1: 1, 2: 1.15, 3: 1.35, 4: 1.65, 5: 2 };
+  const weights: Record<number, number> = {1:1,2:1.08,3:1.16,4:1.28,5:1.42,6:1.6,7:1.82,8:2.1};
   const totalWeight = questionRows.reduce((sum, item) => sum + (weights[item.difficulty ?? 0] ?? 1.2), 0);
   const earnedWeight = questionRows.reduce((sum, item) => sum + (item.correct ? (weights[item.difficulty ?? 0] ?? 1.2) : 0), 0);
   const weightedMastery = totalWeight ? (earnedWeight / totalWeight) * 100 : Number(attempt.score ?? 0);
@@ -185,7 +186,7 @@ function StudentResultModal({
         />
         <section className="student-recommend-card">
           <div><small>NEXT REVIEW</small><h3>우선 복습 추천 5문항</h3><p>오답·미응답 중 쉬운 순서대로 제시합니다.</p></div>
-          {recommended.length ? <div className="student-recommend-list">{recommended.map((item, index) => <article key={item.no}><span>{index + 1}</span><b>{item.no}번</b><strong>{item.info?.minor_unit || item.info?.middle_unit || item.info?.major_unit || "단원 미분류"}</strong><small>{item.type}</small><em>{item.difficulty ? `${item.difficulty}단계` : "난이도 미분류"}</em></article>)}</div> : <p className="student-perfect-message">추천할 오답 문항이 없습니다.</p>}
+          {recommended.length ? <div className="student-recommend-list">{recommended.map((item, index) => <article key={item.no}><span>{index + 1}</span><b>{item.no}번</b><strong>{item.info?.minor_unit || item.info?.middle_unit || item.info?.major_unit || "단원 미분류"}</strong><small>{item.type}</small><em>{item.difficulty ? difficultyLabel(item.difficulty) : "난이도 미분류"}</em></article>)}</div> : <p className="student-perfect-message">추천할 오답 문항이 없습니다.</p>}
         </section>
         <div className="student-result-table-wrap">
           <div className="student-result-table">
@@ -240,7 +241,7 @@ function StudentResultModal({
                     <i
                       className={`difficulty difficulty-${info?.difficulty || "none"}`}
                     >
-                      {info?.difficulty ? `${info.difficulty}단계` : "-"}
+                      {info?.difficulty ? difficultyLabel(info.difficulty) : "-"}
                     </i>
                   </span>
                   <strong>{answer || "-"}</strong>

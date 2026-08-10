@@ -19,6 +19,7 @@ import {
 } from "@/lib/crop/question-anchors";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
+import { DIFFICULTY_SCALE, difficultyLabel } from "@/lib/difficulty-scale";
 
 type SourceFile = {
   id: string;
@@ -2335,7 +2336,7 @@ export default function AnalysisWorkspacePage() {
                     <div className="crop-card-head">
                       <strong>{question.question_no}번</strong>
                       <div className="card-status-group">
-                        <span className={`card-difficulty level-${valueOf(question, "difficulty") || "unknown"}`}>난이도 {valueOf(question, "difficulty") || "-"}</span>
+                        <span className={`card-difficulty level-${valueOf(question, "difficulty") || "unknown"}`}>난이도 {difficultyLabel(valueOf(question, "difficulty"))}</span>
                         <span className="card-workflow-status">{displayQuestionStatus(question)}</span>
                       </div>
                     </div>
@@ -2528,7 +2529,7 @@ export default function AnalysisWorkspacePage() {
                     <label>세부 유형<input name="topic" defaultValue={valueOf(activeQuestion, "topic")} /></label>
                     <label>난이도
                       <select name="difficulty" defaultValue={valueOf(activeQuestion, "difficulty") || "2"}>
-                        <option value="1">1단계 · 개념 확인</option><option value="2">2단계 · 기본 유형</option><option value="3">3단계 · 응용 유형</option><option value="4">4단계 · 준킬러</option><option value="5">5단계 · 최상위·킬러</option>
+                        {DIFFICULTY_SCALE.map((d)=><option key={d.value} value={d.value}>{d.label}</option>)}
                       </select>
                     </label>
                     <label>AI 요약<textarea name="summary" rows={4} defaultValue={valueOf(activeQuestion, "summary")} /></label>

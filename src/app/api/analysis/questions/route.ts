@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
       page_no: Math.max(1, Number(body.pageNo ?? 1)),
       crop_x: Number(body.x ?? 5), crop_y: Number(body.y ?? 5), crop_width: Number(body.width ?? 40), crop_height: Number(body.height ?? 20),
       answer: null, status: "REVIEW", confidence: 1,
-      ai_result: {}, review_result: { question_type: "unknown", subject: null, unit: null, topic: null, difficulty: "2", summary: null },
+      ai_result: {}, review_result: { question_type: "unknown", subject: null, unit: null, topic: null, difficulty: "", summary: null },
     };
     const result = await supabase.from("analysis_questions").insert(row).select("*").single();
     if (result.error) throw result.error;

@@ -15,6 +15,7 @@ import "../exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
+import { DIFFICULTY_SCALE, difficultyLabel, difficultyNumber } from "@/lib/difficulty-scale";
 
 type AdminMenu =
   | "dashboard"
@@ -1330,7 +1331,8 @@ function StudentResultsPage() {
     ? [...subjectResults].sort((a: any, b: any) => a.rate - b.rate || a.correct - b.correct)[0]
     : null;
   const difficultyResults = selectedReport
-    ? [1, 2, 3, 4, 5].map((level) => {
+    ? DIFFICULTY_SCALE.map(({value}) => {
+        const level = Number(value);
         const items = selectedReport.questionResults.filter((item: any) => item.difficulty === level);
         const correct = items.filter((item: any) => item.correct).length;
         return { level, total: items.length, correct, rate: items.length ? Math.round(correct / items.length * 100) : null };
@@ -1348,7 +1350,7 @@ function StudentResultsPage() {
     : [];
   const nationalEstimate = (() => {
     if (!selectedReport) return null;
-    const weights: Record<number, number> = { 1: 1, 2: 1.15, 3: 1.35, 4: 1.65, 5: 2 };
+    const weights: Record<number, number> = {1:1,2:1.08,3:1.16,4:1.28,5:1.42,6:1.6,7:1.82,8:2.1};
     const questions = selectedReport.questionResults ?? [];
     const totalWeight = questions.reduce((sum: number, item: any) => sum + (weights[item.difficulty] ?? 1.2), 0);
     const earnedWeight = questions.reduce((sum: number, item: any) => sum + (item.correct ? (weights[item.difficulty] ?? 1.2) : 0), 0);
@@ -1432,7 +1434,7 @@ function StudentResultsPage() {
             <div className="official-difficulty-section">
               <div className="official-section-title"><div><h4>난이도별 성취</h4><p>문항 난이도에 따른 해결력을 확인합니다.</p></div></div>
               <div className="official-difficulty-grid">
-                {difficultyResults.length ? difficultyResults.map((item: any) => <div key={item.level}><span>{item.level}단계</span><b>{item.correct}/{item.total}</b><i><em style={{width:`${item.rate ?? 0}%`}} /></i><small>{item.rate}%</small></div>) : <p>난이도 분석 데이터가 없습니다.</p>}
+                {difficultyResults.length ? difficultyResults.map((item: any) => <div key={item.level}><span>{difficultyLabel(item.level)}</span><b>{item.correct}/{item.total}</b><i><em style={{width:`${item.rate ?? 0}%`}} /></i><small>{item.rate}%</small></div>) : <p>난이도 분석 데이터가 없습니다.</p>}
               </div>
             </div>
             <div className="official-answer-summary">
@@ -1445,7 +1447,7 @@ function StudentResultsPage() {
                 <span className="recommend-order">{index + 1}</span>
                 <b>{item.no}번</b>
                 <div><strong>{item.unit || "단원 미분류"}</strong><small>{item.type || "유형 미분류"} · {item.subject}</small></div>
-                <em>{item.difficulty ? `${item.difficulty}단계` : "난이도 미분류"}</em>
+                <em>{item.difficulty ? `${difficultyLabel(item.difficulty)}` : "난이도 미분류"}</em>
                 <i className={item.unanswered ? "unanswered" : "wrong"}>{item.unanswered ? "미응답" : "오답"}</i>
               </div>)}</div> : <div className="official-perfect-message">추천할 오답 문항이 없습니다. 모든 문항을 해결했습니다.</div>}
             </div>
@@ -1456,7 +1458,7 @@ function StudentResultsPage() {
             <div className="official-question-detail-table">
               <div className="detail-head"><span>문항</span><span>학생 답</span><span>정답</span><span>영역 / 단원</span><span>유형</span><span>난이도</span><span>결과</span></div>
               {selectedReport.questionResults.map((item: any) => <div key={item.no} className={item.correct ? "correct" : item.unanswered ? "unanswered" : "wrong"}>
-                <b>{item.no}번</b><span>{item.answer || "-"}</span><span>{item.correctAnswer || "-"}</span><span><strong>{item.subject}</strong><small>{item.unit}</small></span><span>{item.type}</span><span>{item.difficulty ? `${item.difficulty}단계` : "-"}</span><em>{item.correct ? "정답" : item.unanswered ? "미응답" : "오답"}</em>
+                <b>{item.no}번</b><span>{item.answer || "-"}</span><span>{item.correctAnswer || "-"}</span><span><strong>{item.subject}</strong><small>{item.unit}</small></span><span>{item.type}</span><span>{item.difficulty ? `${difficultyLabel(item.difficulty)}` : "-"}</span><em>{item.correct ? "정답" : item.unanswered ? "미응답" : "오답"}</em>
               </div>)}
             </div>
             <div className="mathpooh-report-comment"><h4>매쓰푸의 코멘트</h4><p>{selectedReport.mathpoohComment || "아직 등록된 코멘트가 없습니다."}</p></div>
@@ -1570,16 +1572,16 @@ type SosTargetDecision = {
   reason: string[];
 };
 
-function sosDifficulty(value: any) {
-  const number = Number(value);
-  return Number.isFinite(number) ? Math.max(1, Math.min(5, Math.round(number))) : 3;
-}
+function sosDifficulty(value: any) { return difficultyNumber(value, 4); }
 
 function sosExpectedMaxDifficulty(score: number) {
-  if (score >= 95) return 5;
-  if (score >= 88) return 4;
-  if (score >= 78) return 3;
-  if (score >= 65) return 2;
+  if (score >= 97) return 8;
+  if (score >= 93) return 7;
+  if (score >= 88) return 6;
+  if (score >= 82) return 5;
+  if (score >= 74) return 4;
+  if (score >= 64) return 3;
+  if (score >= 50) return 2;
   return 1;
 }
 
@@ -1944,7 +1946,7 @@ function RecommendPage() {
                     <small style={{fontWeight:900,color:"#667085"}}>원시험 공략문항</small>
                     <div style={{fontSize:28,fontWeight:950,margin:"6px 0"}}>{target.sourceExam?.title || "실전모의고사"} · {sosQuestionNo(target.sourceQuestion)}번</div>
                     <div style={{fontWeight:800}}>{target.sourceQuestion?.subject || "영역 미분류"} · {target.sourceQuestion?.unit || "단원 미분류"}</div>
-                    <div style={{marginTop:4,color:"#667085",fontSize:13}}>{target.sourceQuestion?.type || target.sourceQuestion?.topic || "유형 미분류"} · 난이도 {sosDifficulty(target.sourceQuestion?.difficulty)}</div>
+                    <div style={{marginTop:4,color:"#667085",fontSize:13}}>{target.sourceQuestion?.type || target.sourceQuestion?.topic || "유형 미분류"} · 난이도 {difficultyLabel(target.sourceQuestion?.difficulty)}</div>
                     <div style={{marginTop:12,display:"flex",gap:8,flexWrap:"wrap"}}>
                       {target.reason.map((reason, index) => <span key={index} style={{padding:"6px 9px",borderRadius:999,background:"#e8f5ed",color:"#216e45",fontSize:12,fontWeight:800}}>{reason}</span>)}
                     </div>
@@ -2014,7 +2016,7 @@ function RecommendPage() {
             <div className="recommendation-candidates">
               {visibleSourceCandidates.slice(1, 6).map((candidate) => <div key={candidate.key} style={{padding:12,border:"1px solid #e4e7ec",borderRadius:12,background:"#fff"}}>
                 <strong>{candidate.sourceExam?.title || "실전모의고사"} · {sosQuestionNo(candidate.sourceQuestion)}번</strong>
-                <div style={{fontSize:12,color:"#667085",marginTop:4}}>{candidate.sourceQuestion?.unit || "단원 미분류"} · {candidate.sourceQuestion?.type || candidate.sourceQuestion?.topic || "유형 미분류"} · 난이도 {sosDifficulty(candidate.sourceQuestion?.difficulty)} · 우선도 {candidate.priority}</div>
+                <div style={{fontSize:12,color:"#667085",marginTop:4}}>{candidate.sourceQuestion?.unit || "단원 미분류"} · {candidate.sourceQuestion?.type || candidate.sourceQuestion?.topic || "유형 미분류"} · 난이도 {difficultyLabel(candidate.sourceQuestion?.difficulty)} · 우선도 {candidate.priority}</div>
               </div>)}
             </div>
           </> : null}
@@ -2639,7 +2641,7 @@ function AdminResultModal({
                     <i
                       className={`difficulty difficulty-${info?.difficulty || "none"}`}
                     >
-                      {info?.difficulty ? `${info.difficulty}단계` : "-"}
+                      {info?.difficulty ? difficultyLabel(info.difficulty) : "-"}
                     </i>
                   </span>
                   <input
@@ -4903,7 +4905,7 @@ function ExamsPage({
                         "-"}
                     </span>
                     <b className={`analysis-difficulty d${item.difficulty}`}>
-                      {item.difficulty}단계
+                      {difficultyLabel(item.difficulty)}
                     </b>
                     <b>{item.analysis_data?.answer || "-"}</b>
                     <span>{Math.round(Number(item.confidence || 0) * 100)}%</span>
