@@ -163,9 +163,16 @@ export default function DifficultyManagementPage() {
 
   async function runTest20() {
     if (running) return;
-    const targets = filtered.slice(0,20);
-    if (!targets.length) return;
-    if (!window.confirm(`현재 필터의 앞 ${targets.length}문항을 AI가 다시 판정합니다. 테스트 결과는 실제 DB 난이도에 반영되지 않습니다. 진행할까요?`)) return;
+    const shuffle = <T,>(rows:T[]) => [...rows].sort(() => Math.random() - 0.5);
+    const unreviewed = items.filter(x => !x.problem_dna?.difficulty?.admin_fixed);
+    const level2 = shuffle(unreviewed.filter(x => norm(x.difficulty) === "2")).slice(0,10);
+    const level3 = shuffle(unreviewed.filter(x => norm(x.difficulty) === "3")).slice(0,10);
+    const targets = shuffle([...level2, ...level3]);
+    if (!targets.length) { setError("아직 검수하지 않은 난이도 2·3 문항이 없습니다."); return; }
+    if (level2.length < 10 || level3.length < 10) {
+      setMessage(`미검수 문항이 부족해 난이도 2는 ${level2.length}개, 난이도 3은 ${level3.length}개만 뽑았습니다.`);
+    }
+    if (!window.confirm(`새 검수 문항을 난이도 2에서 ${level2.length}개, 난이도 3에서 ${level3.length}개 뽑아 AI가 다시 판정합니다. 이미 직접 확정한 문항은 제외되며 테스트만으로 DB는 변경되지 않습니다. 진행할까요?`)) return;
     setRunning(true); setMessage(""); setError(""); setTestResults([]);
     setProgress({ mode:"test", done:0, total:targets.length, ok:0, fail:0 });
     const rows: TestRow[] = [];
@@ -235,12 +242,12 @@ export default function DifficultyManagementPage() {
         <input value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="문항명·단원·유형·출처 검색"/>
         <select value={subject} onChange={e=>setSubject(e.target.value)}>{subjects.map(x=><option key={x}>{x}</option>)}</select>
         <select value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option>전체</option>{D.map(x=><option key={x} value={x}>{x}단계</option>)}</select>
-        <button disabled={running} onClick={runTest20}>20문항 테스트</button>
+        <button disabled={running} onClick={runTest20}>2·3 균형 20문항 테스트</button>
         <button disabled={running} onClick={runAll} className="primary">전체 재판정</button>
       </div>
 
       {testResults.length>0 && <section className="test-section">
-        <div className="test-section-head"><div><b>20문항 테스트 결과</b><span>문제를 직접 보고 AI 제안을 검수하세요. 테스트만으로는 DB가 변경되지 않습니다.</span></div><strong>{testResults.filter(x=>x.result?.ok).length}/{testResults.length} 성공</strong></div>
+        <div className="test-section-head"><div><b>2·3 균형 20문항 테스트 결과</b><span>문제를 직접 보고 AI 제안을 검수하세요. 테스트만으로는 DB가 변경되지 않습니다.</span></div><strong>{testResults.filter(x=>x.result?.ok).length}/{testResults.length} 성공</strong></div>
         <div className="test-grid">{testResults.map((x)=><article key={x.id} className={`test-card ${x.result?.ok ? (x.before !== String(x.result.difficulty) ? "changed" : "same") : "failed"}`}>
           <div className="test-card-head"><div><b>{x.question_no}번</b><span>{x.subject} · {x.unit}</span></div><code>{x.problem_code}</code></div>
           <div className="test-image-wrap"><TestProblemImage problemId={x.id} questionNo={x.question_no}/></div>
