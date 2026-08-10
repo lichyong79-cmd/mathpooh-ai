@@ -134,6 +134,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     if (!title) return NextResponse.json({ success: false, message: "시험지명을 입력해 주세요." }, { status: 400 });
 
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
+    // 연결 문항 전체 동기화는 관리자 작업이므로 service role을 우선 사용한다.
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (!url || !key) {
       return NextResponse.json({ success: false, message: "Supabase 환경변수가 없습니다." }, { status: 500 });
@@ -141,6 +142,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
     const encodedId = encodeURIComponent(id);
 
+    // 1) 시험지 원본 정보 수정
     const sourceRows = await restPatch(url, headers, `source_files?id=eq.${encodedId}`, {
       title,
       source: source || null,
@@ -151,10 +153,39 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       return NextResponse.json({ success: false, message: "수정할 시험지를 찾지 못했습니다." }, { status: 404 });
     }
 
-    const bankRows = await restJson<BankMetadataRow[]>(
-      url, headers, `problem_bank_questions?source_file_id=eq.${encodedId}&select=id,question_no,problem_dna`,
+    // 2) 화면 집계/검색에 직접 쓰이는 공통 메타데이터는 한 번의 UPDATE로 전 문항 즉시 동기화한다.
+    //    이렇게 해야 시험지 수정 직후 과목별 보유문항/필터에도 그대로 반영된다.
+    const bankBulkResponse = await fetch(
+      `${url}/rest/v1/problem_bank_questions?source_file_id=eq.${encodedId}`,
+      {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json", Prefer: "return=representation" },
+        body: JSON.stringify({
+          grade: grade || null,
+          subject: subject || null,
+          source_name: source || null,
+          updated_at: new Date().toISOString(),
+        }),
+        cache: "no-store",
+      },
     );
-    let bankUpdated = 0;
+    if (!bankBulkResponse.ok) throw new Error(await bankBulkResponse.text());
+    const bulkUpdatedRows = await bankBulkResponse.json() as Array<{ id: string; question_no: number; problem_dna?: Record<string, any> | null }>;
+    const bankUpdated = bulkUpdatedRows.length;
+
+    // 3) 문항명과 Problem DNA 안의 학년/과목도 전부 맞춘다.
+    //    반환행이 DB max-rows에 걸릴 수 있으므로 ID 목록은 별도로 1,000개씩 끝까지 읽는다.
+    const bankRows: BankMetadataRow[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const page = await restJson<BankMetadataRow[]>(
+        url,
+        headers,
+        `problem_bank_questions?source_file_id=eq.${encodedId}&select=id,question_no,problem_dna&order=question_no.asc&offset=${offset}&limit=1000`,
+      );
+      bankRows.push(...page);
+      if (page.length < 1000) break;
+    }
+
     for (const row of bankRows) {
       const dna = row.problem_dna && typeof row.problem_dna === "object"
         ? {
@@ -168,38 +199,40 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
         : row.problem_dna ?? null;
       await restPatch(url, headers, `problem_bank_questions?id=eq.${encodeURIComponent(row.id)}`, {
         title: `${title} ${row.question_no}번`,
-        grade: grade || null,
-        subject: subject || null,
-        source_name: source || null,
         problem_dna: dna,
         updated_at: new Date().toISOString(),
       });
-      bankUpdated += 1;
     }
 
+    // 4) AI 분석 작업물도 같은 시험지 기준으로 동기화한다.
     const analyses = await restJson<AnalysisRow[]>(
       url, headers, `source_analysis?source_file_id=eq.${encodedId}&select=id`,
     );
     let analysisUpdated = 0;
     for (const analysis of analyses) {
-      const questions = await restJson<AnalysisMetadataRow[]>(
-        url, headers, `analysis_questions?analysis_id=eq.${encodeURIComponent(analysis.id)}&select=id,ai_result,review_result`,
-      );
-      for (const question of questions) {
-        await restPatch(url, headers, `analysis_questions?id=eq.${encodeURIComponent(question.id)}`, {
-          ai_result: withSourceMetadata(question.ai_result, grade, subject),
-          review_result: withSourceMetadata(question.review_result, grade, subject),
-        });
-        analysisUpdated += 1;
+      for (let offset = 0; ; offset += 1000) {
+        const questions = await restJson<AnalysisMetadataRow[]>(
+          url,
+          headers,
+          `analysis_questions?analysis_id=eq.${encodeURIComponent(analysis.id)}&select=id,ai_result,review_result&offset=${offset}&limit=1000`,
+        );
+        for (const question of questions) {
+          await restPatch(url, headers, `analysis_questions?id=eq.${encodeURIComponent(question.id)}`, {
+            ai_result: withSourceMetadata(question.ai_result, grade, subject),
+            review_result: withSourceMetadata(question.review_result, grade, subject),
+          });
+          analysisUpdated += 1;
+        }
+        if (questions.length < 1000) break;
       }
     }
 
     return NextResponse.json({
       success: true,
       sourceUpdated: true,
-      bankUpdated,
+      bankUpdated: bankRows.length || bankUpdated,
       analysisUpdated,
-      message: `시험지 정보와 연결 문항 ${bankUpdated}개를 함께 수정했습니다.`,
+      message: `시험지 정보 수정 완료 · 문제은행 ${bankRows.length || bankUpdated}문항 + AI 분석 ${analysisUpdated}문항 동기화`,
     });
   } catch (error) {
     return NextResponse.json({

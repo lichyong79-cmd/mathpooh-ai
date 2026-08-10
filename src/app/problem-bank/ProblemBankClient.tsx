@@ -116,12 +116,22 @@ export default function ProblemBankClient() {
         "grade", "subject", "unit", "topic", "difficulty", "question_type", "answer", "summary",
         "source_name", "confidence", "status", "content_role", "training_course", "created_at", "updated_at", "question_image_path", "page_no", "problem_dna", "analysis_version",
       ].join(",");
-      const response = await fetch(
-        `${config.url}/rest/v1/problem_bank_questions?select=${fields}&order=created_at.desc`,
-        { headers: { ...(await authHeaders()) }, cache: "no-store" },
-      );
-      if (!response.ok) throw new Error(await response.text());
-      const rows = ((await response.json()) as Problem[]).map((item) => ({ ...item, difficulty: normalizeDifficultyLegacy(item.difficulty, item.problem_dna) }));
+      // PostgREST는 프로젝트 설정에 따라 한 요청당 최대 1,000행만 반환할 수 있다.
+      // 문제은행 전체를 정확히 보여주기 위해 1,000행씩 끝까지 페이지네이션한다.
+      const headers = { ...(await authHeaders()) };
+      const allRows: Problem[] = [];
+      const pageSize = 1000;
+      for (let offset = 0; ; offset += pageSize) {
+        const response = await fetch(
+          `${config.url}/rest/v1/problem_bank_questions?select=${fields}&order=created_at.desc&offset=${offset}&limit=${pageSize}`,
+          { headers, cache: "no-store" },
+        );
+        if (!response.ok) throw new Error(await response.text());
+        const pageRows = (await response.json()) as Problem[];
+        allRows.push(...pageRows);
+        if (pageRows.length < pageSize) break;
+      }
+      const rows = allRows.map((item) => ({ ...item, difficulty: normalizeDifficultyLegacy(item.difficulty, item.problem_dna) }));
       setItems(rows);
       setSelectedId((current) => rows.some((item) => item.id === current) ? current : rows[0]?.id ?? "");
     } catch (reason) {
