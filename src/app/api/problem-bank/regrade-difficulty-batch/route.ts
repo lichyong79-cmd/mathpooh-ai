@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: "problemIds가 필요합니다." }, { status: 400 });
     }
 
+    const dryRun = body?.dryRun === true;
     const targetIds = ids.slice(0, 20); // 한 번에 과도하게 호출하지 않도록 제한
     const origin = new URL(request.url).origin;
     const results: any[] = [];
@@ -28,7 +29,7 @@ export async function POST(request: NextRequest) {
           "Content-Type": "application/json",
           cookie: request.headers.get("cookie") ?? "",
         },
-        body: JSON.stringify({ problemId }),
+        body: JSON.stringify({ problemId, dryRun }),
         cache: "no-store",
       });
 
@@ -46,6 +47,7 @@ export async function POST(request: NextRequest) {
       success: true,
       requested: ids.length,
       processed: targetIds.length,
+      dryRun,
       results,
     });
   } catch (error) {

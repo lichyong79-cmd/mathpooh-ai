@@ -134,6 +134,7 @@ export async function POST(request: NextRequest) {
     await requireUser();
     const body = await request.json().catch(() => ({}));
     const problemId = String(body?.problemId ?? "").trim();
+    const dryRun = body?.dryRun === true;
     if (!problemId) return NextResponse.json({ success: false, message: "problemId가 필요합니다." }, { status: 400 });
 
     const supabase = await createClient();
@@ -233,13 +234,15 @@ export async function POST(request: NextRequest) {
       allowed_regrade_grades: allowed,
     };
 
-    const now = new Date().toISOString();
-    const { error: updateError } = await supabase
-      .from("problem_bank_questions")
-      .update({ difficulty: result.final_grade, problem_dna: dna, updated_at: now })
-      .eq("id", problemId);
+    if (!dryRun) {
+      const now = new Date().toISOString();
+      const { error: updateError } = await supabase
+        .from("problem_bank_questions")
+        .update({ difficulty: result.final_grade, problem_dna: dna, updated_at: now })
+        .eq("id", problemId);
 
-    if (updateError) return NextResponse.json({ success: false, message: updateError.message }, { status: 500 });
+      if (updateError) return NextResponse.json({ success: false, message: updateError.message }, { status: 500 });
+    }
 
     return NextResponse.json({
       success: true,
@@ -249,6 +252,9 @@ export async function POST(request: NextRequest) {
       allowedGrades: allowed,
       reason: result.reason,
       confidence: result.confidence,
+      csatPointEquivalent: result.csat_point_equivalent,
+      csatDifficultyBand: result.csat_difficulty_band,
+      dryRun,
       version: "difficulty-v179",
     });
   } catch (error) {
