@@ -13,7 +13,7 @@ import {
   type LandmarkSubject,
   type LandmarkSummary,
 } from "@/lib/landmark";
-import { difficultyLabel } from "@/lib/difficulty-scale";
+import {difficultyLabel, DIFFICULTY_WEIGHTS} from "@/lib/difficulty-scale";
 
 type Attempt = {
   id: string;
@@ -113,7 +113,7 @@ function StudentResultModal({
     const type = rawType.replace(/마코프\s*(체인|상태전이)?/gi, "상태변화 확률").replace(/Markov\s*(Chain|Transition)?/gi, "상태변화 확률").replace(/베이즈\s*(추론|네트워크)?/gi, "조건부확률");
     return { no, answer, key, info, difficulty, correct, unanswered, type };
   });
-  const weights: Record<number, number> = {1:1,2:1.08,3:1.16,4:1.28,5:1.42,6:1.6,7:1.82,8:2.1};
+  const weights = DIFFICULTY_WEIGHTS;
   const totalWeight = questionRows.reduce((sum, item) => sum + (weights[item.difficulty ?? 0] ?? 1.2), 0);
   const earnedWeight = questionRows.reduce((sum, item) => sum + (item.correct ? (weights[item.difficulty ?? 0] ?? 1.2) : 0), 0);
   const weightedMastery = totalWeight ? (earnedWeight / totalWeight) * 100 : Number(attempt.score ?? 0);

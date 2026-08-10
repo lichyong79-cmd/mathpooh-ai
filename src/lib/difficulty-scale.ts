@@ -20,6 +20,21 @@ const valueByBand: Record<string,DifficultyValue> = {
 };
 
 export const DIFFICULTY_SCALE_VERSION = "sos8-v1" as const;
+export const DIFFICULTY_WEIGHTS: Record<number, number> = {
+  1: 1.00, 2: 1.08, 3: 1.16, 4: 1.28, 5: 1.42, 6: 1.60, 7: 1.82, 8: 2.10,
+};
+
+export const DIFFICULTY_PROMPT_GUIDE = `SOS 공식 난이도는 아래 8단계 하나만 사용한다. 기존 1~5 체계나 쉬움/보통/어려움 3단계 체계는 사용하지 않는다.
+1=2점: 정의·공식·성질의 직접 적용 중심.
+2=3점: 정형 대표유형, 기본 조건 해석과 계산.
+3=어3: 3점 상단, 쉬운 4점 직전의 까다로운 조건·계산·연결.
+4=쉬4: 4점 입문, 실질적 사고가 필요하나 풀이 진입이 비교적 명확.
+5=적4: 적정 4점, 표준 수능 4점의 중심.
+6=어4: 어려운 4점, 복합 추론·경우 분류·구조 변환·계산 부담이 큼.
+7=준킬러: 상위권 변별용 고난도.
+8=킬러: 최상위권 변별용 최고난도.
+특히 어3/쉬4/적4/어4 경계를 세밀하게 구분하고 분포를 억지로 맞추지 않는다.`;
+
 
 export function normalizeDifficulty(value: unknown, fallback: DifficultyValue | "" = "") : DifficultyValue | "" {
   const raw=String(value ?? "").trim();

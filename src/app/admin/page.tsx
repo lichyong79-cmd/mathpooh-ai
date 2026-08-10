@@ -15,7 +15,7 @@ import "../exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
-import { DIFFICULTY_SCALE, difficultyLabel, difficultyNumber } from "@/lib/difficulty-scale";
+import { DIFFICULTY_SCALE, DIFFICULTY_WEIGHTS, difficultyLabel, difficultyNumber } from "@/lib/difficulty-scale";
 
 type AdminMenu =
   | "dashboard"
@@ -1350,7 +1350,7 @@ function StudentResultsPage() {
     : [];
   const nationalEstimate = (() => {
     if (!selectedReport) return null;
-    const weights: Record<number, number> = {1:1,2:1.08,3:1.16,4:1.28,5:1.42,6:1.6,7:1.82,8:2.1};
+    const weights = DIFFICULTY_WEIGHTS;
     const questions = selectedReport.questionResults ?? [];
     const totalWeight = questions.reduce((sum: number, item: any) => sum + (weights[item.difficulty] ?? 1.2), 0);
     const earnedWeight = questions.reduce((sum: number, item: any) => sum + (item.correct ? (weights[item.difficulty] ?? 1.2) : 0), 0);

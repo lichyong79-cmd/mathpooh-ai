@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { PROBLEM_DNA_VERSION } from "@/lib/problem-dna";
+import { DIFFICULTY_PROMPT_GUIDE } from "@/lib/difficulty-scale";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -191,7 +192,7 @@ export async function POST(request: Request) {
   const targetDescription = requestedQuestionNo
     ? `${requestedQuestionNo}번 문항 하나만`
     : `1번부터 ${count}번까지 모든 문항을`;
-  const prompt = `실전모의고사 PDF에서 ${targetDescription} 번호별로 분석하라. 시험명=${exam.title}, 과목=${exam.subject}, 범위=${exam.exam_range}. 문제은행 등록이 아니라 시험 결과 진단용 메타데이터다. 지정한 문항을 빠짐없이 한 번씩 반환한다. 단원은 교육과정 기준 대/중/소단원과 세부주제를 구분한다. problem_types는 계산형, 조건해석형, 추론형, 그래프해석형, 도형구조형 등 실제 성격을 기록한다. test_page_no에는 시험지 PDF에서 문항이 시작되는 실제 페이지 번호를 기록한다. test_bbox에는 그 페이지에서 해당 문항 하나만 포함하는 영역을 [x,y,width,height] 형식의 0~1 정규화 좌표로 기록한다. 좌표 원점은 페이지 왼쪽 위이며 문항 번호, 본문, 보기, 그래프·도형을 모두 포함하되 앞뒤 다른 문항은 포함하지 않는다. 해설지 PDF가 함께 제공되면 solution_page_no에는 해당 공식 해설이 시작되는 실제 페이지 번호, solution_bbox에는 같은 방식으로 해당 번호의 공식 해설 하나만 포함하는 영역을 기록하고, answer에는 해당 문항의 공식 정답만, summary에는 핵심 풀이와 발상을 2문장 이내로 기록한다. 해설지가 없으면 solution_page_no는 0, solution_bbox는 [0,0,1,1]로 기록한다. 난이도는 SOS 공식 8단계를 그대로 적용한다: 2점=1, 3점=2, 어려운3점(어3)=3, 쉬운4점(쉬4)=4, 적정4점(적4)=5, 어려운4점(어4)=6, 준킬러=7, 킬러=8. 특히 어3/쉬4/적4/어4 경계를 세밀하게 구분하고 모든 문항을 중간값으로 몰아넣지 마라.`;
+  const prompt = `실전모의고사 PDF에서 ${targetDescription} 번호별로 분석하라. 시험명=${exam.title}, 과목=${exam.subject}, 범위=${exam.exam_range}. 문제은행 등록이 아니라 시험 결과 진단용 메타데이터다. 지정한 문항을 빠짐없이 한 번씩 반환한다. 단원은 교육과정 기준 대/중/소단원과 세부주제를 구분한다. problem_types는 계산형, 조건해석형, 추론형, 그래프해석형, 도형구조형 등 실제 성격을 기록한다. test_page_no에는 시험지 PDF에서 문항이 시작되는 실제 페이지 번호를 기록한다. test_bbox에는 그 페이지에서 해당 문항 하나만 포함하는 영역을 [x,y,width,height] 형식의 0~1 정규화 좌표로 기록한다. 좌표 원점은 페이지 왼쪽 위이며 문항 번호, 본문, 보기, 그래프·도형을 모두 포함하되 앞뒤 다른 문항은 포함하지 않는다. 해설지 PDF가 함께 제공되면 solution_page_no에는 해당 공식 해설이 시작되는 실제 페이지 번호, solution_bbox에는 같은 방식으로 해당 번호의 공식 해설 하나만 포함하는 영역을 기록하고, answer에는 해당 문항의 공식 정답만, summary에는 핵심 풀이와 발상을 2문장 이내로 기록한다. 해설지가 없으면 solution_page_no는 0, solution_bbox는 [0,0,1,1]로 기록한다. ${DIFFICULTY_PROMPT_GUIDE}`;
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {

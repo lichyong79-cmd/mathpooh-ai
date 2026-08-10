@@ -2589,6 +2589,9 @@ export default function AnalysisWorkspacePage() {
         .card-difficulty.level-3{background:#c9932d}
         .card-difficulty.level-4{background:#e36f2d}
         .card-difficulty.level-5{background:#b83d58}
+        .card-difficulty.level-6{background:#a85636}
+        .card-difficulty.level-7{background:#8d3e55}
+        .card-difficulty.level-8{background:#62243d}
         .card-difficulty.level-unknown{background:#8b95a7}
         .card-workflow-status{white-space:nowrap}
         .workflow-action .crop-live-progress{flex:1 0 100%;display:grid;grid-template-columns:auto minmax(240px,1fr) auto;align-items:center;gap:10px;padding:11px 13px;border-radius:10px;background:#eaf0ff;color:#364dbb}

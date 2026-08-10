@@ -18,12 +18,28 @@ const related = (left: unknown, right: unknown) => {
 export async function GET() {
   const ctx = await adminContext();
   if (!ctx) return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
-  const [{ data: students, error: studentError }, { data: attempts, error: attemptError }, { data: problems, error: problemError }] = await Promise.all([
+  const [{ data: students, error: studentError }, { data: attempts, error: attemptError }, activeCountResult] = await Promise.all([
     ctx.supabase.from("students").select("id,name,school,grade,status").neq("status", "퇴원").order("name"),
     ctx.supabase.from("exam_attempts").select("id,student_id,exam_id,status,answers,submitted_at,score,correct_count").eq("status", "submitted"),
-    ctx.supabase.from("problem_bank_questions").select("id,problem_code,title,unit,topic,difficulty,question_type,summary,problem_dna,status,content_role,training_course").eq("status", "ACTIVE").eq("content_role", "TRAINING"),
+    ctx.supabase.from("problem_bank_questions").select("id", { count: "exact", head: true }).eq("status", "ACTIVE"),
   ]);
-  if (studentError || attemptError || problemError) return NextResponse.json({ message: studentError?.message || attemptError?.message || problemError?.message }, { status: 400 });
+  if (studentError || attemptError || activeCountResult.error) return NextResponse.json({ message: studentError?.message || attemptError?.message || activeCountResult.error?.message }, { status: 400 });
+
+  // Supabase/PostgREST의 단일 응답 1,000행 제한을 피해서 SOS 추천 후보 전체를 읽는다.
+  const problems: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const page = await ctx.supabase
+      .from("problem_bank_questions")
+      .select("id,problem_code,title,unit,topic,difficulty,question_type,summary,problem_dna,status,content_role,training_course")
+      .eq("status", "ACTIVE")
+      .eq("content_role", "TRAINING")
+      .order("id")
+      .range(from, from + 999);
+    if (page.error) return NextResponse.json({ message: page.error.message }, { status: 400 });
+    const rows = page.data ?? [];
+    problems.push(...rows);
+    if (rows.length < 1000) break;
+  }
   const examIds = [...new Set((attempts ?? []).map((item) => item.exam_id))];
   const [{ data: exams, error: examError }, { data: metadata, error: metadataError }] = await Promise.all([
     examIds.length ? ctx.supabase.from("exams").select("id,title,exam_date,question_count,total_score,answer_keys").in("id", examIds) : Promise.resolve({ data: [], error: null }),
@@ -35,7 +51,7 @@ export async function GET() {
     const performance = buildStudentPerformance((attempts ?? []).filter((item) => String(item.student_id) === String(student.id)), exams ?? [], metadata ?? []);
     const weakUnits = performance.units.filter((item) => item.total > 0 && item.rate < 70).sort((a, b) => a.rate - b.rate || b.total - a.total).slice(0, 3);
     const weakTypes = performance.types.filter((item) => item.total > 0 && item.rate < 70).sort((a, b) => a.rate - b.rate || b.total - a.total).slice(0, 3);
-    const candidates = (problems ?? []).map((problem) => {
+    const candidates = problems.map((problem) => {
       let score = 0;
       const reasons: string[] = [];
       const unit = weakUnits.find((weak) => related(weak.label, problem.unit) || related(weak.label, problem.topic));
@@ -50,7 +66,7 @@ export async function GET() {
     const missedCount = latestExam ? latestExam.wrongNumbers.length + latestExam.unansweredNumbers.length : 0;
     return { ...student, performance, weakUnits, weakTypes, candidates, latestExam, missedCount };
   }).filter((student) => student.performance.summary.examCount > 0);
-  return NextResponse.json({ students: rows, problemCount: problems?.length ?? 0 });
+  return NextResponse.json({ students: rows, problemCount: activeCountResult.count ?? problems.length, trainingProblemCount: problems.length });
 }
 
 export async function POST(request: Request) {
