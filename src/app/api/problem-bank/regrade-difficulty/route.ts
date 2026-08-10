@@ -6,134 +6,114 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
+type Grade = "1" | "2" | "3" | "4" | "5";
+
 type DifficultyResult = {
-  final_grade: "1" | "2" | "3" | "4" | "5";
+  final_grade: Grade;
   csat_point_equivalent: 2 | 3 | 4;
   csat_difficulty_band:
-    | "two_point"
-    | "three_point"
-    | "four_easy"
-    | "four_medium"
-    | "four_hard"
-    | "semi_killer_easy"
-    | "semi_killer_hard"
-    | "killer";
+    | "two_point" | "three_point" | "four_easy" | "four_medium"
+    | "four_hard" | "semi_killer_easy" | "semi_killer_hard" | "killer";
   reason: string;
   confidence: number;
 };
 
-function extractOutputText(payload: any) {
-  if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
-    return payload.output_text.trim();
-  }
+function outputText(payload: any) {
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) return payload.output_text.trim();
   return (payload?.output ?? [])
     .flatMap((item: any) => item?.content ?? [])
-    .map((content: any) => content?.text ?? "")
+    .map((item: any) => item?.text ?? "")
     .filter(Boolean)
     .join("\n")
     .trim();
 }
 
-function parseJson(text: string): DifficultyResult {
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-
-  if (!cleaned) throw new Error("AI 난이도 결과가 비어 있습니다.");
-
-  let parsed: DifficultyResult;
-  try {
-    parsed = JSON.parse(cleaned) as DifficultyResult;
-  } catch (error) {
-    throw new Error(
-      `AI 난이도 JSON 파싱 실패: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-
-  if (!["1", "2", "3", "4", "5"].includes(String(parsed.final_grade))) {
-    throw new Error("AI 난이도 결과가 1~5단계가 아닙니다.");
-  }
-
-  const confidence = Number(parsed.confidence);
-  parsed.confidence = Number.isFinite(confidence)
-    ? Math.max(0, Math.min(1, confidence))
-    : 0;
-
-  return parsed;
+function normalizeGrade(value: unknown): Grade | "" {
+  const raw = String(value ?? "").trim();
+  return /^[1-5]$/.test(raw) ? (raw as Grade) : "";
 }
 
-const difficultySchema = {
-  type: "object",
-  additionalProperties: false,
-  required: [
-    "final_grade",
-    "csat_point_equivalent",
-    "csat_difficulty_band",
-    "reason",
-    "confidence",
-  ],
-  properties: {
-    final_grade: {
-      type: "string",
-      enum: ["1", "2", "3", "4", "5"],
-    },
-    csat_point_equivalent: {
-      type: "integer",
-      enum: [2, 3, 4],
-    },
-    csat_difficulty_band: {
-      type: "string",
-      enum: [
-        "two_point",
-        "three_point",
-        "four_easy",
-        "four_medium",
-        "four_hard",
-        "semi_killer_easy",
-        "semi_killer_hard",
-        "killer",
-      ],
-    },
-    reason: {
-      type: "string",
-    },
-    confidence: {
-      type: "number",
-      minimum: 0,
-      maximum: 1,
-    },
-  },
-} as const;
+function allowedFromCurrent(current: Grade | ""): Grade[] {
+  if (current === "1") return ["1", "2", "3"];
+  if (current === "2") return ["2", "3", "4"];
+  if (current === "3") return ["3", "4", "5"];
+  if (current === "4") return ["4", "5"];
+  if (current === "5") return ["5"];
+  return ["1", "2", "3", "4", "5"];
+}
 
-function difficultyPrompt(existingDna: any) {
-  const basic = existingDna?.basic ?? {};
-  const thinking = existingDna?.thinking ?? {};
-  const solution = existingDna?.solution ?? {};
-  const concept = existingDna?.concept ?? {};
+function schema(allowed: Grade[]) {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["final_grade", "csat_point_equivalent", "csat_difficulty_band", "reason", "confidence"],
+    properties: {
+      final_grade: { type: "string", enum: allowed },
+      csat_point_equivalent: { type: "integer", enum: [2, 3, 4] },
+      csat_difficulty_band: {
+        type: "string",
+        enum: ["two_point", "three_point", "four_easy", "four_medium", "four_hard",
+          "semi_killer_easy", "semi_killer_hard", "killer"],
+      },
+      reason: { type: "string" },
+      confidence: { type: "number", minimum: 0, maximum: 1 },
+    },
+  } as const;
+}
+
+function prompt(dna: any, current: Grade | "", allowed: Grade[]) {
+  const basic = dna?.basic ?? {};
+  const thinking = dna?.thinking ?? {};
+  const solution = dna?.solution ?? {};
+  const concept = dna?.concept ?? {};
 
   return `
-당신은 한국 고등수학 문항 난이도 판정 전문가입니다.
-이번 작업은 "난이도만 재판정"하는 작업입니다.
-기존 문항의 단원, 유형, 개념, 사고과정, 풀이, 정답 등 다른 DNA는 수정하지 마세요.
+당신은 한국 고등수학 수능 문항 난이도 판정 전문가입니다.
+이번 작업은 MATHPOOH SOS의 기존 난이도 보정 재판정입니다.
+난이도 외 단원·유형·개념·풀이·정답 등 다른 DNA는 수정하지 마세요.
 
-[절대 기준]
-1단계 = 수능 2점급 또는 매우 쉬운 3점급. 개념 1개를 거의 직접 적용하고 계산이 짧다.
-2단계 = 일반적인 수능 3점급. 대표유형이며 익숙한 풀이가 가능하다.
-3단계 = 쉬운~보통 4점급. 개념 결합, 식 변형, 그래프/조건 해석 등 한 번 이상의 의미 있는 사고가 필요하다.
-4단계 = 어려운 4점~쉬운 준킬러급. 여러 조건 결합, 경우분류, 복합 추론, 긴 계산, 비정형 변형 중 하나 이상이 분명하다.
-5단계 = 어려운 준킬러~킬러급. 발상 자체가 어렵거나 여러 단계의 비정형 추론이 필요하고 상위권 변별력이 높다.
+[최종 기준]
+1단계 = 수능 2점급.
+정의·공식·성질 하나를 거의 직접 적용하면 끝나는 매우 쉬운 문항이다.
+조건 해석이나 풀이 전략 선택이 사실상 필요 없고 계산도 짧다.
+대표유형이라는 이유만으로 1을 주지 마라.
 
-[판정 원칙]
-- 1~2단계에 보수적으로 몰지 마세요.
-- 반대로 단순히 사고단계 수가 많다는 이유만으로 4~5단계로 올리지 마세요.
-- 최종 단계는 "해당 과목을 정상적으로 학습한 수능 응시생 기준의 체감 난도"로 판단하세요.
-- 출처(EBS/교재/내신)나 문제번호는 난이도 근거로 사용하지 마세요.
-- 기존 final_grade는 참고하지 말고 새로 판정하세요.
-- 문제 이미지가 최우선 근거이며, 아래 기존 DNA는 보조 근거입니다.
+2단계 = 수능 3점급.
+대표유형을 인식하고 정형적인 풀이를 적용한다.
+약간의 조건 해석·식 정리·계산은 있지만 수능 4점 수준의 실질적 사고는 아니다.
 
-[기존 DNA 요약]
+3단계 = 평범한 수능 4점급.
+일반적인 4점 문항의 기준점이다.
+개념 결합, 조건의 수학적 번역, 의미 있는 식 변형, 관계 발견, 그래프·도형 해석,
+풀이 방향 선택 중 하나 이상이 실질적으로 요구되면 3을 적극 검토한다.
+풀이가 익숙하거나 계산이 짧다는 이유로 평범한 4점을 2로 낮추지 마라.
+
+4단계 = 어려운 수능 4점 또는 쉬운 준킬러급.
+여러 조건 동시 통제, 경우분류, 구조변환, 복합추론, 까다로운 그래프·도형 해석,
+상당한 계산 부담 또는 비정형 핵심 발상 중 하나 이상이 본질적이다.
+
+5단계 = 상위 준킬러 또는 킬러급.
+핵심 발상 자체가 어렵거나 여러 단계의 비정형 추론이 필요하고 상위권 변별력이 뚜렷하다.
+단순히 계산이 길다는 이유만으로 5를 주지 마라.
+
+[이번 보정 허용 범위]
+현재 저장 난이도: ${current || "미분류"}
+이번 문항은 반드시 ${allowed.join(", ")} 중 하나로만 판정한다.
+
+고정 규칙:
+현재 1 → 새 1/2/3
+현재 2 → 새 2/3/4
+현재 3 → 새 3/4/5
+현재 4 → 새 4/5
+현재 5 → 5 유지
+
+[경계]
+1 vs 2: 공식·정의의 거의 직접 적용이 아니면 1을 쉽게 주지 마라.
+2 vs 3: 평범한 수능 4점으로 출제할 만한 실질적 사고가 있으면 3이다.
+3 vs 4: 단순 개념 결합은 3. 상위권에게도 분명한 부담이 있는 어려운 4점/준킬러부터 4.
+4 vs 5: 어려운 4점/쉬운 준킬러는 4. 상위 준킬러/킬러만 5.
+
+[보조 DNA]
 과목: ${basic.subject ?? ""}
 대단원: ${basic.major_unit ?? ""}
 중단원: ${basic.middle_unit ?? ""}
@@ -144,14 +124,8 @@ function difficultyPrompt(existingDna: any) {
 핵심발상: ${String(thinking.key_insight ?? "")}
 대표풀이: ${JSON.stringify(solution.representative_solution ?? [])}
 
-아래 JSON 객체 하나만 출력하세요.
-{
-  "final_grade": "1|2|3|4|5",
-  "csat_point_equivalent": 2|3|4,
-  "csat_difficulty_band": "two_point|three_point|four_easy|four_medium|four_hard|semi_killer_easy|semi_killer_hard|killer",
-  "reason": "핵심 난이도 근거 1~2문장",
-  "confidence": 0.0~1.0
-}
+각 문항을 독립적으로 판정하고 전체 분포를 맞추려 하지 마세요.
+JSON 객체 하나만 출력하세요.
 `.trim();
 }
 
@@ -160,15 +134,12 @@ export async function POST(request: NextRequest) {
     await requireUser();
     const body = await request.json().catch(() => ({}));
     const problemId = String(body?.problemId ?? "").trim();
-    if (!problemId) {
-      return NextResponse.json({ success: false, message: "problemId가 필요합니다." }, { status: 400 });
-    }
+    if (!problemId) return NextResponse.json({ success: false, message: "problemId가 필요합니다." }, { status: 400 });
 
     const supabase = await createClient();
-
     const { data: problem, error } = await supabase
       .from("problem_bank_questions")
-      .select("id,analysis_question_id,question_image_path,problem_dna,difficulty")
+      .select("id,question_image_path,problem_dna,difficulty")
       .eq("id", problemId)
       .single();
 
@@ -176,87 +147,74 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: error?.message || "문항을 찾지 못했습니다." }, { status: 404 });
     }
 
+    const current = normalizeGrade(problem.difficulty);
+    const allowed = allowedFromCurrent(current);
+
+    if (current === "5") {
+      return NextResponse.json({
+        success: true, problemId, difficulty: "5", previousDifficulty: "5",
+        allowedGrades: ["5"], skipped: true, reason: "기존 5단계 유지", confidence: 1, version: "difficulty-v179"
+      });
+    }
+
     if (!problem.question_image_path) {
-      return NextResponse.json({ success: false, message: "문항 이미지가 없어 난이도를 재판정할 수 없습니다." }, { status: 400 });
+      return NextResponse.json({ success: false, message: "문항 이미지가 없습니다." }, { status: 400 });
     }
 
-    // v177.2: OpenAI가 Supabase signed URL을 직접 내려받다가 timeout 나는 문제를 피한다.
-    // 서버가 question-images에서 이미지를 직접 다운로드한 뒤 base64 data URL로 전달한다.
-    const downloaded = await supabase.storage
-      .from("question-images")
-      .download(problem.question_image_path);
-
+    const downloaded = await supabase.storage.from("question-images").download(problem.question_image_path);
     if (downloaded.error || !downloaded.data) {
-      return NextResponse.json(
-        {
-          success: false,
-          message: downloaded.error?.message || `question-images에서 문항 이미지를 찾지 못했습니다: ${problem.question_image_path}`,
-        },
-        { status: 500 },
-      );
+      return NextResponse.json({ success: false, message: downloaded.error?.message || "문항 이미지 다운로드 실패" }, { status: 500 });
     }
 
-    const imageBytes = Buffer.from(await downloaded.data.arrayBuffer());
-    const contentType = downloaded.data.type || "image/webp";
-    const imageDataUrl = `data:${contentType};base64,${imageBytes.toString("base64")}`;
+    const bytes = Buffer.from(await downloaded.data.arrayBuffer());
+    const mime = downloaded.data.type || "image/webp";
+    const imageDataUrl = `data:${mime};base64,${bytes.toString("base64")}`;
 
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ success: false, message: "OPENAI_API_KEY가 없습니다." }, { status: 500 });
-    }
+    if (!apiKey) return NextResponse.json({ success: false, message: "OPENAI_API_KEY가 없습니다." }, { status: 500 });
 
     const model = process.env.OPENAI_DIFFICULTY_MODEL || process.env.OPENAI_MODEL || "gpt-5-mini";
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
         input: [{
           role: "user",
           content: [
-            { type: "input_text", text: difficultyPrompt(problem.problem_dna) },
+            { type: "input_text", text: prompt(problem.problem_dna, current, allowed) },
             { type: "input_image", image_url: imageDataUrl, detail: "high" },
           ],
         }],
         reasoning: { effort: "low" },
-        text: {
-          format: {
-            type: "json_schema",
-            name: "mathpooh_difficulty_v177_3",
-            strict: true,
-            schema: difficultySchema,
-          },
-        },
-        max_output_tokens: 1400,
+        text: { format: { type: "json_schema", name: "mathpooh_difficulty_v179", strict: true, schema: schema(allowed) } },
+        max_output_tokens: 1200,
         store: false,
       }),
       signal: AbortSignal.timeout(180_000),
       cache: "no-store",
     });
 
+    const raw = await response.text();
     if (!response.ok) {
-      return NextResponse.json(
-        { success: false, message: `AI 난이도 재판정 실패 (${response.status}): ${await response.text()}` },
-        { status: 500 },
-      );
+      let errorCode = "";
+      try { errorCode = String(JSON.parse(raw)?.error?.code ?? ""); } catch {}
+      return NextResponse.json({
+        success: false,
+        message: `AI 난이도 재판정 실패 (${response.status}): ${raw.slice(0, 800)}`,
+        errorCode,
+        httpStatus: response.status,
+      }, { status: response.status === 429 ? 429 : 500 });
     }
 
-    const payload = await response.json();
-    const outputText = extractOutputText(payload);
+    const payload = JSON.parse(raw);
+    const text = outputText(payload);
+    if (!text) throw new Error("AI 난이도 응답이 비어 있습니다.");
 
-    if (!outputText) {
-      const incompleteReason = payload?.incomplete_details?.reason;
-      throw new Error(
-        incompleteReason
-          ? `AI 난이도 응답이 완료되지 않았습니다: ${incompleteReason}`
-          : "AI 난이도 응답이 비어 있습니다."
-      );
+    const result = JSON.parse(text) as DifficultyResult;
+    if (!allowed.includes(result.final_grade)) {
+      throw new Error(`허용 범위 ${allowed.join("/")}를 벗어난 판정입니다.`);
     }
-
-    const difficulty = parseJson(outputText);
 
     const dna = problem.problem_dna && typeof problem.problem_dna === "object"
       ? { ...(problem.problem_dna as Record<string, any>) }
@@ -264,40 +222,39 @@ export async function POST(request: NextRequest) {
 
     dna.difficulty = {
       ...(dna.difficulty ?? {}),
-      final_grade: difficulty.final_grade,
-      csat_point_equivalent: difficulty.csat_point_equivalent,
-      csat_difficulty_band: difficulty.csat_difficulty_band,
-      reasons: [difficulty.reason],
+      final_grade: result.final_grade,
+      csat_point_equivalent: result.csat_point_equivalent,
+      csat_difficulty_band: result.csat_difficulty_band,
+      reasons: [result.reason],
       ai_regraded_at: new Date().toISOString(),
-      ai_regrade_confidence: difficulty.confidence,
-      ai_regrade_version: "difficulty-v177.3",
+      ai_regrade_confidence: Math.max(0, Math.min(1, Number(result.confidence) || 0)),
+      ai_regrade_version: "difficulty-v179",
+      previous_final_grade: current || null,
+      allowed_regrade_grades: allowed,
     };
 
+    const now = new Date().toISOString();
     const { error: updateError } = await supabase
       .from("problem_bank_questions")
-      .update({
-        difficulty: difficulty.final_grade,
-        problem_dna: dna,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ difficulty: result.final_grade, problem_dna: dna, updated_at: now })
       .eq("id", problemId);
 
-    if (updateError) {
-      return NextResponse.json({ success: false, message: updateError.message }, { status: 500 });
-    }
+    if (updateError) return NextResponse.json({ success: false, message: updateError.message }, { status: 500 });
 
     return NextResponse.json({
       success: true,
       problemId,
-      difficulty: difficulty.final_grade,
-      reason: difficulty.reason,
-      confidence: difficulty.confidence,
-      version: "difficulty-v177.3",
+      difficulty: result.final_grade,
+      previousDifficulty: current || null,
+      allowedGrades: allowed,
+      reason: result.reason,
+      confidence: result.confidence,
+      version: "difficulty-v179",
     });
   } catch (error) {
-    return NextResponse.json(
-      { success: false, message: error instanceof Error ? error.message : "난이도 재판정 중 오류가 발생했습니다." },
-      { status: 500 },
-    );
+    return NextResponse.json({
+      success: false,
+      message: error instanceof Error ? error.message : "난이도 재판정 중 오류가 발생했습니다.",
+    }, { status: 500 });
   }
 }
