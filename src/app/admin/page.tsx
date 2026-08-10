@@ -5897,26 +5897,25 @@ function ProblemsPage({
     setMessage("");
     setErrorMessage("");
     try {
-      const response = await fetch(
-        `${config.url}/rest/v1/source_files?id=eq.${encodeURIComponent(editingId)}`,
-        {
-          method: "PATCH",
-          headers: {
-            ...(await authHeaders()),
-            "Content-Type": "application/json",
-            Prefer: "return=representation",
-          },
-          body: JSON.stringify({
-            title: editTitle.trim(),
-            source: editSource.trim() || null,
-            grade: editGrade,
-            subject: editSubject,
-          }),
-        },
-      );
-      if (!response.ok) throw new Error(await response.text());
+      const response = await fetch(`/api/source-files/${encodeURIComponent(editingId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: editTitle.trim(),
+          source: editSource.trim() || null,
+          grade: editGrade,
+          subject: editSubject,
+        }),
+      });
+      const payload = await response.json() as {
+        success?: boolean;
+        message?: string;
+        bankUpdated?: number;
+        analysisUpdated?: number;
+      };
+      if (!response.ok || !payload.success) throw new Error(payload.message || "시험지 정보 수정에 실패했습니다.");
       setEditingId(null);
-      setMessage("시험지 정보가 수정되었습니다.");
+      setMessage(payload.message || `시험지 정보와 연결된 문제 ${payload.bankUpdated ?? 0}개가 함께 수정되었습니다.`);
       await loadFiles();
     } catch (error) {
       setErrorMessage(

@@ -66,6 +66,149 @@ async function deleteStorageObjects(
   }
 }
 
+
+
+type SourceMetadataPatch = {
+  title?: unknown;
+  source?: unknown;
+  grade?: unknown;
+  subject?: unknown;
+};
+
+type BankMetadataRow = {
+  id: string;
+  question_no: number;
+  problem_dna?: Record<string, any> | null;
+};
+
+type AnalysisMetadataRow = {
+  id: string;
+  ai_result?: Record<string, any> | null;
+  review_result?: Record<string, any> | null;
+};
+
+function cleanMetadataText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function withSourceMetadata(result: Record<string, any> | null | undefined, grade: string, subject: string) {
+  if (!result || typeof result !== "object") return result ?? null;
+  const next: Record<string, any> = { ...result };
+  if (subject) next.subject = subject;
+  const dna = next.problem_dna;
+  if (dna && typeof dna === "object") {
+    next.problem_dna = {
+      ...dna,
+      basic: {
+        ...(dna.basic && typeof dna.basic === "object" ? dna.basic : {}),
+        ...(grade ? { grade } : {}),
+        ...(subject ? { subject } : {}),
+      },
+    };
+  }
+  return next;
+}
+
+async function restPatch(url: string, headers: Record<string, string>, path: string, body: unknown) {
+  const response = await fetch(`${url}/rest/v1/${path}`, {
+    method: "PATCH",
+    headers: { ...headers, "Content-Type": "application/json", Prefer: "return=representation" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<unknown[]>;
+}
+
+export async function PATCH(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const denied = await requireUser();
+  if (denied) return denied;
+
+  try {
+    const { id } = await context.params;
+    const body = await request.json() as SourceMetadataPatch;
+    const title = cleanMetadataText(body.title);
+    const source = cleanMetadataText(body.source);
+    const grade = cleanMetadataText(body.grade);
+    const subject = cleanMetadataText(body.subject);
+    if (!title) return NextResponse.json({ success: false, message: "시험지명을 입력해 주세요." }, { status: 400 });
+
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !key) {
+      return NextResponse.json({ success: false, message: "Supabase 환경변수가 없습니다." }, { status: 500 });
+    }
+    const headers = { apikey: key, Authorization: `Bearer ${key}` };
+    const encodedId = encodeURIComponent(id);
+
+    const sourceRows = await restPatch(url, headers, `source_files?id=eq.${encodedId}`, {
+      title,
+      source: source || null,
+      grade: grade || null,
+      subject: subject || null,
+    });
+    if (!sourceRows.length) {
+      return NextResponse.json({ success: false, message: "수정할 시험지를 찾지 못했습니다." }, { status: 404 });
+    }
+
+    const bankRows = await restJson<BankMetadataRow[]>(
+      url, headers, `problem_bank_questions?source_file_id=eq.${encodedId}&select=id,question_no,problem_dna`,
+    );
+    let bankUpdated = 0;
+    for (const row of bankRows) {
+      const dna = row.problem_dna && typeof row.problem_dna === "object"
+        ? {
+            ...row.problem_dna,
+            basic: {
+              ...(row.problem_dna.basic && typeof row.problem_dna.basic === "object" ? row.problem_dna.basic : {}),
+              ...(grade ? { grade } : {}),
+              ...(subject ? { subject } : {}),
+            },
+          }
+        : row.problem_dna ?? null;
+      await restPatch(url, headers, `problem_bank_questions?id=eq.${encodeURIComponent(row.id)}`, {
+        title: `${title} ${row.question_no}번`,
+        grade: grade || null,
+        subject: subject || null,
+        source_name: source || null,
+        problem_dna: dna,
+        updated_at: new Date().toISOString(),
+      });
+      bankUpdated += 1;
+    }
+
+    const analyses = await restJson<AnalysisRow[]>(
+      url, headers, `source_analysis?source_file_id=eq.${encodedId}&select=id`,
+    );
+    let analysisUpdated = 0;
+    for (const analysis of analyses) {
+      const questions = await restJson<AnalysisMetadataRow[]>(
+        url, headers, `analysis_questions?analysis_id=eq.${encodeURIComponent(analysis.id)}&select=id,ai_result,review_result`,
+      );
+      for (const question of questions) {
+        await restPatch(url, headers, `analysis_questions?id=eq.${encodeURIComponent(question.id)}`, {
+          ai_result: withSourceMetadata(question.ai_result, grade, subject),
+          review_result: withSourceMetadata(question.review_result, grade, subject),
+        });
+        analysisUpdated += 1;
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      sourceUpdated: true,
+      bankUpdated,
+      analysisUpdated,
+      message: `시험지 정보와 연결 문항 ${bankUpdated}개를 함께 수정했습니다.`,
+    });
+  } catch (error) {
+    return NextResponse.json({
+      success: false,
+      message: error instanceof Error ? error.message : "시험지 정보 수정에 실패했습니다.",
+    }, { status: 500 });
+  }
+}
+
 export async function DELETE(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const denied = await requireUser();
   if (denied) return denied;

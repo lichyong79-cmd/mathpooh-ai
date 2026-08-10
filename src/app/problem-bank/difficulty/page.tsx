@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
 import { authHeaders } from "@/lib/supabase/rest";
-import AdminPortalShell from "@/components/admin-portal-sidebar";
 
 type Problem = {
   id: string;
@@ -94,7 +93,7 @@ export default function DifficultyManagementPage() {
       const res = await fetch("/api/problem-bank/regrade-difficulty-batch", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({problemIds:targets.map(x=>x.id)}) });
       const data = await res.json().catch(()=>({})); if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
       const map = new Map((Array.isArray(data.results)?data.results:[]).map((r:any)=>[String(r.problemId),r]));
-      setTestResults(targets.map(x=>({ ...x, before:norm(x.difficulty), result:map.get(String(x.id)) })));
+      setTestResults(targets.map(x=>({ ...x, before:norm(x.difficulty), result:map.get(String(x.id)) }))
       setMessage("20문항 테스트가 완료되었습니다. 아래 결과를 확인한 뒤 전체 재판정을 실행하세요.");
       await load();
     } catch(e) { setError(e instanceof Error ? e.message : "테스트에 실패했습니다."); }
@@ -122,8 +121,7 @@ export default function DifficultyManagementPage() {
     finally { setRunning(false); }
   }
 
-  return <AdminPortalShell current="sos-difficulty">
-  <main style={{minHeight:"100vh",background:"#f5f7f6",padding:28,fontFamily:"Arial, sans-serif",color:"#15231c"}}>
+  return <main style={{minHeight:"100vh",background:"#f5f7f6",padding:28,fontFamily:"Arial, sans-serif",color:"#15231c"}}>
     <div style={{maxWidth:1500,margin:"0 auto"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:20,alignItems:"flex-start",marginBottom:20}}>
         <div><div style={{fontSize:12,fontWeight:800,color:"#247a4b",letterSpacing:1}}>MATHPOOH SOS</div><h1 style={{margin:"6px 0",fontSize:30}}>난이도 관리</h1><p style={{margin:0,color:"#66736c"}}>문제은행 분석과 분리된 난이도 전용 관리 화면입니다.</p></div>
@@ -145,6 +143,5 @@ export default function DifficultyManagementPage() {
         {loading ? <div style={{padding:30}}>불러오는 중...</div> : filtered.map(x=><div key={x.id} style={{display:"grid",gridTemplateColumns:"80px 150px 1.2fr 1fr 130px",gap:10,padding:12,borderTop:"1px solid #edf0ee",alignItems:"center"}}><b>{x.question_no}번</b><span>{x.problem_code}</span><span><b>{x.unit}</b><br/><small>{x.topic || x.title}</small></span><span>{x.source_name}</span><select value={norm(x.difficulty)} onChange={e=>void changeDifficulty(x.id,e.target.value)} style={{padding:8}}>{D.map(d=><option key={d} value={d}>{d}단계</option>)}</select></div>)}
       </div>
     </div>
-  </main>
-  </AdminPortalShell>;
+  </main>;
 }
