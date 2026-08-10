@@ -93,7 +93,7 @@ export default function DifficultyManagementPage() {
       const res = await fetch("/api/problem-bank/regrade-difficulty-batch", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({problemIds:targets.map(x=>x.id)}) });
       const data = await res.json().catch(()=>({})); if (!res.ok) throw new Error(data?.message || `HTTP ${res.status}`);
       const map = new Map((Array.isArray(data.results)?data.results:[]).map((r:any)=>[String(r.problemId),r]));
-      setTestResults(targets.map(x=>({ ...x, before:norm(x.difficulty), result:map.get(String(x.id)) }))
+      setTestResults(targets.map(x=>({ ...x, before:norm(x.difficulty), result:map.get(String(x.id)) })))
       setMessage("20문항 테스트가 완료되었습니다. 아래 결과를 확인한 뒤 전체 재판정을 실행하세요.");
       await load();
     } catch(e) { setError(e instanceof Error ? e.message : "테스트에 실패했습니다."); }
