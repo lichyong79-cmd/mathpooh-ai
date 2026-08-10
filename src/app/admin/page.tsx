@@ -29,6 +29,7 @@ type AdminMenu =
   | "problem-sources"
   | "problem-analysis"
   | "sos-bank"
+  | "sos-difficulty"
   | "sos-learning"
   | "exam-results"
   | "student-results"
@@ -130,6 +131,7 @@ const menus: MenuItem[] = [
   { id: "problem-sources", label: "문제등록", icon: "▦" },
   { id: "problem-analysis", label: "AI 분석", icon: "✦" },
   { id: "sos-bank", label: "SOS 문제은행", icon: "▣" },
+  { id: "sos-difficulty", label: "난이도 관리", icon: "◆" },
   { id: "sos-learning", label: "SOS 학습운영", icon: "◎" },
   { id: "exam-results", label: "시험성적 분석", icon: "▥" },
   { id: "student-results", label: "학생성적 분석", icon: "↗" },
@@ -142,7 +144,7 @@ const menuGroups: MenuGroup[] = [
   { label: "실전모의고사 관리", icon: "▤", items: menus.filter((item) => ["exam-list", "exam-input", "exam-analysis", "exam-assignment"].includes(item.id)) },
   { label: "시험 운영", items: menus.filter((item) => item.id === "exam-progress") },
   { label: "문제은행 관리", icon: "▦", items: menus.filter((item) => ["problem-sources", "problem-analysis"].includes(item.id)) },
-  { label: "SOS 운영", items: menus.filter((item) => ["sos-bank", "sos-learning"].includes(item.id)) },
+  { label: "SOS 운영", items: menus.filter((item) => ["sos-bank", "sos-difficulty", "sos-learning"].includes(item.id)) },
   { label: "분석", items: menus.filter((item) => ["exam-results", "student-results", "learning-analysis"].includes(item.id)) },
 ];
 
@@ -403,6 +405,10 @@ export default function Home() {
                 onClick={() => {
                   if (menu.id === "sos-bank") {
                     window.location.href = "/problem-bank";
+                    return;
+                  }
+                  if (menu.id === "sos-difficulty") {
+                    window.location.href = "/problem-bank/difficulty";
                     return;
                   }
                   if (menu.id === "problem-analysis") {

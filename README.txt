@@ -1,15 +1,20 @@
-SOS 162 - /problem-bank useSearchParams Suspense 빌드 오류 수정
+MATHPOOH SOS - 난이도 관리 분리 + 기존 문제은행 복구
 
-적용 방법:
-1. 압축을 풉니다.
-2. 안의 src 폴더를 mathpooh-ai 프로젝트 루트에 그대로 덮어씁니다.
-3. git status 확인 후 아래 실행:
-   git add .
-   git commit -m "162 fix problem bank suspense"
-   git push
+교체 파일
+1. src/app/problem-bank/ProblemBankClient.tsx
+   - 난이도 재판정 기능을 넣기 전 문제은행 화면으로 복구
 
-수정 내용:
-- 기존 problem-bank/page.tsx 전체 화면 코드를 ProblemBankClient.tsx로 이동
-- page.tsx는 Suspense wrapper로 변경
-- 기존 검색/필터/대시보드/문항교체 기능은 유지
-- 추가 SQL 없음
+2. src/app/admin/page.tsx
+   - SOS 운영 메뉴에 '난이도 관리' 추가
+   - 클릭 시 /problem-bank/difficulty 이동
+
+3. src/app/problem-bank/difficulty/page.tsx
+   - 난이도 전용 관리 페이지 신규
+   - 1~5 분포 / 검색 / 과목·난이도 필터
+   - 문항별 난이도 직접 변경
+   - 20문항 AI 재판정 테스트
+   - 전체 AI 재판정
+
+주의
+- 기존 /api/problem-bank/regrade-difficulty-batch API는 유지되어 있어야 합니다.
+- 문제은행 원래 분석/문항 관리 기능에는 난이도 재판정 UI를 섞지 않습니다.

@@ -44,7 +44,7 @@ const emptyDraft: Draft = {
   subject: "",
   unit: "",
   topic: "",
-  difficulty: "",
+  difficulty: "2",
   question_type: "unknown",
   answer: "",
   summary: "",
@@ -70,9 +70,7 @@ function confidencePercent(value: number | null) {
 
 function normalizeDifficulty(value: unknown) {
   const raw = String(value ?? "").trim();
-
-
-  return ({ A: "1", B: "2", C: "3", D: "4", E: "5", 하: "1", 중: "2", 상: "4", 최상: "5" } as Record<string, string>)[raw] ?? (/^[1-5]$/.test(raw) ? raw : "");
+  return ({ A: "1", B: "2", C: "3", D: "4", E: "5", 하: "1", 중: "2", 상: "4", 최상: "5" } as Record<string, string>)[raw] ?? (/^[1-5]$/.test(raw) ? raw : "2");
 }
 
 function questionTypeLabel(value: string) {
@@ -94,28 +92,6 @@ export default function ProblemBankClient() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState("");
-  const [bulkRegradeRunning, setBulkRegradeRunning] = useState(false);
-  const [bulkRegradeProgress, setBulkRegradeProgress] = useState({
-    total: 0,
-    done: 0,
-    success: 0,
-    failed: 0,
-  });
-  const [bulkRegradeFailedIds, setBulkRegradeFailedIds] = useState<string[]>([]);
-  const [testRegradeRunning, setTestRegradeRunning] = useState(false);
-  const [testRegradeResults, setTestRegradeResults] = useState<Array<{
-    id: string;
-    questionNo: number;
-    title: string;
-    problemCode: string;
-    before: string;
-    after: string;
-    reason: string;
-    ok: boolean;
-  }>>([]);
-
-
-
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -142,38 +118,12 @@ export default function ProblemBankClient() {
         "grade", "subject", "unit", "topic", "difficulty", "question_type", "answer", "summary",
         "source_name", "confidence", "status", "content_role", "training_course", "created_at", "updated_at", "question_image_path", "page_no", "problem_dna", "analysis_version",
       ].join(",");
-      // Supabase/PostgREST는 한 번의 요청에서 최대 1,000행만 반환될 수 있으므로
-      // 1,000개씩 페이지를 나누어 문제은행 전체를 끝까지 불러옵니다.
-      const pageSize = 1000;
-      const allRows: Problem[] = [];
-
-      for (let from = 0; ; from += pageSize) {
-        const to = from + pageSize - 1;
-        const response = await fetch(
-          `${config.url}/rest/v1/problem_bank_questions?select=${fields}&order=created_at.desc`,
-          {
-            headers: {
-              ...(await authHeaders()),
-              Range: `${from}-${to}`,
-            },
-            cache: "no-store",
-          },
-        );
-
-        if (!response.ok) throw new Error(await response.text());
-
-        const pageRows = (await response.json()) as Problem[];
-        allRows.push(...pageRows);
-
-        // 1,000개보다 적게 왔으면 마지막 페이지입니다.
-        if (pageRows.length < pageSize) break;
-      }
-
-      const rows = allRows.map((item) => ({
-        ...item,
-        difficulty: normalizeDifficulty(item.difficulty),
-      }));
-
+      const response = await fetch(
+        `${config.url}/rest/v1/problem_bank_questions?select=${fields}&order=created_at.desc`,
+        { headers: { ...(await authHeaders()) }, cache: "no-store" },
+      );
+      if (!response.ok) throw new Error(await response.text());
+      const rows = ((await response.json()) as Problem[]).map((item) => ({ ...item, difficulty: normalizeDifficulty(item.difficulty) }));
       setItems(rows);
       setSelectedId((current) => rows.some((item) => item.id === current) ? current : rows[0]?.id ?? "");
     } catch (reason) {
@@ -406,167 +356,6 @@ export default function ProblemBankClient() {
     }
   };
 
-  async function regradeTest20() {
-    if (testRegradeRunning || bulkRegradeRunning) return;
-
-    const targets = items
-      .filter((item) => item.status === "ACTIVE")
-      .filter((item) => ["1", "2", "3", "4"].includes(String(item.difficulty)))
-      .slice(0, 20);
-
-    if (!targets.length) {
-      setError("테스트할 문항이 없습니다.");
-      return;
-    }
-
-    if (!window.confirm(
-      `현재 난이도 기준으로 ${targets.length}문항만 보정 테스트합니다.\n` +
-      `1→1/2/3, 2→2/3/4, 3→3/4/5, 4→4/5\n\n진행할까요?`
-    )) return;
-
-    setTestRegradeRunning(true);
-    setTestRegradeResults([]);
-    setMessage("");
-    setError("");
-
-    try {
-      const response = await fetch("/api/problem-bank/regrade-difficulty-batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ problemIds: targets.map((item) => item.id) }),
-      });
-
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result?.message || `HTTP ${response.status}`);
-
-      const results = Array.isArray(result?.results) ? result.results : [];
-      const summary: Record<string, number> = {};
-      let success = 0;
-
-      const resultMap = new Map<string, any>(
-        results.map((item: any) => [String(item?.problemId ?? ""), item])
-      );
-
-      const visibleResults = targets.map((target) => {
-        const row = resultMap.get(String(target.id));
-        const ok = Boolean(row?.ok);
-        const after = ok ? String(row?.difficulty ?? target.difficulty) : "-";
-
-        if (ok) {
-          success += 1;
-          summary[after] = (summary[after] || 0) + 1;
-        }
-
-        return {
-          id: target.id,
-          questionNo: target.question_no,
-          title: target.title,
-          problemCode: target.problem_code,
-          before: String(target.difficulty || "-"),
-          after,
-          reason: String(row?.reason ?? row?.message ?? ""),
-          ok,
-        };
-      });
-
-      setTestRegradeResults(visibleResults);
-
-      const failed = targets.length - success;
-      setMessage(
-        `20문항 테스트 완료 · 성공 ${success} · 실패 ${failed} · ` +
-        `새 분포 1:${summary["1"] || 0} / 2:${summary["2"] || 0} / 3:${summary["3"] || 0} / 4:${summary["4"] || 0} / 5:${summary["5"] || 0}`
-      );
-
-      await loadProblems();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "20문항 테스트에 실패했습니다.");
-    } finally {
-      setTestRegradeRunning(false);
-    }
-  }
-
-  async function regradeAllDifficulties() {
-    if (bulkRegradeRunning) return;
-    if (!window.confirm("현재 난이도를 기준으로 전체 보정 재판정할까요?\n1→1/2/3, 2→2/3/4, 3→3/4/5, 4→4/5, 5→유지\n기존 단원·유형·정답·풀이 DNA는 유지됩니다.")) {
-      return;
-    }
-
-    setBulkRegradeRunning(true);
-    setBulkRegradeProgress({ total: 0, done: 0, success: 0, failed: 0 });
-    setBulkRegradeFailedIds([]);
-    setMessage("");
-    setError("");
-
-    try {
-      // loadProblems가 이미 1,000개 단위 pagination으로 전체 문제은행을 불러온 상태이므로
-      // 별도 목록 API를 추측해서 호출하지 않고 현재 전체 items에서 ACTIVE 문항만 사용한다.
-      const ids = items
-        .filter((item) => item.status === "ACTIVE")
-        .map((item) => String(item.id ?? "").trim())
-        .filter(Boolean);
-
-      if (!ids.length) {
-        throw new Error("재판정할 ACTIVE 문제은행 문항이 없습니다.");
-      }
-
-      setBulkRegradeProgress({ total: ids.length, done: 0, success: 0, failed: 0 });
-
-      let success = 0;
-      let failed = 0;
-      const failedIds: string[] = [];
-
-      for (let index = 0; index < ids.length; index += 20) {
-        const batch = ids.slice(index, index + 20);
-        const response = await fetch("/api/problem-bank/regrade-difficulty-batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ problemIds: batch }),
-        });
-
-        const result = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          failed += batch.length;
-          failedIds.push(...batch);
-        } else {
-          const results = Array.isArray(result.results) ? result.results : [];
-          for (const item of results) {
-            if (item?.ok) success += 1;
-            else {
-              failed += 1;
-              failedIds.push(String(item?.problemId ?? ""));
-            }
-          }
-
-          const missingCount = Math.max(0, batch.length - results.length);
-          if (missingCount) {
-            failed += missingCount;
-            failedIds.push(...batch.slice(results.length));
-          }
-        }
-
-        setBulkRegradeProgress({
-          total: ids.length,
-          done: Math.min(index + batch.length, ids.length),
-          success,
-          failed,
-        });
-      }
-
-      setBulkRegradeFailedIds(failedIds.filter(Boolean));
-      setMessage(
-        failedIds.length
-          ? `전체 난이도 재판정 완료: 성공 ${success}문항 / 실패 ${failedIds.length}문항`
-          : `전체 난이도 재판정 완료: ${success}문항`,
-      );
-
-      await loadProblems();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "전체 난이도 재판정에 실패했습니다.");
-    } finally {
-      setBulkRegradeRunning(false);
-    }
-  }
-
   return (
     <AdminPortalShell current="sos-bank">
     <main className="bank-page">
@@ -631,56 +420,6 @@ export default function ProblemBankClient() {
       {message ? <div className="notice success">{message}</div> : null}
       {error ? <div className="notice error">{error}</div> : null}
 
-      {testRegradeResults.length ? (
-        <section style={{
-          maxWidth: 1920,
-          margin: "0 auto 12px",
-          padding: 14,
-          background: "#fff",
-          border: "1px solid #dfe5ec",
-          borderRadius: 14,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
-            <strong style={{ color: "#294f31" }}>방금 보정 테스트한 20문항</strong>
-            <span style={{ fontSize: 12, color: "#7b8497" }}>문항을 누르면 오른쪽에서 바로 확인할 수 있습니다.</span>
-          </div>
-          <div style={{ display: "grid", gap: 6 }}>
-            {testRegradeResults.map((row) => (
-              <button
-                key={row.id}
-                type="button"
-                onClick={() => setSelectedId(row.id)}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "70px minmax(220px,1fr) 120px minmax(260px,1.4fr)",
-                  gap: 10,
-                  alignItems: "center",
-                  width: "100%",
-                  padding: "9px 11px",
-                  border: "1px solid #e6eaf0",
-                  borderRadius: 9,
-                  background: row.ok ? "#fbfcfe" : "#fff4f4",
-                  color: "#40506a",
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-              >
-                <b>{row.questionNo}번</b>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {row.title} · {row.problemCode}
-                </span>
-                <strong style={{ color: row.ok ? "#2f6937" : "#b84451" }}>
-                  {row.ok ? `${row.before} → ${row.after}` : "실패"}
-                </strong>
-                <small style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#7b8497" }}>
-                  {row.reason || "-"}
-                </small>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       <section className="bank-layout">
         <aside className="problem-list">
           <div className="list-head"><span>문항</span><span>단원 · 유형</span><span>난이도</span></div>
@@ -708,68 +447,7 @@ export default function ProblemBankClient() {
 
             <form className="edit-panel" onSubmit={(event) => { event.preventDefault(); void save(); }}>
               <div className="edit-head"><div><strong>{selected.question_no}번 분석 정보</strong><span>신뢰도 {confidencePercent(selected.confidence)} · {selected.analysis_version || "legacy"}</span></div><code>{selected.problem_code}</code></div>
-              <div className="detail-tabs"><button type="button" className={detailTab === "basic" ? "active" : ""} onClick={() => setDetailTab("basic")}>기본정보 수정</button>
-
-<div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-  <button
-    type="button"
-    onClick={() => void regradeTest20()}
-    disabled={testRegradeRunning || bulkRegradeRunning}
-  >
-    {testRegradeRunning ? "20문항 테스트 중..." : "20문항 난이도 보정 테스트"}
-  </button>
-
-  <button
-    type="button"
-    onClick={() => void regradeAllDifficulties()}
-    disabled={bulkRegradeRunning}
-  >
-    {bulkRegradeRunning ? "전체 난이도 보정 중..." : "전체 난이도 보정 재판정"}
-  </button>
-  {bulkRegradeProgress.total > 0 ? (
-    <span style={{ fontSize: 13, color: "#667085" }}>
-      {bulkRegradeProgress.done} / {bulkRegradeProgress.total}
-      {" · "}성공 {bulkRegradeProgress.success}
-      {" · "}실패 {bulkRegradeProgress.failed}
-      {" · "}
-      {Math.round((bulkRegradeProgress.done / bulkRegradeProgress.total) * 100)}%
-    </span>
-  ) : null}
-  {bulkRegradeFailedIds.length ? (
-    <button
-      type="button"
-      onClick={() => navigator.clipboard.writeText(bulkRegradeFailedIds.join("\n"))}
-    >
-      실패 문항 ID 복사
-    </button>
-  ) : null}
-</div>
-
-<button
-  type="button"
-  onClick={async () => {
-    if (!selected?.id) return;
-    if (!window.confirm("이 문항의 난이도만 AI로 다시 판정할까요? 다른 DNA는 유지됩니다.")) return;
-    setMessage("");
-    setError("");
-    try {
-      const response = await fetch("/api/problem-bank/regrade-difficulty", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ problemId: selected.id }),
-      });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.message || "난이도 재판정 실패");
-      setMessage(`AI 난이도 재판정 완료: ${result.difficulty}단계`);
-      await loadProblems();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "난이도 재판정 실패");
-    }
-  }}
->
-  AI 난이도 재판정
-</button>
-<button type="button" className={detailTab === "dna" ? "active" : ""} onClick={() => setDetailTab("dna")}>문항 DNA</button></div>
+              <div className="detail-tabs"><button type="button" className={detailTab === "basic" ? "active" : ""} onClick={() => setDetailTab("basic")}>기본정보 수정</button><button type="button" className={detailTab === "dna" ? "active" : ""} onClick={() => setDetailTab("dna")}>문항 DNA</button></div>
               {detailTab === "basic" ? <div className="edit-grid">
                 <label className="wide"><span>문항명</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
                 <label><span>학년</span><input value={draft.grade} onChange={(event) => setDraft({ ...draft, grade: event.target.value })} /></label>
