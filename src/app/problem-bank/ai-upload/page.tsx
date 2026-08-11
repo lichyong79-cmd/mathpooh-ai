@@ -79,7 +79,7 @@ const statusText: Record<string, string> = {
   WAITING: "분석 대기",
   RUNNING: "AI 분석 중",
   REVIEW: "검수 필요",
-  APPROVED: "검수 완료",
+  APPROVED: "등록 대기",
   AUTO_REGISTERED: "등록 대기",
   REGISTERED: "등록 완료",
   REJECTED: "등록 제외",
@@ -2027,9 +2027,9 @@ export default function AnalysisWorkspacePage() {
       if (failures.length) {
         const preview = failures.slice(0, 4).map((item) => `${item.questionNo}번`).join(", ");
         setError(`분석 실패 ${failures.length}문항(${preview}${failures.length > 4 ? " 외" : ""})은 검토대상으로 보류했습니다.`);
-        setMessage(`AI 문항분석 완료 · 자동 통과 문항은 문제은행 대기 · 실패 ${failures.length}문항은 보류`);
+        setMessage(`AI 문항분석 완료 · 정상 문항은 등록대기 · 실패 ${failures.length}문항은 보류 · 문제은행 등록은 수동`);
       } else {
-        setMessage("AI 문항분석 완료 · 자동 통과 문항은 문제은행 대기, 검토 필요 문항은 보류로 분류했습니다.");
+        setMessage("AI 문항분석 완료 · 정상 문항은 등록대기, 검토 필요 문항은 보류로 분류했습니다. 문제은행 등록은 직접 등록 버튼을 눌러야 합니다.");
       }
       setViewMode("review");
       return true;

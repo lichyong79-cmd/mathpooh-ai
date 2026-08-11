@@ -343,7 +343,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       ...(solutionImageUrl && !dna.official_solution?.answer_matches ? ["AI 풀이 정답과 공식 정답의 일치 확인이 필요합니다."] : []),
     ].map((value) => String(value).trim()).filter(Boolean);
     const uniqueReviewReasons = [...new Set(reviewReasons)];
-    const autoPass =
+    const readyForRegistration =
       normalizedConfidence >= 0.82 &&
       Boolean(finalAnswer) &&
       validation.valid &&
@@ -363,8 +363,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
           }
         : cropOnlyReviewResult(question.review_result),
       confidence: normalizedConfidence,
-      status: autoPass ? "AUTO_REGISTERED" : "REVIEW",
-      review_reason: autoPass ? null : (uniqueReviewReasons.join(" · ") || "자동 판정 기준을 통과하지 못해 검토대상으로 보류되었습니다."),
+      status: readyForRegistration ? "APPROVED" : "REVIEW",
+      review_reason: readyForRegistration ? null : (uniqueReviewReasons.join(" · ") || "자동 판정 기준을 통과하지 못해 검토대상으로 보류되었습니다."),
       analysis_version: PROBLEM_DNA_VERSION,
       dna_valid: validation.valid,
       dna_validation_errors: validation.errors,
