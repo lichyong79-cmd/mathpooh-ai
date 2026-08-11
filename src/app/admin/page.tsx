@@ -29,6 +29,7 @@ type CanonicalSourceAnalysisStatus = {
   pending: number;
   review: number;
   failed: number;
+  other?: number;
 };
 
 function canonicalStatusBadge(status?: CanonicalSourceAnalysisStatus | null) {
@@ -5274,6 +5275,7 @@ type SourceFile = {
   analysis_progress?: number;
   analysis_total_questions?: number;
   bank_count?: number;
+  workflow_status?: CanonicalSourceAnalysisStatus | null;
 };
 
 const sourceStatusLabel: Record<string, string> = {
@@ -5290,28 +5292,23 @@ type UploadFileKind = "hwp" | "exam" | "solution";
 type SourceWorkflowTone = "new" | "running" | "ready" | "error" | "review";
 
 function getSourceWorkflow(item: SourceFile): { label: string; detail: string; tone: SourceWorkflowTone } {
-  const bankCount = Number(item.bank_count || 0);
-  const total = Number(item.analysis_total_questions || 0);
-  const analysisStatus = String(item.analysis_status || "").toUpperCase();
-  const sourceStatus = String(item.status || "").toLowerCase();
+  const status = item.workflow_status;
+  if (!status) return { label: "상태 확인 중", detail: "AI 분석 상태 조회", tone: "new" };
 
-  if (analysisStatus === "FAILED" || sourceStatus === "failed") {
-    return { label: "분석오류", detail: "오류 확인 필요", tone: "error" };
+  if (status.state === "REGISTERED") {
+    return { label: "문제은행 등록완료", detail: `${status.registered}/${status.total}문항`, tone: "ready" };
   }
-  if (["RUNNING", "WAITING"].includes(analysisStatus) || ["splitting", "pages_created", "analyzing"].includes(sourceStatus)) {
-    const progress = Math.max(0, Math.min(100, Number(item.analysis_progress || 0)));
-    return { label: "분석중", detail: progress ? `${progress}% 진행` : "AI 분석 진행", tone: "running" };
+  if (status.state === "PENDING") {
+    return { label: "등록대기", detail: `등록 ${status.registered} · 대기 ${status.pending} / 전체 ${status.total}`, tone: "review" };
   }
-  if (bankCount > 0) {
-    const complete = total > 0 && bankCount >= total;
-    return {
-      label: complete || analysisStatus === "DONE" ? "문제은행 등록완료" : "문제은행 등록중",
-      detail: total > 0 ? `${bankCount}/${total}문항` : `${bankCount}문항`,
-      tone: complete || analysisStatus === "DONE" ? "ready" : "review",
-    };
+  if (status.state === "REVIEW") {
+    return { label: "검토보류", detail: `등록 ${status.registered} · 대기 ${status.pending} · 보류 ${status.review}`, tone: "review" };
   }
-  if (["REVIEW", "DONE"].includes(analysisStatus) || sourceStatus === "completed") {
-    return { label: "분석완료·등록대기", detail: total > 0 ? `${total}문항 검토` : "문제은행 등록 대기", tone: "review" };
+  if (status.state === "FAILED") {
+    return { label: "분석오류", detail: `${status.failed}문항`, tone: "error" };
+  }
+  if (status.state === "ANALYZING") {
+    return { label: "분석중", detail: status.label, tone: "running" };
   }
   return { label: "신규", detail: "AI 분석 전", tone: "new" };
 }
@@ -5412,7 +5409,6 @@ function ProblemsPage({
   const [refreshingReplacement, setRefreshingReplacement] = useState(false);
   const [pdfPreview, setPdfPreview] = useState<{ title: string; url: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
-  const [canonicalAnalysisStatuses, setCanonicalAnalysisStatuses] = useState<Record<string, CanonicalSourceAnalysisStatus>>({});
 
   const openSourcePdfPreview = async (item: SourceFile, kind: "exam" | "solution") => {
     const path = kind === "exam" ? item.exam_pdf_path : item.solution_pdf_path;
@@ -5437,24 +5433,6 @@ function ProblemsPage({
   };
 
   
-  async function loadCanonicalAnalysisStatuses(sourceIds: string[]) {
-    const ids = [...new Set(sourceIds.filter(Boolean))];
-    const pairs = await Promise.all(ids.map(async (sourceId) => {
-      try {
-        const response = await fetch(`/api/source-files/${encodeURIComponent(sourceId)}/analysis-status`, { cache: "no-store" });
-        const raw = await response.text();
-        const payload = raw ? JSON.parse(raw) as CanonicalSourceAnalysisStatus : null;
-        if (!response.ok || !payload?.success) return [sourceId, null] as const;
-        return [sourceId, payload] as const;
-      } catch {
-        return [sourceId, null] as const;
-      }
-    }));
-    const next: Record<string, CanonicalSourceAnalysisStatus> = {};
-    for (const [sourceId, payload] of pairs) if (payload) next[sourceId] = payload;
-    setCanonicalAnalysisStatuses(next);
-  }
-
 const loadFiles = useCallback(async () => {
     setLoading(true);
     const config = getSupabaseConfig();
@@ -5466,60 +5444,26 @@ const loadFiles = useCallback(async () => {
 
     try {
       const fields = [
-        "id",
-        "created_at",
-        "title",
-        "source",
-        "grade",
-        "subject",
-        "storage_path",
-        "hwp_path",
-        "exam_pdf_path",
-        "solution_pdf_path",
-        "original_hwp_name",
-        "exam_pdf_name",
-        "solution_pdf_name",
-        "page_count",
-        "status",
-        "error_message",
-        "content_role",
-        "training_course",
+        "id","created_at","title","source","grade","subject","storage_path","hwp_path",
+        "exam_pdf_path","solution_pdf_path","original_hwp_name","exam_pdf_name","solution_pdf_name",
+        "page_count","status","error_message","content_role","training_course",
       ].join(",");
       const headers = { ...(await authHeaders()) };
-      const [sourceResponse, analysisResponse, bankResponse] = await Promise.all([
+      const [sourceResponse, statusResponse] = await Promise.all([
         fetch(`${config.url}/rest/v1/source_files?select=${fields}&order=created_at.desc`, { headers, cache: "no-store" }),
-        fetch(`${config.url}/rest/v1/source_analysis?select=source_file_id,status,progress,total_questions`, { headers, cache: "no-store" }),
-        fetch(`${config.url}/rest/v1/problem_bank_questions?select=source_file_id,status`, { headers, cache: "no-store" }),
+        fetch("/api/source-files/analysis-statuses", { cache: "no-store" }),
       ]);
       if (!sourceResponse.ok) throw new Error(await sourceResponse.text());
+      if (!statusResponse.ok) throw new Error(await statusResponse.text());
+
       const sourceRows = (await sourceResponse.json()) as SourceFile[];
-      const analysisRows = analysisResponse.ok
-        ? (await analysisResponse.json()) as Array<{ source_file_id: string; status: string; progress: number; total_questions: number }>
-        : [];
-      const bankRows = bankResponse.ok
-        ? (await bankResponse.json()) as Array<{ source_file_id: string; status: string }>
-        : [];
+      const statusPayload = await statusResponse.json() as { success?: boolean; statuses?: Record<string, CanonicalSourceAnalysisStatus>; message?: string };
+      if (!statusPayload.success) throw new Error(statusPayload.message || "시험지 상태를 불러오지 못했습니다.");
+      const statuses = statusPayload.statuses ?? {};
 
-      const analysisMap = new Map(analysisRows.map((row) => [row.source_file_id, row]));
-      const bankCountMap = new Map<string, number>();
-      for (const row of bankRows) bankCountMap.set(row.source_file_id, (bankCountMap.get(row.source_file_id) || 0) + 1);
-
-      setItems(sourceRows.map((row) => {
-        const analysis = analysisMap.get(row.id);
-      void loadCanonicalAnalysisStatuses((sourceRows.map((row) => {
-        const analysis = analysisMap.get(row.id ?? []).map((item: any) => String(item.id ?? "")));
-        return {
-          ...row,
-          analysis_status: analysis?.status ?? null,
-          analysis_progress: analysis?.progress ?? 0,
-          analysis_total_questions: analysis?.total_questions ?? 0,
-          bank_count: bankCountMap.get(row.id) ?? 0,
-        };
-      }));
+      setItems(sourceRows.map((row) => ({ ...row, workflow_status: statuses[row.id] ?? null })));
     } catch (error) {
-      setErrorMessage(
-        `목록 조회 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`,
-      );
+      setErrorMessage(`목록 조회 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`);
     } finally {
       setLoading(false);
     }

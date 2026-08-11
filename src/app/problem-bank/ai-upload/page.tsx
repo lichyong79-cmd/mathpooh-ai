@@ -31,6 +31,7 @@ type SourceFile = {
   status: string;
   error_message: string | null;
   workflow_label?: string;
+  workflow_state?: "UNANALYZED" | "ANALYZING" | "PENDING" | "REVIEW" | "REGISTERED" | "FAILED";
 };
 
 type Analysis = {
@@ -64,17 +65,6 @@ type Workspace = {
   questions: Question[];
   examUrl: string | null;
   solutionUrl: string | null;
-};
-
-type CanonicalSourceAnalysisStatus = {
-  success: boolean;
-  state: "UNANALYZED" | "ANALYZING" | "PENDING" | "REVIEW" | "REGISTERED" | "FAILED";
-  label: string;
-  total: number;
-  registered: number;
-  pending: number;
-  review: number;
-  failed: number;
 };
 
 type Rect = {
@@ -819,7 +809,6 @@ export default function AnalysisWorkspacePage() {
 
   const [sources, setSources] = useState<SourceFile[]>([]);
   const [selectedId, setSelectedId] = useState("");
-  const [sourceStatusMap, setSourceStatusMap] = useState<Record<string, CanonicalSourceAnalysisStatus>>({});
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [activeQuestionId, setActiveQuestionId] = useState("");
 
@@ -889,75 +878,28 @@ export default function AnalysisWorkspacePage() {
     }
   }, []);
 
-  
-  async function loadCanonicalSourceStatuses(sourceIds: string[]) {
-    const ids = [...new Set(sourceIds.filter(Boolean))];
-    if (!ids.length) {
-      setSourceStatusMap({});
-      return;
-    }
-
-    const results = await Promise.all(ids.map(async (sourceId) => {
-      try {
-        const response = await fetch(`/api/source-files/${encodeURIComponent(sourceId)}/analysis-status`, {
-          cache: "no-store",
-        });
-        const raw = await response.text();
-        const payload = raw ? JSON.parse(raw) as CanonicalSourceAnalysisStatus : null;
-        if (!response.ok || !payload?.success) return [sourceId, null] as const;
-        return [sourceId, payload] as const;
-      } catch {
-        return [sourceId, null] as const;
-      }
-    }));
-
-    const next: Record<string, CanonicalSourceAnalysisStatus> = {};
-    for (const [sourceId, payload] of results) {
-      if (payload) next[sourceId] = payload;
-    }
-    setSourceStatusMap(next);
-  }
-
-const loadSources = useCallback(async () => {
-    const [sourceResult, analysisResult, questionResult, bankResult] = await Promise.all([
+  const loadSources = useCallback(async () => {
+    const [sourceResult, statusResponse] = await Promise.all([
       supabase.from("source_files").select("id,created_at,title,source,grade,subject,status,error_message").order("created_at", { ascending: false }),
-      supabase.from("source_analysis").select("id,source_file_id,status,current_step"),
-      supabase.from("analysis_questions").select("analysis_id,status,question_image_path,review_result"),
-      supabase.from("problem_bank_questions").select("source_file_id"),
+      fetch("/api/source-files/analysis-statuses", { cache: "no-store" }),
     ]);
     if (sourceResult.error) throw sourceResult.error;
-    if (analysisResult.error) throw analysisResult.error;
-    if (questionResult.error) throw questionResult.error;
-    if (bankResult.error) throw bankResult.error;
+    if (!statusResponse.ok) throw new Error(await statusResponse.text());
 
-    const analysesBySource = new Map((analysisResult.data ?? []).map((row: any) => [String(row.source_file_id), row]));
-    const questionsByAnalysis = new Map<string, any[]>();
-    for (const question of questionResult.data ?? []) {
-      const key = String((question as any).analysis_id);
-      questionsByAnalysis.set(key, [...(questionsByAnalysis.get(key) ?? []), question]);
-    }
-    const bankCounts = new Map<string, number>();
-    for (const row of bankResult.data ?? []) {
-      const key = String((row as any).source_file_id);
-      bankCounts.set(key, (bankCounts.get(key) ?? 0) + 1);
-    }
+    const statusPayload = await statusResponse.json() as {
+      success?: boolean;
+      statuses?: Record<string, { state: SourceFile["workflow_state"]; label: string }>;
+      message?: string;
+    };
+    if (!statusPayload.success) throw new Error(statusPayload.message || "시험지 상태를 불러오지 못했습니다.");
+    const statuses = statusPayload.statuses ?? {};
 
-    const rows = ((sourceResult.data ?? []) as SourceFile[]).map((source) => {
-      const analysis: any = analysesBySource.get(source.id);
-      const linkedQuestions = analysis ? questionsByAnalysis.get(String(analysis.id)) ?? [] : [];
-      const bankCount = bankCounts.get(source.id) ?? 0;
-      const pending = linkedQuestions.filter((item) => ["AUTO_REGISTERED", "APPROVED"].includes(String(item.status))).length;
-      const review = linkedQuestions.filter((item) => String(item.status) === "REVIEW").length;
-      const cropped = linkedQuestions.filter((item) => Boolean(item.question_image_path)).length;
-      let workflowLabel = "미분석";
-      if (bankCount > 0) workflowLabel = `문제은행 등록완료 ${bankCount}문항`;
-      else if (pending > 0 || review > 0 || String(analysis?.current_step ?? "").includes("3단계")) workflowLabel = `3단계 분석 · 대기 ${pending} · 보류 ${review}`;
-      else if (cropped > 0 || String(analysis?.current_step ?? "").includes("2단계")) workflowLabel = `2단계 자르기 ${cropped}/${linkedQuestions.length}`;
-      else if (linkedQuestions.length > 0) workflowLabel = `1단계 문항인식 ${linkedQuestions.length}문항`;
-      return { ...source, workflow_label: workflowLabel };
-    });
+    const rows = ((sourceResult.data ?? []) as SourceFile[]).map((source) => ({
+      ...source,
+      workflow_label: statuses[source.id]?.label ?? "미분석",
+      workflow_state: statuses[source.id]?.state ?? "UNANALYZED",
+    }));
     setSources(rows);
-      void loadCanonicalSourceStatuses((rows ?? []).map((item: any) => String(item.id ?? "")));
     return rows;
   }, [supabase]);
 
@@ -1427,7 +1369,6 @@ const loadSources = useCallback(async () => {
 
       setThumbnailUrls({});
       await loadWorkspace(workspace.source.id);
-      void loadCanonicalSourceStatuses(sources.map((item) => item.id));
       await loadSources();
       setWorkflowStep(1);
       setViewMode("single");
@@ -1745,6 +1686,7 @@ const loadSources = useCallback(async () => {
       }
       if (!response.ok || !payload?.success) throw new Error(apiErrorMessage(payload, "문제은행 등록에 실패했습니다.", response.status));
       await loadWorkspace(workspace.source.id);
+      await loadSources();
       setViewMode("registered");
       setMessage(`${Number(payload.registered ?? targets.length)}문항을 문제은행에 등록했습니다.`);
     } catch (caught) {
@@ -2067,7 +2009,6 @@ const loadSources = useCallback(async () => {
       await Promise.all(Array.from({ length: concurrency }, () => worker()));
       await saveWorkflowStep(3, "3단계 · AI 문항분석 완료");
       await loadWorkspace(selectedId);
-      void loadCanonicalSourceStatuses(sources.map((item) => item.id));
       if (failures.length) {
         const preview = failures.slice(0, 4).map((item) => `${item.questionNo}번`).join(", ");
         setError(`분석 실패 ${failures.length}문항(${preview}${failures.length > 4 ? " 외" : ""})은 검토대상으로 보류했습니다.`);
@@ -2144,6 +2085,7 @@ const loadSources = useCallback(async () => {
       }
 
       await loadWorkspace(workspace.source.id);
+      await loadSources();
       setViewMode("pending");
       setMessage(payload.message || `${registeredQuestions.length}문항을 등록대기로 되돌렸습니다.`);
     } catch (caught) {
@@ -2390,7 +2332,7 @@ const loadSources = useCallback(async () => {
             {sources.length === 0 ? <option value="">등록된 시험지가 없습니다.</option> : null}
             {sources.map((source) => (
               <option key={source.id} value={source.id}>
-                [{source.workflow_label || "상태 확인 중"}] {source.title} · {source.grade || "학년 미정"} · {source.subject || "과목 미정"}
+                [{source.workflow_label || "상태 확인 중"}] {source.title} · {source.subject || "과목 미정"}
               </option>
             ))}
           </select>
