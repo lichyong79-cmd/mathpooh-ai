@@ -71,7 +71,6 @@ async function deleteStorageObjects(
 type SourceMetadataPatch = {
   title?: unknown;
   source?: unknown;
-  grade?: unknown;
   subject?: unknown;
 };
 
@@ -91,7 +90,7 @@ function cleanMetadataText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function withSourceMetadata(result: Record<string, any> | null | undefined, grade: string, subject: string) {
+function withSourceMetadata(result: Record<string, any> | null | undefined, subject: string) {
   if (!result || typeof result !== "object") return result ?? null;
   const next: Record<string, any> = { ...result };
   if (subject) next.subject = subject;
@@ -101,7 +100,6 @@ function withSourceMetadata(result: Record<string, any> | null | undefined, grad
       ...dna,
       basic: {
         ...(dna.basic && typeof dna.basic === "object" ? dna.basic : {}),
-        ...(grade ? { grade } : {}),
         ...(subject ? { subject } : {}),
       },
     };
@@ -129,7 +127,6 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const body = await request.json() as SourceMetadataPatch;
     const title = cleanMetadataText(body.title);
     const source = cleanMetadataText(body.source);
-    const grade = cleanMetadataText(body.grade);
     const subject = cleanMetadataText(body.subject);
     if (!title) return NextResponse.json({ success: false, message: "시험지명을 입력해 주세요." }, { status: 400 });
 
@@ -146,7 +143,6 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const sourceRows = await restPatch(url, headers, `source_files?id=eq.${encodedId}`, {
       title,
       source: source || null,
-      grade: grade || null,
       subject: subject || null,
     });
     if (!sourceRows.length) {
@@ -161,7 +157,6 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
         method: "PATCH",
         headers: { ...headers, "Content-Type": "application/json", Prefer: "return=representation" },
         body: JSON.stringify({
-          grade: grade || null,
           subject: subject || null,
           source_name: source || null,
           updated_at: new Date().toISOString(),
@@ -192,7 +187,6 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
             ...row.problem_dna,
             basic: {
               ...(row.problem_dna.basic && typeof row.problem_dna.basic === "object" ? row.problem_dna.basic : {}),
-              ...(grade ? { grade } : {}),
               ...(subject ? { subject } : {}),
             },
           }
@@ -218,8 +212,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
         );
         for (const question of questions) {
           await restPatch(url, headers, `analysis_questions?id=eq.${encodeURIComponent(question.id)}`, {
-            ai_result: withSourceMetadata(question.ai_result, grade, subject),
-            review_result: withSourceMetadata(question.review_result, grade, subject),
+            ai_result: withSourceMetadata(question.ai_result, subject),
+            review_result: withSourceMetadata(question.review_result, subject),
           });
           analysisUpdated += 1;
         }

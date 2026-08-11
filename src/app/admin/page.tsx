@@ -5364,7 +5364,6 @@ function ProblemsPage({
 }) {
   const [title, setTitle] = useState("");
   const [source, setSource] = useState("MATHPOOH 자체 제작");
-  const [grade, setGrade] = useState("고1");
   const [subject, setSubject] = useState("공통수학1");
   const [contentRole, setContentRole] = useState<"TRAINING" | "REFERENCE">("TRAINING");
   const [hwpFile, setHwpFile] = useState<File | null>(null);
@@ -5378,9 +5377,9 @@ function ProblemsPage({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editSource, setEditSource] = useState("");
-  const [editGrade, setEditGrade] = useState("고1");
   const [editSubject, setEditSubject] = useState("공통수학1");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [syncingSubjects, setSyncingSubjects] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [replacingFile, setReplacingFile] = useState<{ id: string; kind: UploadFileKind } | null>(null);
   const [replacementRefresh, setReplacementRefresh] = useState<ReplacementRefreshState | null>(null);
@@ -5597,7 +5596,6 @@ function ProblemsPage({
           mode: "direct",
           title: title.trim(),
           source: source.trim(),
-          grade,
           subject,
           contentRole,
           folder,
@@ -5654,7 +5652,6 @@ function ProblemsPage({
     setEditingId(item.id);
     setEditTitle(item.title);
     setEditSource(item.source || "");
-    setEditGrade(item.grade || "고1");
     setEditSubject(item.subject || "공통수학1");
     setMessage("");
     setErrorMessage("");
@@ -5905,7 +5902,6 @@ function ProblemsPage({
         body: JSON.stringify({
           title: editTitle.trim(),
           source: editSource.trim() || null,
-          grade: editGrade,
           subject: editSubject,
         }),
       });
@@ -5925,6 +5921,24 @@ function ProblemsPage({
       );
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const syncAllSubjectsFromSources = async () => {
+    if (!window.confirm("현재 문제등록의 시험지 과목을 기준으로 기존 문제은행 전체 과목을 재동기화할까요?\n\n문제등록의 과목값이 최종 기준으로 적용됩니다.")) return;
+    setSyncingSubjects(true);
+    setMessage("");
+    setErrorMessage("");
+    try {
+      const response = await fetch("/api/problem-bank/sync-subjects-from-sources", { method: "POST" });
+      const payload = await response.json() as { success?: boolean; sourceCount?: number; bankUpdated?: number; analysisUpdated?: number; message?: string };
+      if (!response.ok || !payload.success) throw new Error(payload.message || "과목 재동기화에 실패했습니다.");
+      setMessage(payload.message || `시험지 ${payload.sourceCount ?? 0}개 기준 · 문제은행 ${payload.bankUpdated ?? 0}문항 · AI 분석 ${payload.analysisUpdated ?? 0}문항 과목 동기화 완료`);
+      await loadFiles();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "과목 재동기화에 실패했습니다.");
+    } finally {
+      setSyncingSubjects(false);
     }
   };
 
@@ -5976,21 +5990,6 @@ function ProblemsPage({
             />
           </label>
           <label className="field">
-            <span>학년</span>
-            <select
-              value={grade}
-              onChange={(e) => setGrade(e.target.value)}
-              disabled={uploading}
-            >
-              <option>중1</option>
-              <option>중2</option>
-              <option>중3</option>
-              <option>고1</option>
-              <option>고2</option>
-              <option>고3</option>
-            </select>
-          </label>
-          <label className="field">
             <span>과목</span>
             <select
               value={subject}
@@ -6001,7 +6000,7 @@ function ProblemsPage({
               <option>공통수학1</option>
               <option>공통수학2</option>
               <option>대수</option>
-              <option>미적분Ⅰ</option>
+              <option>미적분 I</option>
               <option>확률과 통계</option>
             </select>
           </label>
@@ -6109,14 +6108,24 @@ function ProblemsPage({
             <strong>등록된 시험지 세트</strong>
             <span>총 {items.length}개</span>
           </div>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => void loadFiles()}
-            disabled={loading}
-          >
-            새로고침
-          </button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => void syncAllSubjectsFromSources()}
+              disabled={loading || syncingSubjects}
+            >
+              {syncingSubjects ? "과목 동기화 중..." : "시험지 과목 → 문제은행 전체 동기화"}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => void loadFiles()}
+              disabled={loading || syncingSubjects}
+            >
+              새로고침
+            </button>
+          </div>
         </div>
         {loading ? (
           <div className="source-file-empty">목록을 불러오는 중입니다.</div>
@@ -6127,7 +6136,7 @@ function ProblemsPage({
             <div className="source-file-head">
               <span>등록일</span>
               <span>시험지명</span>
-              <span>학년·과목</span>
+              <span>과목</span>
               <span>파일 구성</span>
               <span>진행 상태</span>
               <span>관리</span>
@@ -6153,21 +6162,6 @@ function ProblemsPage({
                       />
                     </label>
                     <label className="field">
-                      <span>학년</span>
-                      <select
-                        value={editGrade}
-                        onChange={(e) => setEditGrade(e.target.value)}
-                        disabled={savingEdit}
-                      >
-                        <option>중1</option>
-                        <option>중2</option>
-                        <option>중3</option>
-                        <option>고1</option>
-                        <option>고2</option>
-                        <option>고3</option>
-                      </select>
-                    </label>
-                    <label className="field">
                       <span>과목</span>
                       <select
                         value={editSubject}
@@ -6178,7 +6172,7 @@ function ProblemsPage({
                         <option>공통수학1</option>
                         <option>공통수학2</option>
                         <option>대수</option>
-                        <option>미적분Ⅰ</option>
+                        <option>미적분 I</option>
                         <option>확률과 통계</option>
                       </select>
                     </label>
@@ -6302,8 +6296,7 @@ function ProblemsPage({
                     <small className={`source-purpose ${item.content_role === "REFERENCE" ? "reference" : "training"}`}>{item.content_role === "REFERENCE" ? "참고·보관용" : "훈련용 문항"}</small>
                   </div>
                   <span>
-                    {[item.grade, item.subject].filter(Boolean).join(" · ") ||
-                      "-"}
+                    {item.subject || "-"}
                   </span>
                   <div className="file-badges">
                     <span className={item.hwp_path ? "ok" : "missing"}>HWP</span>
