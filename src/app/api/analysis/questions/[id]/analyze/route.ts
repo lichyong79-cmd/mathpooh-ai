@@ -311,11 +311,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       analysis_model: model,
       analyzed_at: new Date().toISOString(),
       official_solution: {
-        connected: Boolean(solutionImageUrl),
+        connected: Boolean(solutionImagePath && solutionImageUrl),
         source_path: source?.solution_pdf_path ?? null,
         question_no: question.question_no,
         verification: !solutionImageUrl
-          ? "official_pdf_missing"
+          ? (source?.solution_pdf_path ? "official_pdf_extract_required" : "official_pdf_missing")
           : officialSolutionIssues.length || !dna.official_solution?.matched_question || !dna.official_solution?.answer_matches
             ? "official_pdf_review_required"
             : "official_pdf_cross_checked",
@@ -338,7 +338,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       ...(!finalAnswer ? ["AI가 정답을 확정하지 못했습니다."] : []),
       ...(normalizedConfidence < 0.82 ? [`AI 신뢰도 ${Math.round(normalizedConfidence * 100)}%로 자동 통과 기준 82% 미만입니다.`] : []),
       ...(classificationMissing ? [`필수 문항분류가 비어 있습니다: ${missingClassification.join(", ")}`] : []),
-      ...(!solutionImageUrl ? ["해당 문항의 공식 해설 이미지가 연결되지 않아 정답·풀이 교차 검증이 필요합니다."] : []),
+      ...(!solutionImageUrl ? [source?.solution_pdf_path ? "공식 해설지는 첨부되어 있으나 문항별 해설 이미지 연결이 필요합니다." : "공식 해설 PDF가 첨부되지 않아 정답·풀이 교차 검증이 필요합니다."] : []),
       ...(solutionImageUrl && !dna.official_solution?.matched_question ? ["공식 해설 이미지에서 동일 문항번호를 확인하지 못했습니다."] : []),
       ...(solutionImageUrl && !dna.official_solution?.answer_matches ? ["AI 풀이 정답과 공식 정답의 일치 확인이 필요합니다."] : []),
     ].map((value) => String(value).trim()).filter(Boolean);

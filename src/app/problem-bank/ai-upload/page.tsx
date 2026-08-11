@@ -127,7 +127,7 @@ function valueOf(question: Question, key: string) {
   return "";
 }
 
-function officialSolutionOf(question: Question): {
+function officialSolutionOf(question: Question, sourceHasSolution = false): {
   tone: "verified" | "review" | "missing";
   label: string;
   detail: string;
@@ -139,7 +139,9 @@ function officialSolutionOf(question: Question): {
   const raw = question.ai_result?.official_solution;
   const solution = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
   const verification = String(solution.verification ?? "");
-  const connected = solution.connected === true;
+  const materializedPath = String(question.ai_result?.official_solution_image_path ?? "").trim();
+  // 실제 문항별 해설 이미지가 저장되어 있으면 과거 connected 플래그보다 이것을 우선한다.
+  const connected = Boolean(materializedPath) || solution.connected === true;
   const dna = question.ai_result?.problem_dna && typeof question.ai_result.problem_dna === "object"
     ? question.ai_result.problem_dna as Record<string, any>
     : null;
@@ -154,8 +156,25 @@ function officialSolutionOf(question: Question): {
   const officialAnswer = String(solution.official_answer ?? "").trim();
   const evidence = String(solution.evidence_summary ?? "").trim();
 
-  if (!connected || verification === "official_pdf_missing") {
-    return { tone: "missing", label: "공식 해설 미연결", detail: "해설 PDF가 분석에 전달되지 않았습니다.", solutionSteps, issues, officialAnswer, evidence };
+  if (!connected) {
+    if (sourceHasSolution) {
+      return {
+        tone: "review",
+        label: "공식 해설 추출 확인 필요",
+        detail: "해설지는 첨부되어 있지만 이 문항의 해설 이미지가 아직 연결되지 않았습니다. 문항 재분석 시 자동 연결을 다시 시도합니다.",
+        solutionSteps, issues, officialAnswer, evidence,
+      };
+    }
+    return { tone: "missing", label: "공식 해설 미연결", detail: "해설 PDF가 첨부되지 않았습니다.", solutionSteps, issues, officialAnswer, evidence };
+  }
+  // materializedPath가 있으면 과거 verification=missing 값은 stale 상태이므로 missing으로 보지 않는다.
+  if (verification === "official_pdf_missing" && materializedPath) {
+    return {
+      tone: "review",
+      label: "공식 해설 연결됨 · 재검증 필요",
+      detail: "문항별 공식 해설 이미지는 연결되어 있습니다. 이전 분석의 미연결 기록만 남아 있어 재분석 시 교차검증 상태를 갱신합니다.",
+      solutionSteps, issues, officialAnswer, evidence,
+    };
   }
   if (verification === "official_pdf_review_required") {
     return { tone: "review", label: "공식 해설 확인 필요", detail: issues.join(" · ") || "해설 탐색 또는 정답 교차검증 결과를 확인해 주세요.", solutionSteps, issues, officialAnswer, evidence };
@@ -797,6 +816,8 @@ export default function AnalysisWorkspacePage() {
   const [anchorBusy, setAnchorBusy] = useState(false);
   const [solutionPdfDoc, setSolutionPdfDoc] = useState<any>(null);
   const [solutionAnchors, setSolutionAnchors] = useState<DocumentAnchors | null>(null);
+  const solutionPdfDocRef = useRef<any>(null);
+  const solutionAnchorsRef = useRef<DocumentAnchors | null>(null);
   const [solutionAnchorBusy, setSolutionAnchorBusy] = useState(false);
   const [pageNo, setPageNo] = useState(1);
   const [pageCount, setPageCount] = useState(0);
@@ -829,6 +850,9 @@ export default function AnalysisWorkspacePage() {
   const questions = workspace?.questions ?? [];
   const selectedSource = sources.find((source) => source.id === selectedId) ?? null;
   const questionNumberKey = questions.map((question) => Number(question.question_no)).join(",");
+  useEffect(() => { solutionPdfDocRef.current = solutionPdfDoc; }, [solutionPdfDoc]);
+  useEffect(() => { solutionAnchorsRef.current = solutionAnchors; }, [solutionAnchors]);
+
   const activeQuestion =
     questions.find((item) => item.id === activeQuestionId) ?? questions[0] ?? null;
 
@@ -1009,12 +1033,14 @@ export default function AnalysisWorkspacePage() {
         const expected = questions.map((question) => Number(question.question_no));
         const found = await buildDocumentAnchors(document, expected.length ? expected : undefined);
         if (!cancelled) {
+          solutionPdfDocRef.current = document;
+          solutionAnchorsRef.current = found;
           setSolutionPdfDoc(document);
           setSolutionAnchors(found);
         }
       } catch (caught) {
         console.error("공식 해설 문항번호 인식 실패", caught);
-        if (!cancelled) { setSolutionPdfDoc(null); setSolutionAnchors(null); }
+        if (!cancelled) { solutionPdfDocRef.current = null; solutionAnchorsRef.current = null; setSolutionPdfDoc(null); setSolutionAnchors(null); }
       } finally {
         if (!cancelled) setSolutionAnchorBusy(false);
       }
@@ -1520,6 +1546,16 @@ export default function AnalysisWorkspacePage() {
     }
   }
 
+  async function waitForOfficialSolutionReady(timeoutMs = 20000): Promise<boolean> {
+    if (!workspace?.solutionUrl) return false;
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      if (solutionPdfDocRef.current && solutionAnchorsRef.current) return true;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return false;
+  }
+
   async function analyzeOneQuestion(targetQuestion: Question | null = activeQuestion) {
     if (!targetQuestion) return;
     setBusy("one");
@@ -1527,7 +1563,14 @@ export default function AnalysisWorkspacePage() {
     setMessage("");
 
     try {
-      await materializeOfficialSolution(targetQuestion);
+      if (workspace?.solutionUrl) {
+        const ready = await waitForOfficialSolutionReady();
+        if (!ready) throw new Error("공식 해설지 준비가 끝나지 않았습니다. 잠시 후 다시 시도해 주세요.");
+        const linked = await materializeOfficialSolution(targetQuestion);
+        if (!linked) throw new Error(`${targetQuestion.question_no}번 공식 해설을 문항별 이미지로 연결하지 못했습니다.`);
+      } else {
+        await materializeOfficialSolution(targetQuestion);
+      }
       const response = await fetch(`/api/analysis/questions/${targetQuestion.id}/analyze`, {
         method: "POST",
       });
@@ -1555,11 +1598,20 @@ export default function AnalysisWorkspacePage() {
   }
 
   async function materializeOfficialSolution(question: Question): Promise<boolean> {
-    if (!workspace?.analysis?.id || !solutionPdfDoc || !solutionAnchors?.hasTextLayer) return false;
-    const anchor = solutionAnchors.byQuestionNo.get(Number(question.question_no));
+    if (!workspace?.analysis?.id || !workspace?.solutionUrl) return false;
+
+    if (!solutionPdfDocRef.current || !solutionAnchorsRef.current) {
+      await waitForOfficialSolutionReady();
+    }
+
+    const doc = solutionPdfDocRef.current;
+    const found = solutionAnchorsRef.current;
+    if (!doc || !found) return false;
+
+    const anchor = found.byQuestionNo.get(Number(question.question_no));
     if (!anchor) return false;
 
-    const page = await solutionPdfDoc.getPage(anchor.page);
+    const page = await doc.getPage(anchor.page);
     const base = page.getViewport({ scale: 1 });
     const viewport = page.getViewport({ scale: Math.max(1.7, 1800 / base.width) });
     const canvas = document.createElement("canvas");
@@ -1884,6 +1936,17 @@ export default function AnalysisWorkspacePage() {
     setError("");
     setMessage("");
     setQueueProgress({ done: 0, total: analysisTargets.length });
+
+    // 해설지가 첨부된 시험지는 해설 PDF와 문항번호 앵커가 준비된 뒤 AI 분석을 시작한다.
+    // 이 준비 전에 워커가 먼저 돌면 정상 해설도 official_pdf_missing으로 굳을 수 있다.
+    if (workspace.solutionUrl) {
+      const ready = await waitForOfficialSolutionReady(20000);
+      if (!ready) {
+        setBusy("");
+        setError("공식 해설지는 첨부되어 있지만 문항별 해설 연결 준비가 끝나지 않았습니다. 잠시 후 다시 분석해 주세요.");
+        return false;
+      }
+    }
 
     // 3단계 AI 문항분석만 제한 병렬화한다.
     // 인식 → 자르기 → 분석 순서는 그대로 유지하며, 한 문항의 Problem DNA 내용도 줄이지 않는다.
@@ -2342,7 +2405,7 @@ export default function AnalysisWorkspacePage() {
                     </div>
                     <small>{valueOf(question, "unit") || "단원 분석 전"}</small>
                     <small>신뢰도 {question.confidence == null ? "-" : `${Math.round(Number(question.confidence) * 100)}%`}</small>
-                    <small className={`solution-badge ${officialSolutionOf(question).tone}`}>{officialSolutionOf(question).label}</small>
+                    <small className={`solution-badge ${officialSolutionOf(question, Boolean(workspace?.solutionUrl)).tone}`}>{officialSolutionOf(question, Boolean(workspace?.solutionUrl)).label}</small>
                     {question.review_reason ? <small className="review-reason">{question.review_reason}</small> : null}
                   </button>
                   <div className="review-card-actions single-action solution-open-action">
@@ -2471,19 +2534,19 @@ export default function AnalysisWorkspacePage() {
                     </div>
                   </div>
 
-                  <section className={`official-solution-panel prominent ${officialSolutionOf(activeQuestion).tone}`}>
+                  <section className={`official-solution-panel prominent ${officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).tone}`}>
                     <div className="official-solution-head">
                       <div>
                         <small>{activeQuestion.question_no}번 공식 해설 확인</small>
-                        <strong>{officialSolutionOf(activeQuestion).label}</strong>
+                        <strong>{officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).label}</strong>
                       </div>
                       {workspace.solutionUrl ? <a href={workspace.solutionUrl} target="_blank" rel="noreferrer">전체 원본 해설지</a> : null}
                     </div>
-                    <p>{officialSolutionOf(activeQuestion).detail}</p>
-                    {officialSolutionOf(activeQuestion).officialAnswer ? <div className="official-answer"><b>공식 정답</b><strong>{officialSolutionOf(activeQuestion).officialAnswer}</strong></div> : null}
-                    {officialSolutionOf(activeQuestion).evidence ? <p><b>확인 근거:</b> {officialSolutionOf(activeQuestion).evidence}</p> : null}
+                    <p>{officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).detail}</p>
+                    {officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).officialAnswer ? <div className="official-answer"><b>공식 정답</b><strong>{officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).officialAnswer}</strong></div> : null}
+                    {officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).evidence ? <p><b>확인 근거:</b> {officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).evidence}</p> : null}
                     {solutionPreviewUrl ? <details open><summary>{activeQuestion.question_no}번 잘린 공식 해설 이미지</summary><img className="solution-preview-image" src={solutionPreviewUrl} alt={`${activeQuestion.question_no}번 공식 해설`} /></details> : <small className="solution-empty">이 문항을 재분석하면 문항별 공식 해설 이미지가 표시됩니다.</small>}
-                    {officialSolutionOf(activeQuestion).solutionSteps.length ? <details><summary>AI가 정리한 핵심 풀이</summary><ol>{officialSolutionOf(activeQuestion).solutionSteps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol></details> : null}
+                    {officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).solutionSteps.length ? <details><summary>AI가 정리한 핵심 풀이</summary><ol>{officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).solutionSteps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol></details> : null}
                   </section>
 
                   <div className="preview-card">

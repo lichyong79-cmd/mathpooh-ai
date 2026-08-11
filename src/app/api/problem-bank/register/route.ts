@@ -32,8 +32,11 @@ function registrationMissing(item: any) {
     if (!Array.isArray(dna.solution?.representative_solution) || !dna.solution.representative_solution.length) missing.push("대표풀이");
     if (!Array.isArray(dna.abilities) || !dna.abilities.length) missing.push("요구능력");
     if (!Array.isArray(dna.educational_value?.training_objectives) || !dna.educational_value.training_objectives.length) missing.push("훈련목적");
-    if (!dna.official_solution?.matched_question) missing.push("공식 해설 문항확인");
-    if (!dna.official_solution?.answer_matches) missing.push("공식 정답 교차검증");
+    const officialSolutionImagePath = String(result.official_solution_image_path ?? "").trim();
+    // 실제 문항별 해설 이미지가 있으면 "해설 없음"으로 차단하지 않는다.
+    // 정답 교차검증은 AI 재분석으로 갱신할 수 있으므로 이미지 존재 자체와 분리한다.
+    if (!officialSolutionImagePath && !dna.official_solution?.matched_question) missing.push("공식 해설 문항확인");
+    if (officialSolutionImagePath && dna.official_solution?.answer_matches === false) missing.push("공식 정답 교차검증");
     return [...new Set(missing)];
   }
 
