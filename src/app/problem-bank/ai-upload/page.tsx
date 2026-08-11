@@ -20,6 +20,7 @@ import {
 import AdminPortalShell from "@/components/admin-portal-sidebar";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { DIFFICULTY_SCALE, difficultyLabel } from "@/lib/difficulty-scale";
+import { workflowBucketOf } from "@/lib/problem-bank-workflow";
 
 type SourceFile = {
   id: string;
@@ -184,7 +185,7 @@ function officialSolutionOf(question: Question, sourceHasSolution = false): {
 }
 
 function isBankRegistered(question: Question) {
-  return String(question.review_result?.bank_status ?? "") === "REGISTERED";
+  return workflowBucketOf(question) === "registered";
 }
 
 function displayQuestionStatus(question: Question) {
@@ -881,7 +882,7 @@ export default function AnalysisWorkspacePage() {
   const loadSources = useCallback(async () => {
     const [sourceResult, statusResponse] = await Promise.all([
       supabase.from("source_files").select("id,created_at,title,source,grade,subject,status,error_message").order("created_at", { ascending: false }),
-      fetch("/api/source-files/analysis-statuses", { cache: "no-store" }),
+      fetch(`/api/source-files/analysis-statuses?_=${Date.now()}`, { cache: "no-store" }),
     ]);
     if (sourceResult.error) throw sourceResult.error;
     if (!statusResponse.ok) throw new Error(await statusResponse.text());
@@ -921,6 +922,7 @@ export default function AnalysisWorkspacePage() {
       const nextWorkspace = payload as Workspace & { success: true };
       setWorkspace(nextWorkspace);
       setSelectedId(sourceId);
+      void loadSources();
       setActiveQuestionId(nextWorkspace.questions?.[0]?.id ?? "");
       const savedStep = String(nextWorkspace.analysis?.current_step ?? "");
       if (savedStep.includes("3단계") || nextWorkspace.questions?.some((item) => item.status === "AUTO_REGISTERED" || item.status === "REVIEW" || item.status === "APPROVED")) {
@@ -2138,16 +2140,13 @@ export default function AnalysisWorkspacePage() {
   const progress = Math.max(0, Math.min(100, Number(workspace?.analysis?.progress ?? 0)));
   const croppedCount = questions.filter((question) => hasValidCrop(question)).length;
   const savedCropCount = questions.filter((question) => Boolean(question.question_image_path)).length;
-  const registeredQuestions = questions.filter((question) => isBankRegistered(question));
-  const pendingQuestions = questions.filter((question) =>
-    !isBankRegistered(question) && (question.status === "AUTO_REGISTERED" || question.status === "APPROVED")
-  );
-  const reviewQuestions = questions.filter((question) => question.status === "REVIEW");
-  const failedQuestions = questions.filter((question) => question.status === "FAILED" || question.status === "REJECTED");
-  const analysisNeededQuestions = questions.filter((question) =>
-    !isBankRegistered(question) &&
-    !["AUTO_REGISTERED", "APPROVED", "REGISTERED", "REJECTED"].includes(question.status)
-  );
+  // 이 5개 배열이 시험지 상태의 유일한 기준이다.
+  // 드롭다운/문제등록 화면도 서버에서 똑같은 workflowBucketOf 규칙으로 집계한다.
+  const registeredQuestions = questions.filter((question) => workflowBucketOf(question) === "registered");
+  const pendingQuestions = questions.filter((question) => workflowBucketOf(question) === "pending");
+  const reviewQuestions = questions.filter((question) => workflowBucketOf(question) === "review");
+  const failedQuestions = questions.filter((question) => workflowBucketOf(question) === "failed");
+  const otherQuestions = questions.filter((question) => workflowBucketOf(question) === "other");
   const visibleQuestions = viewMode === "registered" ? registeredQuestions
     : viewMode === "pending" ? pendingQuestions
     : viewMode === "review" ? reviewQuestions

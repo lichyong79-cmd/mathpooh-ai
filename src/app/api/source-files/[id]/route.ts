@@ -90,20 +90,32 @@ function cleanMetadataText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function withSourceMetadata(result: Record<string, any> | null | undefined, subject: string) {
+function withSourceMetadata(
+  result: Record<string, any> | null | undefined,
+  metadata: { title: string; source: string; subject: string },
+) {
   if (!result || typeof result !== "object") return result ?? null;
-  const next: Record<string, any> = { ...result };
-  if (subject) next.subject = subject;
+
+  const next: Record<string, any> = {
+    ...result,
+    source_title: metadata.title,
+    source_name: metadata.source || null,
+    subject: metadata.subject || null,
+  };
+
   const dna = next.problem_dna;
   if (dna && typeof dna === "object") {
     next.problem_dna = {
       ...dna,
       basic: {
         ...(dna.basic && typeof dna.basic === "object" ? dna.basic : {}),
-        ...(subject ? { subject } : {}),
+        source_title: metadata.title,
+        source_name: metadata.source || null,
+        subject: metadata.subject || null,
       },
     };
   }
+
   return next;
 }
 
@@ -187,7 +199,9 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
             ...row.problem_dna,
             basic: {
               ...(row.problem_dna.basic && typeof row.problem_dna.basic === "object" ? row.problem_dna.basic : {}),
-              ...(subject ? { subject } : {}),
+              source_title: title,
+              source_name: source || null,
+              subject: subject || null,
             },
           }
         : row.problem_dna ?? null;
@@ -212,8 +226,8 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
         );
         for (const question of questions) {
           await restPatch(url, headers, `analysis_questions?id=eq.${encodeURIComponent(question.id)}`, {
-            ai_result: withSourceMetadata(question.ai_result, subject),
-            review_result: withSourceMetadata(question.review_result, subject),
+            ai_result: withSourceMetadata(question.ai_result, { title, source, subject }),
+            review_result: withSourceMetadata(question.review_result, { title, source, subject }),
           });
           analysisUpdated += 1;
         }

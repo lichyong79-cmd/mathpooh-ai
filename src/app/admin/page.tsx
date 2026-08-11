@@ -5402,7 +5402,6 @@ function ProblemsPage({
   const [editSource, setEditSource] = useState("");
   const [editSubject, setEditSubject] = useState("공통수학1");
   const [savingEdit, setSavingEdit] = useState(false);
-  const [syncingSubjects, setSyncingSubjects] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [replacingFile, setReplacingFile] = useState<{ id: string; kind: UploadFileKind } | null>(null);
   const [replacementRefresh, setReplacementRefresh] = useState<ReplacementRefreshState | null>(null);
@@ -5451,7 +5450,7 @@ const loadFiles = useCallback(async () => {
       const headers = { ...(await authHeaders()) };
       const [sourceResponse, statusResponse] = await Promise.all([
         fetch(`${config.url}/rest/v1/source_files?select=${fields}&order=created_at.desc`, { headers, cache: "no-store" }),
-        fetch("/api/source-files/analysis-statuses", { cache: "no-store" }),
+        fetch(`/api/source-files/analysis-statuses?_=${Date.now()}`, { cache: "no-store" }),
       ]);
       if (!sourceResponse.ok) throw new Error(await sourceResponse.text());
       if (!statusResponse.ok) throw new Error(await statusResponse.text());
@@ -5905,7 +5904,7 @@ const loadFiles = useCallback(async () => {
       };
       if (!response.ok || !payload.success) throw new Error(payload.message || "시험지 정보 수정에 실패했습니다.");
       setEditingId(null);
-      setMessage(payload.message || `시험지 정보와 연결된 문제 ${payload.bankUpdated ?? 0}개가 함께 수정되었습니다.`);
+      setMessage(payload.message || `수정 저장 완료 · 연결된 문제은행 ${payload.bankUpdated ?? 0}문항과 AI 분석 ${payload.analysisUpdated ?? 0}문항까지 자동 반영되었습니다.`);
       await loadFiles();
     } catch (error) {
       setErrorMessage(
@@ -5916,23 +5915,6 @@ const loadFiles = useCallback(async () => {
     }
   };
 
-  const syncAllSubjectsFromSources = async () => {
-    if (!window.confirm("현재 문제등록의 시험지 과목을 기준으로 기존 문제은행 전체 과목을 재동기화할까요?\n\n문제등록의 과목값이 최종 기준으로 적용됩니다.")) return;
-    setSyncingSubjects(true);
-    setMessage("");
-    setErrorMessage("");
-    try {
-      const response = await fetch("/api/problem-bank/sync-subjects-from-sources", { method: "POST" });
-      const payload = await response.json() as { success?: boolean; sourceCount?: number; bankUpdated?: number; analysisUpdated?: number; message?: string };
-      if (!response.ok || !payload.success) throw new Error(payload.message || "과목 재동기화에 실패했습니다.");
-      setMessage(payload.message || `시험지 ${payload.sourceCount ?? 0}개 기준 · 문제은행 ${payload.bankUpdated ?? 0}문항 · AI 분석 ${payload.analysisUpdated ?? 0}문항 과목 동기화 완료`);
-      await loadFiles();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "과목 재동기화에 실패했습니다.");
-    } finally {
-      setSyncingSubjects(false);
-    }
-  };
 
   const allReady = Boolean(title.trim() && hwpFile && examPdf && solutionPdf);
 
@@ -6104,16 +6086,8 @@ const loadFiles = useCallback(async () => {
             <button
               className="secondary-button"
               type="button"
-              onClick={() => void syncAllSubjectsFromSources()}
-              disabled={loading || syncingSubjects}
-            >
-              {syncingSubjects ? "과목 동기화 중..." : "시험지 과목 → 문제은행 전체 동기화"}
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
               onClick={() => void loadFiles()}
-              disabled={loading || syncingSubjects}
+              disabled={loading}
             >
               새로고침
             </button>
