@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 async function fetchAll<T>(
-  build: (from: number, to: number) => Promise<{ data: T[] | null; error: any }>,
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
   pageSize = 1000,
 ): Promise<T[]> {
   const rows: T[] = [];
@@ -33,7 +33,7 @@ export async function GET() {
     // 반드시 끝까지 페이지를 읽는다.
     const [sources, analyses, questions] = await Promise.all([
       fetchAll<any>((from, to) =>
-        supabase.from("source_files").select("id").order("created_at", { ascending: true }).range(from, to)
+        supabase.from("source_files").select("id").range(from, to)
       ),
       fetchAll<any>((from, to) =>
         supabase.from("source_analysis").select("id,source_file_id,created_at").order("created_at", { ascending: true }).range(from, to)
