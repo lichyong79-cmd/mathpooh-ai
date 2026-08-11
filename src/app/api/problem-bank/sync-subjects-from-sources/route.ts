@@ -49,7 +49,7 @@ export async function POST() {
   const denied = await requireUser();
   if (denied) return denied;
   try {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\\/$/, "");
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (!url || !key) return NextResponse.json({ success:false, message:"Supabase 환경변수가 없습니다." }, { status:500 });
     const headers = { apikey:key, Authorization:`Bearer ${key}` };
