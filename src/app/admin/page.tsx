@@ -3,20 +3,6 @@
 import {
 
 
-function sourceAnalysisTruthLabel(item: any) {
-  const total = Number(item?.question_count ?? item?.analysis_question_count ?? item?.total_questions ?? 0);
-  const registered = Number(item?.registered_count ?? item?.bank_registered_count ?? 0);
-  const pending = Number(item?.pending_count ?? 0);
-  const review = Number(item?.review_count ?? item?.hold_count ?? 0);
-  const failed = Number(item?.failed_count ?? item?.rejected_count ?? 0);
-  const analyzed = Math.max(0, registered + pending + review + failed);
-
-  if (total > 0 && registered === total) return "등록완료";
-  if (review > 0) return `검토보류 ${review}`;
-  if (pending > 0) return `등록대기 ${pending}`;
-  if (analyzed > 0) return "분석중";
-  return "미분석";
-}
 
   ChangeEvent,
   FormEvent,
@@ -33,6 +19,22 @@ import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
 import { DIFFICULTY_SCALE, DIFFICULTY_WEIGHTS, difficultyLabel, difficultyNumber } from "@/lib/difficulty-scale";
+
+function sourceAnalysisTruthLabel(item: any) {
+  const total = Number(item?.question_count ?? item?.analysis_question_count ?? item?.total_questions ?? 0);
+  const registered = Number(item?.registered_count ?? item?.bank_registered_count ?? 0);
+  const pending = Number(item?.pending_count ?? 0);
+  const review = Number(item?.review_count ?? item?.hold_count ?? 0);
+  const failed = Number(item?.failed_count ?? item?.rejected_count ?? 0);
+  const analyzed = Math.max(0, registered + pending + review + failed);
+
+  if (total > 0 && registered === total) return "등록완료";
+  if (review > 0) return `검토보류 ${review}`;
+  if (pending > 0) return `등록대기 ${pending}`;
+  if (analyzed > 0) return "분석중";
+  return "미분석";
+}
+
 
 type AdminMenu =
   | "dashboard"
