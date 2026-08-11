@@ -6094,14 +6094,6 @@ const loadFiles = useCallback(async () => {
             <button
               className="secondary-button"
               type="button"
-              onClick={() => void syncAllSubjectsFromSources()}
-              disabled={loading || syncingSubjects}
-            >
-              {syncingSubjects ? "과목 동기화 중..." : "시험지 과목 → 문제은행 전체 동기화"}
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
               onClick={() => void loadFiles()}
               disabled={loading || syncingSubjects}
             >

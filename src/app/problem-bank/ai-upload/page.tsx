@@ -2566,16 +2566,6 @@ export default function AnalysisWorkspacePage() {
               <button className={viewMode === "failed" ? "active failed" : ""} onClick={() => setViewMode("failed")}>제외/실패 {failedQuestions.length}</button>
             </div>
             <div className="pipeline-counts"><b>등록완료 {registeredQuestions.length}</b><b>보류 {reviewQuestions.length}</b></div>
-            {registeredQuestions.length > 0 ? (
-              <button
-                className="queue-button"
-                onClick={() => void revertRegisteredToPending()}
-                disabled={!!busy}
-                title="문제은행 등록만 해제하고 분석·해설·DNA는 보존합니다."
-              >
-                등록완료 {registeredQuestions.length} → 등록대기로
-              </button>
-            ) : null}
             <button className="queue-button" onClick={() => void runAutoPipeline()} disabled={!questions.length || savedCropCount !== questions.length || !!busy}>
               {busy === "queue" ? `AI 분석 ${queueProgress.done}/${queueProgress.total}` : `필요 문항 분석 ${analysisNeededQuestions.length}`}
             </button>
