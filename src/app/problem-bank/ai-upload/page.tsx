@@ -2057,6 +2057,58 @@ export default function AnalysisWorkspacePage() {
     if (next) setActiveQuestionId(next.id);
   }
 
+  async function revertRegisteredToPending() {
+    if (!workspace?.source?.id || !registeredQuestions.length) return;
+
+    const title = String(workspace.source.title ?? "").trim();
+    const confirmed = window.prompt(
+      `문제은행 등록완료 ${registeredQuestions.length}문항을 등록대기로 되돌립니다.\n\n` +
+      `문제·자르기·해설·DNA·난이도는 그대로 보존되고, 문제은행 등록만 해제됩니다.\n\n` +
+      `계속하려면 시험지명을 정확히 입력하세요:\n${title}`
+    );
+
+    if (confirmed === null) return;
+    if (confirmed.trim() !== title) {
+      setError("시험지명이 일치하지 않아 취소했습니다.");
+      return;
+    }
+
+    setBusy("revert-pending");
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/problem-bank/revert-source-to-pending", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceFileId: workspace.source.id,
+          confirmation: confirmed.trim(),
+        }),
+      });
+
+      const raw = await response.text();
+      let payload: any = null;
+      try {
+        payload = raw ? JSON.parse(raw) : null;
+      } catch {
+        throw new Error(`서버 응답이 JSON이 아닙니다. HTTP ${response.status} · ${raw.slice(0, 240)}`);
+      }
+
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || "등록대기 되돌리기에 실패했습니다.");
+      }
+
+      await loadWorkspace(workspace.source.id);
+      setViewMode("pending");
+      setMessage(payload.message || `${registeredQuestions.length}문항을 등록대기로 되돌렸습니다.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "등록대기 되돌리기에 실패했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function passRecognitionStep() {
     if (!questions.length) {
       setError("인식된 문항이 없습니다. 먼저 AI 문제인식을 실행해 주세요.");
@@ -2129,6 +2181,7 @@ export default function AnalysisWorkspacePage() {
     one: { title: "AI 선택 문항 재분석 중", detail: "선택한 문항의 분석 결과를 다시 만들고 있습니다." },
     save: { title: "분석 결과 저장 중", detail: "수정한 문항 정보를 안전하게 저장하고 있습니다." },
     "register-pending": { title: "문제은행 저장 중", detail: "선택한 문항을 문제은행에 등록하고 있습니다." },
+    "revert-pending": { title: "등록대기로 되돌리는 중", detail: "문제은행 등록만 해제하고 분석·해설·DNA는 그대로 보존합니다." },
     "review-action": { title: "문항 상태 처리 중", detail: "검수 결과를 저장하고 있습니다." },
     "reset-recognition": { title: "문제인식 전체 취소 중", detail: "문제인식과 이후 단계의 작업 결과를 초기화하고 있습니다." },
     "reset-crop": { title: "자르기 전체 취소 중", detail: "자르기 이미지와 이후 분석 결과를 초기화하고 있습니다." },
@@ -2369,10 +2422,34 @@ export default function AnalysisWorkspacePage() {
               <button className={viewMode === "failed" ? "active failed" : ""} onClick={() => setViewMode("failed")}>제외/실패 {failedQuestions.length}</button>
             </div>
             <div className="pipeline-counts"><b>등록완료 {registeredQuestions.length}</b><b>보류 {reviewQuestions.length}</b></div>
+            {registeredQuestions.length > 0 ? (
+              <button
+                className="queue-button"
+                onClick={() => void revertRegisteredToPending()}
+                disabled={!!busy}
+                title="문제은행 등록만 해제하고 분석·해설·DNA는 보존합니다."
+              >
+                등록완료 {registeredQuestions.length} → 등록대기로
+              </button>
+            ) : null}
             <button className="queue-button" onClick={() => void runAutoPipeline()} disabled={!questions.length || savedCropCount !== questions.length || !!busy}>
               {busy === "queue" ? `AI 분석 ${queueProgress.done}/${queueProgress.total}` : `필요 문항 분석 ${analysisNeededQuestions.length}`}
             </button>
           </section> : null}
+
+          {viewMode === "registered" && registeredQuestions.length ? (
+            <section className="pending-toolbar">
+              <div className="pending-icon">↩</div>
+              <div>
+                <small>REGISTERED QUESTIONS</small>
+                <strong>등록완료 <b>{registeredQuestions.length}</b>문항</strong>
+                <span>필요하면 문제은행 등록만 해제하고 등록대기로 되돌릴 수 있습니다. 분석·해설·DNA는 그대로 보존됩니다.</span>
+              </div>
+              <button onClick={() => void revertRegisteredToPending()} disabled={!!busy}>
+                {busy === "revert-pending" ? "등록대기로 되돌리는 중..." : `등록완료 ${registeredQuestions.length}문항 → 등록대기`}
+              </button>
+            </section>
+          ) : null}
 
           {viewMode === "pending" && pendingQuestions.length ? (
             <section className="pending-toolbar">
