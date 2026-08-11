@@ -11,72 +11,92 @@ import {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// v164: 상태 판정은 src/lib/source-workflow.ts 한 곳에서만 한다.
+async function fetchAll(build: (from:number,to:number)=>any) {
+  const rows:any[]=[];
+  for(let from=0;;from+=1000){
+    const result=await build(from,from+999);
+    if(result.error) throw result.error;
+    const page=Array.isArray(result.data)?result.data:[];
+    rows.push(...page);
+    if(page.length<1000) break;
+  }
+  return rows;
+}
+
 export async function GET() {
   const denied = await requireUser();
   if (denied) return denied;
 
   try {
     const supabase = createClient();
-    const [sourcesResult, analysesResult, questionsResult, bankResult] = await Promise.all([
-      supabase.from("source_files").select("id"),
-      supabase.from("source_analysis").select("id,source_file_id,status,current_step"),
-      supabase.from("analysis_questions").select("id,analysis_id,status"),
-      supabase.from("problem_bank_questions").select("source_file_id,analysis_question_id"),
+
+    const [sources, analyses, questions, bankRows] = await Promise.all([
+      fetchAll((f,t)=>supabase.from("source_files").select("id").range(f,t)),
+      fetchAll((f,t)=>supabase.from("source_analysis").select("id,source_file_id,created_at").order("created_at",{ascending:true}).range(f,t)),
+      fetchAll((f,t)=>supabase.from("analysis_questions").select("id,analysis_id,question_no,status").range(f,t)),
+      fetchAll((f,t)=>supabase.from("problem_bank_questions").select("source_file_id,analysis_question_id,question_no").range(f,t)),
     ]);
 
-    if (sourcesResult.error) throw sourcesResult.error;
-    if (analysesResult.error) throw analysesResult.error;
-    if (questionsResult.error) throw questionsResult.error;
-    if (bankResult.error) throw bankResult.error;
+    // 시험지별 최신 분석만 사용
+    const latestAnalysisBySource=new Map<string,any>();
+    for(const a of analyses) latestAnalysisBySource.set(String(a.source_file_id),a);
 
-    const analysisBySource = new Map<string, any>();
-    for (const row of analysesResult.data ?? []) analysisBySource.set(String(row.source_file_id), row);
-
-    const questionsByAnalysis = new Map<string, any[]>();
-    for (const row of questionsResult.data ?? []) {
-      const key = String(row.analysis_id);
-      const list = questionsByAnalysis.get(key) ?? [];
-      list.push(row);
-      questionsByAnalysis.set(key, list);
+    const questionsByAnalysis=new Map<string,any[]>();
+    for(const q of questions){
+      const key=String(q.analysis_id??"");
+      const list=questionsByAnalysis.get(key)??[];
+      list.push(q);
+      questionsByAnalysis.set(key,list);
     }
 
-    const registeredIdsBySource = new Map<string, Set<string>>();
-    const anonymousBankCountBySource = new Map<string, number>();
-    for (const row of bankResult.data ?? []) {
-      const sourceId = String(row.source_file_id ?? "");
-      if (!sourceId) continue;
-      const analysisQuestionId = String(row.analysis_question_id ?? "").trim();
-      if (analysisQuestionId) {
-        const set = registeredIdsBySource.get(sourceId) ?? new Set<string>();
-        set.add(analysisQuestionId);
-        registeredIdsBySource.set(sourceId, set);
-      } else {
-        anonymousBankCountBySource.set(sourceId, (anonymousBankCountBySource.get(sourceId) ?? 0) + 1);
-      }
+    const bankIdsBySource=new Map<string,Set<string>>();
+    const bankNosBySource=new Map<string,Set<number>>();
+    for(const row of bankRows){
+      const sourceId=String(row.source_file_id??"");
+      if(!sourceId) continue;
+      if(!bankIdsBySource.has(sourceId)) bankIdsBySource.set(sourceId,new Set());
+      if(!bankNosBySource.has(sourceId)) bankNosBySource.set(sourceId,new Set());
+
+      const qid=String(row.analysis_question_id??"").trim();
+      if(qid) bankIdsBySource.get(sourceId)!.add(qid);
+
+      const qno=Number(row.question_no);
+      if(Number.isFinite(qno)) bankNosBySource.get(sourceId)!.add(qno);
     }
 
-    const statuses: Record<string, SourceWorkflowStatus> = {};
+    const statuses:Record<string,SourceWorkflowStatus>={};
 
-    for (const source of sourcesResult.data ?? []) {
-      const sourceId = String(source.id);
-      const analysis = analysisBySource.get(sourceId);
-      if (!analysis) {
-        statuses[sourceId] = summarizeSourceWorkflow(emptySourceWorkflowCounts());
+    for(const source of sources){
+      const sourceId=String(source.id);
+      const analysis=latestAnalysisBySource.get(sourceId);
+
+      if(!analysis){
+        statuses[sourceId]=summarizeSourceWorkflow(emptySourceWorkflowCounts());
         continue;
       }
 
-      const questions = questionsByAnalysis.get(String(analysis.id)) ?? [];
-      const registeredIds = registeredIdsBySource.get(sourceId) ?? new Set<string>();
-      const counts = countSourceWorkflow(
-        questions.map((q) => ({ status: q.status, bankRegistered: registeredIds.has(String(q.id)) })),
-        anonymousBankCountBySource.get(sourceId) ?? 0,
-      );
-      statuses[sourceId] = summarizeSourceWorkflow(counts);
+      const registeredIds=bankIdsBySource.get(sourceId)??new Set<string>();
+      const registeredNos=bankNosBySource.get(sourceId)??new Set<number>();
+      const qs=questionsByAnalysis.get(String(analysis.id))??[];
+
+      const counts=countSourceWorkflow(qs.map((q:any)=>({
+        status:q.status,
+        bankRegistered:
+          registeredIds.has(String(q.id)) ||
+          registeredNos.has(Number(q.question_no)),
+      })));
+
+      statuses[sourceId]=summarizeSourceWorkflow(counts);
     }
 
-    return NextResponse.json({ success: true, statuses });
-  } catch (error) {
-    return NextResponse.json({ success: false, message: error instanceof Error ? error.message : "상태 조회 실패" }, { status: 500 });
+    return NextResponse.json(
+      {success:true,statuses},
+      {headers:{"Cache-Control":"no-store,max-age=0"}}
+    );
+  } catch(error) {
+    return NextResponse.json(
+      {success:false,message:error instanceof Error?error.message:"상태 조회 실패"},
+      {status:500}
+    );
   }
 }

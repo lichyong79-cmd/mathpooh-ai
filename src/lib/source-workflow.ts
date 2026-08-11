@@ -76,15 +76,12 @@ export function emptySourceWorkflowCounts(): SourceWorkflowCounts {
 
 export function countSourceWorkflow(
   questions: Array<{ status?: unknown; bankRegistered: boolean }>,
-  extraRegistered = 0,
 ): SourceWorkflowCounts {
   const counts = emptySourceWorkflowCounts();
   for (const question of questions) {
     counts[classifyQuestionStage(question.status, question.bankRegistered)] += 1;
   }
-  // analysis_question_id가 없는 과거 문제은행 행도 등록 수에 포함한다.
-  counts.registered += extraRegistered;
-  counts.total = questions.length || counts.registered;
+  counts.total = questions.length;
   return counts;
 }
 

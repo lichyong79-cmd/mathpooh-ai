@@ -65,8 +65,9 @@ type Workspace = {
   source: SourceFile;
   analysis: Analysis;
   questions: Question[];
-  /** 서버가 확인한 문제은행 등록 문항 id. 등록완료 판정의 유일한 기준이다. */
+  /** 서버가 확인한 실제 문제은행 등록 문항. */
   registeredQuestionIds?: string[];
+  registeredQuestionNos?: number[];
   examUrl: string | null;
   solutionUrl: string | null;
 };
@@ -191,9 +192,17 @@ function officialSolutionOf(question: Question, sourceHasSolution = false): {
  * v164: 등록완료 판정 기준을 서버(problem_bank_questions 행 존재)와 일치시킨다.
  * review_result.bank_status는 재분석 등으로 지워질 수 있어 보조 신호로만 쓴다.
  */
-function isBankRegistered(question: Question, registeredIds?: Set<string>) {
-  if (registeredIds?.has(question.id)) return true;
-  if (registeredIds) return false;
+function isBankRegistered(
+  question: Question,
+  registeredIds?: Set<string>,
+  registeredNos?: Set<number>,
+) {
+  if (registeredIds || registeredNos) {
+    return Boolean(
+      registeredIds?.has(question.id) ||
+      registeredNos?.has(Number(question.question_no))
+    );
+  }
   return String(question.review_result?.bank_status ?? "") === "REGISTERED";
 }
 
@@ -2155,9 +2164,16 @@ export default function AnalysisWorkspacePage() {
     () => new Set(workspace?.registeredQuestionIds ?? []),
     [workspace?.registeredQuestionIds],
   );
+  const registeredNoSet = useMemo(
+    () => new Set(workspace?.registeredQuestionNos ?? []),
+    [workspace?.registeredQuestionNos],
+  );
   const questionStages = questions.map((question) => ({
     question,
-    stage: classifyQuestionStage(question.status, isBankRegistered(question, registeredIdSet)),
+    stage: classifyQuestionStage(
+      question.status,
+      isBankRegistered(question, registeredIdSet, registeredNoSet),
+    ),
   }));
   const stageList = (target: string) => questionStages.filter((item) => item.stage === target).map((item) => item.question);
   const registeredQuestions = stageList("registered");

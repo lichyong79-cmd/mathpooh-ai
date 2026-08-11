@@ -27,11 +27,14 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
     // 화면이 review_result.bank_status만 보고 판단하면 상태 표시가 목록과 어긋난다.
     const bank = await supabase
       .from("problem_bank_questions")
-      .select("analysis_question_id")
+      .select("analysis_question_id,question_no")
       .eq("source_file_id", id);
     if (bank.error) throw bank.error;
     const registeredQuestionIds = [...new Set(
       (bank.data ?? []).map((row) => String(row.analysis_question_id ?? "").trim()).filter(Boolean),
+    )];
+    const registeredQuestionNos = [...new Set(
+      (bank.data ?? []).map((row:any) => Number(row.question_no)).filter(Number.isFinite),
     )];
 
     const sign = async (path: string | null) => {
@@ -46,6 +49,7 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
       analysis: analysis.data,
       questions,
       registeredQuestionIds,
+      registeredQuestionNos,
       examUrl: await sign(source.data.exam_pdf_path),
       solutionUrl: await sign(source.data.solution_pdf_path),
     });
