@@ -20,20 +20,27 @@ import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
 import { DIFFICULTY_SCALE, DIFFICULTY_WEIGHTS, difficultyLabel, difficultyNumber } from "@/lib/difficulty-scale";
 
-function sourceAnalysisTruthLabel(item: any) {
-  const total = Number(item?.question_count ?? item?.analysis_question_count ?? item?.total_questions ?? 0);
-  const registered = Number(item?.registered_count ?? item?.bank_registered_count ?? 0);
-  const pending = Number(item?.pending_count ?? 0);
-  const review = Number(item?.review_count ?? item?.hold_count ?? 0);
-  const failed = Number(item?.failed_count ?? item?.rejected_count ?? 0);
-  const analyzed = Math.max(0, registered + pending + review + failed);
+type CanonicalSourceAnalysisStatus = {
+  success: boolean;
+  state: "UNANALYZED" | "ANALYZING" | "PENDING" | "REVIEW" | "REGISTERED" | "FAILED";
+  label: string;
+  total: number;
+  registered: number;
+  pending: number;
+  review: number;
+  failed: number;
+};
 
-  if (total > 0 && registered === total) return "등록완료";
-  if (review > 0) return `검토보류 ${review}`;
-  if (pending > 0) return `등록대기 ${pending}`;
-  if (analyzed > 0) return "분석중";
-  return "미분석";
+function canonicalStatusBadge(status?: CanonicalSourceAnalysisStatus | null) {
+  if (!status) return "미분석";
+  if (status.state === "REGISTERED") return `문제은행 등록완료 ${status.registered}/${status.total}문항`;
+  if (status.state === "PENDING") return `등록대기 ${status.pending}/${status.total}문항`;
+  if (status.state === "REVIEW") return `검토보류 ${status.review}문항`;
+  if (status.state === "FAILED") return `분석실패 ${status.failed}문항`;
+  return status.label;
 }
+
+
 
 
 type AdminMenu =
@@ -306,6 +313,7 @@ const emptyStudent: Omit<Student, "id"> = {
 
 export default function Home() {
   const [active, setActive] = useState<AdminMenu>("students");
+  const [canonicalAnalysisStatuses, setCanonicalAnalysisStatuses] = useState<Record<string, CanonicalSourceAnalysisStatus>>({});
   const [collapsed, setCollapsed] = useState(false);
 
   const moveToMenu = useCallback((menu: AdminMenu, mode: "push" | "replace" = "push") => {
@@ -5428,7 +5436,26 @@ function ProblemsPage({
     }
   };
 
-  const loadFiles = useCallback(async () => {
+  
+  async function loadCanonicalAnalysisStatuses(sourceIds: string[]) {
+    const ids = [...new Set(sourceIds.filter(Boolean))];
+    const pairs = await Promise.all(ids.map(async (sourceId) => {
+      try {
+        const response = await fetch(`/api/source-files/${encodeURIComponent(sourceId)}/analysis-status`, { cache: "no-store" });
+        const raw = await response.text();
+        const payload = raw ? JSON.parse(raw) as CanonicalSourceAnalysisStatus : null;
+        if (!response.ok || !payload?.success) return [sourceId, null] as const;
+        return [sourceId, payload] as const;
+      } catch {
+        return [sourceId, null] as const;
+      }
+    }));
+    const next: Record<string, CanonicalSourceAnalysisStatus> = {};
+    for (const [sourceId, payload] of pairs) if (payload) next[sourceId] = payload;
+    setCanonicalAnalysisStatuses(next);
+  }
+
+const loadFiles = useCallback(async () => {
     setLoading(true);
     const config = getSupabaseConfig();
     if (!config) {
