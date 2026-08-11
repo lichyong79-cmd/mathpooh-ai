@@ -5366,9 +5366,7 @@ async function renderPdfPage(pdf: any, pageNo: number) {
 }
 
 async function cropCanvasToWebp(canvas: HTMLCanvasElement, rect: { x: number; y: number; width: number; height: number }) {
-  const [canonicalAnalysisStatuses, setCanonicalAnalysisStatuses] = useState<Record<string, CanonicalSourceAnalysisStatus>>({});
-
-  const sx = Math.max(0, Math.floor((canvas.width * rect.x) / 100));
+const sx = Math.max(0, Math.floor((canvas.width * rect.x) / 100));
   const sy = Math.max(0, Math.floor((canvas.height * rect.y) / 100));
   const sw = Math.max(1, Math.min(canvas.width - sx, Math.ceil((canvas.width * rect.width) / 100)));
   const sh = Math.max(1, Math.min(canvas.height - sy, Math.ceil((canvas.height * rect.height) / 100)));
@@ -5414,6 +5412,7 @@ function ProblemsPage({
   const [refreshingReplacement, setRefreshingReplacement] = useState(false);
   const [pdfPreview, setPdfPreview] = useState<{ title: string; url: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState<string | null>(null);
+  const [canonicalAnalysisStatuses, setCanonicalAnalysisStatuses] = useState<Record<string, CanonicalSourceAnalysisStatus>>({});
 
   const openSourcePdfPreview = async (item: SourceFile, kind: "exam" | "solution") => {
     const path = kind === "exam" ? item.exam_pdf_path : item.solution_pdf_path;
