@@ -20,7 +20,18 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
     if (analysis.data) {
       const query = await supabase.from("analysis_questions").select("*").eq("analysis_id", analysis.data.id).order("question_no");
       if (query.error) throw query.error;
-      questions = query.data ?? [];
+      const rawQuestions = query.data ?? [];
+      const bank = await supabase
+        .from("problem_bank_questions")
+        .select("analysis_question_id,question_no")
+        .eq("source_file_id", id);
+      if (bank.error) throw bank.error;
+      const registeredIds = new Set((bank.data ?? []).map((row:any) => String(row.analysis_question_id ?? "")).filter(Boolean));
+      const registeredNos = new Set((bank.data ?? []).map((row:any) => Number(row.question_no)).filter(Number.isFinite));
+      questions = rawQuestions.map((row:any) => ({
+        ...row,
+        bank_registered: registeredIds.has(String(row.id)) || registeredNos.has(Number(row.question_no)),
+      }));
     }
     const sign = async (path: string | null) => {
       if (!path) return null;

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/supabase/auth";
+import { normalizeSubject } from "@/lib/subject";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 type SourceFileRow = {
   id: string;
@@ -139,14 +141,14 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const body = await request.json() as SourceMetadataPatch;
     const title = cleanMetadataText(body.title);
     const source = cleanMetadataText(body.source);
-    const subject = cleanMetadataText(body.subject);
+    const subject = normalizeSubject(body.subject);
     if (!title) return NextResponse.json({ success: false, message: "시험지명을 입력해 주세요." }, { status: 400 });
 
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
     // 연결 문항 전체 동기화는 관리자 작업이므로 service role을 우선 사용한다.
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !key) {
-      return NextResponse.json({ success: false, message: "Supabase 환경변수가 없습니다." }, { status: 500 });
+      return NextResponse.json({ success: false, message: "SUPABASE_SERVICE_ROLE_KEY 환경변수가 필요합니다." }, { status: 500 });
     }
     const headers = { apikey: key, Authorization: `Bearer ${key}` };
     const encodedId = encodeURIComponent(id);
@@ -193,24 +195,14 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
       if (page.length < 1000) break;
     }
 
-    for (const row of bankRows) {
+    await Promise.all(bankRows.map(async (row) => {
       const dna = row.problem_dna && typeof row.problem_dna === "object"
-        ? {
-            ...row.problem_dna,
-            basic: {
-              ...(row.problem_dna.basic && typeof row.problem_dna.basic === "object" ? row.problem_dna.basic : {}),
-              source_title: title,
-              source_name: source || null,
-              subject: subject || null,
-            },
-          }
+        ? { ...row.problem_dna, basic: { ...(row.problem_dna.basic && typeof row.problem_dna.basic === "object" ? row.problem_dna.basic : {}), source_title: title, source_name: source || null, subject } }
         : row.problem_dna ?? null;
       await restPatch(url, headers, `problem_bank_questions?id=eq.${encodeURIComponent(row.id)}`, {
-        title: `${title} ${row.question_no}번`,
-        problem_dna: dna,
-        updated_at: new Date().toISOString(),
+        title: `${title} ${row.question_no}번`, problem_dna: dna, updated_at: new Date().toISOString(),
       });
-    }
+    }));
 
     // 4) AI 분석 작업물도 같은 시험지 기준으로 동기화한다.
     const analyses = await restJson<AnalysisRow[]>(
@@ -224,13 +216,11 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
           headers,
           `analysis_questions?analysis_id=eq.${encodeURIComponent(analysis.id)}&select=id,ai_result,review_result&offset=${offset}&limit=1000`,
         );
-        for (const question of questions) {
-          await restPatch(url, headers, `analysis_questions?id=eq.${encodeURIComponent(question.id)}`, {
-            ai_result: withSourceMetadata(question.ai_result, { title, source, subject }),
-            review_result: withSourceMetadata(question.review_result, { title, source, subject }),
-          });
-          analysisUpdated += 1;
-        }
+        await Promise.all(questions.map((question) => restPatch(url, headers, `analysis_questions?id=eq.${encodeURIComponent(question.id)}`, {
+          ai_result: withSourceMetadata(question.ai_result, { title, source, subject }),
+          review_result: withSourceMetadata(question.review_result, { title, source, subject }),
+        })));
+        analysisUpdated += questions.length;
         if (questions.length < 1000) break;
       }
     }

@@ -58,6 +58,7 @@ type Question = {
   crop_height: number | null;
   question_image_path: string | null;
   review_reason?: string | null;
+  bank_registered?: boolean;
 };
 
 type Workspace = {

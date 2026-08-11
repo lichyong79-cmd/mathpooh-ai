@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PROBLEM_DNA_VERSION, collectProblemDnaTags, problemDnaEmbeddingText, type ProblemDNA } from "@/lib/problem-dna";
+import { normalizeSubject } from "@/lib/subject";
 
 type AnalysisQuestion = {
   id: string;
@@ -228,7 +229,7 @@ export async function registerQuestions(
     const dna = problemDna(result);
     if (dna?.schema_version === PROBLEM_DNA_VERSION) return problemDnaEmbeddingText(dna);
     return [
-      `과목: ${text(result.subject) || text(source.subject)}`,
+      `과목: ${normalizeSubject(source.subject) || normalizeSubject(result.subject)}`,
       `단원: ${text(result.unit)}`,
       `유형: ${text(result.topic)}`,
       `난이도: ${text(result.difficulty)}`,
@@ -241,7 +242,12 @@ export async function registerQuestions(
   const now = new Date().toISOString();
   const rows = uniqueQuestions.map((question, index) => {
     const result = finalResult(question);
-    const dna = problemDna(result);
+    const rawDna = problemDna(result);
+    const canonicalSubject = normalizeSubject(source.subject) || normalizeSubject(result.subject);
+    const dna = rawDna ? {
+      ...rawDna,
+      basic: { ...rawDna.basic, subject: canonicalSubject || rawDna.basic.subject },
+    } as ProblemDNA : null;
     return {
       source_file_id: source.id,
       analysis_question_id: question.id,
@@ -249,7 +255,7 @@ export async function registerQuestions(
       problem_code: `${source.id}-${String(question.question_no).padStart(3, "0")}`,
       title: `${source.title} ${question.question_no}번`,
       grade: text(source.grade),
-      subject: text(result.subject) || text(source.subject),
+      subject: normalizeSubject(source.subject) || normalizeSubject(result.subject),
       unit: text(result.unit),
       topic: text(result.topic),
       difficulty: resolvedDifficulty(result),

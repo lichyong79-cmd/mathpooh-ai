@@ -5,6 +5,7 @@ import { getSupabaseConfig } from "@/lib/supabase";
 import { authHeaders } from "@/lib/supabase/rest";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
 import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, difficultyFromBand, difficultyLabel, normalizeProblemDifficulty } from "@/lib/difficulty-scale";
+import { normalizeSubject } from "@/lib/subject";
 
 type Problem = {
   id: string;
@@ -115,7 +116,7 @@ export default function DifficultyManagementPage() {
   const subjects = useMemo(() => ["전체", ...Array.from(new Set(items.map(x=>x.subject).filter(Boolean)))], [items]);
   const filtered = useMemo(() => items.filter(x => {
     if (difficulty !== "전체" && norm(x.difficulty,x.problem_dna) !== difficulty) return false;
-    if (subject !== "전체" && x.subject !== subject) return false;
+    if (subject !== "전체" && normalizeSubject(x.subject) !== subject) return false;
     const q = keyword.trim().toLowerCase();
     if (q && ![x.problem_code,x.title,x.unit,x.topic,x.source_name].join(" ").toLowerCase().includes(q)) return false;
     return true;

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
 import { PROBLEM_DNA_VERSION, applyCalculatedDifficulty, legacyFieldsFromDNA, problemDnaQuestionSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
+import { applyDifficultyJudgement } from "@/lib/difficulty-judge";
+import { normalizeSubject } from "@/lib/subject";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -292,7 +294,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       });
     }
 
-    dna = applyCalculatedDifficulty(dna);
+    // 신규 문항도 난이도 관리 탭과 같은 8단계 기준 + 원장 확정 표본을 사용한다.
+    const canonicalSubject = normalizeSubject(source?.subject || dna.basic?.subject);
+    dna.basic.subject = canonicalSubject || dna.basic.subject;
+    const referenceQuery = await supabase
+      .from("problem_bank_questions")
+      .select("difficulty,problem_dna,subject")
+      .eq("subject", canonicalSubject)
+      .limit(500);
+    const references = (referenceQuery.data ?? []).filter((row:any) => row?.problem_dna?.difficulty?.admin_fixed === true);
+    dna = applyDifficultyJudgement(dna, references);
     const validation = validateProblemDNA(dna);
     const officialSolutionIssues = [
       String(dna.official_solution?.review_reason ?? "").trim(),

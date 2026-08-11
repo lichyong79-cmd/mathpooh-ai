@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/supabase/auth";
+import { normalizeSubject } from "@/lib/subject";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 type SourceRow = { id: string; subject?: string | null };
 type BankRow = { id: string; problem_dna?: Record<string, any> | null };
@@ -11,19 +13,6 @@ type AnalysisQuestionRow = { id: string; ai_result?: Record<string, any> | null;
 
 function clean(value: unknown) { return typeof value === "string" ? value.trim() : ""; }
 
-function normalizeSubject(value: unknown) {
-  const subject = clean(value);
-  const aliases: Record<string, string> = {
-    "미적분Ⅰ": "미적분 I",
-    "미적분1": "미적분 I",
-    "확통": "확률과 통계",
-    "공통수학Ⅰ": "공통수학1",
-    "공통수학 1": "공통수학1",
-    "공통수학Ⅱ": "공통수학2",
-    "공통수학 2": "공통수학2",
-  };
-  return aliases[subject] ?? subject;
-}
 
 async function restJson<T>(url: string, headers: Record<string,string>, path: string): Promise<T> {
   const response = await fetch(`${url}/rest/v1/${path}`, { headers, cache: "no-store" });
@@ -50,8 +39,8 @@ export async function POST() {
   if (denied) return denied;
   try {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !key) return NextResponse.json({ success:false, message:"Supabase 환경변수가 없습니다." }, { status:500 });
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) return NextResponse.json({ success:false, message:"SUPABASE_SERVICE_ROLE_KEY 환경변수가 필요합니다." }, { status:500 });
     const headers = { apikey:key, Authorization:`Bearer ${key}` };
     const sources: SourceRow[] = [];
     for (let offset=0;;offset+=1000) {
@@ -75,18 +64,23 @@ export async function POST() {
         if (page.length < 1000) break;
       }
       bankUpdated += bankRows.length;
-      for (const row of bankRows) {
-        const dna = row.problem_dna && typeof row.problem_dna === "object" ? { ...row.problem_dna, basic:{ ...(row.problem_dna.basic && typeof row.problem_dna.basic === "object" ? row.problem_dna.basic : {}), subject } } : row.problem_dna ?? null;
+      await Promise.all(bankRows.map(async (row) => {
+        const dna = row.problem_dna && typeof row.problem_dna === "object"
+          ? { ...row.problem_dna, basic:{ ...(row.problem_dna.basic && typeof row.problem_dna.basic === "object" ? row.problem_dna.basic : {}), subject } }
+          : row.problem_dna ?? null;
         await restPatch(url, headers, `problem_bank_questions?id=eq.${encodeURIComponent(row.id)}`, { problem_dna:dna, updated_at:new Date().toISOString() });
-      }
+      }));
       const analyses = await restJson<AnalysisRow[]>(url, headers, `source_analysis?source_file_id=eq.${encodeURIComponent(source.id)}&select=id`);
       for (const analysis of analyses) {
         for (let offset=0;;offset+=1000) {
           const questions = await restJson<AnalysisQuestionRow[]>(url, headers, `analysis_questions?analysis_id=eq.${encodeURIComponent(analysis.id)}&select=id,ai_result,review_result&offset=${offset}&limit=1000`);
-          for (const q of questions) {
-            await restPatch(url, headers, `analysis_questions?id=eq.${encodeURIComponent(q.id)}`, { ai_result:patchAnalysisResult(q.ai_result,subject), review_result:patchAnalysisResult(q.review_result,subject) });
-            analysisUpdated++;
-          }
+          await Promise.all(questions.map((q) =>
+            restPatch(url, headers, `analysis_questions?id=eq.${encodeURIComponent(q.id)}`, {
+              ai_result:patchAnalysisResult(q.ai_result,subject),
+              review_result:patchAnalysisResult(q.review_result,subject),
+            })
+          ));
+          analysisUpdated += questions.length;
           if (questions.length < 1000) break;
         }
       }

@@ -144,40 +144,36 @@ function bounded(value: unknown, min: number, max: number) {
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : min;
 }
 
-/** 수능형 SOS 8단계 절대난이도: 2점→3점→어3→쉬4→적4→어4→준킬러→킬러. */
+/** 수능형 SOS 8단계 절대난이도: 밴드 + 근거점수를 함께 본다. */
 export function calculateDifficultyLevel(dna: ProblemDNA): 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 {
   const d = dna.difficulty;
-  const band = d.csat_difficulty_band;
-  if (band === "two_point") return 1;
-  if (band === "three_point") return 2;
-  if (band === "three_hard") return 3;
-  if (band === "four_easy") return 4;
-  if (band === "four_medium") return 5;
-  if (band === "four_hard") return 6;
-  if (band === "semi_killer") return 7;
-  if (band === "killer") return 8;
+  const bandMap: Record<string, 1|2|3|4|5|6|7|8> = {
+    two_point:1, three_point:2, three_hard:3, four_easy:4,
+    four_medium:5, four_hard:6, semi_killer:7, killer:8,
+  };
+  const bandGrade = bandMap[d.csat_difficulty_band] ?? 2;
   const score =
-    bounded(d.concept, 0, 100) * 0.14 +
-    bounded(d.condition_interpretation, 0, 100) * 0.18 +
-    bounded(d.insight, 0, 100) * 0.24 +
-    bounded(d.calculation, 0, 100) * 0.13 +
-    bounded(d.trap_strength, 0, 100) * 0.08 +
-    bounded(d.time_burden, 0, 100) * 0.10 +
-    bounded(d.thinking_step_count * 8, 0, 100) * 0.08 +
-    bounded(d.concept_count * 20, 0, 100) * 0.05;
-  if (score < 22) return 1;
-  if (score < 34) return 2;
-  if (score < 44) return 3;
-  if (score < 54) return 4;
-  if (score < 65) return 5;
-  if (score < 76) return 6;
-  if (score < 88) return 7;
-  return 8;
+    bounded(d.concept,0,100)*0.14 +
+    bounded(d.condition_interpretation,0,100)*0.18 +
+    bounded(d.insight,0,100)*0.24 +
+    bounded(d.calculation,0,100)*0.13 +
+    bounded(d.trap_strength,0,100)*0.08 +
+    bounded(d.time_burden,0,100)*0.10 +
+    bounded(d.thinking_step_count*8,0,100)*0.08 +
+    bounded(d.concept_count*20,0,100)*0.05;
+  const evidenceGrade:1|2|3|4|5|6|7|8 =
+    score<22?1:score<34?2:score<44?3:score<54?4:score<65?5:score<76?6:score<88?7:8;
+  const gap=evidenceGrade-bandGrade;
+  return (Math.abs(gap)>=2 ? Math.max(1,Math.min(8,bandGrade+(gap>0?1:-1))) : bandGrade) as 1|2|3|4|5|6|7|8;
 }
 
 export function applyCalculatedDifficulty(dna: ProblemDNA) {
-  dna.difficulty.final_grade = calculateDifficultyLevel(dna);
-  dna.difficulty.scale_version = "sos8-v1";
+  const bandMap: Record<string, number> = {two_point:1,three_point:2,three_hard:3,four_easy:4,four_medium:5,four_hard:6,semi_killer:7,killer:8};
+  const bandGrade=bandMap[dna.difficulty.csat_difficulty_band] ?? 2;
+  const finalGrade=calculateDifficultyLevel(dna);
+  dna.difficulty.final_grade=finalGrade;
+  dna.difficulty.scale_version="sos8-v1";
+  (dna.difficulty as any).band_conflict=Math.abs(finalGrade-bandGrade)>=1;
   return dna;
 }
 
