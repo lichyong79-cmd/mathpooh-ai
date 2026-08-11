@@ -66,6 +66,17 @@ type Workspace = {
   solutionUrl: string | null;
 };
 
+type CanonicalSourceAnalysisStatus = {
+  success: boolean;
+  state: "UNANALYZED" | "ANALYZING" | "PENDING" | "REVIEW" | "REGISTERED" | "FAILED";
+  label: string;
+  total: number;
+  registered: number;
+  pending: number;
+  review: number;
+  failed: number;
+};
+
 type Rect = {
   x: number;
   y: number;
@@ -808,6 +819,7 @@ export default function AnalysisWorkspacePage() {
 
   const [sources, setSources] = useState<SourceFile[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [sourceStatusMap, setSourceStatusMap] = useState<Record<string, CanonicalSourceAnalysisStatus>>({});
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [activeQuestionId, setActiveQuestionId] = useState("");
 
@@ -877,7 +889,36 @@ export default function AnalysisWorkspacePage() {
     }
   }, []);
 
-  const loadSources = useCallback(async () => {
+  
+  async function loadCanonicalSourceStatuses(sourceIds: string[]) {
+    const ids = [...new Set(sourceIds.filter(Boolean))];
+    if (!ids.length) {
+      setSourceStatusMap({});
+      return;
+    }
+
+    const results = await Promise.all(ids.map(async (sourceId) => {
+      try {
+        const response = await fetch(`/api/source-files/${encodeURIComponent(sourceId)}/analysis-status`, {
+          cache: "no-store",
+        });
+        const raw = await response.text();
+        const payload = raw ? JSON.parse(raw) as CanonicalSourceAnalysisStatus : null;
+        if (!response.ok || !payload?.success) return [sourceId, null] as const;
+        return [sourceId, payload] as const;
+      } catch {
+        return [sourceId, null] as const;
+      }
+    }));
+
+    const next: Record<string, CanonicalSourceAnalysisStatus> = {};
+    for (const [sourceId, payload] of results) {
+      if (payload) next[sourceId] = payload;
+    }
+    setSourceStatusMap(next);
+  }
+
+const loadSources = useCallback(async () => {
     const [sourceResult, analysisResult, questionResult, bankResult] = await Promise.all([
       supabase.from("source_files").select("id,created_at,title,source,grade,subject,status,error_message").order("created_at", { ascending: false }),
       supabase.from("source_analysis").select("id,source_file_id,status,current_step"),
@@ -916,6 +957,7 @@ export default function AnalysisWorkspacePage() {
       return { ...source, workflow_label: workflowLabel };
     });
     setSources(rows);
+      void loadCanonicalSourceStatuses((rows ?? []).map((item: any) => String(item.id ?? "")));
     return rows;
   }, [supabase]);
 
@@ -1385,6 +1427,7 @@ export default function AnalysisWorkspacePage() {
 
       setThumbnailUrls({});
       await loadWorkspace(workspace.source.id);
+      void loadCanonicalSourceStatuses(sources.map((item) => item.id));
       await loadSources();
       setWorkflowStep(1);
       setViewMode("single");
@@ -2024,6 +2067,7 @@ export default function AnalysisWorkspacePage() {
       await Promise.all(Array.from({ length: concurrency }, () => worker()));
       await saveWorkflowStep(3, "3단계 · AI 문항분석 완료");
       await loadWorkspace(selectedId);
+      void loadCanonicalSourceStatuses(sources.map((item) => item.id));
       if (failures.length) {
         const preview = failures.slice(0, 4).map((item) => `${item.questionNo}번`).join(", ");
         setError(`분석 실패 ${failures.length}문항(${preview}${failures.length > 4 ? " 외" : ""})은 검토대상으로 보류했습니다.`);

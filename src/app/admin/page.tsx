@@ -5506,6 +5506,8 @@ const loadFiles = useCallback(async () => {
 
       setItems(sourceRows.map((row) => {
         const analysis = analysisMap.get(row.id);
+      void loadCanonicalAnalysisStatuses((sourceRows.map((row) => {
+        const analysis = analysisMap.get(row.id ?? []).map((item: any) => String(item.id ?? "")));
         return {
           ...row,
           analysis_status: analysis?.status ?? null,

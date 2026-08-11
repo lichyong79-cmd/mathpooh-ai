@@ -60,9 +60,9 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
     let label = "분석중";
 
     if (total === 0) { state = "UNANALYZED"; label = "미분석"; }
-    else if (registered === total) { state = "REGISTERED"; label = `문제은행 등록완료 ${registered}문항`; }
+    else if (registered === total) { state = "REGISTERED"; label = `문제은행 등록완료 ${registered}/${total}문항`; }
     else if (review > 0) { state = "REVIEW"; label = `3단계 분석 · 대기 ${pending} · 보류 ${review}`; }
-    else if (pending > 0) { state = "PENDING"; label = `3단계 분석 · 등록대기 ${pending}`; }
+    else if (pending > 0) { state = "PENDING"; label = `3단계 분석 · 등록대기 ${pending}/${total}`; }
     else if (failed > 0) { state = "FAILED"; label = `분석 실패 ${failed}`; }
 
     return NextResponse.json({
