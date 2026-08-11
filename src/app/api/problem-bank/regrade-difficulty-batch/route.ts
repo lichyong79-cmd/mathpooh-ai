@@ -7,7 +7,8 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    await requireUser();
+    const denied = await requireUser();
+    if (denied) return denied;
     const body = await request.json().catch(() => ({}));
     const ids = Array.isArray(body?.problemIds)
       ? body.problemIds.map((v: unknown) => String(v ?? "").trim()).filter(Boolean)
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
     const origin = new URL(request.url).origin;
     const results: any[] = [];
 
-    for (const problemId of targetIds) {
+    async function regradeOne(problemId: string) {
       const response = await fetch(`${origin}/api/problem-bank/regrade-difficulty`, {
         method: "POST",
         headers: {
@@ -41,7 +42,13 @@ export async function POST(request: NextRequest) {
       } catch {
         result = { success: false, message: raw || `HTTP ${response.status}` };
       }
-      results.push({ problemId, ok: response.ok && result?.success, ...result });
+      return { problemId, ok: response.ok && result?.success, ...result };
+    }
+
+    const concurrency = 4;
+    for (let i = 0; i < targetIds.length; i += concurrency) {
+      const chunk = targetIds.slice(i, i + concurrency);
+      results.push(...await Promise.all(chunk.map(regradeOne)));
     }
 
     return NextResponse.json({

@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
 import { PROBLEM_DNA_VERSION, applyCalculatedDifficulty, legacyFieldsFromDNA, problemDnaQuestionSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
-import { applyDifficultyJudgement } from "@/lib/difficulty-judge";
-import { normalizeSubject } from "@/lib/subject";
+import { applyJudgedDifficulty, difficultyReferenceText, judgeDifficulty } from "@/lib/difficulty-judge";
+import { canonicalSubject } from "@/lib/subject";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 const dnaSchema = problemDnaQuestionSchema;
@@ -294,16 +294,31 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       });
     }
 
-    // 신규 문항도 난이도 관리 탭과 같은 8단계 기준 + 원장 확정 표본을 사용한다.
-    const canonicalSubject = normalizeSubject(source?.subject || dna.basic?.subject);
-    dna.basic.subject = canonicalSubject || dna.basic.subject;
-    const referenceQuery = await supabase
-      .from("problem_bank_questions")
-      .select("difficulty,problem_dna,subject")
-      .eq("subject", canonicalSubject)
-      .limit(500);
-    const references = (referenceQuery.data ?? []).filter((row:any) => row?.problem_dna?.difficulty?.admin_fixed === true);
-    dna = applyDifficultyJudgement(dna, references);
+    dna = applyCalculatedDifficulty(dna);
+
+    // v164: 과목은 문제등록에 입력한 시험지 과목을 최종 기준으로 고정한다.
+    const canonical = canonicalSubject(source?.subject, dna.basic?.subject);
+    dna.basic = { ...(dna.basic ?? {}), subject: canonical } as ProblemDNA["basic"];
+
+    // v164: 난이도는 난이도 탭과 같은 8단계 전용 엔진으로 한 번 더 확정한다.
+    // 관리자가 확정해 둔 기준 문항을 함께 넣어 기존 1300문항과 같은 잣대를 적용한다.
+    let difficultyJudged = false;
+    try {
+      const references = await difficultyReferenceText(supabase, canonical);
+      const judgement = await judgeDifficulty({
+        apiKey,
+        model: process.env.OPENAI_DIFFICULTY_MODEL || model,
+        imageUrl: signed.data.signedUrl,
+        dna,
+        references,
+      });
+      dna = applyJudgedDifficulty(dna, judgement, String(dna.difficulty?.final_grade ?? "") || null) as ProblemDNA;
+      difficultyJudged = true;
+    } catch (judgeError) {
+      // 판정 호출이 실패해도 분석 결과 자체는 살린다. 근거 기반 계산값이 남는다.
+      console.warn("[analyze] difficulty judge skipped:", judgeError instanceof Error ? judgeError.message : judgeError);
+    }
+
     const validation = validateProblemDNA(dna);
     const officialSolutionIssues = [
       String(dna.official_solution?.review_reason ?? "").trim(),
@@ -312,7 +327,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         .filter((value) => /공식|해설|정답.*(?:불일치|충돌)|(?:불일치|충돌).*정답/.test(value)),
     ].filter(Boolean);
     const legacy = validation.valid && validation.dna ? legacyFieldsFromDNA(validation.dna) : {
-      question_type: "unknown", subject: source?.subject ?? "", unit: "", topic: "", difficulty: "", summary: "",
+      question_type: "unknown", subject: canonical, unit: "", topic: "", difficulty: "", summary: "",
     };
     const aiResult = {
       ...(question.ai_result ?? {}),
@@ -321,6 +336,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       analysis_version: PROBLEM_DNA_VERSION,
       analysis_model: model,
       analyzed_at: new Date().toISOString(),
+      difficulty_judged: difficultyJudged,
       official_solution: {
         connected: Boolean(solutionImagePath && solutionImageUrl),
         source_path: source?.solution_pdf_path ?? null,

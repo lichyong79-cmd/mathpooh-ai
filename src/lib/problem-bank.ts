@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PROBLEM_DNA_VERSION, collectProblemDnaTags, problemDnaEmbeddingText, type ProblemDNA } from "@/lib/problem-dna";
-import { normalizeSubject } from "@/lib/subject";
+import { canonicalSubject } from "@/lib/subject";
 
 type AnalysisQuestion = {
   id: string;
@@ -54,7 +54,7 @@ function duplicateKeyFromQuestion(question: AnalysisQuestion, source: SourceFile
   const dna = problemDna(result);
   if (dna?.schema_version === PROBLEM_DNA_VERSION) {
     return duplicateKeyFromParts([
-      dna.basic?.subject || source.subject,
+      canonicalSubject(source.subject, dna.basic?.subject),
       dna.basic?.grade || source.grade,
       dna.basic?.major_unit,
       dna.basic?.middle_unit,
@@ -66,7 +66,7 @@ function duplicateKeyFromQuestion(question: AnalysisQuestion, source: SourceFile
     ]);
   }
   return duplicateKeyFromParts([
-    result.subject || source.subject,
+    canonicalSubject(source.subject, result.subject),
     source.grade,
     result.unit,
     result.topic,
@@ -80,7 +80,7 @@ function duplicateKeyFromBankRow(row: any) {
   const dna = row.problem_dna && typeof row.problem_dna === "object" ? row.problem_dna as ProblemDNA : null;
   if (dna?.schema_version === PROBLEM_DNA_VERSION) {
     return duplicateKeyFromParts([
-      dna.basic?.subject || row.subject,
+      canonicalSubject(row.subject, dna.basic?.subject),
       dna.basic?.grade || row.grade,
       dna.basic?.major_unit,
       dna.basic?.middle_unit,
@@ -92,7 +92,7 @@ function duplicateKeyFromBankRow(row: any) {
     ]);
   }
   return duplicateKeyFromParts([
-    row.subject,
+    canonicalSubject(row.subject),
     row.grade,
     row.unit,
     row.topic,
@@ -121,6 +121,15 @@ function normalizeDifficultyValue(value: unknown) {
     하:"1",중:"2",상:"6",최상:"8",
   };
   return mapped[raw] ?? "";
+}
+
+/**
+ * v164: 과목은 "문제등록에 입력한 시험지 과목"이 항상 최종 기준이다.
+ * AI가 만든 자유 표기(수학Ⅱ, 미적분, 확통...)를 그대로 저장하면
+ * 문제은행 과목별 보유 현황이 갈라지므로 표준 6과목으로만 고정한다.
+ */
+function resolvedSubject(result: Record<string, unknown>, source: SourceFile) {
+  return canonicalSubject(source.subject, result.subject);
 }
 
 function resolvedDifficulty(result: Record<string, unknown>) {
@@ -229,7 +238,7 @@ export async function registerQuestions(
     const dna = problemDna(result);
     if (dna?.schema_version === PROBLEM_DNA_VERSION) return problemDnaEmbeddingText(dna);
     return [
-      `과목: ${normalizeSubject(source.subject) || normalizeSubject(result.subject)}`,
+      `과목: ${resolvedSubject(result, source)}`,
       `단원: ${text(result.unit)}`,
       `유형: ${text(result.topic)}`,
       `난이도: ${text(result.difficulty)}`,
@@ -243,11 +252,11 @@ export async function registerQuestions(
   const rows = uniqueQuestions.map((question, index) => {
     const result = finalResult(question);
     const rawDna = problemDna(result);
-    const canonicalSubject = normalizeSubject(source.subject) || normalizeSubject(result.subject);
-    const dna = rawDna ? {
-      ...rawDna,
-      basic: { ...rawDna.basic, subject: canonicalSubject || rawDna.basic.subject },
-    } as ProblemDNA : null;
+    const subject = resolvedSubject(result, source);
+    // 저장되는 DNA의 과목도 같은 값으로 맞춰 두 곳이 어긋나지 않게 한다.
+    const dna = rawDna
+      ? ({ ...rawDna, basic: { ...(rawDna.basic ?? {}), subject } } as ProblemDNA)
+      : rawDna;
     return {
       source_file_id: source.id,
       analysis_question_id: question.id,
@@ -255,7 +264,7 @@ export async function registerQuestions(
       problem_code: `${source.id}-${String(question.question_no).padStart(3, "0")}`,
       title: `${source.title} ${question.question_no}번`,
       grade: text(source.grade),
-      subject: normalizeSubject(source.subject) || normalizeSubject(result.subject),
+      subject,
       unit: text(result.unit),
       topic: text(result.topic),
       difficulty: resolvedDifficulty(result),

@@ -144,36 +144,79 @@ function bounded(value: unknown, min: number, max: number) {
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : min;
 }
 
-/** 수능형 SOS 8단계 절대난이도: 밴드 + 근거점수를 함께 본다. */
-export function calculateDifficultyLevel(dna: ProblemDNA): 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 {
-  const d = dna.difficulty;
-  const bandMap: Record<string, 1|2|3|4|5|6|7|8> = {
-    two_point:1, three_point:2, three_hard:3, four_easy:4,
-    four_medium:5, four_hard:6, semi_killer:7, killer:8,
-  };
-  const bandGrade = bandMap[d.csat_difficulty_band] ?? 2;
+/** 8단계 밴드 → 등급. 밴드가 비었으면 0. */
+export function difficultyLevelFromBand(band: unknown): 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 {
+  switch (String(band ?? "").trim()) {
+    case "two_point": return 1;
+    case "three_point": return 2;
+    case "three_hard": return 3;
+    case "four_easy": return 4;
+    case "four_medium": return 5;
+    case "four_hard": return 6;
+    case "semi_killer": return 7;
+    case "killer": return 8;
+    default: return 0;
+  }
+}
+
+/**
+ * 문항 근거(개념·조건해석·발상·계산·함정·시간·사고단계)만으로 계산한 난이도.
+ * 밴드 표기와 무관하게 독립적으로 나오는 값이라 밴드 쏠림을 잡는 기준이 된다.
+ */
+export function evidenceDifficultyLevel(difficulty: ProblemDNA["difficulty"]): 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 {
+  const d = difficulty ?? ({} as ProblemDNA["difficulty"]);
+  const minutes = Number(d.estimated_minutes);
+  const minutesScore = Number.isFinite(minutes) ? bounded((minutes - 0.8) * 20, 0, 100) : 0;
+  const lengthScore = d.solution_length === "김" ? 100 : d.solution_length === "중간" ? 50 : 0;
   const score =
-    bounded(d.concept,0,100)*0.14 +
-    bounded(d.condition_interpretation,0,100)*0.18 +
-    bounded(d.insight,0,100)*0.24 +
-    bounded(d.calculation,0,100)*0.13 +
-    bounded(d.trap_strength,0,100)*0.08 +
-    bounded(d.time_burden,0,100)*0.10 +
-    bounded(d.thinking_step_count*8,0,100)*0.08 +
-    bounded(d.concept_count*20,0,100)*0.05;
-  const evidenceGrade:1|2|3|4|5|6|7|8 =
-    score<22?1:score<34?2:score<44?3:score<54?4:score<65?5:score<76?6:score<88?7:8;
-  const gap=evidenceGrade-bandGrade;
-  return (Math.abs(gap)>=2 ? Math.max(1,Math.min(8,bandGrade+(gap>0?1:-1))) : bandGrade) as 1|2|3|4|5|6|7|8;
+    bounded(d.concept, 0, 100) * 0.12 +
+    bounded(d.condition_interpretation, 0, 100) * 0.17 +
+    bounded(d.insight, 0, 100) * 0.24 +
+    bounded(d.calculation, 0, 100) * 0.10 +
+    bounded(d.trap_strength, 0, 100) * 0.07 +
+    bounded(d.time_burden, 0, 100) * 0.09 +
+    minutesScore * 0.07 +
+    lengthScore * 0.03 +
+    bounded(Number(d.thinking_step_count) * 9, 0, 100) * 0.06 +
+    bounded(Number(d.concept_count) * 20, 0, 100) * 0.05;
+  if (score < 22) return 1;
+  if (score < 34) return 2;
+  if (score < 44) return 3;
+  if (score < 54) return 4;
+  if (score < 65) return 5;
+  if (score < 76) return 6;
+  if (score < 88) return 7;
+  return 8;
+}
+
+/**
+ * 수능형 SOS 8단계 절대난이도: 2점→3점→어3→쉬4→적4→어4→준킬러→킬러.
+ *
+ * v164 이전에는 csat_difficulty_band 하나만 보고 등급을 정했다.
+ * 밴드는 스키마상 필수라 AI가 애매하면 three_point로 몰아넣었고,
+ * 그 결과 신규 등록 문항 대부분이 "3점"으로 찍혔다.
+ * 이제 밴드와 근거점수를 함께 보고, 둘이 2단계 이상 어긋나면 중간값으로 보정한다.
+ */
+export function calculateDifficultyLevel(dna: ProblemDNA): 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 {
+  const evidence = evidenceDifficultyLevel(dna.difficulty);
+  const band = difficultyLevelFromBand(dna.difficulty?.csat_difficulty_band);
+  if (!band) return evidence;
+  const gap = evidence - band;
+  if (Math.abs(gap) <= 1) return band;
+  const blended = Math.round((band + evidence) / 2);
+  return Math.max(1, Math.min(8, blended)) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 }
 
 export function applyCalculatedDifficulty(dna: ProblemDNA) {
-  const bandMap: Record<string, number> = {two_point:1,three_point:2,three_hard:3,four_easy:4,four_medium:5,four_hard:6,semi_killer:7,killer:8};
-  const bandGrade=bandMap[dna.difficulty.csat_difficulty_band] ?? 2;
-  const finalGrade=calculateDifficultyLevel(dna);
-  dna.difficulty.final_grade=finalGrade;
-  dna.difficulty.scale_version="sos8-v1";
-  (dna.difficulty as any).band_conflict=Math.abs(finalGrade-bandGrade)>=1;
+  const evidence = evidenceDifficultyLevel(dna.difficulty);
+  const band = difficultyLevelFromBand(dna.difficulty?.csat_difficulty_band);
+  const final = calculateDifficultyLevel(dna);
+  dna.difficulty.final_grade = final;
+  dna.difficulty.scale_version = "sos8-v1";
+  // 밴드와 근거가 크게 어긋난 문항은 난이도 탭의 이상 검토 대상으로 표시한다.
+  (dna.difficulty as Record<string, unknown>).evidence_grade = evidence;
+  (dna.difficulty as Record<string, unknown>).band_grade = band || null;
+  (dna.difficulty as Record<string, unknown>).band_conflict = Boolean(band) && Math.abs(evidence - band) >= 2;
   return dna;
 }
 

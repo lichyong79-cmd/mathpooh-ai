@@ -8,7 +8,7 @@ import { ProblemDnaCard } from "@/components/problem-dna-card";
 import type { ProblemDNA } from "@/lib/problem-dna";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
 import { DIFFICULTY_SCALE, difficultyLabel, normalizeProblemDifficulty } from "@/lib/difficulty-scale";
-import { normalizeSubject, SUBJECTS } from "@/lib/subject";
+import { SUBJECTS, canonicalSubject } from "@/lib/subject";
 
 type Problem = {
   id: string;
@@ -132,7 +132,7 @@ export default function ProblemBankClient() {
         allRows.push(...pageRows);
         if (pageRows.length < pageSize) break;
       }
-      const rows = allRows.map((item) => ({ ...item, subject: normalizeSubject(item.subject), difficulty: normalizeDifficultyLegacy(item.difficulty, item.problem_dna) }));
+      const rows = allRows.map((item) => ({ ...item, difficulty: normalizeDifficultyLegacy(item.difficulty, item.problem_dna) }));
       setItems(rows);
       setSelectedId((current) => rows.some((item) => item.id === current) ? current : rows[0]?.id ?? "");
     } catch (reason) {
@@ -202,7 +202,11 @@ export default function ProblemBankClient() {
   }, [selected]);
 
   const grades = useMemo(() => Array.from(new Set(items.map((item) => item.grade).filter(Boolean))).sort(), [items]);
-  const subjects = useMemo(() => SUBJECTS.filter((name) => items.some((item) => normalizeSubject(item.subject) === name)), [items]);
+  // v164: 과목은 표준 6과목으로만 묶어서 보여준다. (표기 흔들림 때문에 과목이 갈라지던 문제 해결)
+  const subjects = useMemo(() => {
+    const present = new Set(items.map((item) => canonicalSubject(item.subject)));
+    return [...SUBJECTS.filter((value) => present.has(value)), ...(present.has("미분류") ? ["미분류"] : [])];
+  }, [items]);
   const units = useMemo(() => Array.from(new Set(items.map((item) => item.unit).filter(Boolean))).sort(), [items]);
   const difficulties = useMemo(() => DIFFICULTY_SCALE.map(x=>x.value).filter(v=>items.some(item=>item.difficulty===v)), [items]);
   const questionTypes = useMemo(() => Array.from(new Set(items.map((item) => item.question_type).filter(Boolean))).sort(), [items]);
@@ -219,7 +223,7 @@ export default function ProblemBankClient() {
       const haystack = [item.problem_code, item.title, item.subject, item.unit, item.topic, item.summary, item.answer, item.source_name, questionTypeLabel(item.question_type), dnaText].join(" ").toLowerCase();
       return (!q || haystack.includes(q))
         && (grade === "전체" || item.grade === grade)
-        && (subject === "전체" || normalizeSubject(item.subject) === subject)
+        && (subject === "전체" || canonicalSubject(item.subject) === subject)
         && (unit === "전체" || item.unit === unit)
         && (difficulty === "전체" || item.difficulty === difficulty)
         && (questionType === "전체" || item.question_type === questionType)
@@ -256,7 +260,7 @@ export default function ProblemBankClient() {
 
     return {
       total, training, reference, active, hold, archived, sosReady, dnaReady, sourceCount, recent,
-      subjects: countBy((item) => normalizeSubject(item.subject)),
+      subjects: countBy((item) => canonicalSubject(item.subject)),
       units: countBy((item) => item.unit).slice(0, 5),
       difficulties: DIFFICULTY_SCALE.map(({value}) => [value, items.filter((item) => item.difficulty === value).length] as const),
     };
@@ -279,7 +283,7 @@ export default function ProblemBankClient() {
           "Content-Type": "application/json",
           Prefer: "return=representation",
         },
-        body: JSON.stringify({ ...draft, subject: normalizeSubject(draft.subject), updated_at: new Date().toISOString() }),
+        body: JSON.stringify({ ...draft, updated_at: new Date().toISOString() }),
       });
       if (!response.ok) throw new Error(await response.text());
       const rows = (await response.json()) as Problem[];
@@ -398,7 +402,7 @@ export default function ProblemBankClient() {
         <div className="bank-dashboard-detail">
           <article className="bank-chart-card">
             <div className="bank-card-title"><strong>과목별 보유 문항</strong><span>전체 분포</span></div>
-            <div className="bank-bars">{dashboard.subjects.slice(0, 6).map(([label, value]) => <div key={label} className="bank-bar-row"><span>{label}</span><div><i style={{ width: `${dashboardPercent(value)}%` }} /></div><b>{value}</b></div>)}</div>
+            <div className="bank-bars">{dashboard.subjects.map(([label, value]) => <div key={label} className="bank-bar-row"><span>{label}</span><div><i style={{ width: `${dashboardPercent(value)}%` }} /></div><b>{value}</b></div>)}</div>
           </article>
           <article className="bank-chart-card">
             <div className="bank-card-title"><strong>난이도 분포</strong><span>SOS 8단계</span></div>

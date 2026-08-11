@@ -19,11 +19,20 @@ import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
 import { DIFFICULTY_SCALE, DIFFICULTY_WEIGHTS, difficultyLabel, difficultyNumber } from "@/lib/difficulty-scale";
+import { SUBJECTS, normalizeSubject } from "@/lib/subject";
+import {
+  SOURCE_WORKFLOW_LABEL,
+  SOURCE_WORKFLOW_ORDER,
+  SOURCE_WORKFLOW_TONE,
+  type SourceWorkflowState,
+  type SourceWorkflowTone,
+} from "@/lib/source-workflow";
 
 type CanonicalSourceAnalysisStatus = {
   success: boolean;
-  state: "UNANALYZED" | "ANALYZING" | "PENDING" | "REVIEW" | "REGISTERED" | "FAILED";
+  state: SourceWorkflowState;
   label: string;
+  detail?: string;
   total: number;
   registered: number;
   pending: number;
@@ -32,13 +41,11 @@ type CanonicalSourceAnalysisStatus = {
   other?: number;
 };
 
+// v164: 표기는 src/lib/source-workflow.ts의 단어를 그대로 쓴다. (AI 분석 화면과 동일)
 function canonicalStatusBadge(status?: CanonicalSourceAnalysisStatus | null) {
-  if (!status) return "미분석";
-  if (status.state === "REGISTERED") return `문제은행 등록완료 ${status.registered}/${status.total}문항`;
-  if (status.state === "PENDING") return `등록대기 ${status.pending}/${status.total}문항`;
-  if (status.state === "REVIEW") return `검토보류 ${status.review}문항`;
-  if (status.state === "FAILED") return `분석실패 ${status.failed}문항`;
-  return status.label;
+  if (!status) return SOURCE_WORKFLOW_LABEL.UNANALYZED;
+  const label = SOURCE_WORKFLOW_LABEL[status.state] ?? status.label;
+  return status.detail ? `${label} · ${status.detail}` : label;
 }
 
 
@@ -5289,28 +5296,17 @@ const sourceStatusLabel: Record<string, string> = {
 
 type UploadFileKind = "hwp" | "exam" | "solution";
 
-type SourceWorkflowTone = "new" | "running" | "ready" | "error" | "review";
-
-function getSourceWorkflow(item: SourceFile): { label: string; detail: string; tone: SourceWorkflowTone } {
+// v164: 상태·표기는 서버(source-workflow)가 계산한 값을 그대로 쓴다.
+function getSourceWorkflow(item: SourceFile): { state: SourceWorkflowState; label: string; detail: string; tone: SourceWorkflowTone } {
   const status = item.workflow_status;
-  if (!status) return { label: "상태 확인 중", detail: "AI 분석 상태 조회", tone: "new" };
-
-  if (status.state === "REGISTERED") {
-    return { label: "문제은행 등록완료", detail: `${status.registered}/${status.total}문항`, tone: "ready" };
-  }
-  if (status.state === "PENDING") {
-    return { label: "등록대기", detail: `등록 ${status.registered} · 대기 ${status.pending} / 전체 ${status.total}`, tone: "review" };
-  }
-  if (status.state === "REVIEW") {
-    return { label: "검토보류", detail: `등록 ${status.registered} · 대기 ${status.pending} · 보류 ${status.review}`, tone: "review" };
-  }
-  if (status.state === "FAILED") {
-    return { label: "분석오류", detail: `${status.failed}문항`, tone: "error" };
-  }
-  if (status.state === "ANALYZING") {
-    return { label: "분석중", detail: status.label, tone: "running" };
-  }
-  return { label: "신규", detail: "AI 분석 전", tone: "new" };
+  if (!status) return { state: "UNANALYZED", label: "상태 확인 중", detail: "AI 분석 상태 조회", tone: "new" };
+  const state = status.state ?? "UNANALYZED";
+  return {
+    state,
+    label: SOURCE_WORKFLOW_LABEL[state] ?? status.label,
+    detail: status.detail ?? status.label ?? "",
+    tone: SOURCE_WORKFLOW_TONE[state] ?? "new",
+  };
 }
 
 
@@ -5402,6 +5398,7 @@ function ProblemsPage({
   const [editSource, setEditSource] = useState("");
   const [editSubject, setEditSubject] = useState("공통수학1");
   const [savingEdit, setSavingEdit] = useState(false);
+  const [syncingSubjects, setSyncingSubjects] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [replacingFile, setReplacingFile] = useState<{ id: string; kind: UploadFileKind } | null>(null);
   const [replacementRefresh, setReplacementRefresh] = useState<ReplacementRefreshState | null>(null);
@@ -5450,7 +5447,7 @@ const loadFiles = useCallback(async () => {
       const headers = { ...(await authHeaders()) };
       const [sourceResponse, statusResponse] = await Promise.all([
         fetch(`${config.url}/rest/v1/source_files?select=${fields}&order=created_at.desc`, { headers, cache: "no-store" }),
-        fetch(`/api/source-files/analysis-statuses?_=${Date.now()}`, { cache: "no-store" }),
+        fetch("/api/source-files/analysis-statuses", { cache: "no-store" }),
       ]);
       if (!sourceResponse.ok) throw new Error(await sourceResponse.text());
       if (!statusResponse.ok) throw new Error(await statusResponse.text());
@@ -5643,7 +5640,8 @@ const loadFiles = useCallback(async () => {
     setEditingId(item.id);
     setEditTitle(item.title);
     setEditSource(item.source || "");
-    setEditSubject(item.subject || "공통수학1");
+    // 예전에 자유 입력으로 들어간 과목도 표준 6과목으로 맞춰 보여준다.
+    setEditSubject(normalizeSubject(item.subject) || "공통수학1");
     setMessage("");
     setErrorMessage("");
   };
@@ -5904,7 +5902,7 @@ const loadFiles = useCallback(async () => {
       };
       if (!response.ok || !payload.success) throw new Error(payload.message || "시험지 정보 수정에 실패했습니다.");
       setEditingId(null);
-      setMessage(payload.message || `수정 저장 완료 · 연결된 문제은행 ${payload.bankUpdated ?? 0}문항과 AI 분석 ${payload.analysisUpdated ?? 0}문항까지 자동 반영되었습니다.`);
+      setMessage(payload.message || `시험지 정보와 연결된 문제 ${payload.bankUpdated ?? 0}개가 함께 수정되었습니다.`);
       await loadFiles();
     } catch (error) {
       setErrorMessage(
@@ -5915,6 +5913,23 @@ const loadFiles = useCallback(async () => {
     }
   };
 
+  const syncAllSubjectsFromSources = async () => {
+    if (!window.confirm("현재 문제등록의 시험지 과목을 기준으로 기존 문제은행 전체 과목을 재동기화할까요?\n\n문제등록의 과목값이 최종 기준으로 적용됩니다.")) return;
+    setSyncingSubjects(true);
+    setMessage("");
+    setErrorMessage("");
+    try {
+      const response = await fetch("/api/problem-bank/sync-subjects-from-sources", { method: "POST" });
+      const payload = await response.json() as { success?: boolean; sourceCount?: number; bankUpdated?: number; analysisUpdated?: number; message?: string };
+      if (!response.ok || !payload.success) throw new Error(payload.message || "과목 재동기화에 실패했습니다.");
+      setMessage(payload.message || `시험지 ${payload.sourceCount ?? 0}개 기준 · 문제은행 ${payload.bankUpdated ?? 0}문항 · AI 분석 ${payload.analysisUpdated ?? 0}문항 과목 동기화 완료`);
+      await loadFiles();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "과목 재동기화에 실패했습니다.");
+    } finally {
+      setSyncingSubjects(false);
+    }
+  };
 
   const allReady = Boolean(title.trim() && hwpFile && examPdf && solutionPdf);
 
@@ -5970,12 +5985,7 @@ const loadFiles = useCallback(async () => {
               onChange={(e) => setSubject(e.target.value)}
               disabled={uploading}
             >
-              <option>중등수학</option>
-              <option>공통수학1</option>
-              <option>공통수학2</option>
-              <option>대수</option>
-              <option>미적분 I</option>
-              <option>확률과 통계</option>
+              {SUBJECTS.map((value) => <option key={value}>{value}</option>)}
             </select>
           </label>
         </div>
@@ -6065,13 +6075,11 @@ const loadFiles = useCallback(async () => {
 
       <section className="panel source-file-panel">
         <div className="source-workflow-summary">
-          {[
-            { label: "신규", count: items.filter((item) => getSourceWorkflow(item).tone === "new").length, tone: "new" },
-            { label: "분석중", count: items.filter((item) => getSourceWorkflow(item).tone === "running").length, tone: "running" },
-            { label: "등록대기", count: items.filter((item) => getSourceWorkflow(item).tone === "review").length, tone: "review" },
-            { label: "문제은행 등록완료", count: items.filter((item) => getSourceWorkflow(item).tone === "ready").length, tone: "ready" },
-            { label: "분석오류", count: items.filter((item) => getSourceWorkflow(item).tone === "error").length, tone: "error" },
-          ].map((stat) => (
+          {SOURCE_WORKFLOW_ORDER.map((state) => ({
+            label: SOURCE_WORKFLOW_LABEL[state],
+            count: items.filter((item) => getSourceWorkflow(item).state === state).length,
+            tone: SOURCE_WORKFLOW_TONE[state],
+          })).map((stat) => (
             <div key={stat.label} className={`source-workflow-stat ${stat.tone}`}>
               <span>{stat.label}</span><strong>{stat.count}</strong>
             </div>
@@ -6086,8 +6094,16 @@ const loadFiles = useCallback(async () => {
             <button
               className="secondary-button"
               type="button"
+              onClick={() => void syncAllSubjectsFromSources()}
+              disabled={loading || syncingSubjects}
+            >
+              {syncingSubjects ? "과목 동기화 중..." : "시험지 과목 → 문제은행 전체 동기화"}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
               onClick={() => void loadFiles()}
-              disabled={loading}
+              disabled={loading || syncingSubjects}
             >
               새로고침
             </button>
@@ -6134,12 +6150,7 @@ const loadFiles = useCallback(async () => {
                         onChange={(e) => setEditSubject(e.target.value)}
                         disabled={savingEdit}
                       >
-                        <option>중등수학</option>
-                        <option>공통수학1</option>
-                        <option>공통수학2</option>
-                        <option>대수</option>
-                        <option>미적분 I</option>
-                        <option>확률과 통계</option>
+                        {SUBJECTS.map((value) => <option key={value}>{value}</option>)}
                       </select>
                     </label>
                   </div>

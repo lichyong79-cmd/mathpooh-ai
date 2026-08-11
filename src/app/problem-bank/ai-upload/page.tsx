@@ -20,7 +20,7 @@ import {
 import AdminPortalShell from "@/components/admin-portal-sidebar";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { DIFFICULTY_SCALE, difficultyLabel } from "@/lib/difficulty-scale";
-import { workflowBucketOf } from "@/lib/problem-bank-workflow";
+import { SOURCE_WORKFLOW_LABEL, classifyQuestionStage, type SourceWorkflowState } from "@/lib/source-workflow";
 
 type SourceFile = {
   id: string;
@@ -32,7 +32,8 @@ type SourceFile = {
   status: string;
   error_message: string | null;
   workflow_label?: string;
-  workflow_state?: "UNANALYZED" | "ANALYZING" | "PENDING" | "REVIEW" | "REGISTERED" | "FAILED";
+  workflow_detail?: string;
+  workflow_state?: SourceWorkflowState;
 };
 
 type Analysis = {
@@ -58,13 +59,14 @@ type Question = {
   crop_height: number | null;
   question_image_path: string | null;
   review_reason?: string | null;
-  bank_registered?: boolean;
 };
 
 type Workspace = {
   source: SourceFile;
   analysis: Analysis;
   questions: Question[];
+  /** 서버가 확인한 문제은행 등록 문항 id. 등록완료 판정의 유일한 기준이다. */
+  registeredQuestionIds?: string[];
   examUrl: string | null;
   solutionUrl: string | null;
 };
@@ -185,19 +187,25 @@ function officialSolutionOf(question: Question, sourceHasSolution = false): {
   return { tone: "verified", label: "공식 해설 교차검증 완료", detail: "같은 문항번호의 공식 해설을 분석에 함께 사용했습니다.", solutionSteps, issues, officialAnswer, evidence };
 }
 
-function isBankRegistered(question: Question) {
-  return workflowBucketOf(question) === "registered";
+/**
+ * v164: 등록완료 판정 기준을 서버(problem_bank_questions 행 존재)와 일치시킨다.
+ * review_result.bank_status는 재분석 등으로 지워질 수 있어 보조 신호로만 쓴다.
+ */
+function isBankRegistered(question: Question, registeredIds?: Set<string>) {
+  if (registeredIds?.has(question.id)) return true;
+  if (registeredIds) return false;
+  return String(question.review_result?.bank_status ?? "") === "REGISTERED";
 }
 
-function displayQuestionStatus(question: Question) {
-  return isBankRegistered(question) ? "등록 완료" : (statusText[question.status] ?? question.status);
+function displayQuestionStatus(question: Question, registeredIds?: Set<string>) {
+  return isBankRegistered(question, registeredIds) ? "등록 완료" : (statusText[question.status] ?? question.status);
 }
 
-function sourceWorkflowTone(label = "") {
-  if (label.includes("문제은행 등록완료")) return "registered";
-  if (label.includes("3단계")) return "analysis";
-  if (label.includes("2단계")) return "crop";
-  if (label.includes("1단계")) return "recognition";
+function sourceWorkflowTone(state?: SourceWorkflowState) {
+  if (state === "REGISTERED") return "registered";
+  if (state === "REVIEW" || state === "PENDING") return "analysis";
+  if (state === "ANALYZING") return "crop";
+  if (state === "FAILED") return "recognition";
   return "idle";
 }
 
@@ -883,14 +891,14 @@ export default function AnalysisWorkspacePage() {
   const loadSources = useCallback(async () => {
     const [sourceResult, statusResponse] = await Promise.all([
       supabase.from("source_files").select("id,created_at,title,source,grade,subject,status,error_message").order("created_at", { ascending: false }),
-      fetch(`/api/source-files/analysis-statuses?_=${Date.now()}`, { cache: "no-store" }),
+      fetch("/api/source-files/analysis-statuses", { cache: "no-store" }),
     ]);
     if (sourceResult.error) throw sourceResult.error;
     if (!statusResponse.ok) throw new Error(await statusResponse.text());
 
     const statusPayload = await statusResponse.json() as {
       success?: boolean;
-      statuses?: Record<string, { state: SourceFile["workflow_state"]; label: string }>;
+      statuses?: Record<string, { state: SourceFile["workflow_state"]; label: string; detail?: string }>;
       message?: string;
     };
     if (!statusPayload.success) throw new Error(statusPayload.message || "시험지 상태를 불러오지 못했습니다.");
@@ -898,7 +906,8 @@ export default function AnalysisWorkspacePage() {
 
     const rows = ((sourceResult.data ?? []) as SourceFile[]).map((source) => ({
       ...source,
-      workflow_label: statuses[source.id]?.label ?? "미분석",
+      workflow_label: statuses[source.id]?.label ?? SOURCE_WORKFLOW_LABEL.UNANALYZED,
+      workflow_detail: statuses[source.id]?.detail ?? "",
       workflow_state: statuses[source.id]?.state ?? "UNANALYZED",
     }));
     setSources(rows);
@@ -923,7 +932,6 @@ export default function AnalysisWorkspacePage() {
       const nextWorkspace = payload as Workspace & { success: true };
       setWorkspace(nextWorkspace);
       setSelectedId(sourceId);
-      void loadSources();
       setActiveQuestionId(nextWorkspace.questions?.[0]?.id ?? "");
       const savedStep = String(nextWorkspace.analysis?.current_step ?? "");
       if (savedStep.includes("3단계") || nextWorkspace.questions?.some((item) => item.status === "AUTO_REGISTERED" || item.status === "REVIEW" || item.status === "APPROVED")) {
@@ -1912,7 +1920,7 @@ export default function AnalysisWorkspacePage() {
   async function runAutoPipeline() {
     if (!workspace || !pdfDoc || !questions.length) return false;
     const analysisTargets = questions.filter((question) =>
-      !isBankRegistered(question) &&
+      !isBankRegistered(question, registeredIdSet) &&
       !["AUTO_REGISTERED", "APPROVED", "REGISTERED", "REJECTED"].includes(question.status)
     );
     if (!analysisTargets.length) {
@@ -2141,20 +2149,22 @@ export default function AnalysisWorkspacePage() {
   const progress = Math.max(0, Math.min(100, Number(workspace?.analysis?.progress ?? 0)));
   const croppedCount = questions.filter((question) => hasValidCrop(question)).length;
   const savedCropCount = questions.filter((question) => Boolean(question.question_image_path)).length;
-  // 이 5개 배열이 시험지 상태의 유일한 기준이다.
-  // 드롭다운/문제등록 화면도 서버에서 똑같은 workflowBucketOf 규칙으로 집계한다.
-  const registeredQuestions = questions.filter((question) => workflowBucketOf(question) === "registered");
-  const pendingQuestions = questions.filter((question) => workflowBucketOf(question) === "pending");
-  const reviewQuestions = questions.filter((question) => workflowBucketOf(question) === "review");
-  const failedQuestions = questions.filter((question) => workflowBucketOf(question) === "failed");
-  const otherQuestions = questions.filter((question) => workflowBucketOf(question) === "other");
-
-  // 아직 AI 문항분석이 끝나지 않은 문항만 자동 분석 대상으로 잡는다.
-  // 등록완료/등록대기/검토보류/제외실패는 이미 3단계 결과가 있으므로 재분석 대상이 아니다.
-  const analysisNeededQuestions = questions.filter((question) => {
-    const bucket = workflowBucketOf(question);
-    return bucket === "other";
-  });
+  // v164: 등록완료/등록대기/검토보류/실패를 서로 겹치지 않게 나눈다.
+  // 목록 API(source-workflow)와 같은 우선순위를 쓰므로 두 화면 숫자가 항상 일치한다.
+  const registeredIdSet = useMemo(
+    () => new Set(workspace?.registeredQuestionIds ?? []),
+    [workspace?.registeredQuestionIds],
+  );
+  const questionStages = questions.map((question) => ({
+    question,
+    stage: classifyQuestionStage(question.status, isBankRegistered(question, registeredIdSet)),
+  }));
+  const stageList = (target: string) => questionStages.filter((item) => item.stage === target).map((item) => item.question);
+  const registeredQuestions = stageList("registered");
+  const pendingQuestions = stageList("pending");
+  const reviewQuestions = stageList("review");
+  const failedQuestions = stageList("failed");
+  const analysisNeededQuestions = stageList("other");
   const visibleQuestions = viewMode === "registered" ? registeredQuestions
     : viewMode === "pending" ? pendingQuestions
     : viewMode === "review" ? reviewQuestions
@@ -2310,8 +2320,8 @@ export default function AnalysisWorkspacePage() {
                 <button
                   className="analyze-one-prominent"
                   onClick={() => void analyzeOneQuestion(activeQuestion)}
-                  disabled={!activeQuestion || isBankRegistered(activeQuestion) || !!busy}
-                  title={activeQuestion && isBankRegistered(activeQuestion) ? "문제은행에서 삭제한 뒤 재분석할 수 있습니다." : "현재 선택한 문항만 재분석합니다."}
+                  disabled={!activeQuestion || isBankRegistered(activeQuestion, registeredIdSet) || !!busy}
+                  title={activeQuestion && isBankRegistered(activeQuestion, registeredIdSet) ? "문제은행에서 삭제한 뒤 재분석할 수 있습니다." : "현재 선택한 문항만 재분석합니다."}
                 >
                   {activeQuestion ? `${activeQuestion.question_no}번만 재분석` : "문항 1개 재분석"}
                 </button>
@@ -2328,10 +2338,10 @@ export default function AnalysisWorkspacePage() {
         <label>
           <span className="source-label-head">
             분석할 시험지
-            {selectedSource ? <b className={`source-status-badge ${sourceWorkflowTone(selectedSource.workflow_label)}`}>{selectedSource.workflow_label}</b> : null}
+            {selectedSource ? <b className={`source-status-badge ${sourceWorkflowTone(selectedSource.workflow_state)}`}>{selectedSource.workflow_label}{selectedSource.workflow_detail ? ` · ${selectedSource.workflow_detail}` : ""}</b> : null}
           </span>
           <select
-            className={`source-status-select ${sourceWorkflowTone(selectedSource?.workflow_label)}`}
+            className={`source-status-select ${sourceWorkflowTone(selectedSource?.workflow_state)}`}
             value={selectedId}
             onChange={(event) => void loadWorkspace(event.target.value)}
             disabled={busy === "load"}
@@ -2461,7 +2471,7 @@ export default function AnalysisWorkspacePage() {
           {viewMode !== "single" ? (
             <section className={`all-crops-grid ${workflowStep === 2 ? "crop-three-grid" : ""}`}>
               {visibleQuestions.map((question) => (
-                <article key={question.id} className={`crop-card ${isBankRegistered(question) ? "registered-card" : question.status === "AUTO_REGISTERED" || question.status === "APPROVED" ? "auto" : question.status === "REVIEW" ? "hold" : "failed-card"}`}>
+                <article key={question.id} className={`crop-card ${isBankRegistered(question, registeredIdSet) ? "registered-card" : question.status === "AUTO_REGISTERED" || question.status === "APPROVED" ? "auto" : question.status === "REVIEW" ? "hold" : "failed-card"}`}>
                   <button className="card-open" onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>
                     <div className="crop-thumb">
                       {thumbnailUrls[question.id] ? <img src={thumbnailUrls[question.id]} alt={`${question.question_no}번 잘린 문항`} /> : <span>{thumbnailBusy ? "미리보기 생성 중..." : "미리보기 없음"}</span>}
@@ -2470,7 +2480,7 @@ export default function AnalysisWorkspacePage() {
                       <strong>{question.question_no}번</strong>
                       <div className="card-status-group">
                         <span className={`card-difficulty level-${valueOf(question, "difficulty") || "unknown"}`}>난이도 {difficultyLabel(valueOf(question, "difficulty"))}</span>
-                        <span className="card-workflow-status">{displayQuestionStatus(question)}</span>
+                        <span className="card-workflow-status">{displayQuestionStatus(question, registeredIdSet)}</span>
                       </div>
                     </div>
                     <small>{valueOf(question, "unit") || "단원 분석 전"}</small>
@@ -2481,10 +2491,10 @@ export default function AnalysisWorkspacePage() {
                   <div className="review-card-actions single-action solution-open-action">
                     <button onClick={() => { setActiveQuestionId(question.id); setViewMode("single"); }}>공식 해설·DNA 확인</button>
                   </div>
-                  {!isBankRegistered(question) ? <div className="review-card-actions single-action analyze-one-action">
+                  {!isBankRegistered(question, registeredIdSet) ? <div className="review-card-actions single-action analyze-one-action">
                     <button onClick={() => { setActiveQuestionId(question.id); void analyzeOneQuestion(question); }} disabled={!!busy}>{question.question_no}번만 재분석</button>
                   </div> : null}
-                  {(!isBankRegistered(question) && (question.status === "AUTO_REGISTERED" || question.status === "APPROVED")) ? <div className="review-card-actions single-action pending-actions">
+                  {(!isBankRegistered(question, registeredIdSet) && (question.status === "AUTO_REGISTERED" || question.status === "APPROVED")) ? <div className="review-card-actions single-action pending-actions">
                     <button className="register-now" onClick={() => void registerPendingQuestions([question])} disabled={!!busy}>이 문항 문제은행 등록</button>
                   </div> : null}
                   {question.status === "REVIEW" ? <div className="review-card-actions">
@@ -2492,7 +2502,7 @@ export default function AnalysisWorkspacePage() {
                     <button className="register-now" onClick={() => void approveForPending(question)} disabled={!!busy}>수정 완료 · 대기로</button>
                     <button className="exclude" onClick={() => void excludeQuestion(question)} disabled={!!busy}>등록 제외</button>
                   </div> : null}
-                  {isBankRegistered(question) ? <div className="review-card-actions single-action">
+                  {isBankRegistered(question, registeredIdSet) ? <div className="review-card-actions single-action">
                     <button className="register-now" onClick={() => router.push("/problem-bank")}>문제은행에서 보기</button>
                   </div> : null}
                 </article>

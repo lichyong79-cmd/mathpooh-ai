@@ -5,7 +5,8 @@ import { getSupabaseConfig } from "@/lib/supabase";
 import { authHeaders } from "@/lib/supabase/rest";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
 import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, difficultyFromBand, difficultyLabel, normalizeProblemDifficulty } from "@/lib/difficulty-scale";
-import { normalizeSubject } from "@/lib/subject";
+import { SUBJECTS, canonicalSubject } from "@/lib/subject";
+import { evidenceDifficultyLevel } from "@/lib/problem-dna";
 
 type Problem = {
   id: string;
@@ -21,6 +22,7 @@ type Problem = {
   status: string;
   question_image_path?: string | null;
   problem_dna?: any;
+  created_at?: string;
 };
 
 type RegradeResult = {
@@ -97,7 +99,7 @@ export default function DifficultyManagementPage() {
     if (!config) { setError("Supabase 환경변수를 확인해 주세요."); setLoading(false); return; }
     setLoading(true); setError("");
     try {
-      const fields = ["id","question_no","problem_code","title","grade","subject","unit","topic","difficulty","source_name","status","question_image_path","problem_dna"].join(",");
+      const fields = ["id","question_no","problem_code","title","grade","subject","unit","topic","difficulty","source_name","status","question_image_path","problem_dna","created_at"].join(",");
       const all: Problem[] = [];
       for (let offset=0;;offset+=1000) {
         const res = await fetch(`${config.url}/rest/v1/problem_bank_questions?select=${fields}&status=eq.ACTIVE&order=created_at.desc&offset=${offset}&limit=1000`, { headers:{ ...(await authHeaders()) }, cache:"no-store" });
@@ -113,10 +115,13 @@ export default function DifficultyManagementPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const subjects = useMemo(() => ["전체", ...Array.from(new Set(items.map(x=>x.subject).filter(Boolean)))], [items]);
+  const subjects = useMemo(() => {
+    const present = new Set(items.map(x => canonicalSubject(x.subject)));
+    return ["전체", ...SUBJECTS.filter(v => present.has(v)), ...(present.has("미분류") ? ["미분류"] : [])];
+  }, [items]);
   const filtered = useMemo(() => items.filter(x => {
     if (difficulty !== "전체" && norm(x.difficulty,x.problem_dna) !== difficulty) return false;
-    if (subject !== "전체" && normalizeSubject(x.subject) !== subject) return false;
+    if (subject !== "전체" && canonicalSubject(x.subject) !== subject) return false;
     const q = keyword.trim().toLowerCase();
     if (q && ![x.problem_code,x.title,x.unit,x.topic,x.source_name].join(" ").toLowerCase().includes(q)) return false;
     return true;
@@ -149,6 +154,92 @@ export default function DifficultyManagementPage() {
     setSavingId(null);
   }
 
+
+  async function runFullEightScaleReview() {
+    if (running) return;
+
+    // 원장이 직접 확정한 문항은 이미 검토 완료된 기준표이므로 덮어쓰지 않는다.
+    // 그 외 문제은행 전체를 등록일/현재난이도와 무관하게 새 8단계 엔진으로 다시 판정한다.
+    const targets = items.filter((x) => x.problem_dna?.difficulty?.admin_fixed !== true);
+
+    if (!targets.length) {
+      setMessage("전체 8단계 재검토 대상이 없습니다.");
+      return;
+    }
+
+    const fixed = items.filter(
+      (x) => x.problem_dna?.difficulty?.admin_fixed === true
+        && x.problem_dna?.difficulty?.scale_version === DIFFICULTY_SCALE_VERSION,
+    );
+
+    // 각 8단계에서 원장 확정 표본을 최대 5개씩 전달한다.
+    const referenceIds = DIFFICULTY_SCALE.flatMap((scale) =>
+      fixed
+        .filter((x) => norm(x.difficulty, x.problem_dna) === scale.value)
+        .slice(0, 5)
+        .map((x) => x.id),
+    );
+
+    if (!window.confirm(
+      `문제은행 전체 ${items.length}문항 중 관리자 확정 ${fixed.length}문항은 기준표로 보존하고,
+`
+      + `나머지 ${targets.length}문항을 새 8단계 기준으로 전부 다시 판정합니다.
+
+`
+      + `문제/해설/DNA/학생 연결은 유지하고 난이도만 갱신합니다.
+`
+      + `시간이 오래 걸릴 수 있습니다.
+
+진행할까요?`
+    )) return;
+
+    setRunning(true);
+    setMessage("");
+    setError("");
+    setTestResults([]);
+    setProgress({ mode:"anomaly", done:0, total:targets.length, ok:0, fail:0 });
+
+    let ok = 0;
+    let fail = 0;
+
+    try {
+      // 20문항 단위로 서버 배치 호출.
+      for (let i = 0; i < targets.length; i += 20) {
+        const batch = targets.slice(i, i + 20);
+        const res = await fetch("/api/problem-bank/regrade-difficulty-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            problemIds: batch.map((x) => x.id),
+            dryRun: false,
+            referenceIds,
+          }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.success !== true) {
+          throw new Error(data?.message || `재검토 배치 실패 (${res.status})`);
+        }
+
+        const results = Array.isArray(data.results) ? data.results : [];
+        ok += results.filter((r:any) => r?.ok === true).length;
+        fail += results.filter((r:any) => r?.ok !== true).length;
+
+        const done = Math.min(i + 20, targets.length);
+        setProgress({ mode:"anomaly", done, total:targets.length, ok, fail });
+        setMessage(`전체 8단계 재검토 중 · ${done}/${targets.length} · 성공 ${ok} · 실패 ${fail}`);
+      }
+
+      await load();
+      setMessage(`전체 8단계 재검토 완료 · 대상 ${targets.length}문항 · 성공 ${ok}${fail ? ` · 실패 ${fail}` : ""} · 관리자 확정 ${fixed.length}문항 보존`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "전체 8단계 재검토에 실패했습니다.");
+    } finally {
+      setRunning(false);
+      setProgress(null);
+    }
+  }
+
   async function runAnomalyReview() {
     if (running) return;
 
@@ -167,9 +258,16 @@ export default function DifficultyManagementPage() {
         const bandValue = difficultyFromBand(d.csat_difficulty_band);
         const finalValue = String(d.final_grade ?? "");
         const confidence = Number(d.ai_regrade_confidence ?? x.problem_dna?.confidence ?? 1);
+        // v164: 문항 근거(개념·조건해석·발상·계산·시간)만으로 계산한 난이도.
+        // 밴드만 보고 3점으로 몰려 등록된 문항을 찾아내는 핵심 신호다.
+        const evidence = d && Object.keys(d).length ? String(evidenceDifficultyLevel(d)) : "";
+        const evidenceGap = evidence && current ? Math.abs(Number(evidence) - Number(current)) : 0;
         let suspicion = 0;
         if (bandValue && bandValue !== current) suspicion += 100;
         if (/^[1-8]$/.test(finalValue) && finalValue !== current) suspicion += 90;
+        if (evidenceGap >= 2) suspicion += 60 + evidenceGap * 25;
+        if (d.band_conflict === true) suspicion += 85;
+        if (!d.ai_regrade_version) suspicion += 40; // 8단계 전용 재판정을 한 번도 안 거친 문항
         if (d.scale_version !== DIFFICULTY_SCALE_VERSION) suspicion += 80;
         if (Number.isFinite(confidence) && confidence < .72) suspicion += 70 + Math.round((.72-confidence)*100);
         if (Number(current) >= 7) suspicion += 30; // 준킬러/킬러는 소수이므로 정기 재확인
@@ -241,7 +339,8 @@ export default function DifficultyManagementPage() {
         <input value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="문항명·단원·유형·출처 검색"/>
         <select value={subject} onChange={e=>setSubject(e.target.value)}>{subjects.map(x=><option key={x}>{x}</option>)}</select>
         <select value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option>전체</option>{DIFFICULTY_SCALE.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}</select>
-        <button disabled={running} onClick={runAnomalyReview} className="primary">AI 이상 난이도 검토</button>
+        <button disabled={running} onClick={runFullEightScaleReview} className="primary">전체 8단계 재검토</button>
+        <button disabled={running} onClick={runAnomalyReview}>AI 이상 난이도 검토</button>
       </div>
 
       {testResults.length>0 && <section className="test-section">

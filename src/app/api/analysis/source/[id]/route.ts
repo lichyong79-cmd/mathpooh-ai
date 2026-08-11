@@ -20,26 +20,35 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
     if (analysis.data) {
       const query = await supabase.from("analysis_questions").select("*").eq("analysis_id", analysis.data.id).order("question_no");
       if (query.error) throw query.error;
-      const rawQuestions = query.data ?? [];
-      const bank = await supabase
-        .from("problem_bank_questions")
-        .select("analysis_question_id,question_no")
-        .eq("source_file_id", id);
-      if (bank.error) throw bank.error;
-      const registeredIds = new Set((bank.data ?? []).map((row:any) => String(row.analysis_question_id ?? "")).filter(Boolean));
-      const registeredNos = new Set((bank.data ?? []).map((row:any) => Number(row.question_no)).filter(Number.isFinite));
-      questions = rawQuestions.map((row:any) => ({
-        ...row,
-        bank_registered: registeredIds.has(String(row.id)) || registeredNos.has(Number(row.question_no)),
-      }));
+      questions = query.data ?? [];
     }
+
+    // v164: "문제은행 등록완료"의 기준을 서버 한 곳으로 통일한다.
+    // 화면이 review_result.bank_status만 보고 판단하면 상태 표시가 목록과 어긋난다.
+    const bank = await supabase
+      .from("problem_bank_questions")
+      .select("analysis_question_id")
+      .eq("source_file_id", id);
+    if (bank.error) throw bank.error;
+    const registeredQuestionIds = [...new Set(
+      (bank.data ?? []).map((row) => String(row.analysis_question_id ?? "").trim()).filter(Boolean),
+    )];
+
     const sign = async (path: string | null) => {
       if (!path) return null;
       const result = await supabase.storage.from("exam-pdf").createSignedUrl(path, 3600);
       if (result.error) throw result.error;
       return result.data.signedUrl;
     };
-    return NextResponse.json({ success: true, source: source.data, analysis: analysis.data, questions, examUrl: await sign(source.data.exam_pdf_path), solutionUrl: await sign(source.data.solution_pdf_path) });
+    return NextResponse.json({
+      success: true,
+      source: source.data,
+      analysis: analysis.data,
+      questions,
+      registeredQuestionIds,
+      examUrl: await sign(source.data.exam_pdf_path),
+      solutionUrl: await sign(source.data.solution_pdf_path),
+    });
   } catch (error) {
     return NextResponse.json({ success: false, message: error instanceof Error ? error.message : "작업장을 불러오지 못했습니다." }, { status: 500 });
   }
