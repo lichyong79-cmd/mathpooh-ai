@@ -2147,6 +2147,13 @@ export default function AnalysisWorkspacePage() {
   const reviewQuestions = questions.filter((question) => workflowBucketOf(question) === "review");
   const failedQuestions = questions.filter((question) => workflowBucketOf(question) === "failed");
   const otherQuestions = questions.filter((question) => workflowBucketOf(question) === "other");
+
+  // 아직 AI 문항분석이 끝나지 않은 문항만 자동 분석 대상으로 잡는다.
+  // 등록완료/등록대기/검토보류/제외실패는 이미 3단계 결과가 있으므로 재분석 대상이 아니다.
+  const analysisNeededQuestions = questions.filter((question) => {
+    const bucket = workflowBucketOf(question);
+    return bucket === "other";
+  });
   const visibleQuestions = viewMode === "registered" ? registeredQuestions
     : viewMode === "pending" ? pendingQuestions
     : viewMode === "review" ? reviewQuestions
