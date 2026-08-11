@@ -182,6 +182,9 @@ function officialSolutionOf(question: Question, sourceHasSolution = false): {
       solutionSteps, issues, officialAnswer, evidence,
     };
   }
+  if (verification === "manual_crop_connected" || verification === "official_pdf_image_connected") {
+    return { tone: "verified", label: "공식 해설 이미지 연결 완료", detail: "문항별 공식 해설 이미지가 저장되어 있습니다.", solutionSteps, issues, officialAnswer, evidence };
+  }
   if (verification === "official_pdf_review_required") {
     return { tone: "review", label: "공식 해설 확인 필요", detail: issues.join(" · ") || "해설 탐색 또는 정답 교차검증 결과를 확인해 주세요.", solutionSteps, issues, officialAnswer, evidence };
   }
@@ -822,6 +825,108 @@ function hasValidCrop(question: Question | null) {
   );
 }
 
+
+function ManualSolutionCropModal({
+  doc,
+  questionNo,
+  initialPage,
+  onClose,
+  onSave,
+}: {
+  doc: any;
+  questionNo: number;
+  initialPage: number;
+  onClose: () => void;
+  onSave: (blob: Blob, pageNo: number) => Promise<void>;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const startRef = useRef<{x:number;y:number}|null>(null);
+  const [pageNo, setPageNo] = useState(Math.max(1, initialPage || 1));
+  const [pageCount, setPageCount] = useState(Number(doc?.numPages ?? 1));
+  const [rect, setRect] = useState<Rect|null>(null);
+  const [saving, setSaving] = useState(false);
+  const [localError, setLocalError] = useState("");
+
+  useEffect(() => {
+    let cancelled=false;
+    void (async()=>{
+      try{
+        if(!doc || !canvasRef.current) return;
+        setPageCount(Number(doc.numPages ?? 1));
+        const page=await doc.getPage(pageNo);
+        const base=page.getViewport({scale:1});
+        const viewport=page.getViewport({scale:Math.max(1.4,Math.min(2.2,1200/base.width))});
+        const canvas=canvasRef.current;
+        canvas.width=Math.ceil(viewport.width);
+        canvas.height=Math.ceil(viewport.height);
+        const ctx=canvas.getContext("2d");
+        if(!ctx) return;
+        await page.render({canvasContext:ctx,viewport}).promise;
+        if(!cancelled) setRect(null);
+      }catch(e){ if(!cancelled) setLocalError(e instanceof Error?e.message:"해설 PDF 페이지를 불러오지 못했습니다."); }
+    })();
+    return()=>{cancelled=true};
+  },[doc,pageNo]);
+
+  function pos(event: React.PointerEvent<HTMLDivElement>){
+    const el=wrapRef.current;
+    if(!el) return {x:0,y:0};
+    const b=el.getBoundingClientRect();
+    return {
+      x:Math.max(0,Math.min(100,((event.clientX-b.left)/b.width)*100)),
+      y:Math.max(0,Math.min(100,((event.clientY-b.top)/b.height)*100)),
+    };
+  }
+
+  function down(event:React.PointerEvent<HTMLDivElement>){
+    if(saving) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const p=pos(event); startRef.current=p; setRect({x:p.x,y:p.y,width:0,height:0});
+  }
+  function move(event:React.PointerEvent<HTMLDivElement>){
+    if(!startRef.current) return;
+    const p=pos(event),s=startRef.current;
+    setRect({x:Math.min(s.x,p.x),y:Math.min(s.y,p.y),width:Math.abs(p.x-s.x),height:Math.abs(p.y-s.y)});
+  }
+  function up(){ startRef.current=null; }
+
+  async function save(){
+    const canvas=canvasRef.current;
+    if(!canvas||!rect||rect.width<1||rect.height<1) return setLocalError("저장할 해설 영역을 드래그해 주세요.");
+    setSaving(true);setLocalError("");
+    try{
+      const cropped=cropExact(canvas,rect).canvas;
+      const blob=await new Promise<Blob>((resolve,reject)=>cropped.toBlob(v=>v?resolve(v):reject(new Error("해설 이미지 변환 실패")),"image/webp",.94));
+      await onSave(blob,pageNo);
+      onClose();
+    }catch(e){setLocalError(e instanceof Error?e.message:"해설 저장 실패");}
+    finally{setSaving(false);}
+  }
+
+  return <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,.68)",display:"grid",placeItems:"center",padding:20}}>
+    <div style={{width:"min(1180px,96vw)",height:"92vh",background:"#fff",borderRadius:16,display:"grid",gridTemplateRows:"auto 1fr auto",overflow:"hidden"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 16px",borderBottom:"1px solid #ddd"}}>
+        <div><strong>{questionNo}번 공식 해설 직접 긁기</strong><div style={{fontSize:12,color:"#667085"}}>해설 PDF에서 해당 풀이 영역을 마우스로 드래그하세요.</div></div>
+        <button type="button" onClick={onClose}>닫기</button>
+      </div>
+      <div style={{overflow:"auto",padding:12,background:"#eef1f4"}}>
+        <div ref={wrapRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} style={{position:"relative",width:"fit-content",margin:"0 auto",cursor:"crosshair",touchAction:"none"}}>
+          <canvas ref={canvasRef} style={{display:"block",maxWidth:"100%",height:"auto",background:"#fff"}} />
+          {rect ? <div style={{position:"absolute",left:`${rect.x}%`,top:`${rect.y}%`,width:`${rect.width}%`,height:`${rect.height}%`,border:"2px solid #e74c3c",background:"rgba(231,76,60,.08)",pointerEvents:"none"}}/>:null}
+        </div>
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",padding:"10px 16px",borderTop:"1px solid #ddd"}}>
+        <button type="button" disabled={pageNo<=1||saving} onClick={()=>setPageNo(v=>Math.max(1,v-1))}>← 이전</button>
+        <span style={{fontWeight:800}}>해설 {pageNo}/{pageCount}쪽</span>
+        <button type="button" disabled={pageNo>=pageCount||saving} onClick={()=>setPageNo(v=>Math.min(pageCount,v+1))}>다음 →</button>
+        <span style={{flex:1,fontSize:12,color:"#667085"}}>{localError}</span>
+        <button type="button" disabled={!rect||saving} onClick={()=>void save()} style={{fontWeight:900}}>{saving?"저장 중...":"이 영역을 공식 해설로 저장"}</button>
+      </div>
+    </div>
+  </div>;
+}
+
 export default function AnalysisWorkspacePage() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -845,6 +950,7 @@ export default function AnalysisWorkspacePage() {
   const [draft, setDraft] = useState<Rect | null>(null);
   const [preview, setPreview] = useState("");
   const [solutionPreviewUrl, setSolutionPreviewUrl] = useState("");
+  const [manualSolutionCropOpen, setManualSolutionCropOpen] = useState(false);
 
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
@@ -1666,6 +1772,25 @@ export default function AnalysisWorkspacePage() {
     const payload = await response.json();
     if (!response.ok || !payload.success) throw new Error(payload.message || `${question.question_no}번 공식 해설 저장 실패`);
     return true;
+  }
+
+  async function saveManualOfficialSolution(blob: Blob, solutionPageNo: number) {
+    if (!workspace?.analysis?.id || !activeQuestion) throw new Error("현재 문항 정보가 없습니다.");
+    const form = new FormData();
+    form.append("image", blob, `solution-${String(activeQuestion.question_no).padStart(3, "0")}-manual.webp`);
+    form.append("analysisId", workspace.analysis.id);
+    form.append("sourceFileId", workspace.source.id);
+    form.append("questionId", activeQuestion.id);
+    form.append("questionNo", String(activeQuestion.question_no));
+    form.append("pageNo", String(solutionPageNo));
+    form.append("manual", "true");
+
+    const response = await fetch("/api/problem-bank/materialize-solution", { method: "POST", body: form });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) throw new Error(payload.message || "공식 해설 수동 저장 실패");
+
+    await loadWorkspace(workspace.source.id);
+    setMessage(`${activeQuestion.question_no}번 공식 해설을 직접 연결했습니다.`);
   }
 
 
@@ -2636,7 +2761,10 @@ export default function AnalysisWorkspacePage() {
                         <small>{activeQuestion.question_no}번 공식 해설 확인</small>
                         <strong>{officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).label}</strong>
                       </div>
-                      {workspace.solutionUrl ? <a href={workspace.solutionUrl} target="_blank" rel="noreferrer">전체 원본 해설지</a> : null}
+                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                        {workspace.solutionUrl ? <button type="button" onClick={() => setManualSolutionCropOpen(true)}>해설 PDF에서 직접 긁기</button> : null}
+                        {workspace.solutionUrl ? <a href={workspace.solutionUrl} target="_blank" rel="noreferrer">전체 원본 해설지</a> : null}
+                      </div>
                     </div>
                     <p>{officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).detail}</p>
                     {officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).officialAnswer ? <div className="official-answer"><b>공식 정답</b><strong>{officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).officialAnswer}</strong></div> : null}
@@ -2710,6 +2838,16 @@ export default function AnalysisWorkspacePage() {
           </section> : null}
         </>
       )}
+
+      {manualSolutionCropOpen && activeQuestion && solutionPdfDoc ? (
+        <ManualSolutionCropModal
+          doc={solutionPdfDoc}
+          questionNo={Number(activeQuestion.question_no)}
+          initialPage={Number(activeQuestion.ai_result?.official_solution_page_no ?? 1)}
+          onClose={() => setManualSolutionCropOpen(false)}
+          onSave={saveManualOfficialSolution}
+        />
+      ) : null}
 
       <style jsx>{`
         .page-move{display:flex;align-items:center;gap:9px;margin-bottom:10px}

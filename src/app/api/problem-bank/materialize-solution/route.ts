@@ -13,6 +13,7 @@ export async function POST(request: NextRequest) {
   try {
     const form = await request.formData();
     const image = form.get("image");
+    const manual = String(form.get("manual") ?? "") === "true";
     const analysisId = String(form.get("analysisId") ?? "");
     const sourceFileId = String(form.get("sourceFileId") ?? "");
     const questionId = String(form.get("questionId") ?? "");
@@ -32,11 +33,27 @@ export async function POST(request: NextRequest) {
     });
     if (stored.error) throw stored.error;
 
+    const previousAi = current.data.ai_result ?? {};
+    const previousOfficial = previousAi.official_solution && typeof previousAi.official_solution === "object"
+      ? previousAi.official_solution
+      : {};
+    const previousVerification = String(previousOfficial.verification ?? "");
+    const staleMissing = previousVerification === "official_pdf_extract_required" || previousVerification === "official_pdf_missing";
     const aiResult = {
-      ...(current.data.ai_result ?? {}),
+      ...previousAi,
       official_solution_image_path: path,
       official_solution_page_no: pageNo,
       official_solution_materialized_at: new Date().toISOString(),
+      official_solution_manual_crop: manual,
+      official_solution: {
+        ...previousOfficial,
+        connected: true,
+        question_no: questionNo,
+        ...(staleMissing ? {
+          verification: manual ? "manual_crop_connected" : "official_pdf_image_connected",
+          issues: [],
+        } : {}),
+      },
     };
     const updated = await supabase.from("analysis_questions").update({ ai_result: aiResult, updated_at: new Date().toISOString() }).eq("id", questionId);
     if (updated.error) throw updated.error;
