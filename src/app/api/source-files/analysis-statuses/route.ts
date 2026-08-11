@@ -7,17 +7,25 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 async function fetchAll<T>(
-  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  build: (from: number, to: number) => any,
   pageSize = 1000,
 ): Promise<T[]> {
   const rows: T[] = [];
+
   for (let from = 0; ; from += pageSize) {
-    const result = await build(from, from + pageSize - 1);
-    if (result.error) throw result.error;
-    const page = result.data ?? [];
+    const result = await build(from, from + pageSize - 1) as {
+      data?: T[] | null;
+      error?: unknown;
+    };
+
+    if (result?.error) throw result.error;
+
+    const page = Array.isArray(result?.data) ? result.data : [];
     rows.push(...page);
+
     if (page.length < pageSize) break;
   }
+
   return rows;
 }
 
