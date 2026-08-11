@@ -157,87 +157,44 @@ export default function DifficultyManagementPage() {
 
   async function runFullEightScaleReview() {
     if (running) return;
-
-    // 원장이 직접 확정한 문항은 이미 검토 완료된 기준표이므로 덮어쓰지 않는다.
-    // 그 외 문제은행 전체를 등록일/현재난이도와 무관하게 새 8단계 엔진으로 다시 판정한다.
     const targets = items.filter((x) => x.problem_dna?.difficulty?.admin_fixed !== true);
-
-    if (!targets.length) {
-      setMessage("전체 8단계 재검토 대상이 없습니다.");
-      return;
-    }
-
-    const fixed = items.filter(
-      (x) => x.problem_dna?.difficulty?.admin_fixed === true
-        && x.problem_dna?.difficulty?.scale_version === DIFFICULTY_SCALE_VERSION,
-    );
-
-    // 각 8단계에서 원장 확정 표본을 최대 5개씩 전달한다.
-    const referenceIds = DIFFICULTY_SCALE.flatMap((scale) =>
-      fixed
-        .filter((x) => norm(x.difficulty, x.problem_dna) === scale.value)
-        .slice(0, 5)
-        .map((x) => x.id),
-    );
-
+    const fixed = items.length - targets.length;
     if (!window.confirm(
-      `문제은행 전체 ${items.length}문항 중 관리자 확정 ${fixed.length}문항은 기준표로 보존하고,
-`
-      + `나머지 ${targets.length}문항을 새 8단계 기준으로 전부 다시 판정합니다.
+      `저장된 DNA만 사용해 전체 난이도를 8단계로 다시 계산합니다.
 
 `
-      + `문제/해설/DNA/학생 연결은 유지하고 난이도만 갱신합니다.
+      + `대상 ${targets.length}문항 · 관리자 확정 ${fixed}문항 보존
 `
-      + `시간이 오래 걸릴 수 있습니다.
+      + `AI/OpenAI 호출 0회 · 추가 AI 비용 0원
 
 진행할까요?`
     )) return;
 
-    setRunning(true);
-    setMessage("");
-    setError("");
-    setTestResults([]);
-    setProgress({ mode:"anomaly", done:0, total:targets.length, ok:0, fail:0 });
-
-    let ok = 0;
-    let fail = 0;
-
+    setRunning(true); setMessage(""); setError(""); setTestResults([]);
+    setProgress({mode:"anomaly",done:0,total:items.length,ok:0,fail:0});
+    let offset=0, ok=0, fail=0, fixedSkipped=0, noDna=0;
     try {
-      // 20문항 단위로 서버 배치 호출.
-      for (let i = 0; i < targets.length; i += 20) {
-        const batch = targets.slice(i, i + 20);
-        const res = await fetch("/api/problem-bank/regrade-difficulty-batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            problemIds: batch.map((x) => x.id),
-            dryRun: false,
-            referenceIds,
-          }),
+      while (true) {
+        const res=await fetch("/api/problem-bank/recalculate-difficulty-from-dna",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({offset,limit:250}),
         });
-
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.success !== true) {
-          throw new Error(data?.message || `재검토 배치 실패 (${res.status})`);
-        }
-
-        const results = Array.isArray(data.results) ? data.results : [];
-        ok += results.filter((r:any) => r?.ok === true).length;
-        fail += results.filter((r:any) => r?.ok !== true).length;
-
-        const done = Math.min(i + 20, targets.length);
-        setProgress({ mode:"anomaly", done, total:targets.length, ok, fail });
-        setMessage(`전체 8단계 재검토 중 · ${done}/${targets.length} · 성공 ${ok} · 실패 ${fail}`);
+        const data=await res.json().catch(()=>({}));
+        if(!res.ok||data?.success!==true) throw new Error(data?.message||`DNA 재계산 실패 (${res.status})`);
+        ok += Number(data.updated)||0;
+        fail += Number(data.failed)||0;
+        fixedSkipped += Number(data.skippedFixed)||0;
+        noDna += Number(data.skippedNoDna)||0;
+        offset = Number(data.nextOffset)||offset;
+        setProgress({mode:"anomaly",done:Math.min(offset,items.length),total:items.length,ok,fail});
+        setMessage(`DNA 난이도 재계산 중 · ${Math.min(offset,items.length)}/${items.length} · 변경 ${ok} · 관리자확정 보존 ${fixedSkipped} · DNA없음 ${noDna} · 실패 ${fail}`);
+        if(data.done===true) break;
       }
-
       await load();
-      setMessage(`전체 8단계 재검토 완료 · 대상 ${targets.length}문항 · 성공 ${ok}${fail ? ` · 실패 ${fail}` : ""} · 관리자 확정 ${fixed.length}문항 보존`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "전체 8단계 재검토에 실패했습니다.");
-    } finally {
-      setRunning(false);
-      setProgress(null);
-    }
+      setMessage(`DNA 난이도 재계산 완료 · 변경 ${ok} · 관리자확정 보존 ${fixedSkipped} · DNA없음 ${noDna}${fail?` · 실패 ${fail}`:""} · AI 호출 0회`);
+    } catch(e) {
+      setError(e instanceof Error?e.message:"DNA 난이도 재계산에 실패했습니다.");
+    } finally { setRunning(false); setProgress(null); }
   }
 
   async function runAnomalyReview() {
@@ -339,7 +296,7 @@ export default function DifficultyManagementPage() {
         <input value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="문항명·단원·유형·출처 검색"/>
         <select value={subject} onChange={e=>setSubject(e.target.value)}>{subjects.map(x=><option key={x}>{x}</option>)}</select>
         <select value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option>전체</option>{DIFFICULTY_SCALE.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}</select>
-        <button disabled={running} onClick={runFullEightScaleReview} className="primary">전체 8단계 재검토</button>
+        <button disabled={running} onClick={runFullEightScaleReview} className="primary">1회용 · DNA로 전체 난이도 재계산</button>
         <button disabled={running} onClick={runAnomalyReview}>AI 이상 난이도 검토</button>
       </div>
 
