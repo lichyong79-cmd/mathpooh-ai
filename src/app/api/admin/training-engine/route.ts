@@ -51,6 +51,22 @@ function score(problem:any,target:any){
   return value;
 }
 
+function dnaTags(problem:any){
+  const out:string[]=[];
+  const visit=(value:any)=>{
+    if(out.length>=6||value==null)return;
+    if(typeof value==="string"){
+      const v=value.trim();
+      if(v&&v.length<=36&&!out.includes(v))out.push(v);
+      return;
+    }
+    if(Array.isArray(value)){ for(const item of value)visit(item); return; }
+    if(typeof value==="object"){ for(const value2 of Object.values(value))visit(value2); }
+  };
+  visit(problem?.problem_dna);
+  return out.slice(0,4);
+}
+
 function selectByMeter(pool:any[], targets:Array<{meter:number;role:string}>, used:Set<string>) {
   const selected:any[]=[];
 
@@ -216,7 +232,7 @@ export async function POST(request:Request){
 
   const {data:problems,error}=await ctx.supabase
     .from("problem_bank_questions")
-    .select("id,title,problem_code,subject,unit,topic,difficulty,difficulty_meter,difficulty_meter_unique_students,difficulty_meter_origin,question_type,problem_dna,training_course")
+    .select("id,title,problem_code,subject,unit,topic,difficulty,difficulty_meter,difficulty_meter_unique_students,difficulty_meter_origin,question_type,problem_dna,training_course,question_image_path")
     .eq("status","ACTIVE")
     .eq("content_role","TRAINING");
 
@@ -234,7 +250,58 @@ export async function POST(request:Request){
     ""
   ).trim();
 
-  // 같은 과목 + 같은 소단원 안에서만 진단/훈련 문항을 찾는다.
+  // 최초 진단은 자동 확정하지 않는다. 타겟과 연관도가 높은 후보를 최대 10개 보여주고
+  // 관리자가 그중 정확히 3개를 선택한 뒤 학생에게 배정한다.
+  if(action==="diagnosis-candidates"){
+    const targetDifficulty=Number(target?.sourceDifficulty??0)||3;
+    const ranked=(problems??[]).map((p:any)=>{
+      const info=problemSubunit(p);
+      const meter=clampMeter(p.difficulty_meter,Number(p.difficulty)||3);
+      const baseMatch=score(p,target);
+      const subjectMatch=!targetSubject?10:(related(targetSubject,info.subject||p.subject)?45:-80);
+      const subunitMatch=!targetUnit?0:(related(targetUnit,info.subunit)?95:related(targetUnit,p.unit)||related(targetUnit,p.topic)?55:0);
+      const diffMatch=Math.max(0,28-Math.abs((Number(p.difficulty)||meter)-targetDifficulty)*7);
+      return {...p,subunitInfo:info,meter,match:baseMatch+subjectMatch+subunitMatch+diffMatch};
+    }).sort((a:any,b:any)=>Number(b.match)-Number(a.match)||Math.abs(Number(a.meter)-targetDifficulty)-Math.abs(Number(b.meter)-targetDifficulty)||String(a.id).localeCompare(String(b.id)))
+      .slice(0,10);
+
+    const candidates=await Promise.all(ranked.map(async(p:any)=>{
+      let imageUrl="";
+      if(p.question_image_path){
+        const signed=await ctx.supabase.storage.from("question-images").createSignedUrl(p.question_image_path,60*30);
+        imageUrl=signed.data?.signedUrl??"";
+      }
+      return {
+        id:String(p.id), title:p.title, problemCode:p.problem_code, subject:p.subject, unit:p.unit, topic:p.topic,
+        difficulty:p.difficulty, meter:p.meter, questionType:p.question_type, match:Math.round(Number(p.match)||0),
+        subunit:p.subunitInfo?.subunit||p.unit||p.topic||"", majorUnit:p.subunitInfo?.major||"", dnaTags:dnaTags(p), imageUrl,
+      };
+    }));
+    return NextResponse.json({candidates,total:candidates.length,targetUnit,targetSubject});
+  }
+
+  if(action==="assign-diagnosis-selected"){
+    const selectedIds=Array.isArray(body.problemIds)?body.problemIds.map(String).filter(Boolean):[];
+    if(selectedIds.length!==3||new Set(selectedIds).size!==3)
+      return NextResponse.json({message:"진단 문항을 정확히 3개 선택해 주세요."},{status:400});
+    const chosen=(problems??[]).filter((p:any)=>selectedIds.includes(String(p.id)));
+    if(chosen.length!==3)return NextResponse.json({message:"선택한 진단 문항 중 문제은행에서 찾을 수 없는 문항이 있습니다."},{status:409});
+    const reference=chosen[0];
+    const info=problemSubunit(reference);
+    let meterRow;
+    try{ meterRow=await loadSubunitMeter(ctx.supabase,studentId,info,Number(target.sourceDifficulty)||Number(reference.difficulty)||3); }
+    catch(error){ return NextResponse.json({message:error instanceof Error?error.message:"학생 소단원 미터 조회 실패"},{status:400}); }
+    const snapshot={...target,subject:info.subject,majorUnit:info.major,subunit:info.subunit,subunitKey:info.key,studentDifficultyMeter:meterRow.meter,studentDifficultyLabel:meterLabel(meterRow.meter),meterSystem:"sos8-subunit-dynamic-v1",manualDiagnosisSelection:true};
+    const {data:session,error:sessionError}=await ctx.supabase.from("sos_training_sessions").insert({student_id:studentId,phase:"DIAGNOSIS",status:"ASSIGNED",target_snapshot:snapshot,parent_session_id:null,round_no:1,total_count:3}).select().single();
+    if(sessionError||!session)return NextResponse.json({message:tableMessage(sessionError?.message||"생성 실패")},{status:400});
+    const orderMap=new Map(selectedIds.map((id:string,index:number)=>[id,index]));
+    chosen.sort((a:any,b:any)=>(orderMap.get(String(a.id))??0)-(orderMap.get(String(b.id))??0));
+    const {error:itemError}=await ctx.supabase.from("sos_training_items").insert(chosen.map((p:any,index:number)=>({session_id:session.id,problem_id:p.id,item_order:index+1,item_role:`관리자 선택 진단 · ${problemSubunit(p).subunit||p.unit||"연관문항"}`,subunit_key:problemSubunit(p).key||info.key})));
+    if(itemError){ await ctx.supabase.from("sos_training_sessions").delete().eq("id",session.id); return NextResponse.json({message:tableMessage(itemError.message)},{status:400}); }
+    return NextResponse.json({success:true,session,selectedIds});
+  }
+
+  // 추가 진단/훈련 자동선정은 기존 소단원 기반 엔진을 사용한다.
   const sameSubunitPool=(problems??[])
     .map((p:any)=>{
       const info=problemSubunit(p);

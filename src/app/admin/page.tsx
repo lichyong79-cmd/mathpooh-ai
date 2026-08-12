@@ -1744,6 +1744,9 @@ function RecommendPage() {
   const [diagnosisErrorForNo1, setDiagnosisErrorForNo1] = useState("");
   const [rejectedSourceKeys, setRejectedSourceKeys] = useState<string[]>([]);
   const [confirmedTarget, setConfirmedTarget] = useState<SosTargetDecision | null>(null);
+  const [diagnosisCandidates, setDiagnosisCandidates] = useState<any[]>([]);
+  const [selectedDiagnosisIds, setSelectedDiagnosisIds] = useState<string[]>([]);
+  const [candidateLoading, setCandidateLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1779,6 +1782,8 @@ function RecommendPage() {
     setConfirmedTarget(null);
     setDiagnosisReadyForNo1(false);
     setDiagnosisErrorForNo1("");
+    setDiagnosisCandidates([]);
+    setSelectedDiagnosisIds([]);
   }, [selectedId]);
 
   const allSourceCandidates = useMemo(
@@ -1804,6 +1809,8 @@ function RecommendPage() {
     setConfirmedTarget(null);
     setDiagnosisReadyForNo1(false);
     setDiagnosisErrorForNo1("");
+    setDiagnosisCandidates([]);
+    setSelectedDiagnosisIds([]);
     setRejectedSourceKeys((current) => current.includes(target.key) ? current : [...current, target.key]);
   };
 
@@ -1812,6 +1819,8 @@ function RecommendPage() {
     setConfirmedTarget(null);
     setDiagnosisReadyForNo1(false);
     setDiagnosisErrorForNo1("");
+    setDiagnosisCandidates([]);
+    setSelectedDiagnosisIds([]);
     setRejectedSourceKeys((current) => current.includes(target.key) ? current : [...current, target.key]);
   };
 
@@ -1822,49 +1831,60 @@ function RecommendPage() {
     const unit = String(item?.unit ?? item?.minorUnit ?? item?.middleUnit ?? item?.subject ?? "").trim();
     const type = String(item?.type ?? item?.topic ?? item?.detailedTopic ?? "").trim();
     const sourceAttemptId = String(exam?.attemptId ?? exam?.attempt_id ?? exam?.examId ?? exam?.exam_id ?? "");
+    const targetPayload = {
+      units: unit ? [{ label: unit, rate: 0 }] : selected.weakUnits,
+      types: type ? [{ label: type, rate: 0 }] : selected.weakTypes,
+      sourceAttemptId, sourceExamId: exam?.examId ?? exam?.exam_id ?? null, sourceExamTitle: exam?.title ?? "실전모의고사",
+      sourceSubject: item?.subject ?? exam?.subject ?? null, sourceUnit: unit || null, sourceQuestionNo: sosQuestionNo(item),
+      sourceDifficulty: sosDifficulty(item?.difficulty), sourcePriority: target.priority, sourceVerdict: target.verdict, sosNo: 1,
+    };
 
-    setSaving(true);
-    setConfirmedTarget(target); // NO1 확정 자체는 문제은행 진단문항 수와 별개다.
+    setConfirmedTarget(target);
     setDiagnosisReadyForNo1(false);
     setDiagnosisErrorForNo1("");
+    setDiagnosisCandidates([]);
+    setSelectedDiagnosisIds([]);
+    setCandidateLoading(true);
     try {
       const response = await fetch("/api/admin/training-engine", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "generate-diagnosis",
-          studentId: selected.id,
-          target: {
-            units: unit ? [{ label: unit, rate: 0 }] : selected.weakUnits,
-            types: type ? [{ label: type, rate: 0 }] : selected.weakTypes,
-            sourceAttemptId,
-            sourceExamId: exam?.examId ?? exam?.exam_id ?? null,
-            sourceExamTitle: exam?.title ?? "실전모의고사",
-            sourceSubject: item?.subject ?? exam?.subject ?? null,
-            sourceUnit: unit || null,
-            sourceQuestionNo: sosQuestionNo(item),
-            sourceDifficulty: sosDifficulty(item?.difficulty),
-            sourcePriority: target.priority,
-            sourceVerdict: target.verdict,
-            sosNo: 1,
-          },
-        }),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "diagnosis-candidates", studentId: selected.id, target: targetPayload }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "진단 3문항 생성 실패");
+      if (!response.ok) throw new Error(data.message || "진단 후보 조회 실패");
+      setDiagnosisCandidates(data.candidates ?? []);
+      if (!(data.candidates ?? []).length) setDiagnosisErrorForNo1("문제은행에서 진단 후보를 찾지 못했습니다.");
+    } catch (error) {
+      setDiagnosisErrorForNo1(error instanceof Error ? error.message : "진단 후보를 불러오지 못했습니다.");
+    } finally { setCandidateLoading(false); }
+  };
+
+  const toggleDiagnosisCandidate = (id: string) => {
+    setSelectedDiagnosisIds((current) => current.includes(id)
+      ? current.filter((value) => value !== id)
+      : current.length >= 3 ? current : [...current, id]);
+  };
+
+  const assignSelectedDiagnosis = async () => {
+    if (!selected || !confirmedTarget || selectedDiagnosisIds.length !== 3) return alert("진단 문항을 3개 선택해 주세요.");
+    const item = confirmedTarget.sourceQuestion;
+    const exam = confirmedTarget.sourceExam;
+    const unit = String(item?.unit ?? item?.minorUnit ?? item?.middleUnit ?? item?.subject ?? "").trim();
+    const type = String(item?.type ?? item?.topic ?? item?.detailedTopic ?? "").trim();
+    const sourceAttemptId = String(exam?.attemptId ?? exam?.attempt_id ?? exam?.examId ?? exam?.exam_id ?? "");
+    setSaving(true);
+    try {
+      const response = await fetch("/api/admin/training-engine", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
+        action:"assign-diagnosis-selected", studentId:selected.id, problemIds:selectedDiagnosisIds,
+        target:{ units:unit?[{label:unit,rate:0}]:selected.weakUnits, types:type?[{label:type,rate:0}]:selected.weakTypes, sourceAttemptId, sourceExamId:exam?.examId??exam?.exam_id??null, sourceExamTitle:exam?.title??"실전모의고사", sourceSubject:item?.subject??exam?.subject??null, sourceUnit:unit||null, sourceQuestionNo:sosQuestionNo(item), sourceDifficulty:sosDifficulty(item?.difficulty), sourcePriority:confirmedTarget.priority, sourceVerdict:confirmedTarget.verdict, sosNo:1 }
+      })});
+      const data=await response.json();
+      if(!response.ok) throw new Error(data.message||"진단 3문항 배정 실패");
       await loadSessions(String(selected.id));
       setDiagnosisReadyForNo1(true);
-      setDiagnosisErrorForNo1("");
-      alert("SOS_NO1을 확정하고 학생에게 진단 3문항을 배정했습니다.");
-    } catch (error) {
-      // 문제은행이 아직 부족하면 NO1은 보이되, 관리자가 즉시 취소하고 다음 실제 오답을 선택할 수 있다.
-      const message = error instanceof Error ? error.message : "진단 3문항을 생성하지 못했습니다.";
-      setDiagnosisReadyForNo1(false);
-      setDiagnosisErrorForNo1(message);
-      alert(message);
-    } finally {
-      setSaving(false);
-    }
+      alert("선택한 3문항을 학생 진단으로 배정했습니다.");
+    } catch(error){ alert(error instanceof Error?error.message:"진단 3문항 배정 실패"); }
+    finally{ setSaving(false); }
   };
 
   const latestDiagnosis = sessions.find((item: any) => item.phase === "DIAGNOSIS");
@@ -2019,33 +2039,17 @@ function RecommendPage() {
                 <div style={{padding:14,borderRadius:14,background:"#fff",border:"1px solid #e4e7ec"}}>
                   {confirmedTarget?.key === target.key ? <>
                     <div style={{fontWeight:900,color: diagnosisReadyForNo1 ? "#25633a" : "#b54708",fontSize:16}}>
-                      {diagnosisReadyForNo1 ? "✓ SOS_NO1 확정 · 진단 3문항 생성 완료" : "SOS_NO1 확정 · 진단문항 확인 필요"}
+                      {diagnosisReadyForNo1 ? "✓ 진단 3문항 배정 완료" : candidateLoading ? "진단 후보 10문항 찾는 중..." : `진단 후보 ${diagnosisCandidates.length}문항 · ${selectedDiagnosisIds.length}/3 선택`}
                     </div>
-                    {diagnosisReadyForNo1 ? (
-                      <p style={{fontSize:13,color:"#667085",lineHeight:1.6}}>이 원문항을 기준으로 진단 3문항이 준비되었습니다.</p>
-                    ) : (
-                      <>
-                        <p style={{fontSize:13,color:"#667085",lineHeight:1.6,marginBottom:8}}>
-                          {diagnosisErrorForNo1 || "현재 문제은행에서 진단 3문항을 충분히 찾지 못했습니다."}
-                        </p>
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          disabled={saving}
-                          onClick={cancelConfirmedNo1AndMoveNext}
-                          style={{width:"100%"}}
-                        >
-                          NO1 확정 취소 · 다음 실제 오답 선택
-                        </button>
-                        <div style={{marginTop:8,fontSize:11,color:"#98a2b3",textAlign:"center"}}>
-                          현재 NO1을 제외하고 이 학생이 실제로 틀린 다음 실전모의고사 문항을 올립니다.
-                        </div>
-                      </>
-                    )}
+                    {diagnosisReadyForNo1 ? <p style={{fontSize:13,color:"#667085",lineHeight:1.6}}>선택한 3문항이 학생 페이지에 배정되었습니다.</p> : <>
+                      {diagnosisErrorForNo1 ? <p style={{fontSize:13,color:"#b42318",lineHeight:1.6}}>{diagnosisErrorForNo1}</p> : null}
+                      <button type="button" className="primary-button" disabled={saving||candidateLoading||selectedDiagnosisIds.length!==3} onClick={()=>void assignSelectedDiagnosis()} style={{width:"100%",marginTop:8}}>선택한 3문항 진단 확정</button>
+                      <button type="button" className="secondary-button" disabled={saving} onClick={cancelConfirmedNo1AndMoveNext} style={{width:"100%",marginTop:8}}>NO1 취소 · 다른 오답</button>
+                    </>}
                   </> : <>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
                       <button className="secondary-button" disabled={saving} onClick={rejectCurrent}>NO · 다른 오답</button>
-                      <button className="primary-button" disabled={saving} onClick={() => void confirmNo1AndGenerateDiagnosis()}>YES · SOS_NO1 확정</button>
+                      <button className="primary-button" disabled={saving} onClick={() => void confirmNo1AndGenerateDiagnosis()}>YES · SOS_NO1 확정 / 진단후보</button>
                     </div>
                     <div style={{marginTop:8,fontSize:11,color:"#98a2b3",textAlign:"center"}}>NO를 누르면 문제은행이 아니라 이 학생의 다른 실전모의고사 오답이 올라옵니다. 남은 후보 {Math.max(0, visibleSourceCandidates.length - 1)}개</div>
                   </>}
@@ -2053,6 +2057,24 @@ function RecommendPage() {
               </div> : null}
             </section>
           )}
+
+          {confirmedTarget?.key === target?.key && !diagnosisReadyForNo1 && diagnosisCandidates.length ? (
+            <section style={{margin:"18px 0",padding:18,border:"1px solid #d0d5dd",borderRadius:16,background:"#f9fafb"}}>
+              <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center",marginBottom:12}}>
+                <div><b style={{fontSize:18}}>진단 후보 최대 10문항</b><p style={{margin:"4px 0 0",fontSize:12,color:"#667085"}}>문항·난이도·소단원·핵심 DNA를 보고 진단에 쓸 3문항을 직접 선택하세요.</p></div>
+                <strong style={{color:selectedDiagnosisIds.length===3?"#1f7a4d":"#b54708"}}>{selectedDiagnosisIds.length}/3 선택</strong>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:12}}>
+                {diagnosisCandidates.map((candidate:any,index:number)=>{ const checked=selectedDiagnosisIds.includes(String(candidate.id)); return <button type="button" key={candidate.id} onClick={()=>toggleDiagnosisCandidate(String(candidate.id))} style={{textAlign:"left",border:checked?"3px solid #1f7a4d":"1px solid #d0d5dd",borderRadius:14,background:"#fff",padding:12,cursor:"pointer",boxShadow:checked?"0 0 0 3px rgba(31,122,77,.08)":"none"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><b>후보 {index+1}</b><span style={{fontWeight:900,color:checked?"#1f7a4d":"#98a2b3"}}>{checked?"✓ 선택":"선택"}</span></div>
+                  <div style={{height:170,margin:"10px 0",border:"1px solid #eaecf0",borderRadius:10,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>{candidate.imageUrl?<img src={candidate.imageUrl} alt={`진단 후보 ${index+1}`} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}}/>:<span style={{fontSize:12,color:"#98a2b3"}}>문항 이미지 없음</span>}</div>
+                  <div style={{fontSize:13,fontWeight:800}}>{candidate.subject||"과목 미분류"} · {candidate.subunit||candidate.unit||"소단원 미분류"}</div>
+                  <div style={{marginTop:4,fontSize:12,color:"#667085"}}>난이도 {difficultyLabel(candidate.difficulty)} · 미터 {Number(candidate.meter??0).toFixed(2)} · 연관도 {candidate.match}</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:8}}>{(candidate.dnaTags??[]).slice(0,4).map((tag:string)=><span key={tag} style={{padding:"4px 7px",borderRadius:999,background:"#eef7f1",color:"#216e45",fontSize:11,fontWeight:800}}>{tag}</span>)}</div>
+                </button>})}
+              </div>
+            </section>
+          ) : null}
 
           <div className="recommendation-head">
             <div>
