@@ -738,10 +738,17 @@ export default function StudentHome() {
         return;
       }
       const paused = Boolean(current.paused_at);
-      setExamPaused(paused);
-      setActiveExam(current);
-      if (paused) setRemaining(Number(current.paused_remaining_seconds ?? remaining));
-      else if (current.close_at) setRemaining(Math.max(0, Math.ceil((new Date(current.close_at).getTime() - Date.now()) / 1000)));
+      // OMR 응시 중에는 activeExam 객체를 3초마다 교체하지 않는다.
+      // activeExam이 바뀌면 시험지 iframe이 다시 렌더링되어 화면이 깜빡일 수 있다.
+      // 관리자 제어 동기화는 pause/status/remaining 값만 최소 갱신한다.
+      setExamPaused((prev) => (prev === paused ? prev : paused));
+      if (paused) {
+        const nextRemaining = Number(current.paused_remaining_seconds ?? remaining);
+        setRemaining((prev) => (prev === nextRemaining ? prev : nextRemaining));
+      } else if (current.close_at) {
+        const nextRemaining = Math.max(0, Math.ceil((new Date(current.close_at).getTime() - Date.now()) / 1000));
+        setRemaining((prev) => (Math.abs(prev - nextRemaining) <= 1 ? prev : nextRemaining));
+      }
     }, 3000);
     return () => window.clearInterval(sync);
   }, [activeExam?.id, attempt?.id]);
