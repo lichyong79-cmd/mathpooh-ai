@@ -28,7 +28,7 @@ export async function GET(){
       all((f,t)=>ctx.supabase.from("students").select("id,name,school,grade,class_name,status").range(f,t)),
       all((f,t)=>ctx.supabase
         .from("sos_training_sessions")
-        .select("id,student_id,phase,status,target_snapshot,round_no,correct_count,total_count,decision,created_at,updated_at,started_at,submitted_at,sos_training_items(id,item_order,student_answer,is_correct,answered_at)")
+        .select("id,student_id,phase,status,target_snapshot,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,item_order,student_answer,is_correct,answered_at)")
         .order("created_at",{ascending:false}).range(f,t)),
       all((f,t)=>ctx.supabase
         .from("sos_student_subunit_meters")
@@ -69,8 +69,8 @@ export async function GET(){
         correct:session.correct_count===null||session.correct_count===undefined?correct:Number(session.correct_count),
         decision:session.decision,
         createdAt:session.created_at,
-        startedAt:session.started_at,
-        submittedAt:session.submitted_at,
+        startedAt:session.status==="IN_PROGRESS"||["COMPLETED","PASSED","RETRAIN"].includes(String(session.status))?session.updated_at:null,
+        submittedAt:["COMPLETED","PASSED","RETRAIN"].includes(String(session.status))?session.updated_at:null,
         updatedAt:session.updated_at,
       };
     });

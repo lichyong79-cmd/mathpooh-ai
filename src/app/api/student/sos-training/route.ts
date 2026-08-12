@@ -125,7 +125,7 @@ export async function POST(request:Request){
 
     const update=await supabase
       .from("sos_training_sessions")
-      .update({status:"IN_PROGRESS",started_at:new Date().toISOString(),updated_at:new Date().toISOString()})
+      .update({status:"IN_PROGRESS",updated_at:new Date().toISOString()})
       .eq("id",sessionId);
 
     return update.error
@@ -250,7 +250,6 @@ export async function POST(request:Request){
         status,
         correct_count:correct,
         decision,
-        submitted_at:new Date().toISOString(),
         updated_at:new Date().toISOString(),
       })
       .eq("id",sessionId);
