@@ -720,38 +720,10 @@ export default function StudentHome() {
     },
     [activeExam, answers, attempt, busy, load],
   );
-  useEffect(() => {
-    if (!activeExam || !attempt) return;
-    const sync = window.setInterval(async () => {
-      const response = await fetch("/api/student/portal", { cache: "no-store" });
-      if (!response.ok) return;
-      const data = await response.json();
-      const current = (data.exams ?? []).find((exam: Exam) => exam.id === activeExam.id);
-      if (!current) return;
-      if (current.attempt?.status === "submitted") {
-        window.clearInterval(sync);
-        alert("관리자에 의해 시험이 종료되어 현재 답안이 제출되었습니다.");
-        setActiveExam(null);
-        setAttempt(null);
-        setExamPaused(false);
-        setPortal(data);
-        return;
-      }
-      const paused = Boolean(current.paused_at);
-      // OMR 응시 중에는 activeExam 객체를 3초마다 교체하지 않는다.
-      // activeExam이 바뀌면 시험지 iframe이 다시 렌더링되어 화면이 깜빡일 수 있다.
-      // 관리자 제어 동기화는 pause/status/remaining 값만 최소 갱신한다.
-      setExamPaused((prev) => (prev === paused ? prev : paused));
-      if (paused) {
-        const nextRemaining = Number(current.paused_remaining_seconds ?? remaining);
-        setRemaining((prev) => (prev === nextRemaining ? prev : nextRemaining));
-      } else if (current.close_at) {
-        const nextRemaining = Math.max(0, Math.ceil((new Date(current.close_at).getTime() - Date.now()) / 1000));
-        setRemaining((prev) => (Math.abs(prev - nextRemaining) <= 1 ? prev : nextRemaining));
-      }
-    }, 3000);
-    return () => window.clearInterval(sync);
-  }, [activeExam?.id, attempt?.id]);
+  // HOTFIX SOS217: 실전모의고사 응시 중 3초 서버 폴링 완전 중지.
+  // 시험 중에는 시험지/OMR 렌더 트리를 건드리는 주기적 상태 동기화를 하지 않는다.
+  // 답안 자동저장(10초)과 로컬 남은시간 타이머만 유지한다.
+  // 관리자 pause/force-submit 실시간 동기화는 시험 안정화를 위해 일시 비활성화한다.
 
   useEffect(() => {
     if (activeExam && attempt && !examPaused && remaining === 0) void submit(true);
