@@ -67,6 +67,90 @@ function dnaTags(problem:any){
   return out.slice(0,4);
 }
 
+function outputText(payload:any){
+  if(typeof payload?.output_text==="string") return payload.output_text.trim();
+  const parts:string[]=[];
+  for(const item of payload?.output??[]) for(const content of item?.content??[])
+    if(typeof content?.text==="string") parts.push(content.text);
+  return parts.join("\n").trim();
+}
+
+function aiTargetText(target:any){
+  return [
+    `과목: ${target?.sourceSubject??"미분류"}`,
+    `대단원: ${target?.sourceMajorUnit??""}`,
+    `중단원: ${target?.sourceMiddleUnit??""}`,
+    `소단원: ${target?.sourceMinorUnit??target?.sourceUnit??""}`,
+    `세부주제: ${target?.sourceDetailedTopic??""}`,
+    `문항유형: ${target?.sourceQuestionType??""}`,
+    `문제유형 태그: ${Array.isArray(target?.sourceProblemTypes)?target.sourceProblemTypes.join(", "):""}`,
+    `난이도(1~8): ${target?.sourceDifficulty??""}`,
+    `기존 분류: ${Array.isArray(target?.types)?target.types.map((x:any)=>x?.label).filter(Boolean).join(", "):""}`,
+  ].join("\n");
+}
+
+function compactDnaForAi(problem:any){
+  const dna=problem?.problem_dna??{};
+  const basic=dna?.basic??{};
+  const concept=dna?.concept??{};
+  const thinking=dna?.thinking??{};
+  const abilities=dna?.abilities??{};
+  const summary=dna?.summary??{};
+  const edu=dna?.educational_value??{};
+  return {
+    id:String(problem.id),
+    subject:problem.subject??basic.subject??"",
+    unit:problem.unit??"",
+    topic:problem.topic??"",
+    questionType:problem.question_type??basic.question_format??"",
+    difficulty:Number(problem.difficulty??0)||null,
+    meter:Number(problem.difficulty_meter??0)||null,
+    basic:{major:basic.major_unit??"",middle:basic.middle_unit??"",minor:basic.minor_unit??"",detailed:basic.detailed_topic??""},
+    coreConcepts:concept.core_concepts??concept.key_concepts??concept.primary_concepts??[],
+    prerequisite:concept.prerequisite_concepts??[],
+    thinkingTypes:thinking.thinking_types??thinking.process??[],
+    abilities,
+    oneLine:summary.one_line??summary.summary??"",
+    trainingGoal:edu.training_goal??edu.training_goals??"",
+  };
+}
+
+async function rankDiagnosisCandidatesWithAi(target:any, pool:any[]){
+  const apiKey=process.env.OPENAI_API_KEY;
+  if(!apiKey) throw new Error("OPENAI_API_KEY가 없습니다. AI 추천문항을 생성할 수 없습니다.");
+  const model=process.env.OPENAI_ANALYSIS_MODEL||process.env.OPENAI_MODEL||"gpt-5-mini";
+  const candidateData=pool.map(compactDnaForAi);
+  const prompt=`당신은 MATHPOOH SOS 수학 진단문항 추천 엔진입니다.\n\n[타겟문항]\n${aiTargetText(target)}\n\n[후보 문제은행]\n${JSON.stringify(candidateData)}\n\n목표: 타겟문항에서 학생의 취약 원인을 진단하기에 가장 적합한 문제를 최대 10개 추천하세요.\n규칙:\n- 같은 과목을 최우선으로 유지합니다. 과목이 다른 문항은 추천하지 않습니다.\n- 단순 단원명 일치보다 실제 수학 개념, 조건 해석 방식, 풀이 사고과정, 요구 능력, Problem DNA의 유사성을 더 중요하게 봅니다.\n- 타겟이 복합개념이면 핵심 구성요소를 분리 진단할 수 있는 문항도 좋은 후보입니다.\n- 난이도는 진단이 가능하도록 약간의 분산은 허용하되 관련성이 우선입니다.\n- 관련성이 약한 문항으로 10개를 억지로 채우지 마세요. 충분히 관련된 문항만 반환하세요. 최소 3개가 없다면 있는 만큼만 반환합니다.\n- candidate id는 반드시 제공된 후보 id 중에서만 선택하세요.\n- relevance는 0~100. 60 미만은 반환하지 마세요.\n- stars는 1~5 정수이며 relevance와 진단가치를 함께 반영하세요.\n- reason은 한국어 한 문장으로, 왜 타겟문항 진단에 유효한지 구체적으로 씁니다.\n- 추천순으로 반환하세요.`;
+  const response=await fetch("https://api.openai.com/v1/responses",{
+    method:"POST",
+    headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
+    body:JSON.stringify({
+      model,
+      input:[{role:"user",content:[{type:"input_text",text:prompt}]}],
+      reasoning:{effort:"medium"},
+      text:{format:{type:"json_schema",name:"sos_diagnosis_recommendations",strict:true,schema:{
+        type:"object",additionalProperties:false,required:["recommendations"],properties:{recommendations:{type:"array",maxItems:10,items:{
+          type:"object",additionalProperties:false,required:["id","relevance","stars","reason"],properties:{
+            id:{type:"string"}, relevance:{type:"integer",minimum:0,maximum:100}, stars:{type:"integer",minimum:1,maximum:5}, reason:{type:"string"}
+          }
+        }}}
+      }}}
+    }),
+  });
+  const payload=await response.json();
+  if(!response.ok) throw new Error(payload?.error?.message||"AI 추천 연결에 실패했습니다.");
+  const text=outputText(payload);
+  if(!text) throw new Error("AI 추천 결과가 비어 있습니다.");
+  let parsed:any;
+  try{parsed=JSON.parse(text);}catch{throw new Error("AI 추천 결과 형식을 읽지 못했습니다.");}
+  const allowed=new Set(pool.map((p:any)=>String(p.id)));
+  const seen=new Set<string>();
+  return (Array.isArray(parsed?.recommendations)?parsed.recommendations:[])
+    .filter((r:any)=>allowed.has(String(r?.id))&&Number(r?.relevance)>=60&&!seen.has(String(r?.id))&&(seen.add(String(r?.id))||true))
+    .slice(0,10)
+    .map((r:any)=>({id:String(r.id),relevance:Math.round(Number(r.relevance)||0),stars:Math.max(1,Math.min(5,Math.round(Number(r.stars)||1))),reason:String(r.reason??"").trim()}));
+}
+
 function selectByMeter(pool:any[], targets:Array<{meter:number;role:string}>, used:Set<string>) {
   const selected:any[]=[];
 
@@ -254,18 +338,32 @@ export async function POST(request:Request){
   // 관리자가 그중 정확히 3개를 선택한 뒤 학생에게 배정한다.
   if(action==="diagnosis-candidates"){
     const targetDifficulty=Number(target?.sourceDifficulty??0)||3;
-    const ranked=(problems??[]).map((p:any)=>{
+    const all=(problems??[]).map((p:any)=>{
       const info=problemSubunit(p);
       const meter=clampMeter(p.difficulty_meter,Number(p.difficulty)||3);
       const baseMatch=score(p,target);
-      const subjectMatch=!targetSubject?10:(related(targetSubject,info.subject||p.subject)?45:-80);
-      const subunitMatch=!targetUnit?0:(related(targetUnit,info.subunit)?95:related(targetUnit,p.unit)||related(targetUnit,p.topic)?55:0);
-      const diffMatch=Math.max(0,28-Math.abs((Number(p.difficulty)||meter)-targetDifficulty)*7);
-      return {...p,subunitInfo:info,meter,match:baseMatch+subjectMatch+subunitMatch+diffMatch};
-    }).sort((a:any,b:any)=>Number(b.match)-Number(a.match)||Math.abs(Number(a.meter)-targetDifficulty)-Math.abs(Number(b.meter)-targetDifficulty)||String(a.id).localeCompare(String(b.id)))
-      .slice(0,10);
+      const subjectMatch=!targetSubject?0:(related(targetSubject,info.subject||p.subject)?90:-300);
+      const subunitMatch=!targetUnit?0:(related(targetUnit,info.subunit)?100:related(targetUnit,p.unit)||related(targetUnit,p.topic)?55:0);
+      const diffMatch=Math.max(0,24-Math.abs((Number(p.difficulty)||meter)-targetDifficulty)*6);
+      return {...p,subunitInfo:info,meter,prefilterScore:baseMatch+subjectMatch+subunitMatch+diffMatch};
+    });
 
-    const candidates=await Promise.all(ranked.map(async(p:any)=>{
+    // AI에게 보내기 전에는 과목을 강하게 고정하고, DNA/단원 기준으로 넓게 최대 50개만 추린다.
+    const sameSubject=targetSubject?all.filter((p:any)=>related(targetSubject,p.subunitInfo?.subject||p.subject)):all;
+    const basePool=(sameSubject.length>=3?sameSubject:all)
+      .sort((a:any,b:any)=>Number(b.prefilterScore)-Number(a.prefilterScore)||Math.abs(Number(a.meter)-targetDifficulty)-Math.abs(Number(b.meter)-targetDifficulty)||String(a.id).localeCompare(String(b.id)))
+      .slice(0,50);
+
+    let recommendations;
+    try{
+      recommendations=await rankDiagnosisCandidatesWithAi(target,basePool);
+    }catch(aiError){
+      return NextResponse.json({message:aiError instanceof Error?aiError.message:"AI 추천문항 생성 실패"},{status:502});
+    }
+
+    const byId=new Map(basePool.map((p:any)=>[String(p.id),p]));
+    const selected=recommendations.map((rec:any)=>({problem:byId.get(rec.id),rec})).filter((x:any)=>x.problem);
+    const candidates=await Promise.all(selected.map(async({problem:p,rec}:any)=>{
       let imageUrl="";
       if(p.question_image_path){
         const signed=await ctx.supabase.storage.from("question-images").createSignedUrl(p.question_image_path,60*30);
@@ -273,11 +371,11 @@ export async function POST(request:Request){
       }
       return {
         id:String(p.id), title:p.title, problemCode:p.problem_code, subject:p.subject, unit:p.unit, topic:p.topic,
-        difficulty:p.difficulty, meter:p.meter, questionType:p.question_type, match:Math.round(Number(p.match)||0),
+        difficulty:p.difficulty, meter:p.meter, questionType:p.question_type, match:rec.relevance, relevance:rec.relevance, stars:rec.stars, reason:rec.reason,
         subunit:p.subunitInfo?.subunit||p.unit||p.topic||"", majorUnit:p.subunitInfo?.major||"", dnaTags:dnaTags(p), imageUrl,
       };
     }));
-    return NextResponse.json({candidates,total:candidates.length,targetUnit,targetSubject});
+    return NextResponse.json({candidates,total:candidates.length,targetUnit,targetSubject,ai:true});
   }
 
   if(action==="assign-diagnosis-selected"){

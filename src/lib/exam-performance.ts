@@ -21,7 +21,7 @@ export type PerformanceHistory = {
   scoreSource: string;
   solutionVisible: boolean;
   subjectResults: Array<{ label: string; correct: number; total: number; rate: number }>;
-  questionResults: Array<{ no: number; answer: string; correctAnswer: string; correct: boolean; unanswered: boolean; subject: string; unit: string; type: string; difficulty: number | null }>;
+  questionResults: Array<{ no: number; answer: string; correctAnswer: string; correct: boolean; unanswered: boolean; subject: string; unit: string; type: string; difficulty: number | null; majorUnit: string; middleUnit: string; minorUnit: string; detailedTopic: string; questionType: string; problemTypes: string[] }>;
 };
 
 const answerAt = (answers: unknown, no: number) => {
@@ -100,7 +100,15 @@ export function buildStudentPerformance(
         label: difficulty ? difficultyLabel(difficulty) : "미분류",
         correct,
       });
-      questionResults.push({ no, answer: studentAnswer, correctAnswer, correct, unanswered, subject, unit, type, difficulty });
+      questionResults.push({
+        no, answer: studentAnswer, correctAnswer, correct, unanswered, subject, unit, type, difficulty,
+        majorUnit: String(info?.major_unit ?? "").trim(),
+        middleUnit: String(info?.middle_unit ?? "").trim(),
+        minorUnit: String(info?.minor_unit ?? "").trim(),
+        detailedTopic: String(info?.detailed_topic ?? "").trim(),
+        questionType: String(info?.question_type ?? "").trim(),
+        problemTypes,
+      });
     }
     const wrongNumbers = questionResults.filter((item) => !item.correct && !item.unanswered).map((item) => item.no);
     const unansweredNumbers = questionResults.filter((item) => item.unanswered).map((item) => item.no);

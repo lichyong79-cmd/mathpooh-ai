@@ -1835,7 +1835,10 @@ function RecommendPage() {
       units: unit ? [{ label: unit, rate: 0 }] : selected.weakUnits,
       types: type ? [{ label: type, rate: 0 }] : selected.weakTypes,
       sourceAttemptId, sourceExamId: exam?.examId ?? exam?.exam_id ?? null, sourceExamTitle: exam?.title ?? "실전모의고사",
-      sourceSubject: item?.subject ?? exam?.subject ?? null, sourceUnit: unit || null, sourceQuestionNo: sosQuestionNo(item),
+      sourceSubject: item?.subject ?? exam?.subject ?? null, sourceUnit: unit || null,
+      sourceMajorUnit: item?.majorUnit ?? null, sourceMiddleUnit: item?.middleUnit ?? null, sourceMinorUnit: item?.minorUnit ?? null,
+      sourceDetailedTopic: item?.detailedTopic ?? item?.type ?? item?.topic ?? null, sourceQuestionType: item?.questionType ?? null,
+      sourceProblemTypes: Array.isArray(item?.problemTypes) ? item.problemTypes : [], sourceQuestionNo: sosQuestionNo(item),
       sourceDifficulty: sosDifficulty(item?.difficulty), sourcePriority: target.priority, sourceVerdict: target.verdict, sosNo: 1,
     };
 
@@ -1876,7 +1879,7 @@ function RecommendPage() {
     try {
       const response = await fetch("/api/admin/training-engine", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
         action:"assign-diagnosis-selected", studentId:selected.id, problemIds:selectedDiagnosisIds,
-        target:{ units:unit?[{label:unit,rate:0}]:selected.weakUnits, types:type?[{label:type,rate:0}]:selected.weakTypes, sourceAttemptId, sourceExamId:exam?.examId??exam?.exam_id??null, sourceExamTitle:exam?.title??"실전모의고사", sourceSubject:item?.subject??exam?.subject??null, sourceUnit:unit||null, sourceQuestionNo:sosQuestionNo(item), sourceDifficulty:sosDifficulty(item?.difficulty), sourcePriority:confirmedTarget.priority, sourceVerdict:confirmedTarget.verdict, sosNo:1 }
+        target:{ units:unit?[{label:unit,rate:0}]:selected.weakUnits, types:type?[{label:type,rate:0}]:selected.weakTypes, sourceAttemptId, sourceExamId:exam?.examId??exam?.exam_id??null, sourceExamTitle:exam?.title??"실전모의고사", sourceSubject:item?.subject??exam?.subject??null, sourceUnit:unit||null, sourceMajorUnit:item?.majorUnit??null, sourceMiddleUnit:item?.middleUnit??null, sourceMinorUnit:item?.minorUnit??null, sourceDetailedTopic:item?.detailedTopic??item?.type??item?.topic??null, sourceQuestionType:item?.questionType??null, sourceProblemTypes:Array.isArray(item?.problemTypes)?item.problemTypes:[], sourceQuestionNo:sosQuestionNo(item), sourceDifficulty:sosDifficulty(item?.difficulty), sourcePriority:confirmedTarget.priority, sourceVerdict:confirmedTarget.verdict, sosNo:1 }
       })});
       const data=await response.json();
       if(!response.ok) throw new Error(data.message||"진단 3문항 배정 실패");
@@ -2039,7 +2042,7 @@ function RecommendPage() {
                 <div style={{padding:14,borderRadius:14,background:"#fff",border:"1px solid #e4e7ec"}}>
                   {confirmedTarget?.key === target.key ? <>
                     <div style={{fontWeight:900,color: diagnosisReadyForNo1 ? "#25633a" : "#b54708",fontSize:16}}>
-                      {diagnosisReadyForNo1 ? "✓ 진단 3문항 배정 완료" : candidateLoading ? "진단 후보 10문항 찾는 중..." : `진단 후보 ${diagnosisCandidates.length}문항 · ${selectedDiagnosisIds.length}/3 선택`}
+                      {diagnosisReadyForNo1 ? "✓ 진단 3문항 배정 완료" : candidateLoading ? "AI가 진단 추천문항을 생성 중..." : `진단 후보 ${diagnosisCandidates.length}문항 · ${selectedDiagnosisIds.length}/3 선택`}
                     </div>
                     {diagnosisReadyForNo1 ? <p style={{fontSize:13,color:"#667085",lineHeight:1.6}}>선택한 3문항이 학생 페이지에 배정되었습니다.</p> : <>
                       {diagnosisErrorForNo1 ? <p style={{fontSize:13,color:"#b42318",lineHeight:1.6}}>{diagnosisErrorForNo1}</p> : null}
@@ -2058,10 +2061,25 @@ function RecommendPage() {
             </section>
           )}
 
+          {confirmedTarget?.key === target?.key && candidateLoading ? (
+            <section style={{margin:"18px 0",padding:"34px 20px",border:"2px solid #98d5b3",borderRadius:18,background:"linear-gradient(180deg,#f2fbf5,#ffffff)",textAlign:"center",boxShadow:"0 10px 30px rgba(31,122,77,.08)"}}>
+              <div style={{width:52,height:52,border:"5px solid #d9eee1",borderTopColor:"#1f7a4d",borderRadius:"50%",margin:"0 auto 16px",animation:"spin 1s linear infinite"}} />
+              <div style={{fontSize:14,fontWeight:900,color:"#1f7a4d",letterSpacing:1}}>AI 연결 중</div>
+              <div style={{fontSize:26,fontWeight:950,marginTop:7}}>AI가 추천문항을 생성 중입니다</div>
+              <p style={{margin:"10px auto 0",maxWidth:650,color:"#667085",lineHeight:1.7}}>타겟문항의 단원·세부개념·풀이구조·Problem DNA를 문제은행 후보와 비교하고 있습니다.<br/>관련도가 높은 문항만 최대 10개 추천합니다.</p>
+              <div style={{display:"flex",justifyContent:"center",gap:8,flexWrap:"wrap",marginTop:16,fontSize:12,fontWeight:800,color:"#475467"}}>
+                <span style={{padding:"7px 10px",borderRadius:999,background:"#fff",border:"1px solid #d0d5dd"}}>① 타겟문항 분석</span><span>→</span>
+                <span style={{padding:"7px 10px",borderRadius:999,background:"#fff",border:"1px solid #d0d5dd"}}>② 문제은행 후보 검색</span><span>→</span>
+                <span style={{padding:"7px 10px",borderRadius:999,background:"#e8f5ed",border:"1px solid #98d5b3",color:"#216e45"}}>③ AI 연관도 판정</span><span>→</span>
+                <span style={{padding:"7px 10px",borderRadius:999,background:"#fff",border:"1px solid #d0d5dd"}}>④ 추천 정리</span>
+              </div>
+            </section>
+          ) : null}
+
           {confirmedTarget?.key === target?.key && !diagnosisReadyForNo1 && diagnosisCandidates.length ? (
             <section style={{margin:"18px 0",padding:18,border:"1px solid #d0d5dd",borderRadius:16,background:"#f9fafb"}}>
               <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center",marginBottom:12}}>
-                <div><b style={{fontSize:18}}>진단 후보 최대 10문항</b><p style={{margin:"4px 0 0",fontSize:12,color:"#667085"}}>문항·난이도·소단원·핵심 DNA를 보고 진단에 쓸 3문항을 직접 선택하세요.</p></div>
+                <div><b style={{fontSize:18}}>AI 진단 추천 · 최대 10문항</b><p style={{margin:"4px 0 0",fontSize:12,color:"#667085"}}>타겟문항의 개념·사고과정·DNA를 AI가 비교한 후보입니다. 관련성이 부족하면 10문항을 억지로 채우지 않습니다.</p></div>
                 <strong style={{color:selectedDiagnosisIds.length===3?"#1f7a4d":"#b54708"}}>{selectedDiagnosisIds.length}/3 선택</strong>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:12}}>
@@ -2069,7 +2087,9 @@ function RecommendPage() {
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}><b>후보 {index+1}</b><span style={{fontWeight:900,color:checked?"#1f7a4d":"#98a2b3"}}>{checked?"✓ 선택":"선택"}</span></div>
                   <div style={{height:170,margin:"10px 0",border:"1px solid #eaecf0",borderRadius:10,background:"#fff",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>{candidate.imageUrl?<img src={candidate.imageUrl} alt={`진단 후보 ${index+1}`} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}}/>:<span style={{fontSize:12,color:"#98a2b3"}}>문항 이미지 없음</span>}</div>
                   <div style={{fontSize:13,fontWeight:800}}>{candidate.subject||"과목 미분류"} · {candidate.subunit||candidate.unit||"소단원 미분류"}</div>
-                  <div style={{marginTop:4,fontSize:12,color:"#667085"}}>난이도 {difficultyLabel(candidate.difficulty)} · 미터 {Number(candidate.meter??0).toFixed(2)} · 연관도 {candidate.match}</div>
+                  <div style={{marginTop:4,fontSize:12,color:"#667085"}}>난이도 {difficultyLabel(candidate.difficulty)} · 미터 {Number(candidate.meter??0).toFixed(2)} · AI 연관도 {candidate.relevance ?? candidate.match}%</div>
+                  <div style={{marginTop:7,fontSize:13,fontWeight:900,color:"#9a6700"}}>AI 추천 {"★".repeat(Math.max(1,Math.min(5,Number(candidate.stars??1))))}{"☆".repeat(Math.max(0,5-Math.max(1,Math.min(5,Number(candidate.stars??1)))))}</div>
+                  {candidate.reason?<div style={{marginTop:6,fontSize:12,lineHeight:1.45,color:"#475467"}}>추천 이유 · {candidate.reason}</div>:null}
                   <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:8}}>{(candidate.dnaTags??[]).slice(0,4).map((tag:string)=><span key={tag} style={{padding:"4px 7px",borderRadius:999,background:"#eef7f1",color:"#216e45",fontSize:11,fontWeight:800}}>{tag}</span>)}</div>
                 </button>})}
               </div>
