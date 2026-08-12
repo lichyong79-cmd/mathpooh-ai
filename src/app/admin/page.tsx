@@ -1958,7 +1958,12 @@ function RecommendPage() {
   return <>
     <section className="page-title-row">
       <div>
-        <h2>SOS 학습운영</h2><button className="sos-progress-open" onClick={()=>location.href="/admin/sos-progress"}>진단·훈련 진행현황</button>
+        <h2>SOS 학습운영</h2>
+        <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+          <button className="primary-button">배정</button>
+          <button className="secondary-button" onClick={()=>location.href="/admin/sos-progress"}>진행</button>
+          <button className="secondary-button" onClick={()=>location.href="/admin/sos-results"}>결과</button>
+        </div>
         <p>SOS_NO1은 문제은행 문항이 아니라 학생이 실제로 틀린 실전모의고사 문항 중 가장 먼저 해결할 1문항입니다.</p>
       </div>
       <button className="secondary-button" onClick={() => void load()}>새로고침</button>
