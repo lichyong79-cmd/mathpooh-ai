@@ -17,6 +17,13 @@ export async function GET(request: Request) {
   const studentIds = (students ?? []).map((student) => student.id);
   if (!studentIds.length) return NextResponse.json({ students: [] });
 
+  const subunitMeterResult = await supabase
+    .from("sos_student_subunit_meters")
+    .select("student_id,subject,major_unit,subunit,subunit_key,difficulty_meter,sample_count,updated_at")
+    .in("student_id", studentIds);
+  if (subunitMeterResult.error)
+    return NextResponse.json({ message: subunitMeterResult.error.message }, { status: 400 });
+
   const { data: attempts, error: attemptError } = await supabase
     .from("exam_attempts")
     .select("id,student_id,exam_id,status,answers,submitted_at,score,correct_count,wrong_numbers,unanswered_numbers,mathpooh_comment,score_source,solution_override")
@@ -36,6 +43,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     students: (students ?? []).map((student) => ({
       ...student,
+      subunitMeters: (subunitMeterResult.data ?? []).filter((row) => String(row.student_id) === String(student.id)),
       performance: buildStudentPerformance(
         (attempts ?? []).filter((attempt) => String(attempt.student_id) === String(student.id)),
         examsResult.data ?? [],
