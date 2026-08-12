@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { recordTrainingResult } from "@/lib/sos-training-result";
+import { autoCreateTrainingFromDiagnosis } from "@/lib/sos-auto-training";
 
 async function context(){
   const user=await getSessionUser();
@@ -192,6 +193,20 @@ export async function POST(request:Request){
 
     if(update.error)return NextResponse.json({message:update.error.message},{status:400});
 
+    let autoTraining:any=null;
+    let autoTrainingError="";
+    if(phase==="DIAGNOSIS"){
+      try{
+        autoTraining=await autoCreateTrainingFromDiagnosis({
+          supabase,
+          studentId:String(student.id),
+          diagnosisSessionId:sessionId,
+        });
+      }catch(error){
+        autoTrainingError=error instanceof Error?error.message:"훈련 자동 생성 실패";
+      }
+    }
+
     return NextResponse.json({
       success:true,
       phase,
@@ -201,6 +216,8 @@ export async function POST(request:Request){
       rate,
       decision,
       results,
+      autoTraining,
+      autoTrainingError,
     });
   }
 

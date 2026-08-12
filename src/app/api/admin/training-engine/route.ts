@@ -158,6 +158,33 @@ export async function POST(request:Request){
 
   if(!studentId)return NextResponse.json({message:"학생을 선택해 주세요."},{status:400});
 
+  if(action==="cancel-session"){
+    const sessionId=String(body.sessionId??"");
+    if(!sessionId)return NextResponse.json({message:"취소할 진단·훈련 ID가 없습니다."},{status:400});
+
+    const sessionResult=await ctx.supabase
+      .from("sos_training_sessions")
+      .select("id,status,phase")
+      .eq("id",sessionId)
+      .eq("student_id",studentId)
+      .maybeSingle();
+
+    if(sessionResult.error)return NextResponse.json({message:sessionResult.error.message},{status:400});
+    if(!sessionResult.data)return NextResponse.json({message:"진단·훈련을 찾을 수 없습니다."},{status:404});
+
+    const currentStatus=String(sessionResult.data.status??"");
+    if(!["DRAFT","ASSIGNED"].includes(currentStatus))
+      return NextResponse.json({message:"학생이 이미 시작한 진단·훈련은 취소할 수 없습니다."},{status:409});
+
+    const itemDelete=await ctx.supabase.from("sos_training_items").delete().eq("session_id",sessionId);
+    if(itemDelete.error)return NextResponse.json({message:itemDelete.error.message},{status:400});
+
+    const sessionDelete=await ctx.supabase.from("sos_training_sessions").delete().eq("id",sessionId);
+    if(sessionDelete.error)return NextResponse.json({message:sessionDelete.error.message},{status:400});
+
+    return NextResponse.json({success:true,cancelled:sessionId});
+  }
+
   // 관리자 수동 채점/검증용. 학생 화면 제출도 동일한 공통 엔진을 사용한다.
   if(action==="record-result"){
     const itemId=String(body.itemId??"");

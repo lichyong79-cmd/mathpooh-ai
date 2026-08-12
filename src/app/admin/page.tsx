@@ -1898,6 +1898,35 @@ function RecommendPage() {
     }
   };
 
+  const cancelTrainingSession = async (session: any) => {
+    if (!selected) return;
+    if (!["DRAFT","ASSIGNED"].includes(String(session?.status ?? ""))) {
+      return alert("학생이 이미 시작한 진단·훈련은 취소할 수 없습니다.");
+    }
+    const label = session.phase === "DIAGNOSIS" ? `진단 ${session.round_no ?? 1}차` : "훈련";
+    if (!window.confirm(`${label} 생성을 취소할까요? 아직 학생이 시작하지 않은 세션만 삭제됩니다.`)) return;
+
+    setSaving(true);
+    try {
+      const response = await fetch("/api/admin/training-engine", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "cancel-session",
+          studentId: selected.id,
+          sessionId: session.id,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "생성 취소 실패");
+      await loadSessions(String(selected.id));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "생성 취소 실패");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const verdictColor =
     target?.verdict === "명확한 취약" ? "#b42318" :
     target?.verdict === "실수 의심" ? "#b54708" :
@@ -1906,7 +1935,7 @@ function RecommendPage() {
   return <>
     <section className="page-title-row">
       <div>
-        <h2>SOS 학습운영</h2>
+        <h2>SOS 학습운영</h2><button className="sos-progress-open" onClick={()=>location.href="/admin/sos-progress"}>진단·훈련 진행현황</button>
         <p>SOS_NO1은 문제은행 문항이 아니라 학생이 실제로 틀린 실전모의고사 문항 중 가장 먼저 해결할 1문항입니다.</p>
       </div>
       <button className="secondary-button" onClick={() => void load()}>새로고침</button>
@@ -2032,15 +2061,16 @@ function RecommendPage() {
             </div>
             <div className="engine-actions">
               <button className="diagnosis-more-button" disabled={saving || !latestDiagnosis} onClick={() => void generateFollowUp("additional-diagnosis")}>추가 진단 3문항</button>
-              <button className="training-button" disabled={saving || !latestDiagnosis} onClick={() => void generateFollowUp("generate-training")}>훈련 10문항</button>
+              <span style={{padding:"10px 14px",borderRadius:10,background:"#e8f5ed",color:"#216e45",fontWeight:900,fontSize:13}}>진단 제출 → 훈련 10문항 자동선정</span>
             </div>
           </div>
 
           <div className="training-session-summary">
             <b>진단·훈련 생성 이력</b>
             {sessions.length ? sessions.map((session: any) =>
-              <span key={session.id} className={session.phase === "DIAGNOSIS" ? "diagnosis" : "training"}>
+              <span key={session.id} className={session.phase === "DIAGNOSIS" ? "diagnosis" : "training"} style={{display:"inline-flex",alignItems:"center",gap:6}}>
                 {session.phase === "DIAGNOSIS" ? `진단 ${session.round_no ?? 1}차 · ${session.question_count ?? 3}문항` : `훈련 · ${session.question_count ?? 10}문항`} · {session.status}
+                {["DRAFT","ASSIGNED"].includes(String(session.status)) ? <button type="button" disabled={saving} onClick={()=>void cancelTrainingSession(session)} style={{border:"1px solid #e7b3b3",background:"#fff",color:"#b42318",borderRadius:999,padding:"3px 8px",fontSize:11,fontWeight:900,cursor:"pointer"}}>생성 취소</button> : null}
               </span>
             ) : <span>아직 생성된 진단·훈련이 없습니다.</span>}
           </div>

@@ -388,7 +388,14 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
       });
       const json=await response.json();
       if(!response.ok)throw new Error(json.message||"제출 실패");
-      setNotice(`${active.phase==="DIAGNOSIS"?"진단":"훈련"} 완료 · ${json.correct}/${json.total} 정답 (${json.rate}%)`);
+      const autoMessage=active.phase==="DIAGNOSIS"
+        ? (json.autoTraining?.created||json.autoTraining?.existing
+            ? " · 진단완료 · 훈련 10문항 자동선정 완료"
+            : json.autoTrainingError
+              ? ` · 진단완료 · 훈련 자동선정 확인 필요 (${json.autoTrainingError})`
+              : " · 진단완료")
+        : "";
+      setNotice(`${active.phase==="DIAGNOSIS"?"진단":"훈련"} 완료 · ${json.correct}/${json.total} 정답 (${json.rate}%)${autoMessage}`);
       setAnswers({});
       setActiveId("");
       await load();
@@ -442,7 +449,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
               <div className="sos-submit-bar"><span>{activeItems.filter((item:any)=>String(answers[String(item.id)]??item.studentAnswer??"").trim()).length}/{activeItems.length} 응답</span><button disabled={busy==="submit"} onClick={()=>void submit()}>{busy==="submit"?"채점·미터 반영 중...":"전체 제출"}</button></div>
             </>:null}
 
-            {["COMPLETED","PASSED","RETRAIN"].includes(String(active.status))?<div className="sos-complete-box"><b>{active.status==="PASSED"?"훈련 통과":"학습 완료"}</b><strong>{active.correct_count??0}/{active.total_count}</strong><p>{active.phase==="DIAGNOSIS"?"진단 결과를 기준으로 다음 맞춤 훈련이 생성됩니다.":active.status==="PASSED"?"이 소단원 훈련을 통과했습니다.":"추가 훈련이 필요합니다."}</p></div>:null}
+            {["COMPLETED","PASSED","RETRAIN"].includes(String(active.status))?<div className="sos-complete-box"><b>{active.status==="PASSED"?"훈련 통과":"학습 완료"}</b><strong>{active.correct_count??0}/{active.total_count}</strong><p>{active.phase==="DIAGNOSIS"?"진단완료 · 결과에 맞춘 훈련 10문항이 자동선정됩니다.":active.status==="PASSED"?"이 소단원 훈련을 통과했습니다.":"추가 훈련이 필요합니다."}</p></div>:null}
           </>}
         </section>
       </div>
