@@ -60,7 +60,7 @@ export default function SosProgressPage(){
   },[autoRefresh]);
 
   const filtered=useMemo(()=>rows.filter((r:any)=>{
-    const text=`${r.student?.name??""} ${r.student?.school??""} ${r.student?.grade??""} ${r.student?.class_name??""} ${r.subject} ${r.majorUnit} ${r.subunit}`.toLowerCase();
+    const text=`${r.student?.name??""} ${r.student?.school??""} ${r.student?.grade??""} ${r.subject} ${r.majorUnit} ${r.subunit}`.toLowerCase();
     return (!keyword||text.includes(keyword.toLowerCase()))
       &&(phase==="전체"||r.phase===phase)
       &&(status==="전체"||r.status===status);
@@ -92,7 +92,7 @@ export default function SosProgressPage(){
       <section className="table">
         <div className="row head"><span>학생</span><span>구분</span><span>과목·소단원</span><span>상태</span><span>진도</span><span>결과</span><span>시작</span><span>경과</span><span>바로미터</span></div>
         {loading?<div className="empty">진행현황을 불러오는 중...</div>:filtered.length?filtered.map((r:any)=><div className="row" key={r.id}>
-          <span><b>{r.student?.name??"학생정보없음"}</b><small>{r.student?.school??"-"} · {r.student?.grade??"-"} {r.student?.class_name?`· ${r.student.class_name}`:""}</small></span>
+          <span><b>{r.student?.name??"학생정보없음"}</b><small>{r.student?.school??"-"} · {r.student?.grade??"-"}</small></span>
           <span><b>{phaseText(r.phase)} {r.phase==="DIAGNOSIS"?`${r.roundNo}차`:""}</b><small>{r.total}문항</small></span>
           <span><b>{r.subject||"-"}</b><small>{r.majorUnit?`${r.majorUnit} · `:""}{r.subunit||"-"}</small></span>
           <span><em className={`status ${String(r.status).toLowerCase()}`}>{statusText(r.status)}</em><small>{r.decision||""}</small></span>

@@ -31,7 +31,7 @@ export async function GET(){
   if(!ctx)return NextResponse.json({message:"관리자 권한이 필요합니다."},{status:403});
   try{
     const [students,sessions,meters]=await Promise.all([
-      all((f,t)=>ctx.supabase.from("students").select("id,name,school,grade,class_name,status").range(f,t)),
+      all((f,t)=>ctx.supabase.from("students").select("id,name,school,grade,status").range(f,t)),
       all((f,t)=>ctx.supabase
         .from("sos_training_sessions")
         .select("id,student_id,phase,status,target_snapshot,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,problem_id,item_order,student_answer,is_correct,response_seconds,answered_at,revealed_at,answer_locked_at,solution_photo_path,photo_submitted_at,photo_submit_seconds,screen_exit_count,problem_bank_questions(id,problem_code,title,subject,unit,topic,difficulty,difficulty_meter,question_image_path,answer))")
@@ -121,7 +121,9 @@ export async function GET(){
       summary:{total:rows.length,active,inProgress,completed},
       serverTime:new Date().toISOString(),
     },{headers:{"Cache-Control":"no-store,max-age=0"}});
-  }catch(error){
-    return NextResponse.json({message:error instanceof Error?error.message:"진행현황 조회 실패"},{status:500});
+  }catch(error:any){
+    const message = error?.message || error?.details || error?.hint || (typeof error === "string" ? error : "진행현황 조회 실패");
+    console.error("[SOS_PROGRESS_GET]", error);
+    return NextResponse.json({message},{status:500});
   }
 }
