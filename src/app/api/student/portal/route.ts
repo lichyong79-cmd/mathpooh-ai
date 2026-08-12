@@ -12,6 +12,9 @@ import {
   type LandmarkRecord,
 } from "@/lib/landmark";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 async function context() {
   const user = await getSessionUser();
   if (!user)
@@ -279,19 +282,28 @@ export async function GET() {
     .order("created_at", { ascending: false })
     .limit(20);
 
-  return NextResponse.json({
-    student: {
-      id: student.id,
-      name: student.name,
-      school: student.school,
-      grade: student.grade,
-      passwordChanged: student.password_changed,
+  return NextResponse.json(
+    {
+      student: {
+        id: student.id,
+        name: student.name,
+        school: student.school,
+        grade: student.grade,
+        passwordChanged: student.password_changed,
+      },
+      exams: examItems,
+      sosSessions: sosSessions ?? [],
+      landmark,
+      posters,
     },
-    exams: examItems,
-    sosSessions: sosSessions ?? [],
-    landmark,
-    posters,
-  });
+    {
+      headers: {
+        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        Pragma: "no-cache",
+        Expires: "0",
+      },
+    },
+  );
 }
 
 export async function POST(request: Request) {

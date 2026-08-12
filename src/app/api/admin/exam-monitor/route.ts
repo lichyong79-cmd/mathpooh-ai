@@ -355,9 +355,29 @@ export async function PATCH(request: Request) {
         "id,student_id,status,answers,started_at,last_saved_at,submitted_at,score,correct_count,wrong_numbers,unanswered_numbers,graded_at,score_source,solution_override,mathpooh_comment",
       )
       .single();
-    return error
-      ? NextResponse.json({ message: error.message }, { status: 400 })
-      : NextResponse.json({ attempt: data });
+    if (error)
+      return NextResponse.json({ message: error.message }, { status: 400 });
+
+    // 저장 성공 응답만 믿지 않고, 같은 attempt를 DB에서 다시 읽어 실제 저장값을 검증한다.
+    const { data: verifiedAttempt, error: verifyError } = await ctx.supabase
+      .from("exam_attempts")
+      .select(
+        "id,student_id,exam_id,status,answers,started_at,last_saved_at,submitted_at,score,correct_count,wrong_numbers,unanswered_numbers,graded_at,score_source,solution_override,mathpooh_comment",
+      )
+      .eq("id", attemptId)
+      .eq("exam_id", examId)
+      .single();
+    if (verifyError || !verifiedAttempt)
+      return NextResponse.json(
+        { message: verifyError?.message || "저장 후 결과를 다시 확인하지 못했습니다." },
+        { status: 500 },
+      );
+    if (Number(verifiedAttempt.score) !== score)
+      return NextResponse.json(
+        { message: `점수 저장 검증 실패: 요청 ${score}점 / DB ${verifiedAttempt.score ?? "-"}점` },
+        { status: 409 },
+      );
+    return NextResponse.json({ attempt: verifiedAttempt });
   }
   const minutes = Math.max(1, Number(currentExam.time_limit ?? 100));
   const startedAt =
