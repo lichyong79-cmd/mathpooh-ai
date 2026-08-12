@@ -37,7 +37,6 @@ export async function POST(request: Request) {
   const totalScore = Number(exam.total_score ?? 100);
   const gradedAt = new Date().toISOString();
   let updated = 0;
-  let manualPreserved = 0;
   for (const attempt of attempts ?? []) {
     const answers = (attempt.answers ?? {}) as Record<string, unknown>;
     const wrong: number[] = [];
@@ -51,20 +50,17 @@ export async function POST(request: Request) {
       else wrong.push(no);
     }
     const autoScore = Math.round((correct / Math.max(1, questionCount)) * totalScore);
-    const preserveManual = attempt.score_source === "manual";
     const payload: Record<string, unknown> = {
       correct_count: correct,
       wrong_numbers: wrong,
       unanswered_numbers: unanswered,
       graded_at: gradedAt,
+      score: autoScore,
+      score_source: "auto",
     };
-    if (!preserveManual) {
-      payload.score = autoScore;
-      payload.score_source = "auto";
-    } else manualPreserved += 1;
     const { error } = await supabase.from("exam_attempts").update(payload).eq("id", attempt.id);
     if (error) return NextResponse.json({ message: error.message }, { status: 400 });
     updated += 1;
   }
-  return NextResponse.json({ updated, manualPreserved });
+  return NextResponse.json({ updated });
 }

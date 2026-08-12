@@ -118,7 +118,7 @@ export function buildStudentPerformance(
       title: exam.title ?? "시험",
       examDate: exam.exam_date ?? "",
       submittedAt: attempt.submitted_at ?? "",
-      score: Number(attempt.score ?? Math.round((recomputedCorrect / Math.max(1, questionCount)) * Number(exam.total_score ?? 100))),
+      score: Math.round((recomputedCorrect / Math.max(1, questionCount)) * Number(exam.total_score ?? 100)),
       correct: recomputedCorrect,
       questionCount,
       wrongNumbers,

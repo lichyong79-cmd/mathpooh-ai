@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
+import { calculateExamScore } from "@/lib/exam-score";
 import {
   buildLandmarkSummary,
   clampPercentile,
@@ -139,8 +140,39 @@ export async function GET() {
               .from("exam-files")
               .createSignedUrl(exam.test_file_path, 60 * 60 * 3)
           ).data?.signedUrl ?? "";
-      const attempt = attemptMap.get(exam.id) ?? null;
+      let attempt = attemptMap.get(exam.id) ?? null;
       const submitted = attempt?.status === "submitted";
+      if (submitted && attempt) {
+        const graded = calculateExamScore(
+          (attempt.answers ?? {}) as Record<string, unknown>,
+          exam.answer_keys,
+          Number(exam.question_count),
+          Number(exam.total_score ?? 100),
+        );
+        const changed =
+          Number(attempt.score ?? -1) !== graded.score ||
+          Number(attempt.correct_count ?? -1) !== graded.correct ||
+          JSON.stringify(attempt.wrong_numbers ?? []) !== JSON.stringify(graded.wrong) ||
+          JSON.stringify(attempt.unanswered_numbers ?? []) !== JSON.stringify(graded.unanswered);
+        attempt = {
+          ...attempt,
+          score: graded.score,
+          correct_count: graded.correct,
+          wrong_numbers: graded.wrong,
+          unanswered_numbers: graded.unanswered,
+          score_source: "auto",
+        };
+        if (changed) {
+          await supabase.from("exam_attempts").update({
+            score: graded.score,
+            correct_count: graded.correct,
+            wrong_numbers: graded.wrong,
+            unanswered_numbers: graded.unanswered,
+            graded_at: new Date().toISOString(),
+            score_source: "auto",
+          }).eq("id", attempt.id);
+        }
+      }
       let solutionUrl = "";
       const solutionAllowed = submitted && ((attempt?.solution_override ?? exam.solution_open) === true);
       if (solutionAllowed && exam.solution_file_path)
@@ -495,23 +527,13 @@ export async function POST(request: Request) {
       : NextResponse.json({ success: true, savedAt });
   }
   if (action === "submit") {
-    const keys = Array.isArray(exam.answer_keys)
-      ? exam.answer_keys.map(String)
-      : [];
-    const wrong: number[] = [],
-      unanswered: number[] = [];
-    let correct = 0;
-    for (let no = 1; no <= Number(exam.question_count); no++) {
-      const answer = String(answers[no] ?? answers[String(no)] ?? "").trim();
-      if (!answer) unanswered.push(no);
-      else if (keys[no - 1] && answer === String(keys[no - 1]).trim())
-        correct++;
-      else wrong.push(no);
-    }
-    const score = Math.round(
-      (correct / Math.max(1, Number(exam.question_count))) *
-        Number(exam.total_score),
+    const graded = calculateExamScore(
+      answers as Record<string, unknown>,
+      exam.answer_keys,
+      Number(exam.question_count),
+      Number(exam.total_score ?? 100),
     );
+    const { score, correct, wrong, unanswered } = graded;
     const submittedAt = new Date().toISOString();
     const { error } = await supabase
       .from("exam_attempts")

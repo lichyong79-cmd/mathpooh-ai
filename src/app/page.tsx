@@ -504,34 +504,16 @@ export default function StudentHome() {
   const [examConsentChecked, setExamConsentChecked] = useState(false);
   const [waitingExam, setWaitingExam] = useState<Exam | null>(null);
   const load = useCallback(async () => {
-    // F5/최초 진입 시에만 최신 데이터를 읽는다. 주기 polling은 사용하지 않는다.
-    const [portalResponse, scoreResponse] = await Promise.all([
-      fetch("/api/student/portal", { cache: "no-store" }),
-      fetch("/api/student/scores", { cache: "no-store" }),
-    ]);
+    // F5/최초 진입 시 portal이 정오답 기준 최종점수를 반환한다.
+    const portalResponse = await fetch("/api/student/portal", { cache: "no-store" });
     if (portalResponse.status === 403) return window.location.replace("/admin");
     const data = await portalResponse.json();
     if (!portalResponse.ok)
       return setError(data.message || "학생 정보를 불러오지 못했습니다.");
-
-    // 점수는 exam_attempts를 직접 읽는 score API를 최종 source of truth로 사용한다.
-    // portal의 시험/파일/응시정보는 유지하고, 같은 exam_id의 제출 attempt 결과만 최신값으로 교체한다.
-    if (scoreResponse.ok) {
-      const scoreData = await scoreResponse.json();
-      const latestAttempts = new Map<string, any>(
-        (Array.isArray(scoreData.attempts) ? scoreData.attempts : []).map((item: any) => [String(item.exam_id), item]),
-      );
-      data.exams = (Array.isArray(data.exams) ? data.exams : []).map((exam: any) => {
-        const latest = latestAttempts.get(String(exam.id));
-        if (!latest) return exam;
-        return {
-          ...exam,
-          attempt: exam.attempt ? { ...exam.attempt, ...latest } : latest,
-        };
-      });
-    }
     setPortal(data);
+    setError("");
   }, []);
+
   useEffect(() => {
     void load();
   }, [load]);
