@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { recordTrainingResult } from "@/lib/sos-training-result";
-import { autoCreateTrainingFromDiagnosis } from "@/lib/sos-auto-training";
 
 async function context(){
   const user=await getSessionUser();
@@ -36,7 +35,7 @@ export async function GET(){
 
   const result=await supabase
     .from("sos_training_sessions")
-    .select("id,phase,status,target_snapshot,parent_session_id,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,problem_id,item_order,item_role,student_answer,is_correct,response_seconds,answered_at,revealed_at,answer_locked_at,solution_photo_path,photo_submitted_at,photo_submit_seconds,screen_exit_count,subunit_key,student_meter_before,student_meter_after,problem_meter_before,problem_meter_after,problem_bank_questions(id,problem_code,title,subject,unit,topic,difficulty,difficulty_meter,question_image_path))")
+    .select("id,phase,status,target_snapshot,parent_session_id,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,problem_id,item_order,item_role,student_answer,is_correct,response_seconds,answered_at,revealed_at,answer_locked_at,solution_photo_path,photo_submitted_at,photo_submit_seconds,screen_exit_count,subunit_key,student_meter_before,student_meter_after,problem_meter_before,problem_meter_after,problem_bank_questions(id,problem_code,title,subject,unit,topic,difficulty,difficulty_meter,question_image_path,answer))")
     .eq("student_id",student.id)
     .in("status",["ASSIGNED","IN_PROGRESS","COMPLETED","PASSED","RETRAIN"])
     .order("created_at",{ascending:false});
@@ -77,6 +76,7 @@ export async function GET(){
             difficulty:problem.difficulty,
             difficultyMeter:problem.difficulty_meter,
             imageUrl:await signedQuestionImage(supabase,problem.question_image_path),
+            correctAnswer:["COMPLETED","PASSED","RETRAIN"].includes(String(session.status))?String(problem.answer??""):undefined,
           },
         };
       }));
@@ -256,20 +256,6 @@ export async function POST(request:Request){
 
     if(update.error)return NextResponse.json({message:update.error.message},{status:400});
 
-    let autoTraining:any=null;
-    let autoTrainingError="";
-    if(phase==="DIAGNOSIS"){
-      try{
-        autoTraining=await autoCreateTrainingFromDiagnosis({
-          supabase,
-          studentId:String(student.id),
-          diagnosisSessionId:sessionId,
-        });
-      }catch(error){
-        autoTrainingError=error instanceof Error?error.message:"훈련 자동 생성 실패";
-      }
-    }
-
     return NextResponse.json({
       success:true,
       phase,
@@ -279,8 +265,7 @@ export async function POST(request:Request){
       rate,
       decision,
       results,
-      autoTraining,
-      autoTrainingError,
+      nextStep:phase==="DIAGNOSIS"?"AI_WEAKNESS_ANALYSIS_PENDING":undefined,
     });
   }
 

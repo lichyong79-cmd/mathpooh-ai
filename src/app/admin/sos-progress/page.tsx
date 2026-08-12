@@ -24,6 +24,11 @@ function elapsed(start:any,end:any,serverTime:any){
   const min=Math.max(0,Math.floor((b-a)/60000));
   return min<60?`${min}분`:`${Math.floor(min/60)}시간 ${min%60}분`;
 }
+function duration(sec:any){
+  if(sec===null||sec===undefined||!Number.isFinite(Number(sec)))return "-";
+  const n=Math.max(0,Math.round(Number(sec)));
+  return n<60?`${n}초`:`${Math.floor(n/60)}분 ${String(n%60).padStart(2,"0")}초`;
+}
 
 export default function SosProgressPage(){
   const [rows,setRows]=useState<any[]>([]);
@@ -35,6 +40,7 @@ export default function SosProgressPage(){
   const [phase,setPhase]=useState("전체");
   const [status,setStatus]=useState("전체");
   const [autoRefresh,setAutoRefresh]=useState(true);
+  const [selectedId,setSelectedId]=useState<string>("");
 
   async function load(){
     setError("");
@@ -60,11 +66,12 @@ export default function SosProgressPage(){
       &&(phase==="전체"||r.phase===phase)
       &&(status==="전체"||r.status===status);
   }),[rows,keyword,phase,status]);
+  const selected=useMemo(()=>rows.find((r:any)=>String(r.id)===selectedId)??null,[rows,selectedId]);
 
   return <AdminPortalShell current="sos-learning">
     <main className="progress-page">
       <header className="top">
-        <div><small>MATHPOOH SOS · LIVE PROGRESS</small><h1>진단·훈련 진행현황</h1><p>학생별 미응시·진행·완료와 소단원 미터 변화를 실시간으로 확인합니다.</p></div>
+        <div><small>MATHPOOH SOS · LIVE PROGRESS</small><h1>진단·훈련 진행현황</h1><p>학생별 진행상황과 진단 문항별 결과·풀이사진까지 확인합니다.</p></div>
         <div className="buttons"><button onClick={()=>location.href="/admin?menu=sos-learning"}>← SOS 학습운영</button><button onClick={()=>void load()}>새로고침</button></div>
       </header>
 
@@ -85,8 +92,8 @@ export default function SosProgressPage(){
       </section>
 
       <section className="table">
-        <div className="row head"><span>학생</span><span>구분</span><span>과목·소단원</span><span>상태</span><span>진도</span><span>결과</span><span>시작</span><span>경과</span><span>바로미터</span></div>
-        {loading?<div className="empty">진행현황을 불러오는 중...</div>:filtered.length?filtered.map((r:any)=><div className="row" key={r.id}>
+        <div className="row head"><span>학생</span><span>구분</span><span>과목·소단원</span><span>상태</span><span>진도</span><span>결과</span><span>시작</span><span>경과</span><span>바로미터</span><span>상세</span></div>
+        {loading?<div className="empty">진행현황을 불러오는 중...</div>:filtered.length?filtered.map((r:any)=><div className={`row ${selectedId===String(r.id)?"selected":""}`} key={r.id}>
           <span><b>{r.student?.name??"학생정보없음"}</b><small>{r.student?.school??"-"} · {r.student?.grade??"-"} {r.student?.class_name?`· ${r.student.class_name}`:""}</small></span>
           <span><b>{phaseText(r.phase)} {r.phase==="DIAGNOSIS"?`${r.roundNo}차`:""}</b><small>{r.total}문항</small></span>
           <span><b>{r.subject||"-"}</b><small>{r.majorUnit?`${r.majorUnit} · `:""}{r.subunit||"-"}</small></span>
@@ -96,16 +103,42 @@ export default function SosProgressPage(){
           <span><b>{timeText(r.startedAt)}</b><small>배정 {timeText(r.createdAt)}</small></span>
           <span><b>{elapsed(r.startedAt,r.submittedAt,serverTime)}</b><small>{r.submittedAt?`제출 ${timeText(r.submittedAt)}`:""}</small></span>
           <span><b>{r.currentMeter===null?"-":Number(r.currentMeter).toFixed(2)}</b><small>{r.initialMeter===null?"":`시작 ${Number(r.initialMeter).toFixed(2)} ${r.meterDelta===null?"":`→ ${r.meterDelta>=0?"+":""}${Number(r.meterDelta).toFixed(2)}`}`}</small></span>
+          <span><button className="detail-btn" onClick={()=>setSelectedId(selectedId===String(r.id)?"":String(r.id))}>{selectedId===String(r.id)?"닫기":"결과보기"}</button></span>
         </div>):<div className="empty">조건에 맞는 진단·훈련이 없습니다.</div>}
       </section>
+
+      {selected?<section className="detail-panel">
+        <div className="detail-head">
+          <div><small>{phaseText(selected.phase)} {selected.phase==="DIAGNOSIS"?`${selected.roundNo}차`:""} 결과 상세</small><h2>{selected.student?.name??"학생"} · {selected.subject||"-"} {selected.subunit?`· ${selected.subunit}`:""}</h2><p>{selected.correct}/{selected.total} 정답 · {selected.total?Math.round(selected.correct/selected.total*100):0}% · {statusText(selected.status)}</p></div>
+          <button onClick={()=>setSelectedId("")}>닫기</button>
+        </div>
+        <div className="problem-grid">
+          {(selected.items??[]).map((item:any,index:number)=><article className={`problem-card ${item.isCorrect===true?"correct":item.isCorrect===false?"wrong":""}`} key={item.id}>
+            <div className="problem-title"><b>{index+1}번</b><em>{item.isCorrect===true?"✓ 정답":item.isCorrect===false?"✕ 오답":"채점 전"}</em></div>
+            <div className="problem-info"><span>난이도 <b>{item.problem?.difficulty||"-"}</b></span><span>문항미터 <b>{item.problem?.difficultyMeter===null?"-":Number(item.problem.difficultyMeter).toFixed(2)}</b></span><span>화면이탈 <b>{item.screenExitCount??0}회</b></span></div>
+            {item.problem?.imageUrl?<div className="question-image"><img src={item.problem.imageUrl} alt={`${index+1}번 진단문항`}/></div>:<div className="no-image">문항 이미지 없음</div>}
+            <div className="answer-grid">
+              <div><small>학생 답</small><b>{item.studentAnswer||"-"}</b></div>
+              <div><small>정답</small><b>{item.problem?.correctAnswer||"-"}</b></div>
+              <div><small>풀이시간</small><b>{duration(item.responseSeconds)}</b></div>
+              <div><small>사진제출</small><b>{duration(item.photoSubmitSeconds)}</b></div>
+            </div>
+            <div className="photo-block">
+              <div><b>학생 풀이사진</b><small>{item.photoSubmittedAt?`제출 ${timeText(item.photoSubmittedAt)}`:"미제출"}</small></div>
+              {item.solutionPhotoUrl?<a href={item.solutionPhotoUrl} target="_blank" rel="noreferrer"><img src={item.solutionPhotoUrl} alt={`${index+1}번 학생 풀이사진`}/><span>클릭해서 크게 보기</span></a>:<div className="no-photo">풀이사진 없음</div>}
+            </div>
+          </article>)}
+        </div>
+      </section>:null}
 
       <style jsx>{`
         .progress-page{min-height:100vh;background:#f5f7f6;padding:28px;color:#17211b}.top{display:flex;justify-content:space-between;gap:18px}.top small{font-weight:900;color:#247249;letter-spacing:1px}.top h1{margin:5px 0;font-size:30px}.top p{margin:0;color:#667085}.buttons{display:flex;gap:8px}.buttons button,.filters select,.filters input{border:1px solid #d0d5dd;background:#fff;border-radius:10px;padding:10px 12px}.buttons button{font-weight:850;cursor:pointer}
         .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0}.cards article{background:#fff;border:1px solid #e3e8e5;border-radius:14px;padding:16px}.cards span{display:block;color:#667085}.cards b{font-size:28px}
         .filters{display:flex;gap:9px;align-items:center;background:#fff;border:1px solid #e3e8e5;border-radius:14px;padding:12px;margin-bottom:12px}.filters>input{flex:1}.filters label{font-size:12px;font-weight:800;color:#526159;white-space:nowrap}
-        .table{background:#fff;border:1px solid #e3e8e5;border-radius:14px;overflow:auto}.row{display:grid;grid-template-columns:1.1fr .65fr 1.35fr .7fr .9fr .65fr 1fr .8fr .85fr;align-items:center;min-width:1250px;border-bottom:1px solid #eef1ef}.row>span{padding:11px 9px;min-width:0}.row b,.row small{display:block}.row small{font-size:11px;color:#7a8580;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.head{background:#f8faf9;font-size:12px;font-weight:900;color:#59645e;position:sticky;top:0}.status{font-style:normal;font-weight:900;border-radius:999px;padding:5px 8px;background:#eef1ef}.status.in_progress{background:#fff3d6;color:#8a5a00}.status.assigned{background:#edf1f7;color:#536173}.status.completed,.status.passed{background:#e7f6ed;color:#176d42}
-        .row i{display:block;height:6px;background:#e8eeea;border-radius:999px;overflow:hidden;margin-top:5px}.row i em{display:block;height:100%;background:#278557;border-radius:999px}.empty{padding:36px;text-align:center;color:#667085}.error{margin-top:12px;padding:12px;border-radius:10px;background:#fff0f0;color:#a61b1b}
-        @media(max-width:900px){.cards{grid-template-columns:1fr 1fr}.top,.filters{flex-direction:column;align-items:stretch}}
+        .table{background:#fff;border:1px solid #e3e8e5;border-radius:14px;overflow:auto}.row{display:grid;grid-template-columns:1.05fr .6fr 1.25fr .65fr .8fr .6fr .9fr .75fr .8fr .62fr;align-items:center;min-width:1320px;border-bottom:1px solid #eef1ef}.row>span{padding:11px 9px;min-width:0}.row b,.row small{display:block}.row small{font-size:11px;color:#7a8580;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.head{background:#f8faf9;font-size:12px;font-weight:900;color:#59645e;position:sticky;top:0}.row.selected{background:#f1faf5}.status{font-style:normal;font-weight:900;border-radius:999px;padding:5px 8px;background:#eef1ef}.status.in_progress{background:#fff3d6;color:#8a5a00}.status.assigned{background:#edf1f7;color:#536173}.status.completed,.status.passed{background:#e7f6ed;color:#176d42}
+        .row i{display:block;height:6px;background:#e8eeea;border-radius:999px;overflow:hidden;margin-top:5px}.row i em{display:block;height:100%;background:#278557;border-radius:999px}.detail-btn{width:100%;border:1px solid #b9d9c7;background:#effaf4;color:#176d42;border-radius:9px;padding:8px 6px;font-weight:900;cursor:pointer}.empty{padding:36px;text-align:center;color:#667085}.error{margin-top:12px;padding:12px;border-radius:10px;background:#fff0f0;color:#a61b1b}
+        .detail-panel{margin-top:16px;background:#fff;border:1px solid #dfe8e2;border-radius:16px;padding:18px}.detail-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;border-bottom:1px solid #edf1ee;padding-bottom:14px;margin-bottom:14px}.detail-head small{font-weight:900;color:#247249}.detail-head h2{margin:4px 0;font-size:22px}.detail-head p{margin:0;color:#667085}.detail-head button{border:1px solid #d0d5dd;background:#fff;border-radius:9px;padding:8px 12px;font-weight:800;cursor:pointer}.problem-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.problem-card{border:1px solid #e2e7e4;border-radius:14px;padding:14px;overflow:hidden}.problem-card.correct{border-top:4px solid #218653}.problem-card.wrong{border-top:4px solid #cf3f3f}.problem-title{display:flex;align-items:center;justify-content:space-between}.problem-title b{font-size:18px}.problem-title em{font-style:normal;font-weight:900}.correct .problem-title em{color:#177443}.wrong .problem-title em{color:#b42318}.problem-info{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.problem-info span{background:#f4f7f5;border-radius:999px;padding:5px 8px;font-size:11px;color:#667085}.problem-info b{display:inline;color:#26362d}.question-image{height:250px;border:1px solid #edf0ee;border-radius:10px;background:#fafcfa;display:flex;align-items:flex-start;justify-content:center;overflow:auto}.question-image img{width:100%;height:auto;object-fit:contain;display:block}.no-image,.no-photo{height:120px;border:1px dashed #ccd5cf;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#89938d;background:#fafbfa}.answer-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:10px 0}.answer-grid>div{background:#f7f9f8;border-radius:9px;padding:9px}.answer-grid small{font-size:10px;color:#7b8580}.answer-grid b{font-size:14px;margin-top:3px}.photo-block{margin-top:10px}.photo-block>div:first-child{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:7px}.photo-block>div:first-child small{font-size:10px;color:#7c8781}.photo-block a{display:block;text-decoration:none;color:#176d42}.photo-block a img{width:100%;max-height:340px;object-fit:contain;background:#f7f8f7;border:1px solid #e0e5e2;border-radius:10px}.photo-block a span{display:block;font-size:11px;font-weight:800;margin-top:5px;text-align:center}
+        @media(max-width:1100px){.problem-grid{grid-template-columns:1fr 1fr}.answer-grid{grid-template-columns:1fr 1fr}}@media(max-width:900px){.cards{grid-template-columns:1fr 1fr}.top,.filters{flex-direction:column;align-items:stretch}.problem-grid{grid-template-columns:1fr}}
       `}</style>
     </main>
   </AdminPortalShell>;

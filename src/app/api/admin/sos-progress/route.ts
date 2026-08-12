@@ -20,6 +20,12 @@ async function all(build:(from:number,to:number)=>any){
   return rows;
 }
 
+async function signedUrl(supabase:any,bucket:string,path:any){
+  if(!path)return "";
+  const result=await supabase.storage.from(bucket).createSignedUrl(String(path),60*60);
+  return result.data?.signedUrl??"";
+}
+
 export async function GET(){
   const ctx=await admin();
   if(!ctx)return NextResponse.json({message:"관리자 권한이 필요합니다."},{status:403});
@@ -28,7 +34,7 @@ export async function GET(){
       all((f,t)=>ctx.supabase.from("students").select("id,name,school,grade,class_name,status").range(f,t)),
       all((f,t)=>ctx.supabase
         .from("sos_training_sessions")
-        .select("id,student_id,phase,status,target_snapshot,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,item_order,student_answer,is_correct,answered_at)")
+        .select("id,student_id,phase,status,target_snapshot,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,problem_id,item_order,student_answer,is_correct,response_seconds,answered_at,revealed_at,answer_locked_at,solution_photo_path,photo_submitted_at,photo_submit_seconds,screen_exit_count,problem_bank_questions(id,problem_code,title,subject,unit,topic,difficulty,difficulty_meter,question_image_path,answer))")
         .order("created_at",{ascending:false}).range(f,t)),
       all((f,t)=>ctx.supabase
         .from("sos_student_subunit_meters")
@@ -38,19 +44,48 @@ export async function GET(){
 
     const studentMap=new Map(students.map((s:any)=>[String(s.id),s]));
     const meterMap=new Map<string,any>();
-    for(const m of meters){
-      meterMap.set(`${m.student_id}:${m.subunit_key}`,m);
-    }
+    for(const m of meters)meterMap.set(`${m.student_id}:${m.subunit_key}`,m);
 
-    const rows=sessions.map((session:any)=>{
-      const items=(session.sos_training_items??[]).sort((a:any,b:any)=>Number(a.item_order)-Number(b.item_order));
-      const answered=items.filter((i:any)=>String(i.student_answer??"").trim()||i.answered_at).length;
-      const correct=items.filter((i:any)=>i.is_correct===true).length;
+    const rows=await Promise.all(sessions.map(async(session:any)=>{
+      const rawItems=(session.sos_training_items??[]).sort((a:any,b:any)=>Number(a.item_order)-Number(b.item_order));
+      const items=await Promise.all(rawItems.map(async(item:any)=>{
+        const problem=Array.isArray(item.problem_bank_questions)?item.problem_bank_questions[0]:item.problem_bank_questions??{};
+        return {
+          id:item.id,
+          order:Number(item.item_order??0),
+          studentAnswer:String(item.student_answer??""),
+          isCorrect:item.is_correct,
+          responseSeconds:item.response_seconds===null||item.response_seconds===undefined?null:Number(item.response_seconds),
+          answeredAt:item.answered_at,
+          revealedAt:item.revealed_at,
+          answerLockedAt:item.answer_locked_at,
+          photoSubmittedAt:item.photo_submitted_at,
+          photoSubmitSeconds:item.photo_submit_seconds===null||item.photo_submit_seconds===undefined?null:Number(item.photo_submit_seconds),
+          screenExitCount:Number(item.screen_exit_count??0),
+          solutionPhotoUrl:await signedUrl(ctx.supabase,"sos-solution-photos",item.solution_photo_path),
+          problem:{
+            id:problem?.id??item.problem_id,
+            code:String(problem?.problem_code??""),
+            title:String(problem?.title??""),
+            subject:String(problem?.subject??""),
+            unit:String(problem?.unit??""),
+            topic:String(problem?.topic??""),
+            difficulty:String(problem?.difficulty??""),
+            difficultyMeter:problem?.difficulty_meter===null||problem?.difficulty_meter===undefined?null:Number(problem.difficulty_meter),
+            correctAnswer:String(problem?.answer??""),
+            imageUrl:await signedUrl(ctx.supabase,"question-images",problem?.question_image_path),
+          },
+        };
+      }));
+      const answered=items.filter((i:any)=>String(i.studentAnswer??"").trim()||i.answeredAt).length;
+      const correct=items.filter((i:any)=>i.isCorrect===true).length;
       const snapshot=session.target_snapshot??{};
       const key=String(snapshot.subunitKey??"");
       const currentMeter=meterMap.get(`${session.student_id}:${key}`)??null;
       const initialMeter=Number(snapshot.studentDifficultyMeter??0)||null;
       const currentValue=currentMeter?Number(currentMeter.difficulty_meter):null;
+      const startedCandidates=items.map((i:any)=>i.revealedAt).filter(Boolean).map((v:any)=>new Date(v).getTime()).filter(Number.isFinite);
+      const submittedCandidates=items.map((i:any)=>i.photoSubmittedAt||i.answeredAt).filter(Boolean).map((v:any)=>new Date(v).getTime()).filter(Number.isFinite);
       return {
         id:session.id,
         student:studentMap.get(String(session.student_id))??null,
@@ -69,11 +104,12 @@ export async function GET(){
         correct:session.correct_count===null||session.correct_count===undefined?correct:Number(session.correct_count),
         decision:session.decision,
         createdAt:session.created_at,
-        startedAt:session.status==="IN_PROGRESS"||["COMPLETED","PASSED","RETRAIN"].includes(String(session.status))?session.updated_at:null,
-        submittedAt:["COMPLETED","PASSED","RETRAIN"].includes(String(session.status))?session.updated_at:null,
+        startedAt:startedCandidates.length?new Date(Math.min(...startedCandidates)).toISOString():null,
+        submittedAt:["COMPLETED","PASSED","RETRAIN"].includes(String(session.status))&&submittedCandidates.length?new Date(Math.max(...submittedCandidates)).toISOString():null,
         updatedAt:session.updated_at,
+        items,
       };
-    });
+    }));
 
     const active=rows.filter((r:any)=>["ASSIGNED","IN_PROGRESS"].includes(String(r.status))).length;
     const inProgress=rows.filter((r:any)=>r.status==="IN_PROGRESS").length;

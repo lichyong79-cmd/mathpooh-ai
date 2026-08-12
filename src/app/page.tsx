@@ -453,9 +453,8 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             </div>:null}
 
             {active.status==="IN_PROGRESS"&&active.phase==="DIAGNOSIS"?<SosDiagnosisRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              const autoMessage=json.autoTraining?.created||json.autoTraining?.existing?" · 훈련 10문항 자동선정 완료":json.autoTrainingError?` · 훈련 자동선정 확인 필요 (${json.autoTrainingError})`:"";
-              setNotice(`진단 완료 · ${json.correct}/${json.total} 정답 (${json.rate}%)${autoMessage}`);
-              setAnswers({});setActiveId("");await load();await onRefresh();
+              setNotice(`진단 완료 · ${json.correct}/${json.total} 정답 (${json.rate}%) · AI 취약점 분석 준비 완료`);
+              setAnswers({});await load();await onRefresh();
             }}/>:null}
 
             {active.status==="IN_PROGRESS"&&active.phase!=="DIAGNOSIS"?<>
@@ -467,7 +466,16 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
               <div className="sos-submit-bar"><span>{activeItems.filter((item:any)=>String(answers[String(item.id)]??item.studentAnswer??"").trim()).length}/{activeItems.length} 응답</span><button disabled={busy==="submit"} onClick={()=>void submit()}>{busy==="submit"?"채점·미터 반영 중...":"전체 제출"}</button></div>
             </>:null}
 
-            {["COMPLETED","PASSED","RETRAIN"].includes(String(active.status))?<div className="sos-complete-box"><b>{active.status==="PASSED"?"훈련 통과":"학습 완료"}</b><strong>{active.correct_count??0}/{active.total_count}</strong><p>{active.phase==="DIAGNOSIS"?"진단완료 · 결과에 맞춘 훈련 10문항이 자동선정됩니다.":active.status==="PASSED"?"이 소단원 훈련을 통과했습니다.":"추가 훈련이 필요합니다."}</p></div>:null}
+            {["COMPLETED","PASSED","RETRAIN"].includes(String(active.status))?<div className="sos-complete-box">
+              <b>{active.status==="PASSED"?"훈련 통과":active.phase==="DIAGNOSIS"?"진단 완료":"학습 완료"}</b>
+              <strong>{active.correct_count??0}/{active.total_count}</strong>
+              <p>{active.phase==="DIAGNOSIS"?"문항별 결과를 확인하세요. 다음 단계에서 AI가 풀이 데이터와 함께 취약점을 분석합니다.":active.status==="PASSED"?"이 소단원 훈련을 통과했습니다.":"추가 훈련이 필요합니다."}</p>
+              {active.phase==="DIAGNOSIS"?<div className="sos-diagnosis-result-list">{activeItems.map((item:any,index:number)=><article key={item.id} className={item.isCorrect===true?"correct":"wrong"}>
+                <div className="result-no"><b>{index+1}번</b><em>{item.isCorrect===true?"정답":"오답"}</em></div>
+                <div className="result-answer"><span>내 답 <strong>{item.studentAnswer||"-"}</strong></span><span>정답 <strong>{item.problem?.correctAnswer||"-"}</strong></span></div>
+                <div className="result-time"><span>풀이시간 <strong>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</strong></span><span>사진제출 <strong>{Math.floor(Number(item.photoSubmitSeconds??0)/60)}:{String(Number(item.photoSubmitSeconds??0)%60).padStart(2,"0")}</strong></span></div>
+              </article>)}</div>:null}
+            </div>:null}
           </>}
         </section>
       </div>
