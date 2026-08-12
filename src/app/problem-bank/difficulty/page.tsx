@@ -280,7 +280,7 @@ export default function DifficultyManagementPage() {
     <div className="difficulty-wrap">
       <div className="difficulty-header">
         <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>평소에는 AI가 현재 난이도가 이상하다고 판단한 문항만 검토합니다. 8단계 절대난이도는 전 시스템 공통 기준입니다.</p></div>
-        <div className="header-buttons"><button onClick={()=>location.href="/admin?menu=sos-learning"}>관리자 홈</button><button onClick={()=>location.href="/problem-bank"}>SOS 문제은행</button></div>
+        <div className="header-buttons"><button onClick={()=>location.href="/problem-bank/barometer"}>학생·문항 바로미터</button><button onClick={()=>location.href="/admin?menu=sos-learning"}>관리자 홈</button><button onClick={()=>location.href="/problem-bank"}>SOS 문제은행</button></div>
       </div>
 
       {progress && <div className="progress-card">
