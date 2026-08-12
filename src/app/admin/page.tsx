@@ -1819,7 +1819,7 @@ function RecommendPage() {
     if (!selected || !target) return;
     const item = target.sourceQuestion;
     const exam = target.sourceExam;
-    const unit = String(item?.unit ?? item?.minorUnit ?? item?.middleUnit ?? item?.subject ?? "").trim();
+    const unit = String(item?.minorUnit ?? item?.middleUnit ?? item?.unit ?? item?.subject ?? "").trim();
     const type = String(item?.type ?? item?.topic ?? item?.detailedTopic ?? "").trim();
     const sourceAttemptId = String(exam?.attemptId ?? exam?.attempt_id ?? exam?.examId ?? exam?.exam_id ?? "");
 
