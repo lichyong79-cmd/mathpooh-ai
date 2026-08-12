@@ -248,10 +248,8 @@ export async function POST(request:Request){
     .filter((p:any)=>{
       if(!p.subunitInfo?.subunit) return false;
       if(targetSubject && !related(targetSubject,p.subunitInfo.subject)) return false;
-      // SOS_NO1의 소단원이 명시되어 있으면 유형 점수(match)와 무관하게
-      // 같은 소단원 전체를 후보로 둔다. 유형은 동률 보조 기준일 뿐이다.
-      if(targetUnit) return related(targetUnit,p.subunitInfo.subunit);
-      return p.match>0;
+      if(!targetUnit) return p.match>0;
+      return related(targetUnit,p.subunitInfo.subunit) && p.match>0;
     });
 
   if(!sameSubunitPool.length)

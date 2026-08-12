@@ -36,7 +36,7 @@ export async function GET(){
 
   const result=await supabase
     .from("sos_training_sessions")
-    .select("id,phase,status,target_snapshot,parent_session_id,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,problem_id,item_order,item_role,student_answer,is_correct,response_seconds,subunit_key,student_meter_before,student_meter_after,problem_meter_before,problem_meter_after,problem_bank_questions(id,problem_code,title,subject,unit,topic,difficulty,difficulty_meter,question_image_path))")
+    .select("id,phase,status,target_snapshot,parent_session_id,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,problem_id,item_order,item_role,student_answer,is_correct,response_seconds,answered_at,revealed_at,answer_locked_at,solution_photo_path,photo_submitted_at,photo_submit_seconds,screen_exit_count,subunit_key,student_meter_before,student_meter_after,problem_meter_before,problem_meter_after,problem_bank_questions(id,problem_code,title,subject,unit,topic,difficulty,difficulty_meter,question_image_path))")
     .eq("student_id",student.id)
     .in("status",["ASSIGNED","IN_PROGRESS","COMPLETED","PASSED","RETRAIN"])
     .order("created_at",{ascending:false});
@@ -56,6 +56,13 @@ export async function GET(){
           studentAnswer:item.student_answer??"",
           isCorrect:item.is_correct,
           responseSeconds:item.response_seconds,
+          answeredAt:item.answered_at,
+          revealedAt:item.revealed_at,
+          answerLockedAt:item.answer_locked_at,
+          photoSubmittedAt:item.photo_submitted_at,
+          photoSubmitSeconds:item.photo_submit_seconds,
+          hasSolutionPhoto:Boolean(item.solution_photo_path),
+          screenExitCount:Number(item.screen_exit_count??0),
           studentMeterBefore:item.student_meter_before,
           studentMeterAfter:item.student_meter_after,
           problemMeterBefore:item.problem_meter_before,
@@ -126,6 +133,55 @@ export async function POST(request:Request){
       : NextResponse.json({success:true,status:"IN_PROGRESS"});
   }
 
+  if(action==="reveal"){
+    if(String(session.phase)!=="DIAGNOSIS"||String(session.status)!=="IN_PROGRESS")
+      return NextResponse.json({message:"진행 중인 진단에서만 문항을 공개할 수 있습니다."},{status:409});
+    const itemId=String(body.itemId??"");
+    const item=await supabase.from("sos_training_items").select("id,revealed_at,answer_locked_at").eq("id",itemId).eq("session_id",sessionId).single();
+    if(item.error||!item.data)return NextResponse.json({message:item.error?.message||"문항을 찾을 수 없습니다."},{status:404});
+    if(item.data.answer_locked_at)return NextResponse.json({message:"이미 답안을 확정한 문항입니다."},{status:409});
+    const revealedAt=item.data.revealed_at??new Date().toISOString();
+    if(!item.data.revealed_at){
+      const update=await supabase.from("sos_training_items").update({revealed_at:revealedAt}).eq("id",itemId);
+      if(update.error)return NextResponse.json({message:update.error.message},{status:400});
+      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:"QUESTION_REVEALED",detail:{}});
+    }
+    return NextResponse.json({success:true,revealedAt});
+  }
+
+  if(action==="lock_answer"){
+    if(String(session.phase)!=="DIAGNOSIS"||String(session.status)!=="IN_PROGRESS")
+      return NextResponse.json({message:"진행 중인 진단에서만 답안을 확정할 수 있습니다."},{status:409});
+    const itemId=String(body.itemId??"");
+    const answer=String(body.answer??"").trim();
+    if(!answer)return NextResponse.json({message:"답을 입력해 주세요."},{status:400});
+    const item=await supabase.from("sos_training_items").select("id,revealed_at,answer_locked_at,student_answer").eq("id",itemId).eq("session_id",sessionId).single();
+    if(item.error||!item.data)return NextResponse.json({message:item.error?.message||"문항을 찾을 수 없습니다."},{status:404});
+    if(item.data.answer_locked_at)return NextResponse.json({message:"이미 확정한 답안입니다."},{status:409});
+    if(!item.data.revealed_at)return NextResponse.json({message:"아직 공개되지 않은 문항입니다."},{status:409});
+    const lockedAt=new Date();
+    const seconds=Math.max(1,Math.round((lockedAt.getTime()-new Date(item.data.revealed_at).getTime())/1000));
+    const update=await supabase.from("sos_training_items").update({student_answer:answer,response_seconds:seconds,answer_locked_at:lockedAt.toISOString(),answered_at:lockedAt.toISOString()}).eq("id",itemId);
+    if(update.error)return NextResponse.json({message:update.error.message},{status:400});
+    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:"ANSWER_LOCKED",detail:{responseSeconds:seconds}});
+    return NextResponse.json({success:true,responseSeconds:seconds,answerLockedAt:lockedAt.toISOString()});
+  }
+
+  if(action==="activity"){
+    if(String(session.status)!=="IN_PROGRESS")return NextResponse.json({success:true,ignored:true});
+    const itemId=String(body.itemId??"")||null;
+    const eventType=String(body.eventType??"").slice(0,50);
+    if(!["SCREEN_EXIT","SCREEN_RETURN"].includes(eventType))return NextResponse.json({message:"지원하지 않는 로그입니다."},{status:400});
+    const detail=(body.detail&&typeof body.detail==="object")?body.detail:{};
+    const log=await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:eventType,detail});
+    if(log.error)return NextResponse.json({message:log.error.message},{status:400});
+    if(eventType==="SCREEN_EXIT"&&itemId){
+      const row=await supabase.from("sos_training_items").select("screen_exit_count").eq("id",itemId).eq("session_id",sessionId).single();
+      if(!row.error&&row.data)await supabase.from("sos_training_items").update({screen_exit_count:Number(row.data.screen_exit_count??0)+1}).eq("id",itemId);
+    }
+    return NextResponse.json({success:true});
+  }
+
   if(action==="submit"){
     if(["COMPLETED","PASSED"].includes(String(session.status)))
       return NextResponse.json({message:"이미 제출한 학습입니다."},{status:409});
@@ -145,9 +201,17 @@ export async function POST(request:Request){
     if(items.length!==Number(session.total_count))
       return NextResponse.json({message:`문항 구성이 올바르지 않습니다. ${items.length}/${session.total_count}`},{status:409});
 
-    const missing=items.filter((item:any)=>!String(answers[String(item.id)]??"").trim());
-    if(missing.length)
-      return NextResponse.json({message:`미응답 ${missing.length}문항이 있습니다. 모두 답한 뒤 제출해 주세요.`},{status:400});
+    const fullItems=await supabase.from("sos_training_items").select("id,student_answer,response_seconds,solution_photo_path,answer_locked_at").eq("session_id",sessionId).order("item_order");
+    if(fullItems.error)return NextResponse.json({message:fullItems.error.message},{status:400});
+    const fullById=new Map((fullItems.data??[]).map((x:any)=>[String(x.id),x]));
+    const missing=items.filter((item:any)=>!String(answers[String(item.id)]??fullById.get(String(item.id))?.student_answer??"").trim());
+    if(missing.length)return NextResponse.json({message:`미응답 ${missing.length}문항이 있습니다. 모두 답한 뒤 제출해 주세요.`},{status:400});
+    if(String(session.phase)==="DIAGNOSIS"){
+      const unlocked=items.filter((item:any)=>!fullById.get(String(item.id))?.answer_locked_at);
+      if(unlocked.length)return NextResponse.json({message:"모든 진단 문항의 답안을 먼저 확정해 주세요."},{status:400});
+      const noPhoto=items.filter((item:any)=>!fullById.get(String(item.id))?.solution_photo_path);
+      if(noPhoto.length)return NextResponse.json({message:`풀이사진 미제출 ${noPhoto.length}문항이 있습니다.`},{status:400});
+    }
 
     let correct=0;
     const results:any[]=[];
@@ -159,8 +223,8 @@ export async function POST(request:Request){
           supabase,
           studentId:String(student.id),
           itemId:String(item.id),
-          studentAnswer:String(answers[String(item.id)]??""),
-          responseSeconds:Number(seconds[String(item.id)]??0)||null,
+          studentAnswer:String(answers[String(item.id)]??fullById.get(String(item.id))?.student_answer??""),
+          responseSeconds:Number(seconds[String(item.id)]??fullById.get(String(item.id))?.response_seconds??0)||null,
         });
         if(result.isCorrect)correct++;
         results.push({itemId:item.id,ok:true,...result});

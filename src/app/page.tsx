@@ -8,6 +8,7 @@ import "./sos-landmark.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
 import SosLandmarkMap from "@/components/sos-landmark-map";
+import SosDiagnosisRunner from "@/components/sos-diagnosis-runner";
 import {
   summarizeExamsForLandmark,
   type LandmarkSubject,
@@ -438,9 +439,26 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
               <span>{active.total_count}문항</span>
             </header>
 
-            {active.status==="ASSIGNED"?<div className="sos-start-box"><b>{active.phase==="DIAGNOSIS"?"현재 수준을 찾는 3문항입니다.":"현재 수준에 맞춘 10문항 훈련입니다."}</b><p>모든 문항을 직접 풀고 한 번에 제출합니다.</p><button disabled={!!busy} onClick={()=>void start(active)}>{busy==="start"?"준비 중...":"시작하기"}</button></div>:null}
+            {active.status==="ASSIGNED"?<div className="sos-start-box sos-diagnosis-guide">
+              <b>{active.phase==="DIAGNOSIS"?"SOS 진단 응시 안내":"현재 수준에 맞춘 10문항 훈련입니다."}</b>
+              {active.phase==="DIAGNOSIS"?<div className="sos-guide-list">
+                <p>진단은 현재 취약지점을 정확하게 찾기 위한 평가입니다.</p>
+                <p><strong>풀이 사진을 촬영할 수 있는 휴대폰·태블릿 등의 기기를 미리 준비</strong>해 주세요.</p>
+                <p>각 문항은 <strong>10초 준비화면 후 공개</strong>되며, 공개 순간부터 답안 확정까지 풀이시간이 기록됩니다.</p>
+                <p>답안을 확정하면 수정할 수 없으며, 이어서 <strong>종이에 작성한 풀이 사진을 반드시 제출</strong>해야 합니다.</p>
+                <p>답안 확정부터 풀이사진 제출까지 걸린 시간도 별도로 기록됩니다.</p>
+                <p className="warn">응시 중 다른 웹페이지·앱으로 이동하면 화면 이탈 기록이 저장되고 즉시 경고가 표시됩니다.</p>
+              </div>:<p>모든 문항을 직접 풀고 한 번에 제출합니다.</p>}
+              <button disabled={!!busy} onClick={()=>void start(active)}>{busy==="start"?"준비 중...":"안내 확인 · 진단 시작"}</button>
+            </div>:null}
 
-            {active.status==="IN_PROGRESS"?<>
+            {active.status==="IN_PROGRESS"&&active.phase==="DIAGNOSIS"?<SosDiagnosisRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
+              const autoMessage=json.autoTraining?.created||json.autoTraining?.existing?" · 훈련 10문항 자동선정 완료":json.autoTrainingError?` · 훈련 자동선정 확인 필요 (${json.autoTrainingError})`:"";
+              setNotice(`진단 완료 · ${json.correct}/${json.total} 정답 (${json.rate}%)${autoMessage}`);
+              setAnswers({});setActiveId("");await load();await onRefresh();
+            }}/>:null}
+
+            {active.status==="IN_PROGRESS"&&active.phase!=="DIAGNOSIS"?<>
               <div className="sos-question-stack">{activeItems.map((item:any,index:number)=><article key={item.id} className="sos-live-question">
                 <header><b>{index+1}번</b><span>{item.problem?.unit??""} · {item.problem?.topic??""}</span><em>{item.role}</em></header>
                 <div className="sos-live-image">{item.problem?.imageUrl?<img src={item.problem.imageUrl} alt={`${index+1}번 문제`}/>:<p>문항 이미지가 없습니다.</p>}</div>

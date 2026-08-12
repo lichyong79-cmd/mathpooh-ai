@@ -37,10 +37,8 @@ function choose(pool:any[],targets:Array<{meter:number;role:string}>,used:Set<st
         meterDistance:distanceFromTarget(Number(p.meter),target.meter),
       }))
       .sort((a,b)=>
-        // 훈련의 1순위는 학생 미터에 맞는 난이도다.
-        // 유형 유사도는 같은 거리에서만 보조 기준으로 사용한다.
-        a.meterDistance-b.meterDistance ||
         Number(b.match)-Number(a.match) ||
+        a.meterDistance-b.meterDistance ||
         String(a.id).localeCompare(String(b.id))
       )[0];
     if(!candidate)continue;
