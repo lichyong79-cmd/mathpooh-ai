@@ -294,8 +294,8 @@ export async function POST(request:Request){
     const snapshot={...target,subject:info.subject,majorUnit:info.major,subunit:info.subunit,subunitKey:info.key,studentDifficultyMeter:meterRow.meter,studentDifficultyLabel:meterLabel(meterRow.meter),meterSystem:"sos8-subunit-dynamic-v1",manualDiagnosisSelection:true};
     const {data:session,error:sessionError}=await ctx.supabase.from("sos_training_sessions").insert({student_id:studentId,phase:"DIAGNOSIS",status:"ASSIGNED",target_snapshot:snapshot,parent_session_id:null,round_no:1,total_count:3}).select().single();
     if(sessionError||!session)return NextResponse.json({message:tableMessage(sessionError?.message||"생성 실패")},{status:400});
-    const orderMap=new Map(selectedIds.map((id:string,index:number)=>[id,index]));
-    chosen.sort((a:any,b:any)=>(orderMap.get(String(a.id))??0)-(orderMap.get(String(b.id))??0));
+    const orderMap = new Map<string, number>(selectedIds.map((id: string, index: number): [string, number] => [id, index]));
+    chosen.sort((a: any, b: any) => (orderMap.get(String(a.id)) ?? 0) - (orderMap.get(String(b.id)) ?? 0));
     const {error:itemError}=await ctx.supabase.from("sos_training_items").insert(chosen.map((p:any,index:number)=>({session_id:session.id,problem_id:p.id,item_order:index+1,item_role:`관리자 선택 진단 · ${problemSubunit(p).subunit||p.unit||"연관문항"}`,subunit_key:problemSubunit(p).key||info.key})));
     if(itemError){ await ctx.supabase.from("sos_training_sessions").delete().eq("id",session.id); return NextResponse.json({message:tableMessage(itemError.message)},{status:400}); }
     return NextResponse.json({success:true,session,selectedIds});
