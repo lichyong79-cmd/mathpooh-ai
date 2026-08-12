@@ -9,10 +9,10 @@ function fmt(seconds:number){
 }
 
 export default function SosDiagnosisRunner({session,onCompleted,onNotice}:{session:any;onCompleted:(json:any)=>Promise<void>|void;onNotice:(message:string)=>void}){
-  const items=Array.isArray(session?.items)?session.items:[];
-  const initialRaw=items.findIndex((x:any)=>!x.hasSolutionPhoto);
-  const initialIndex=initialRaw<0?Math.max(0,items.length-1):initialRaw;
-  const [index,setIndex]=useState(initialIndex);
+  const items:any[]=Array.isArray(session?.items)?session.items:[];
+  const initialRaw:number=items.findIndex((x:any)=>!x.hasSolutionPhoto);
+  const initialIndex:number=initialRaw<0?Math.max(0,items.length-1):initialRaw;
+  const [index,setIndex]=useState<number>(initialIndex);
   const [answer,setAnswer]=useState("");
   const [countdown,setCountdown]=useState(10);
   const [now,setNow]=useState(Date.now());
@@ -104,7 +104,7 @@ export default function SosDiagnosisRunner({session,onCompleted,onNotice}:{sessi
         const done=await post({action:"submit",answers:{},responseSeconds:{}});
         await onCompleted(done);
       }else{
-        setIndex((v)=>v+1);
+        setIndex((v:number)=>v+1);
         setCountdown(10);
       }
     }catch(e){onNotice(e instanceof Error?e.message:"풀이사진 제출 실패");}finally{setBusy("");}
