@@ -515,22 +515,6 @@ export default function StudentHome() {
     void load();
   }, [load]);
 
-  // 관리자에서 성적/상태를 수정하면 학생 화면도 별도 새로고침 없이 따라오도록 동기화한다.
-  // 시험 응시 중에는 기존 시험 동기화 루프가 있으므로 중복 폴링을 피한다.
-  useEffect(() => {
-    if (activeExam) return;
-    const refresh = () => {
-      if (document.visibilityState === "visible") void load();
-    };
-    const timer = window.setInterval(refresh, 5000);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [activeExam, load]);
   useEffect(() => {
     const saved = window.localStorage.getItem("matspu-student-section") as StudentSection | null;
     if (saved && ["home", "apply", "exams", "strategy", "scores", "learning"].includes(saved)) setActiveSection(saved);
