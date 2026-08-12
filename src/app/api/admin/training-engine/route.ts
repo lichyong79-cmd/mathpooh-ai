@@ -10,7 +10,8 @@ import {
   nextStudentMeter,
   trainingTargets,
 } from "@/lib/difficulty-meter";
-import { problemSubunit, requireSubunit } from "@/lib/subunit-key";
+import { problemSubunit } from "@/lib/subunit-key";
+import { recordTrainingResult } from "@/lib/sos-training-result";
 
 async function admin() {
   const user = await getSessionUser();
@@ -157,174 +158,22 @@ export async function POST(request:Request){
 
   if(!studentId)return NextResponse.json({message:"학생을 선택해 주세요."},{status:400});
 
-  // 실제 한 문항 풀이 기록
+  // 관리자 수동 채점/검증용. 학생 화면 제출도 동일한 공통 엔진을 사용한다.
   if(action==="record-result"){
     const itemId=String(body.itemId??"");
     if(!itemId)return NextResponse.json({message:"훈련 문항 ID가 없습니다."},{status:400});
-
-    const isCorrect=body.isCorrect===true;
-    const responseSeconds=Number.isFinite(Number(body.responseSeconds))
-      ? Math.max(0,Math.round(Number(body.responseSeconds)))
-      : null;
-
-    const itemResult=await ctx.supabase
-      .from("sos_training_items")
-      .select("id,session_id,problem_id,is_correct,sos_training_sessions(student_id),problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,difficulty_meter_samples,difficulty_meter_unique_students,problem_dna)")
-      .eq("id",itemId)
-      .single();
-
-    if(itemResult.error||!itemResult.data)
-      return NextResponse.json({message:itemResult.error?.message||"훈련 문항을 찾을 수 없습니다."},{status:400});
-
-    const item:any=itemResult.data;
-    const rowStudentId=String(item.sos_training_sessions?.student_id??"");
-    if(rowStudentId!==studentId)
-      return NextResponse.json({message:"학생과 훈련 문항이 일치하지 않습니다."},{status:400});
-
-    const existingEvent=await ctx.supabase
-      .from("sos_difficulty_events")
-      .select("id")
-      .eq("training_item_id",itemId)
-      .maybeSingle();
-
-    if(existingEvent.data)
-      return NextResponse.json({message:"이미 난이도 미터에 반영된 문항입니다."},{status:409});
-
-    const problem:any=item.problem_bank_questions??{};
-    let info;
-    try {
-      info=requireSubunit(problem);
-    } catch(error) {
-      return NextResponse.json({message:error instanceof Error?error.message:"소단원 분류 오류"},{status:409});
-    }
-
-    const problemBefore=clampMeter(problem.difficulty_meter,Number(problem.difficulty)||3);
-    let studentMeterRow;
-    try {
-      studentMeterRow=await loadSubunitMeter(
-        ctx.supabase,
+    try{
+      const result=await recordTrainingResult({
+        supabase:ctx.supabase,
         studentId,
-        info,
-        problemBefore
-      );
-    } catch(error) {
-      return NextResponse.json({message:error instanceof Error?error.message:"학생 소단원 미터 조회 실패"},{status:400});
-    }
-
-    const studentBefore=studentMeterRow.meter;
-    const studentAfter=nextStudentMeter(studentBefore,problemBefore,isCorrect);
-
-    // 문항 표본은 '서로 다른 학생' 기준
-    const priorStudent=await ctx.supabase
-      .from("sos_difficulty_events")
-      .select("id")
-      .eq("problem_id",String(item.problem_id))
-      .eq("student_id",studentId)
-      .limit(1);
-
-    if(priorStudent.error)
-      return NextResponse.json({message:priorStudent.error.message},{status:400});
-
-    const firstStudentSample=(priorStudent.data??[]).length===0;
-    const uniqueBefore=Math.max(0,Number(problem.difficulty_meter_unique_students??0));
-    const uniqueAfter=uniqueBefore+(firstStudentSample?1:0);
-
-    const problemAfter=firstStudentSample
-      ? nextProblemMeter({
-          problemMeter:problemBefore,
-          studentMeterBefore:studentBefore,
-          correct:isCorrect,
-          uniqueStudents:uniqueAfter,
-        })
-      : problemBefore;
-
-    const now=new Date().toISOString();
-
-    const meterUpdate=await ctx.supabase
-      .from("sos_student_subunit_meters")
-      .update({
-        difficulty_meter:studentAfter,
-        sample_count:studentMeterRow.samples+1,
-        updated_at:now,
-      })
-      .eq("id",studentMeterRow.id);
-
-    if(meterUpdate.error)
-      return NextResponse.json({message:meterUpdate.error.message},{status:400});
-
-    const [problemUpdate,itemUpdate]=await Promise.all([
-      ctx.supabase
-        .from("problem_bank_questions")
-        .update({
-          difficulty_meter:problemAfter,
-          difficulty_meter_samples:Number(problem.difficulty_meter_samples??0)+1,
-          difficulty_meter_unique_students:uniqueAfter,
-          difficulty_meter_origin:uniqueAfter>=20?"EMPIRICAL":"DNA",
-          difficulty_meter_updated_at:firstStudentSample&&uniqueAfter>=20?now:null,
-        })
-        .eq("id",String(item.problem_id)),
-      ctx.supabase
-        .from("sos_training_items")
-        .update({
-          is_correct:isCorrect,
-          response_seconds:responseSeconds,
-          answered_at:now,
-          subunit_key:info.key,
-          student_meter_before:studentBefore,
-          student_meter_after:studentAfter,
-          problem_meter_before:problemBefore,
-          problem_meter_after:problemAfter,
-        })
-        .eq("id",itemId),
-    ]);
-
-    const updateError=problemUpdate.error||itemUpdate.error;
-    if(updateError)
-      return NextResponse.json({message:updateError.message},{status:400});
-
-    const event=await ctx.supabase
-      .from("sos_difficulty_events")
-      .insert({
-        student_id:studentId,
-        problem_id:String(item.problem_id),
-        training_item_id:itemId,
-        subject:info.subject,
-        major_unit:info.major,
-        subunit:info.subunit,
-        subunit_key:info.key,
-        is_correct:isCorrect,
-        response_seconds:responseSeconds,
-        student_meter_before:studentBefore,
-        student_meter_after:studentAfter,
-        problem_meter_before:problemBefore,
-        problem_meter_after:problemAfter,
-        problem_unique_students:uniqueAfter,
+        itemId,
+        studentAnswer:String(body.studentAnswer??""),
+        responseSeconds:Number(body.responseSeconds??0)||null,
       });
-
-    if(event.error)
-      return NextResponse.json({message:event.error.message},{status:400});
-
-    return NextResponse.json({
-      success:true,
-      scope:{
-        subject:info.subject,
-        majorUnit:info.major,
-        subunit:info.subunit,
-        subunitKey:info.key,
-      },
-      studentMeter:{
-        before:studentBefore,
-        after:studentAfter,
-        label:meterLabel(studentAfter),
-      },
-      problemMeter:{
-        before:problemBefore,
-        after:problemAfter,
-        label:meterLabel(problemAfter),
-        uniqueStudents:uniqueAfter,
-        empirical:uniqueAfter>=20,
-      },
-    });
+      return NextResponse.json({success:true,...result});
+    }catch(error){
+      return NextResponse.json({message:error instanceof Error?error.message:"난이도 미터 반영 실패"},{status:400});
+    }
   }
 
   const {data:previous}=await ctx.supabase
@@ -348,12 +197,17 @@ export async function POST(request:Request){
 
   const targetUnit=String(
     target?.subunit ||
-    target?.units?.[0]?.label ||
     target?.sourceUnit ||
+    target?.units?.[0]?.label ||
+    ""
+  ).trim();
+  const targetSubject=String(
+    target?.subject ||
+    target?.sourceSubject ||
     ""
   ).trim();
 
-  // 같은 소단원 안에서만 진단/훈련 문항을 찾는다.
+  // 같은 과목 + 같은 소단원 안에서만 진단/훈련 문항을 찾는다.
   const sameSubunitPool=(problems??[])
     .map((p:any)=>{
       const info=problemSubunit(p);
@@ -366,6 +220,7 @@ export async function POST(request:Request){
     })
     .filter((p:any)=>{
       if(!p.subunitInfo?.subunit) return false;
+      if(targetSubject && !related(targetSubject,p.subunitInfo.subject)) return false;
       if(!targetUnit) return p.match>0;
       return related(targetUnit,p.subunitInfo.subunit) && p.match>0;
     });
@@ -403,6 +258,17 @@ export async function POST(request:Request){
       : 1;
     selected=selectByMeter(sameSubunitPool,diagnosisTargets(studentMeter),used);
   }else if(action==="generate-training"){
+    if(parentSessionId){
+      const parent=await ctx.supabase
+        .from("sos_training_sessions")
+        .select("id,phase,status,correct_count")
+        .eq("id",parentSessionId)
+        .eq("student_id",studentId)
+        .maybeSingle();
+      if(parent.error)return NextResponse.json({message:parent.error.message},{status:400});
+      if(!parent.data||parent.data.phase!=="DIAGNOSIS"||!["COMPLETED","PASSED"].includes(String(parent.data.status)))
+        return NextResponse.json({message:"학생이 진단을 제출한 뒤 훈련을 생성해 주세요."},{status:409});
+    }
     phase="TRAINING";
     selected=selectByMeter(sameSubunitPool,trainingTargets(studentMeter),used);
   }else{
@@ -435,7 +301,7 @@ export async function POST(request:Request){
     .insert({
       student_id:studentId,
       phase,
-      status:"DRAFT",
+      status:"ASSIGNED",
       target_snapshot:snapshot,
       parent_session_id:parentSessionId,
       round_no:roundNo,

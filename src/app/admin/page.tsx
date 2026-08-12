@@ -1840,6 +1840,8 @@ function RecommendPage() {
             sourceAttemptId,
             sourceExamId: exam?.examId ?? exam?.exam_id ?? null,
             sourceExamTitle: exam?.title ?? "실전모의고사",
+            sourceSubject: item?.subject ?? exam?.subject ?? null,
+            sourceUnit: unit || null,
             sourceQuestionNo: sosQuestionNo(item),
             sourceDifficulty: sosDifficulty(item?.difficulty),
             sourcePriority: target.priority,
@@ -1853,7 +1855,7 @@ function RecommendPage() {
       await loadSessions(String(selected.id));
       setDiagnosisReadyForNo1(true);
       setDiagnosisErrorForNo1("");
-      alert("SOS_NO1을 확정하고 진단 3문항을 생성했습니다.");
+      alert("SOS_NO1을 확정하고 학생에게 진단 3문항을 배정했습니다.");
     } catch (error) {
       // 문제은행이 아직 부족하면 NO1은 보이되, 관리자가 즉시 취소하고 다음 실제 오답을 선택할 수 있다.
       const message = error instanceof Error ? error.message : "진단 3문항을 생성하지 못했습니다.";
@@ -1868,11 +1870,9 @@ function RecommendPage() {
   const latestDiagnosis = sessions.find((item: any) => item.phase === "DIAGNOSIS");
   const generateFollowUp = async (action: "additional-diagnosis" | "generate-training") => {
     if (!selected || !latestDiagnosis) return alert("먼저 SOS_NO1을 확정하고 진단을 생성해 주세요.");
-    let diagnosticCorrect = 0;
-    if (action === "generate-training") {
-      const value = window.prompt("가장 최근 진단의 정답 수를 입력하세요. (0~3)", String(latestDiagnosis.correct_count ?? 0));
-      if (value === null) return;
-      diagnosticCorrect = Math.max(0, Math.min(3, Number(value)));
+    const diagnosticCorrect = Math.max(0, Math.min(3, Number(latestDiagnosis.correct_count ?? 0)));
+    if (action === "generate-training" && latestDiagnosis.status !== "COMPLETED") {
+      return alert("학생이 최근 진단 3문항을 제출한 뒤 훈련을 생성할 수 있습니다.");
     }
     setSaving(true);
     try {
@@ -1890,7 +1890,7 @@ function RecommendPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "후속 문항 생성 실패");
       await loadSessions(String(selected.id));
-      alert(action === "generate-training" ? "훈련 10문항을 생성했습니다." : "추가 진단 3문항을 생성했습니다.");
+      alert(action === "generate-training" ? "학생에게 훈련 10문항을 배정했습니다." : "학생에게 추가 진단 3문항을 배정했습니다.");
     } catch (error) {
       alert(error instanceof Error ? error.message : "후속 문항 생성 실패");
     } finally {

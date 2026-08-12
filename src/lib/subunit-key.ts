@@ -30,10 +30,12 @@ export function problemSubunit(problem: any) {
     );
   const subunit =
     clean(
+      basic?.minor_unit ||
+      taxonomy?.minor_unit ||
+      basic?.middle_unit ||
+      taxonomy?.middle_unit ||
       problem?.unit ||
       basic?.unit ||
-      taxonomy?.middle_unit ||
-      taxonomy?.minor_unit ||
       problem?.topic ||
       ""
     );

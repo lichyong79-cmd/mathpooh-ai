@@ -271,6 +271,14 @@ export async function GET() {
     sort_order: poster.sort_order,
     image_url: (await supabase.storage.from("site-posters").createSignedUrl(poster.image_path, 60 * 60 * 3)).data?.signedUrl ?? "",
   })));
+  const { data: sosSessions } = await supabase
+    .from("sos_training_sessions")
+    .select("id,phase,status,target_snapshot,round_no,correct_count,total_count,decision,created_at")
+    .eq("student_id", student.id)
+    .in("status", ["ASSIGNED","IN_PROGRESS","COMPLETED","PASSED","RETRAIN"])
+    .order("created_at", { ascending: false })
+    .limit(20);
+
   return NextResponse.json({
     student: {
       id: student.id,
@@ -280,6 +288,7 @@ export async function GET() {
       passwordChanged: student.password_changed,
     },
     exams: examItems,
+    sosSessions: sosSessions ?? [],
     landmark,
     posters,
   });

@@ -77,6 +77,17 @@ type Portal = {
     passwordChanged: boolean;
   };
   exams: Exam[];
+  sosSessions?: Array<{
+    id:string;
+    phase:"DIAGNOSIS"|"TRAINING";
+    status:string;
+    target_snapshot:any;
+    round_no:number;
+    correct_count:number|null;
+    total_count:number;
+    decision:string|null;
+    created_at:string;
+  }>;
   landmark?: LandmarkSummary;
   posters: { id: string; title: string; image_url: string; link_url: string; sort_order: number }[];
 };
@@ -304,6 +315,141 @@ function StudentResultModal({
       </section>
     </div>
   );
+}
+
+
+function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | void }) {
+  const [data,setData]=useState<any>({sessions:[],subunitMeters:[]});
+  const [loading,setLoading]=useState(true);
+  const [activeId,setActiveId]=useState("");
+  const [answers,setAnswers]=useState<Record<string,string>>({});
+  const [startedAt,setStartedAt]=useState<Record<string,number>>({});
+  const [busy,setBusy]=useState("");
+  const [notice,setNotice]=useState("");
+
+  const load=useCallback(async()=>{
+    setLoading(true);
+    try{
+      const response=await fetch("/api/student/sos-training",{cache:"no-store"});
+      const json=await response.json();
+      if(!response.ok||json?.success!==true)throw new Error(json?.message||"진단·훈련을 불러오지 못했습니다.");
+      setData(json);
+      const open=(json.sessions??[]).find((x:any)=>["IN_PROGRESS","ASSIGNED"].includes(String(x.status)));
+      setActiveId((current:string)=>current||String(open?.id??""));
+    }catch(error){setNotice(error instanceof Error?error.message:"진단·훈련 조회 실패");}
+    finally{setLoading(false);}
+  },[]);
+
+  useEffect(()=>{void load();},[load]);
+
+  const sessions=Array.isArray(data.sessions)?data.sessions:[];
+  const active=sessions.find((x:any)=>String(x.id)===activeId)??null;
+  const activeItems=Array.isArray(active?.items)?active.items:[];
+
+  async function start(session:any){
+    setBusy("start");setNotice("");
+    try{
+      const response=await fetch("/api/student/sos-training",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"start",sessionId:session.id}),
+      });
+      const json=await response.json();
+      if(!response.ok)throw new Error(json.message||"시작 실패");
+      setActiveId(String(session.id));
+      setStartedAt((current:Record<string,number>)=>({...current,[String(session.id)]:Date.now()}));
+      await load();
+    }catch(error){setNotice(error instanceof Error?error.message:"시작 실패");}
+    finally{setBusy("");}
+  }
+
+  async function submit(){
+    if(!active)return;
+    const missing=activeItems.filter((item:any)=>!String(answers[String(item.id)]??item.studentAnswer??"").trim());
+    if(missing.length){setNotice(`미응답 ${missing.length}문항이 있습니다.`);return;}
+    if(!window.confirm(`${active.phase==="DIAGNOSIS"?"진단":"훈련"} ${activeItems.length}문항을 제출할까요? 제출 후 답은 수정할 수 없습니다.`))return;
+
+    const now=Date.now();
+    const startMs=startedAt[String(active.id)]??now;
+    const totalSeconds=Math.max(1,Math.round((now-startMs)/1000));
+    const per=Math.max(1,Math.round(totalSeconds/Math.max(1,activeItems.length)));
+    const responseSeconds:Record<string,number>={};
+    const payloadAnswers:Record<string,string>={};
+
+    for(const item of activeItems){
+      payloadAnswers[String(item.id)]=String(answers[String(item.id)]??item.studentAnswer??"");
+      responseSeconds[String(item.id)]=per;
+    }
+
+    setBusy("submit");setNotice("");
+    try{
+      const response=await fetch("/api/student/sos-training",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"submit",sessionId:active.id,answers:payloadAnswers,responseSeconds}),
+      });
+      const json=await response.json();
+      if(!response.ok)throw new Error(json.message||"제출 실패");
+      setNotice(`${active.phase==="DIAGNOSIS"?"진단":"훈련"} 완료 · ${json.correct}/${json.total} 정답 (${json.rate}%)`);
+      setAnswers({});
+      setActiveId("");
+      await load();
+      await onRefresh();
+    }catch(error){setNotice(error instanceof Error?error.message:"제출 실패");}
+    finally{setBusy("");}
+  }
+
+  const latestMeters=Array.isArray(data.subunitMeters)?data.subunitMeters:[];
+
+  return <div className="sos-live-wrap">
+    <section className="sos-live-summary">
+      <article><span>대기·진행</span><b>{sessions.filter((x:any)=>["ASSIGNED","IN_PROGRESS"].includes(String(x.status))).length}</b><small>진단/훈련</small></article>
+      <article><span>완료</span><b>{sessions.filter((x:any)=>["COMPLETED","PASSED"].includes(String(x.status))).length}</b><small>누적 세션</small></article>
+      <article><span>소단원 미터</span><b>{latestMeters.length}</b><small>측정된 영역</small></article>
+    </section>
+
+    {notice?<div className="sos-live-notice">{notice}</div>:null}
+
+    {loading?<div className="student-section-empty"><b>진단·훈련을 불러오는 중...</b></div>:(
+      <div className="sos-live-layout">
+        <aside className="sos-session-list">
+          <h3>나의 진단·훈련</h3>
+          {sessions.map((session:any)=><button
+            key={session.id}
+            className={String(session.id)===String(active?.id)?"selected":""}
+            onClick={()=>setActiveId(String(session.id))}
+          >
+            <div><b>{session.phase==="DIAGNOSIS"?`진단 ${session.round_no}차`:"맞춤 훈련"}</b><span>{session.target_snapshot?.subunit??"소단원"}</span></div>
+            <em>{session.status==="ASSIGNED"?"시작 전":session.status==="IN_PROGRESS"?"진행 중":session.status==="PASSED"?"통과":"완료"}</em>
+            <small>{session.correct_count===null||session.correct_count===undefined?`${session.total_count}문항`:`${session.correct_count}/${session.total_count} 정답`}</small>
+          </button>)}
+          {!sessions.length?<p>아직 배정된 진단·훈련이 없습니다.</p>:null}
+        </aside>
+
+        <section className="sos-session-main">
+          {!active?<div className="student-section-empty"><b>진행할 진단·훈련을 선택하세요.</b><span>관리자가 SOS 진단을 생성하면 이곳에 표시됩니다.</span></div>:<>
+            <header className="sos-session-head">
+              <div><small>{active.phase==="DIAGNOSIS"?"SOS DIAGNOSIS":"SOS TRAINING"}</small><h3>{active.target_snapshot?.subunit??"소단원"} · {active.phase==="DIAGNOSIS"?`진단 ${active.round_no}차`:"맞춤 훈련"}</h3><p>{active.target_snapshot?.subject??""} {active.target_snapshot?.majorUnit?`· ${active.target_snapshot.majorUnit}`:""} · 시작 미터 {Number(active.target_snapshot?.studentDifficultyMeter??0).toFixed(2)}</p></div>
+              <span>{active.total_count}문항</span>
+            </header>
+
+            {active.status==="ASSIGNED"?<div className="sos-start-box"><b>{active.phase==="DIAGNOSIS"?"현재 수준을 찾는 3문항입니다.":"현재 수준에 맞춘 10문항 훈련입니다."}</b><p>모든 문항을 직접 풀고 한 번에 제출합니다.</p><button disabled={!!busy} onClick={()=>void start(active)}>{busy==="start"?"준비 중...":"시작하기"}</button></div>:null}
+
+            {active.status==="IN_PROGRESS"?<>
+              <div className="sos-question-stack">{activeItems.map((item:any,index:number)=><article key={item.id} className="sos-live-question">
+                <header><b>{index+1}번</b><span>{item.problem?.unit??""} · {item.problem?.topic??""}</span><em>{item.role}</em></header>
+                <div className="sos-live-image">{item.problem?.imageUrl?<img src={item.problem.imageUrl} alt={`${index+1}번 문제`}/>:<p>문항 이미지가 없습니다.</p>}</div>
+                <label><span>답 입력</span><input value={answers[String(item.id)]??item.studentAnswer??""} onChange={(e:any)=>setAnswers((current:Record<string,string>)=>({...current,[String(item.id)]:e.target.value}))} placeholder="정답을 입력하세요"/></label>
+              </article>)}</div>
+              <div className="sos-submit-bar"><span>{activeItems.filter((item:any)=>String(answers[String(item.id)]??item.studentAnswer??"").trim()).length}/{activeItems.length} 응답</span><button disabled={busy==="submit"} onClick={()=>void submit()}>{busy==="submit"?"채점·미터 반영 중...":"전체 제출"}</button></div>
+            </>:null}
+
+            {["COMPLETED","PASSED","RETRAIN"].includes(String(active.status))?<div className="sos-complete-box"><b>{active.status==="PASSED"?"훈련 통과":"학습 완료"}</b><strong>{active.correct_count??0}/{active.total_count}</strong><p>{active.phase==="DIAGNOSIS"?"진단 결과를 기준으로 다음 맞춤 훈련이 생성됩니다.":active.status==="PASSED"?"이 소단원 훈련을 통과했습니다.":"추가 훈련이 필요합니다."}</p></div>:null}
+          </>}
+        </section>
+      </div>
+    )}
+
+    {latestMeters.length?<section className="sos-my-meters"><h3>나의 소단원 바로미터</h3><div>{latestMeters.slice(0,12).map((m:any)=><article key={m.subunit_key}><span>{m.subject}</span><b>{m.subunit}</b><strong>{Number(m.difficulty_meter).toFixed(2)}</strong><i><em style={{width:`${Math.max(0,Math.min(100,(Number(m.difficulty_meter)-1)/7*100))}%`}}/></i><small>{m.sample_count}문항 반영</small></article>)}</div></section>:null}
+  </div>;
 }
 
 export default function StudentHome() {
@@ -1081,7 +1227,7 @@ export default function StudentHome() {
           <article><span>분석 완료 시험</span><b>{portal.exams.filter((exam) => exam.attempt?.status === "submitted").length}회</b><small>제출한 시험 기준</small></article>
           <article><span>공략 준비 상태</span><b>{portal.exams.some((exam) => exam.attempt?.status === "submitted") ? "분석 가능" : "시험 필요"}</b><small>{portal.exams.some((exam) => exam.attempt?.status === "submitted") ? "진단·훈련 매칭을 준비합니다." : "실전모의고사 응시 후 생성됩니다."}</small></article>
         </div>
-        <div className="student-section-empty strategy"><b>진단 3문항 → 부족하면 추가 3문항 → 훈련 10문항</b><span>관리자가 공략 문항을 배정하면 이곳에 문항과 진행률이 표시됩니다.</span><button onClick={() => moveSection("exams")}>실전모의고사 확인</button></div>
+        <SosTrainingWorkspace onRefresh={load} />
       </section> : null}
       {activeSection === "scores" ? <section className="student-score-page student-app-page">
         <div className="student-page-intro"><div><small>PREMIUM SCORE REPORT</small><h2>나의 시험별 성적표</h2><p>시험을 선택하면 총점, 예상등급, 영역별 분석과 추천문항을 확인할 수 있습니다.</p></div><div className="student-kpi"><span>응시 완료</span><b>{submittedExams.length}</b><em>회</em></div></div>

@@ -77,7 +77,7 @@ export function buildStudentPerformance(
       const unanswered = !studentAnswer;
       if (correct) recomputedCorrect += 1;
       const info = metadataMap.get(`${exam.id}:${no}`);
-      const unit = info?.middle_unit || info?.major_unit || info?.minor_unit || "미분류";
+      const unit = info?.minor_unit || info?.middle_unit || info?.major_unit || "미분류";
       const problemTypes = Array.isArray(info?.problem_types) ? info.problem_types : [];
       const type = problemTypes[0] || info?.detailed_topic || info?.question_type || "미분류";
       const difficultyValue = Number(info?.difficulty);
