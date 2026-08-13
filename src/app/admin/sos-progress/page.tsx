@@ -1,119 +1,27 @@
 "use client";
-import { useEffect,useMemo,useState } from "react";
+import {useEffect,useMemo,useState} from "react";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
 
-function statusText(status:string){
-  if(status==="ASSIGNED")return "미응시";
-  if(status==="IN_PROGRESS")return "진행중";
-  if(status==="PASSED")return "통과";
-  if(status==="RETRAIN")return "재훈련";
-  if(status==="COMPLETED")return "완료";
-  return status||"-";
-}
-function phaseText(phase:string){return phase==="DIAGNOSIS"?"진단":"훈련";}
-function timeText(value:any){
-  if(!value)return "-";
-  const d=new Date(value);
-  return Number.isNaN(d.getTime())?"-":d.toLocaleString("ko-KR",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
-}
-function elapsed(start:any,end:any,serverTime:any){
-  if(!start)return "-";
-  const a=new Date(start).getTime();
-  const b=new Date(end||serverTime||Date.now()).getTime();
-  if(!Number.isFinite(a)||!Number.isFinite(b))return "-";
-  const min=Math.max(0,Math.floor((b-a)/60000));
-  return min<60?`${min}분`:`${Math.floor(min/60)}시간 ${min%60}분`;
-}
-function duration(sec:any){
-  if(sec===null||sec===undefined||!Number.isFinite(Number(sec)))return "-";
-  const n=Math.max(0,Math.round(Number(sec)));
-  return n<60?`${n}초`:`${Math.floor(n/60)}분 ${String(n%60).padStart(2,"0")}초`;
-}
+function statusText(status:string){if(status==="ASSIGNED")return "미응시";if(status==="IN_PROGRESS")return "진행중";if(status==="RETRAIN")return "오답중";if(status==="PASSED")return "완료";if(status==="COMPLETED")return "완료";return status||"-";}
+function phaseText(r:any){if(r.phase==="DIAGNOSIS")return `진단 ${r.roundNo}차`;if(r.cycleKind==="HOMEWORK")return "유사문항 숙제";if(r.roundNo===2)return "2차 AI 유사훈련";return "1차 훈련";}
+function timeText(value:any){if(!value)return "-";const d=new Date(value);return Number.isNaN(d.getTime())?"-":d.toLocaleString("ko-KR",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});}
+function elapsed(start:any,end:any,serverTime:any){if(!start)return "-";const a=new Date(start).getTime(),b=new Date(end||serverTime||Date.now()).getTime();if(!Number.isFinite(a)||!Number.isFinite(b))return "-";const sec=Math.max(0,Math.floor((b-a)/1000));if(sec<60)return `${sec}초`;const min=Math.floor(sec/60);return min<60?`${min}분 ${sec%60}초`:`${Math.floor(min/60)}시간 ${min%60}분`;}
+function logText(log:any){const q=Number(log?.detail?.question??0);const sec=Number(log?.detail?.responseSeconds??log?.detail?.awaySeconds??0);switch(log.eventType){case"SESSION_STARTED":return "학습 시작";case"QUESTION_REVEALED":return q?`${q}번 문제 공개`:"문제 공개";case"ANSWER_LOCKED":return q?`${q}번 답안 확정`:`답안 확정${sec?` · ${sec}초`:""}`;case"TRAINING_ITEM_DONE":return `${q||"-"}번 훈련 답 저장${sec?` · ${sec}초`:""}`;case"REVIEW_ITEM_DONE":return `${q||"-"}번 오답 재풀이 저장${sec?` · ${sec}초`:""}`;case"SCREEN_EXIT":return "시험 화면 이탈";case"SCREEN_RETURN":return `시험 화면 복귀${sec?` · ${sec}초 이탈`:""}`;case"SESSION_SUBMITTED":return "학습 제출";case"REVIEW_COMPLETED":return "오답 완료";default:return String(log.eventType??"");}}
 
 export default function SosProgressPage(){
-  const [rows,setRows]=useState<any[]>([]);
-  const [summary,setSummary]=useState<any>({});
-  const [serverTime,setServerTime]=useState("");
-  const [loading,setLoading]=useState(true);
-  const [error,setError]=useState("");
-  const [keyword,setKeyword]=useState("");
-  const [phase,setPhase]=useState("전체");
-  const [status,setStatus]=useState("전체");
-  const [autoRefresh,setAutoRefresh]=useState(true);
-
-  async function load(){
-    setError("");
-    try{
-      const response=await fetch("/api/admin/sos-progress",{cache:"no-store"});
-      const data=await response.json();
-      if(!response.ok||data?.success!==true)throw new Error(data?.message||"진행현황을 불러오지 못했습니다.");
-      setRows(data.rows??[]);setSummary(data.summary??{});setServerTime(data.serverTime??"");
-    }catch(e){setError(e instanceof Error?e.message:"조회 실패");}
-    finally{setLoading(false);}
-  }
-
-  useEffect(()=>{void load();},[]);
-  useEffect(()=>{
-    if(!autoRefresh)return;
-    const timer=window.setInterval(()=>void load(),15000);
-    return()=>window.clearInterval(timer);
-  },[autoRefresh]);
-
-  const filtered=useMemo(()=>rows.filter((r:any)=>{
-    const text=`${r.student?.name??""} ${r.student?.school??""} ${r.student?.grade??""} ${r.subject} ${r.majorUnit} ${r.subunit}`.toLowerCase();
-    return (!keyword||text.includes(keyword.toLowerCase()))
-      &&(phase==="전체"||r.phase===phase)
-      &&(status==="전체"||r.status===status);
-  }),[rows,keyword,phase,status]);
-
-  return <AdminPortalShell current="sos-learning">
-    <main className="progress-page">
-      <header className="top">
-        <div><small>MATHPOOH SOS · LIVE PROGRESS</small><h1>SOS 진행관리</h1><p>학생별 진단·훈련의 미응시·진행·완료 상태만 빠르게 확인합니다.</p><nav className="sos-tabs"><button onClick={()=>location.href="/admin?menu=sos-learning"}>배정</button><button className="active">진행</button><button onClick={()=>location.href="/admin/sos-results"}>결과</button></nav></div>
-        <div className="buttons"><button onClick={()=>void load()}>새로고침</button></div>
-      </header>
-
-      {error?<div className="error">{error}</div>:null}
-
-      <section className="cards">
-        <article><span>전체 세션</span><b>{summary.total??0}</b></article>
-        <article><span>미응시·진행</span><b>{summary.active??0}</b></article>
-        <article><span>현재 진행중</span><b>{summary.inProgress??0}</b></article>
-        <article><span>완료·통과</span><b>{summary.completed??0}</b></article>
-      </section>
-
-      <section className="filters">
-        <input value={keyword} onChange={(e:any)=>setKeyword(e.target.value)} placeholder="학생·학교·반·소단원 검색"/>
-        <select value={phase} onChange={(e:any)=>setPhase(e.target.value)}><option>전체</option><option value="DIAGNOSIS">진단</option><option value="TRAINING">훈련</option></select>
-        <select value={status} onChange={(e:any)=>setStatus(e.target.value)}><option>전체</option><option value="ASSIGNED">미응시</option><option value="IN_PROGRESS">진행중</option><option value="COMPLETED">완료</option><option value="PASSED">통과</option><option value="RETRAIN">재훈련</option></select>
-        <label><input type="checkbox" checked={autoRefresh} onChange={(e:any)=>setAutoRefresh(e.target.checked)}/> 15초 자동새로고침</label>
-      </section>
-
-      <section className="table">
-        <div className="row head"><span>학생</span><span>구분</span><span>과목·소단원</span><span>상태</span><span>진도</span><span>결과</span><span>시작</span><span>경과</span><span>바로미터</span></div>
-        {loading?<div className="empty">진행현황을 불러오는 중...</div>:filtered.length?filtered.map((r:any)=><div className="row" key={r.id}>
-          <span><b>{r.student?.name??"학생정보없음"}</b><small>{r.student?.school??"-"} · {r.student?.grade??"-"}</small></span>
-          <span><b>{phaseText(r.phase)} {r.phase==="DIAGNOSIS"?`${r.roundNo}차`:""}</b><small>{r.total}문항</small></span>
-          <span><b>{r.subject||"-"}</b><small>{r.majorUnit?`${r.majorUnit} · `:""}{r.subunit||"-"}</small></span>
-          <span><em className={`status ${String(r.status).toLowerCase()}`}>{statusText(r.status)}</em><small>{r.decision||""}</small></span>
-          <span><b>{r.answered}/{r.total}</b><i><em style={{width:`${r.total?Math.min(100,r.answered/r.total*100):0}%`}}/></i></span>
-          <span><b>{["COMPLETED","PASSED","RETRAIN"].includes(String(r.status))?`${r.correct}/${r.total}`:"-"}</b><small>{r.total&&["COMPLETED","PASSED","RETRAIN"].includes(String(r.status))?`${Math.round(r.correct/r.total*100)}%`:"채점 전"}</small></span>
-          <span><b>{timeText(r.startedAt)}</b><small>배정 {timeText(r.createdAt)}</small></span>
-          <span><b>{elapsed(r.startedAt,r.submittedAt,serverTime)}</b><small>{r.submittedAt?`제출 ${timeText(r.submittedAt)}`:""}</small></span>
-          <span><b>{r.currentMeter===null?"-":Number(r.currentMeter).toFixed(2)}</b><small>{r.initialMeter===null?"":`시작 ${Number(r.initialMeter).toFixed(2)} ${r.meterDelta===null?"":`→ ${r.meterDelta>=0?"+":""}${Number(r.meterDelta).toFixed(2)}`}`}</small></span>
-        </div>):<div className="empty">조건에 맞는 진단·훈련이 없습니다.</div>}
-      </section>
-
-
-      <style jsx>{`
-        .progress-page{min-height:100vh;background:#f5f7f6;padding:28px;color:#17211b}.top{display:flex;justify-content:space-between;gap:18px}.top small{font-weight:900;color:#247249;letter-spacing:1px}.top h1{margin:5px 0;font-size:30px}.top p{margin:0;color:#667085}.sos-tabs{display:flex;gap:8px;margin-top:14px}.sos-tabs button{border:1px solid #cfd8d2;background:#fff;border-radius:10px;padding:9px 18px;font-weight:900;cursor:pointer}.sos-tabs .active{background:#216e45;color:#fff;border-color:#216e45}.buttons{display:flex;gap:8px}.buttons button,.filters select,.filters input{border:1px solid #d0d5dd;background:#fff;border-radius:10px;padding:10px 12px}.buttons button{font-weight:850;cursor:pointer}
-        .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0}.cards article{background:#fff;border:1px solid #e3e8e5;border-radius:14px;padding:16px}.cards span{display:block;color:#667085}.cards b{font-size:28px}
-        .filters{display:flex;gap:9px;align-items:center;background:#fff;border:1px solid #e3e8e5;border-radius:14px;padding:12px;margin-bottom:12px}.filters>input{flex:1}.filters label{font-size:12px;font-weight:800;color:#526159;white-space:nowrap}
-        .table{background:#fff;border:1px solid #e3e8e5;border-radius:14px;overflow:auto}.row{display:grid;grid-template-columns:1.1fr .65fr 1.35fr .7fr .9fr .65fr 1fr .8fr .85fr;align-items:center;min-width:1200px;border-bottom:1px solid #eef1ef}.row>span{padding:11px 9px;min-width:0}.row b,.row small{display:block}.row small{font-size:11px;color:#7a8580;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.head{background:#f8faf9;font-size:12px;font-weight:900;color:#59645e;position:sticky;top:0}.row.selected{background:#f1faf5}.status{font-style:normal;font-weight:900;border-radius:999px;padding:5px 8px;background:#eef1ef}.status.in_progress{background:#fff3d6;color:#8a5a00}.status.assigned{background:#edf1f7;color:#536173}.status.completed,.status.passed{background:#e7f6ed;color:#176d42}
-        .row i{display:block;height:6px;background:#e8eeea;border-radius:999px;overflow:hidden;margin-top:5px}.row i em{display:block;height:100%;background:#278557;border-radius:999px}.detail-btn{width:100%;border:1px solid #b9d9c7;background:#effaf4;color:#176d42;border-radius:9px;padding:8px 6px;font-weight:900;cursor:pointer}.empty{padding:36px;text-align:center;color:#667085}.error{margin-top:12px;padding:12px;border-radius:10px;background:#fff0f0;color:#a61b1b}
-        .detail-panel{margin-top:16px;background:#fff;border:1px solid #dfe8e2;border-radius:16px;padding:18px}.detail-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;border-bottom:1px solid #edf1ee;padding-bottom:14px;margin-bottom:14px}.detail-head small{font-weight:900;color:#247249}.detail-head h2{margin:4px 0;font-size:22px}.detail-head p{margin:0;color:#667085}.detail-head button{border:1px solid #d0d5dd;background:#fff;border-radius:9px;padding:8px 12px;font-weight:800;cursor:pointer}.problem-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.problem-card{border:1px solid #e2e7e4;border-radius:14px;padding:14px;overflow:hidden}.problem-card.correct{border-top:4px solid #218653}.problem-card.wrong{border-top:4px solid #cf3f3f}.problem-title{display:flex;align-items:center;justify-content:space-between}.problem-title b{font-size:18px}.problem-title em{font-style:normal;font-weight:900}.correct .problem-title em{color:#177443}.wrong .problem-title em{color:#b42318}.problem-info{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.problem-info span{background:#f4f7f5;border-radius:999px;padding:5px 8px;font-size:11px;color:#667085}.problem-info b{display:inline;color:#26362d}.question-image{height:250px;border:1px solid #edf0ee;border-radius:10px;background:#fafcfa;display:flex;align-items:flex-start;justify-content:center;overflow:auto}.question-image img{width:100%;height:auto;object-fit:contain;display:block}.no-image,.no-photo{height:120px;border:1px dashed #ccd5cf;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#89938d;background:#fafbfa}.answer-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:10px 0}.answer-grid>div{background:#f7f9f8;border-radius:9px;padding:9px}.answer-grid small{font-size:10px;color:#7b8580}.answer-grid b{font-size:14px;margin-top:3px}.photo-block{margin-top:10px}.photo-block>div:first-child{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:7px}.photo-block>div:first-child small{font-size:10px;color:#7c8781}.photo-block a{display:block;text-decoration:none;color:#176d42}.photo-block a img{width:100%;max-height:340px;object-fit:contain;background:#f7f8f7;border:1px solid #e0e5e2;border-radius:10px}.photo-block a span{display:block;font-size:11px;font-weight:800;margin-top:5px;text-align:center}
-        @media(max-width:1100px){.problem-grid{grid-template-columns:1fr 1fr}.answer-grid{grid-template-columns:1fr 1fr}}@media(max-width:900px){.cards{grid-template-columns:1fr 1fr}.top,.filters{flex-direction:column;align-items:stretch}.problem-grid{grid-template-columns:1fr}}
-      `}</style>
-    </main>
-  </AdminPortalShell>;
+  const [rows,setRows]=useState<any[]>([]),[summary,setSummary]=useState<any>({});
+  const [serverTime,setServerTime]=useState(""),[loading,setLoading]=useState(true),[error,setError]=useState("");
+  const [keyword,setKeyword]=useState(""),[phase,setPhase]=useState("전체"),[status,setStatus]=useState("전체"),[selected,setSelected]=useState("");
+  async function load(){setError("");try{const r=await fetch("/api/admin/sos-progress",{cache:"no-store"});const j=await r.json();if(!r.ok||j?.success!==true)throw new Error(j?.message||"진행현황 조회 실패");setRows(j.rows??[]);setSummary(j.summary??{});setServerTime(j.serverTime??"");}catch(e){setError(e instanceof Error?e.message:"조회 실패");}finally{setLoading(false);}}
+  useEffect(()=>{void load();const id=window.setInterval(()=>void load(),15000);return()=>window.clearInterval(id);},[]);
+  const filtered=useMemo(()=>rows.filter((r:any)=>{const t=`${r.student?.name??""} ${r.student?.school??""} ${r.subject} ${r.subunit}`.toLowerCase();return(!keyword||t.includes(keyword.toLowerCase()))&&(phase==="전체"||r.phase===phase)&&(status==="전체"||r.status===status);}),[rows,keyword,phase,status]);
+  return <AdminPortalShell current="sos-learning"><main className="progress-page">
+    <header className="top"><div><small>MATHPOOH SOS · LIVE PROGRESS</small><h1>SOS 진행관리</h1><p>성적은 빼고, 학생이 언제 시작했고 어디까지 했는지와 응시 로그만 확인합니다.</p><nav><button onClick={()=>location.href="/admin?menu=sos-learning"}>배정</button><button className="active">진행</button><button onClick={()=>location.href="/admin/sos-results"}>결과</button></nav></div><button className="refresh" onClick={()=>void load()}>새로고침</button></header>
+    {error?<div className="error">{error}</div>:null}
+    <section className="cards"><article><span>전체</span><b>{summary.total??0}</b></article><article><span>대기·진행</span><b>{summary.active??0}</b></article><article><span>진행중</span><b>{summary.inProgress??0}</b></article><article><span>완료</span><b>{summary.completed??0}</b></article></section>
+    <section className="filters"><input value={keyword} onChange={(e)=>setKeyword(e.target.value)} placeholder="학생·학교·소단원 검색"/><select value={phase} onChange={(e)=>setPhase(e.target.value)}><option>전체</option><option value="DIAGNOSIS">진단</option><option value="TRAINING">훈련</option></select><select value={status} onChange={(e)=>setStatus(e.target.value)}><option>전체</option><option value="ASSIGNED">미응시</option><option value="IN_PROGRESS">진행중</option><option value="RETRAIN">오답중</option><option value="COMPLETED">완료</option><option value="PASSED">완료(통과)</option></select></section>
+    <section className="table"><div className="row head"><span>학생</span><span>단계</span><span>상태</span><span>진도</span><span>배정</span><span>시작</span><span>완료</span><span>소요</span><span>로그</span></div>
+    {loading?<div className="empty">불러오는 중...</div>:filtered.length?filtered.map((r:any)=><div key={r.id} className="row-wrap"><div className="row"><span><b>{r.student?.name??"학생"}</b><small>{r.student?.school??"-"} · {r.student?.grade??"-"}</small></span><span><b>{phaseText(r)}</b><small>{r.subject||"-"} · {r.subunit||"-"}</small></span><span><em className={`status ${String(r.status).toLowerCase()}`}>{statusText(r.status)}</em></span><span><b>{r.answered}/{r.total}</b><i><em style={{width:`${r.total?Math.min(100,r.answered/r.total*100):0}%`}}/></i></span><span>{timeText(r.createdAt)}</span><span>{timeText(r.startedAt)}</span><span>{timeText(r.submittedAt)}</span><span><b>{elapsed(r.startedAt,r.submittedAt,serverTime)}</b></span><span><button onClick={()=>setSelected(selected===String(r.id)?"":String(r.id))}>{selected===String(r.id)?"닫기":`로그 ${r.logs?.length??0}`}</button></span></div>{selected===String(r.id)?<div className="logs">{(r.logs??[]).length?(r.logs??[]).map((log:any)=><div key={log.id}><time>{timeText(log.occurredAt)}</time><b>{logText(log)}</b></div>):<p>기록된 로그가 없습니다.</p>}</div>:null}</div>):<div className="empty">조건에 맞는 진행 기록이 없습니다.</div>}</section>
+    <style jsx>{`.progress-page{min-height:100vh;background:#f5f7f6;padding:28px;color:#17211b}.top{display:flex;justify-content:space-between;gap:18px}.top small{font-weight:900;color:#247249}.top h1{margin:5px 0}.top p{margin:0;color:#667085}.top nav{display:flex;gap:8px;margin-top:14px}.top nav button,.refresh,.row button{border:1px solid #cfd8d2;background:#fff;border-radius:9px;padding:8px 13px;font-weight:900;cursor:pointer}.top nav .active{background:#216e45;color:#fff}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}.cards article{background:#fff;border:1px solid #e2e8e4;border-radius:13px;padding:14px}.cards span{color:#667085}.cards b{display:block;font-size:26px}.filters{display:flex;gap:8px;background:#fff;border:1px solid #e2e8e4;border-radius:13px;padding:10px;margin-bottom:10px}.filters input{flex:1}.filters input,.filters select{border:1px solid #d0d5dd;border-radius:9px;padding:9px}.table{background:#fff;border:1px solid #e2e8e4;border-radius:13px;overflow:auto}.row{display:grid;grid-template-columns:1.05fr 1.25fr .7fr .75fr 1fr 1fr 1fr .8fr .65fr;min-width:1180px;align-items:center;border-bottom:1px solid #edf1ee}.row>span{padding:10px 8px}.row b,.row small{display:block}.row small{font-size:10px;color:#7a8580;margin-top:3px}.head{background:#f8faf9;font-weight:900;font-size:12px}.status{font-style:normal;font-weight:900;background:#eef1ef;border-radius:999px;padding:5px 8px}.status.in_progress{background:#fff2cc;color:#885c00}.status.retrain{background:#fff0e8;color:#a24816}.status.passed,.status.completed{background:#e8f6ed;color:#176d42}.row i{display:block;height:6px;background:#e8eeea;border-radius:999px;overflow:hidden;margin-top:5px}.row i em{display:block;height:100%;background:#278557}.logs{padding:12px 18px;background:#fbfdfb;border-bottom:1px solid #e5ebe7}.logs div{display:grid;grid-template-columns:160px 1fr;gap:12px;padding:7px 0;border-bottom:1px dashed #e2e8e4}.logs time{color:#738078;font-size:12px}.logs b{font-size:13px}.empty{padding:34px;text-align:center;color:#667085}.error{padding:10px;background:#fff0f0;color:#a61b1b;border-radius:9px;margin:12px 0}@media(max-width:900px){.cards{grid-template-columns:1fr 1fr}.top,.filters{flex-direction:column}}`}</style>
+  </main></AdminPortalShell>;
 }

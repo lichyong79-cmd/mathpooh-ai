@@ -31,6 +31,12 @@ export function nextStudentMeter(studentMeter: number, problemMeter: number, cor
   return clampMeter(studentMeter + k * (actual - expected), studentMeter);
 }
 
+export function nextStudentMeterWithActual(studentMeter: number, problemMeter: number, actual: number, k = 0.35) {
+  const expected = expectedCorrectProbability(studentMeter, problemMeter);
+  const safeActual = Math.max(0, Math.min(1, Number(actual) || 0));
+  return clampMeter(studentMeter + k * (safeActual - expected), studentMeter);
+}
+
 export function nextProblemMeter(args: {
   problemMeter: number;
   studentMeterBefore: number;

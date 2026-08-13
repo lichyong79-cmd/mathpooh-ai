@@ -3,8 +3,10 @@ import {
   meterLabel,
   nextProblemMeter,
   nextStudentMeter,
+  nextStudentMeterWithActual,
 } from "@/lib/difficulty-meter";
 import { requireSubunit } from "@/lib/subunit-key";
+import { trainingPerformanceActual } from "@/lib/sos-training-policy";
 
 function normalizeAnswer(value: unknown) {
   return String(value ?? "")
@@ -18,8 +20,6 @@ export function answerMatches(studentAnswer: unknown, correctAnswer: unknown) {
   const student = normalizeAnswer(studentAnswer);
   const raw = String(correctAnswer ?? "").trim();
   if (!student || !raw) return false;
-
-  // 정답 필드에 복수 정답을 "||" 또는 "|"로 둔 경우도 허용.
   const candidates = raw.split(/\s*\|\|?\s*/).map(normalizeAnswer).filter(Boolean);
   return candidates.includes(student);
 }
@@ -81,7 +81,7 @@ export async function recordTrainingResult(args:{
 
   const itemResult=await supabase
     .from("sos_training_items")
-    .select("id,session_id,problem_id,is_correct,sos_training_sessions(student_id),problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,difficulty_meter_samples,difficulty_meter_unique_students,problem_dna,answer)")
+    .select("id,session_id,problem_id,is_correct,generated_problem,sos_training_sessions(student_id,phase,target_snapshot,cycle_kind),problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,difficulty_meter_samples,difficulty_meter_unique_students,problem_dna,answer)")
     .eq("id",itemId)
     .single();
 
@@ -89,7 +89,8 @@ export async function recordTrainingResult(args:{
     throw new Error(itemResult.error?.message||"훈련 문항을 찾을 수 없습니다.");
 
   const item:any=itemResult.data;
-  if(String(item.sos_training_sessions?.student_id??"")!==studentId)
+  const session:any=item.sos_training_sessions??{};
+  if(String(session?.student_id??"")!==studentId)
     throw new Error("학생과 진단·훈련 문항이 일치하지 않습니다.");
 
   const existingEvent=await supabase
@@ -108,63 +109,101 @@ export async function recordTrainingResult(args:{
     };
   }
 
-  const problem:any=item.problem_bank_questions??{};
-  const info=requireSubunit(problem);
+  const bankProblem:any=item.problem_bank_questions??null;
+  const generated:any=item.generated_problem??null;
+  if(!bankProblem&&!generated) throw new Error("훈련 문항 원본을 찾을 수 없습니다.");
+
+  const target=session?.target_snapshot??{};
+  const problem:any=bankProblem??{
+    subject:generated?.subject??target?.subject??target?.sourceSubject??"",
+    unit:generated?.unit??generated?.subunit??target?.subunit??target?.sourceUnit??"",
+    topic:generated?.topic??generated?.weakness??target?.weaknessTitle??"AI 유사문항",
+    difficulty:String(generated?.difficulty??generated?.meter??target?.studentDifficultyMeter??3),
+    difficulty_meter:generated?.meter??generated?.difficulty??target?.studentDifficultyMeter??3,
+    answer:generated?.answer??"",
+  };
+
+  const info=bankProblem
+    ? requireSubunit(problem)
+    : {
+        subject:String(generated?.subject??target?.subject??target?.sourceSubject??"미분류"),
+        major:String(generated?.majorUnit??target?.majorUnit??target?.sourceMajorUnit??""),
+        subunit:String(generated?.subunit??target?.subunit??target?.sourceUnit??"AI 유사훈련"),
+        key:String(generated?.subunitKey??target?.subunitKey??item.subunit_key??""),
+      };
+  if(!info.key) throw new Error("훈련 소단원 키를 찾을 수 없습니다.");
+
   const problemBefore=clampMeter(problem.difficulty_meter,Number(problem.difficulty)||3);
   const studentMeterRow=await loadSubunitMeter(supabase,studentId,info,problemBefore);
-
   const isCorrect=answerMatches(args.studentAnswer,problem.answer);
-  const studentBefore=studentMeterRow.meter;
-  const studentAfter=nextStudentMeter(studentBefore,problemBefore,isCorrect);
-
-  const priorStudent=await supabase
-    .from("sos_difficulty_events")
-    .select("id")
-    .eq("problem_id",String(item.problem_id))
-    .eq("student_id",studentId)
-    .limit(1);
-
-  if(priorStudent.error) throw priorStudent.error;
-
-  const firstStudentSample=(priorStudent.data??[]).length===0;
-  const uniqueBefore=Math.max(0,Number(problem.difficulty_meter_unique_students??0));
-  const uniqueAfter=uniqueBefore+(firstStudentSample?1:0);
-
-  const problemAfter=firstStudentSample
-    ? nextProblemMeter({
-        problemMeter:problemBefore,
-        studentMeterBefore:studentBefore,
-        correct:isCorrect,
-        uniqueStudents:uniqueAfter,
-      })
-    : problemBefore;
-
   const responseSeconds=Number.isFinite(Number(args.responseSeconds))
     ? Math.max(0,Math.round(Number(args.responseSeconds)))
     : null;
-  const now=new Date().toISOString();
 
+  const studentBefore=studentMeterRow.meter;
+  const phase=String(session?.phase??"");
+  const homework=String(session?.cycle_kind??"")==="HOMEWORK";
+  const studentAfter=homework
+    ? studentBefore
+    : phase==="TRAINING"
+      ? nextStudentMeterWithActual(
+          studentBefore,
+          problemBefore,
+          trainingPerformanceActual({correct:isCorrect,responseSeconds,problemMeter:problemBefore}),
+          0.05,
+        )
+      : nextStudentMeter(studentBefore,problemBefore,isCorrect);
+
+  let uniqueAfter=0;
+  let problemAfter=problemBefore;
+  let firstStudentSample=false;
+
+  if(bankProblem&&item.problem_id){
+    const priorStudent=await supabase
+      .from("sos_difficulty_events")
+      .select("id")
+      .eq("problem_id",String(item.problem_id))
+      .eq("student_id",studentId)
+      .limit(1);
+    if(priorStudent.error) throw priorStudent.error;
+
+    firstStudentSample=(priorStudent.data??[]).length===0;
+    const uniqueBefore=Math.max(0,Number(bankProblem.difficulty_meter_unique_students??0));
+    uniqueAfter=uniqueBefore+(firstStudentSample?1:0);
+    problemAfter=firstStudentSample
+      ? nextProblemMeter({
+          problemMeter:problemBefore,
+          studentMeterBefore:studentBefore,
+          correct:isCorrect,
+          uniqueStudents:uniqueAfter,
+        })
+      : problemBefore;
+  }
+
+  const now=new Date().toISOString();
   const meterUpdate=await supabase
     .from("sos_student_subunit_meters")
     .update({
       difficulty_meter:studentAfter,
-      sample_count:studentMeterRow.samples+1,
+      sample_count:studentMeterRow.samples+(homework?0:1),
       updated_at:now,
     })
     .eq("id",studentMeterRow.id);
   if(meterUpdate.error) throw meterUpdate.error;
 
-  const problemUpdate=await supabase
-    .from("problem_bank_questions")
-    .update({
-      difficulty_meter:problemAfter,
-      difficulty_meter_samples:Number(problem.difficulty_meter_samples??0)+1,
-      difficulty_meter_unique_students:uniqueAfter,
-      difficulty_meter_origin:uniqueAfter>=20?"EMPIRICAL":"DNA",
-      ...(firstStudentSample&&uniqueAfter>=20?{difficulty_meter_updated_at:now}:{}),
-    })
-    .eq("id",String(item.problem_id));
-  if(problemUpdate.error) throw problemUpdate.error;
+  if(bankProblem&&item.problem_id){
+    const problemUpdate=await supabase
+      .from("problem_bank_questions")
+      .update({
+        difficulty_meter:problemAfter,
+        difficulty_meter_samples:Number(bankProblem.difficulty_meter_samples??0)+1,
+        difficulty_meter_unique_students:uniqueAfter,
+        difficulty_meter_origin:uniqueAfter>=20?"EMPIRICAL":"DNA",
+        ...(firstStudentSample&&uniqueAfter>=20?{difficulty_meter_updated_at:now}:{}),
+      })
+      .eq("id",String(item.problem_id));
+    if(problemUpdate.error) throw problemUpdate.error;
+  }
 
   const itemUpdate=await supabase
     .from("sos_training_items")
@@ -186,7 +225,7 @@ export async function recordTrainingResult(args:{
     .from("sos_difficulty_events")
     .insert({
       student_id:studentId,
-      problem_id:String(item.problem_id),
+      problem_id:item.problem_id?String(item.problem_id):null,
       training_item_id:itemId,
       subject:info.subject,
       major_unit:info.major,
@@ -207,17 +246,7 @@ export async function recordTrainingResult(args:{
     isCorrect,
     correctAnswer:String(problem.answer??""),
     scope:info,
-    studentMeter:{
-      before:studentBefore,
-      after:studentAfter,
-      label:meterLabel(studentAfter),
-    },
-    problemMeter:{
-      before:problemBefore,
-      after:problemAfter,
-      label:meterLabel(problemAfter),
-      uniqueStudents:uniqueAfter,
-      empirical:uniqueAfter>=20,
-    },
+    studentMeter:{before:studentBefore,after:studentAfter,label:meterLabel(studentAfter)},
+    problemMeter:{before:problemBefore,after:problemAfter,label:meterLabel(problemAfter),uniqueStudents:uniqueAfter,empirical:uniqueAfter>=20},
   };
 }
