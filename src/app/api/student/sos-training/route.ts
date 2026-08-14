@@ -236,10 +236,18 @@ export async function POST(request:Request){
     const answer=String(body.answer??"").trim();
     const responseSeconds=Math.max(1,Math.round(Number(body.responseSeconds??0)||1));
     if(!itemId||!answer)return NextResponse.json({message:"오답 문항과 답을 확인해 주세요."},{status:400});
-    const update=await supabase.from("sos_training_items").update({review_answer:answer,review_response_seconds:responseSeconds,review_answered_at:new Date().toISOString()}).eq("id",itemId).eq("session_id",sessionId);
+    const itemResult=await supabase.from("sos_training_items")
+      .select("id,generated_problem,problem_bank_questions(answer)")
+      .eq("id",itemId).eq("session_id",sessionId).single();
+    if(itemResult.error||!itemResult.data)return NextResponse.json({message:itemResult.error?.message||"오답 문항을 찾을 수 없습니다."},{status:404});
+    const row:any=itemResult.data;
+    const bank:any=Array.isArray(row.problem_bank_questions)?row.problem_bank_questions[0]:row.problem_bank_questions;
+    const correctAnswer=String(bank?.answer??row.generated_problem?.answer??"").trim();
+    const isCorrect=answerMatches(answer,correctAnswer);
+    const update=await supabase.from("sos_training_items").update({review_answer:answer,review_is_correct:isCorrect,review_response_seconds:responseSeconds,review_answered_at:new Date().toISOString()}).eq("id",itemId).eq("session_id",sessionId);
     if(update.error)return NextResponse.json({message:update.error.message},{status:400});
-    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:"REVIEW_ITEM_DONE",detail:{question:Number(body.question??0),responseSeconds}});
-    return NextResponse.json({success:true});
+    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:isCorrect?"REVIEW_ITEM_CORRECTED":"REVIEW_ITEM_RETRY_WRONG",detail:{question:Number(body.question??0),responseSeconds,isCorrect}});
+    return NextResponse.json({success:true,isCorrect,correctAnswer:isCorrect?"":correctAnswer});
   }
 
   if(action==="submit_review"){
@@ -253,7 +261,20 @@ export async function POST(request:Request){
       .eq("session_id",sessionId).eq("is_correct",false).order("item_order");
     if(itemsResult.error)return NextResponse.json({message:itemsResult.error.message},{status:400});
     const wrongItems=itemsResult.data??[];
-    if(!wrongItems.length)return NextResponse.json({message:"오답 대상 문항이 없습니다."},{status:409});
+    if(!wrongItems.length){
+      const meter=await currentTargetMeter(supabase,String(student.id),session);
+      const goal=clampMeter(session.goal_meter,Number(session.baseline_meter)||meter);
+      const passed=meter>=goal;
+      let next:any=null;
+      let finalStatus="COMPLETED";
+      let decision="SECOND_TRAINING_DONE";
+      if(Number(session.round_no)===1){
+        if(passed){finalStatus="PASSED";decision="FIRST_TRAINING_PASSED";try{next=await generateSimilarTraining({supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,count:3,kind:"HOMEWORK"});}catch(error){next={error:error instanceof Error?error.message:"유사문항 숙제 생성 실패"};}}
+        else{decision="SECOND_TRAINING_REQUIRED";try{next=await generateSimilarTraining({supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,count:10,kind:"SECOND_TRAINING"});}catch(error){next={error:error instanceof Error?error.message:"2차 유사훈련 생성 실패"};}}
+      }else if(Number(session.round_no)===2){finalStatus=passed?"PASSED":"COMPLETED";decision=passed?"SECOND_TRAINING_PASSED":"SECOND_TRAINING_FINISHED_TARGET_MISSED";}
+      await supabase.from("sos_training_sessions").update({status:finalStatus,decision,review_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
+      return NextResponse.json({success:true,recovered:0,total:0,reviewBonus:0,meter,goal,passed,status:finalStatus,decision,next});
+    }
 
     let recovered=0;
     let bonusTotal=0;
@@ -262,7 +283,8 @@ export async function POST(request:Request){
       const answer=String(reviewAnswers[id]??"").trim();
       if(!answer)return NextResponse.json({message:"오답 문항을 모두 다시 풀어 주세요."},{status:400});
       const seconds=Math.max(1,Math.round(Number(reviewSeconds[id]??0)||1));
-      const correctAnswer=String(item.problem_bank_questions?.answer??item.generated_problem?.answer??"");
+      const reviewBank:any=Array.isArray(item.problem_bank_questions)?item.problem_bank_questions[0]:item.problem_bank_questions;
+      const correctAnswer=String(reviewBank?.answer??item.generated_problem?.answer??"");
       const ok=answerMatches(answer,correctAnswer);
       if(ok)recovered++;
       const b=reviewBonus({correct:ok,responseSeconds:seconds,problemMeter:Number(item.problem_meter_before??item.generated_problem?.meter??3)});
@@ -381,35 +403,21 @@ export async function POST(request:Request){
       return NextResponse.json({success:true,phase,status:"PASSED",correct,total,rate,decision:"HOMEWORK_DONE",results,meter,goal,homework:true});
     }
 
-    if(wrong>0){
-      const update=await supabase.from("sos_training_sessions").update({status:"RETRAIN",correct_count:correct,decision:"REVIEW_REQUIRED",training_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
+    // SOS225: 훈련 제출 뒤에는 정오답 수와 관계없이 성적표를 먼저 보여준다.
+    // 오답이 있으면 X 문항을 교정하고, 전 문항 정답이면 성적표에서 바로 결과 확인으로 간다.
+    {
+      const update=await supabase.from("sos_training_sessions").update({
+        status:"RETRAIN",
+        correct_count:correct,
+        decision:wrong>0?"REVIEW_REQUIRED":"RESULT_REVIEW_READY",
+        training_meter:meter,
+        updated_at:new Date().toISOString(),
+      }).eq("id",sessionId);
       if(update.error)return NextResponse.json({message:update.error.message},{status:400});
-      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,meter,goal,reviewRequired:true}});
-      return NextResponse.json({success:true,phase,status:"RETRAIN",correct,total,rate,decision:"REVIEW_REQUIRED",results,meter,goal,wrongCount:wrong,nextStep:"REVIEW"});
+      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,meter,goal,reviewRequired:wrong>0,reportReady:true}});
+      return NextResponse.json({success:true,phase,status:"RETRAIN",correct,total,rate,decision:wrong>0?"REVIEW_REQUIRED":"RESULT_REVIEW_READY",results,meter,goal,wrongCount:wrong,nextStep:"REPORT"});
     }
 
-    const passed=meter>=goal;
-    let next:any=null;
-    let status="PASSED";
-    let decision="SECOND_TRAINING_FINISHED";
-    if(Number(session.round_no)===1){
-      if(passed){
-        decision="FIRST_TRAINING_PASSED";
-        try{next=await generateSimilarTraining({supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,count:3,kind:"HOMEWORK"});}
-        catch(error){next={error:error instanceof Error?error.message:"유사문항 숙제 생성 실패"};}
-      }else{
-        status="COMPLETED";decision="SECOND_TRAINING_REQUIRED";
-        try{next=await generateSimilarTraining({supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,count:10,kind:"SECOND_TRAINING"});}
-        catch(error){next={error:error instanceof Error?error.message:"2차 유사훈련 생성 실패"};}
-      }
-    }else if(Number(session.round_no)===2){
-      status=passed?"PASSED":"COMPLETED";
-      decision=passed?"SECOND_TRAINING_PASSED":"SECOND_TRAINING_FINISHED_TARGET_MISSED";
-    }
-    const update=await supabase.from("sos_training_sessions").update({status,correct_count:correct,decision,training_meter:meter,review_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
-    if(update.error)return NextResponse.json({message:update.error.message},{status:400});
-    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,meter,goal,passed,decision}});
-    return NextResponse.json({success:true,phase,status,correct,total,rate,decision,results,meter,goal,passed,next});
   }
 
   return NextResponse.json({message:"지원하지 않는 작업입니다."},{status:400});
