@@ -459,7 +459,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
 
     {notice?<div className="sos-live-notice">{notice}</div>:null}
 
-    {loading?<div className="student-section-empty"><b>진단·훈련을 불러오는 중...</b></div>:(
+    {loading?<MATHPOOHLoader title="진단·훈련을 가져오는 중입니다" detail="나의 SOS 진행상황, 바로미터, 진단·훈련 결과를 준비하고 있습니다." kind="loading"/>:(
       <div className="sos-live-layout">
         <aside className="sos-session-list">
           <h3>나의 진단·훈련</h3>

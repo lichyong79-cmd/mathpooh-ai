@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
 import { difficultyLabel } from "@/lib/difficulty-scale";
 import { meterLabel, meterStage } from "@/lib/difficulty-meter";
+import MATHPOOHLoader from "../../../components/math-pooh-loader";
 
 type StudentMeterRow={
   student_id:string;
@@ -109,7 +110,7 @@ export default function BarometerPage(){
         <select value={subject} onChange={(e:any)=>setSubject(e.target.value)}>{subjects.map((s:string)=><option key={s}>{s}</option>)}</select>
       </section>
 
-      {loading?<div className="empty">바로미터 데이터를 불러오는 중...</div>:tab==="students"?(
+      {loading?<MATHPOOHLoader title="바로미터 데이터를 가져오는 중입니다" detail="학생별·문항별 바로미터와 최신 분석 결과를 준비하고 있습니다." kind="report" audience="admin"/>:tab==="students"?(
         <section className="table">
           <div className="row head student">
             <span>학생</span><span>과목</span><span>대단원</span><span>소단원</span><span>현재 미터</span><span>단계</span><span>표본</span>

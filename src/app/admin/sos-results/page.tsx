@@ -1,6 +1,7 @@
 "use client";
 import { useEffect,useMemo,useState } from "react";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
+import MATHPOOHLoader from "../../../components/math-pooh-loader";
 
 function statusText(status:string){
   if(status==="ASSIGNED")return "미응시";
@@ -93,7 +94,7 @@ export default function SosResultsPage(){
 
       <section className="table">
         <div className="row head"><span>학생</span><span>구분</span><span>과목·소단원</span><span>상태</span><span>진도</span><span>결과</span><span>시작</span><span>경과</span><span>바로미터</span><span>상세</span></div>
-        {loading?<div className="empty">진행현황을 불러오는 중...</div>:filtered.length?filtered.map((r:any)=><div className={`row ${selectedId===String(r.id)?"selected":""}`} key={r.id}>
+        {loading?<MATHPOOHLoader title="SOS 결과를 가져오는 중입니다" detail="진단·훈련 결과와 학생별 상세 데이터를 준비하고 있습니다." kind="loading" audience="admin"/>:filtered.length?filtered.map((r:any)=><div className={`row ${selectedId===String(r.id)?"selected":""}`} key={r.id}>
           <span><b>{r.student?.name??"학생정보없음"}</b><small>{r.student?.school??"-"} · {r.student?.grade??"-"}</small></span>
           <span><b>{phaseText(r.phase)} {r.phase==="DIAGNOSIS"?`${r.roundNo}차`:""}</b><small>{r.total}문항</small></span>
           <span><b>{r.subject||"-"}</b><small>{r.majorUnit?`${r.majorUnit} · `:""}{r.subunit||"-"}</small></span>
