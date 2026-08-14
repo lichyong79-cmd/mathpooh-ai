@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { answerMatches, recordTrainingResult } from "@/lib/sos-training-result";
-import { analyzeDiagnosisAndCreateFirstTraining, generateSimilarTraining } from "@/lib/sos-ai-training";
+import { analyzeDiagnosisAndCreateFirstTraining, generateSimilarTraining, generateReviewHint } from "@/lib/sos-ai-training";
 import { clampMeter } from "@/lib/difficulty-meter";
 import { reviewBonus } from "@/lib/sos-training-policy";
 
@@ -60,7 +60,21 @@ export async function GET(){
 
   if(result.error)return NextResponse.json({message:result.error.message},{status:400});
 
-  const sessions=await Promise.all((result.data??[]).map(async(session:any)=>{
+  const rawSessions=result.data??[];
+  const sessionIds=rawSessions.map((s:any)=>String(s.id)).filter(Boolean);
+  const reviewLogMap=new Map<string,any[]>();
+  if(sessionIds.length){
+    const reviewLogs=await supabase.from("sos_training_activity_logs")
+      .select("session_id,item_id,event_type,detail,occurred_at")
+      .in("session_id",sessionIds)
+      .in("event_type",["REVIEW_ITEM_RETRY_WRONG","REVIEW_ITEM_CORRECTED","REVIEW_HINT_USED","REVIEW_ITEM_EXPLAINED"]);
+    for(const log of reviewLogs.data??[]){
+      if(!log.item_id)continue;
+      const key=String(log.item_id);const list=reviewLogMap.get(key)??[];list.push(log);reviewLogMap.set(key,list);
+    }
+  }
+
+  const sessions=await Promise.all(rawSessions.map(async(session:any)=>{
     const items=await Promise.all((session.sos_training_items??[])
       .sort((a:any,b:any)=>Number(a.item_order)-Number(b.item_order))
       .map(async(item:any)=>{
@@ -89,6 +103,11 @@ export async function GET(){
           reviewAnswer:item.review_answer??"",
           reviewIsCorrect:item.review_is_correct,
           reviewResponseSeconds:item.review_response_seconds,
+          reviewAttemptCount:(reviewLogMap.get(String(item.id))??[]).filter((l:any)=>["REVIEW_ITEM_RETRY_WRONG","REVIEW_ITEM_CORRECTED"].includes(String(l.event_type))).length,
+          reviewHintLevel:Math.max(0,...(reviewLogMap.get(String(item.id))??[]).filter((l:any)=>String(l.event_type)==="REVIEW_HINT_USED").map((l:any)=>Number(l.detail?.level??0))),
+          reviewLastHint:[...(reviewLogMap.get(String(item.id))??[])].reverse().find((l:any)=>String(l.event_type)==="REVIEW_HINT_USED")?.detail?.hint??"",
+          reviewExplained:(reviewLogMap.get(String(item.id))??[]).some((l:any)=>String(l.event_type)==="REVIEW_ITEM_EXPLAINED"),
+          reviewCompleted:item.review_is_correct===true||(reviewLogMap.get(String(item.id))??[]).some((l:any)=>String(l.event_type)==="REVIEW_ITEM_EXPLAINED"),
           generated:Boolean(generated),
           problem:{
             id:bank?.id??null,
@@ -230,29 +249,54 @@ export async function POST(request:Request){
   }
 
   if(action==="save_review_item"){
-    if(String(session.phase)!=="TRAINING"||String(session.status)!=="RETRAIN")
-      return NextResponse.json({message:"오답 진행 상태가 아닙니다."},{status:409});
+    if(!["DIAGNOSIS","TRAINING"].includes(String(session.phase))||String(session.status)!=="RETRAIN")
+      return NextResponse.json({message:"오답 교정 진행 상태가 아닙니다."},{status:409});
     const itemId=String(body.itemId??"");
     const answer=String(body.answer??"").trim();
     const responseSeconds=Math.max(1,Math.round(Number(body.responseSeconds??0)||1));
     if(!itemId||!answer)return NextResponse.json({message:"오답 문항과 답을 확인해 주세요."},{status:400});
     const itemResult=await supabase.from("sos_training_items")
-      .select("id,generated_problem,problem_bank_questions(answer)")
+      .select("id,generated_problem,problem_bank_questions(id,title,subject,unit,topic,difficulty,answer)")
       .eq("id",itemId).eq("session_id",sessionId).single();
     if(itemResult.error||!itemResult.data)return NextResponse.json({message:itemResult.error?.message||"오답 문항을 찾을 수 없습니다."},{status:404});
     const row:any=itemResult.data;
     const bank:any=Array.isArray(row.problem_bank_questions)?row.problem_bank_questions[0]:row.problem_bank_questions;
-    const correctAnswer=String(bank?.answer??row.generated_problem?.answer??"").trim();
+    const generated:any=row.generated_problem??null;
+    const correctAnswer=String(bank?.answer??generated?.answer??"").trim();
     const isCorrect=answerMatches(answer,correctAnswer);
+    const priorLogs=await supabase.from("sos_training_activity_logs")
+      .select("event_type")
+      .eq("session_id",sessionId).eq("item_id",itemId)
+      .in("event_type",["REVIEW_ITEM_RETRY_WRONG","REVIEW_ITEM_CORRECTED"]);
+    const attemptNo=(priorLogs.data??[]).length+1;
     const update=await supabase.from("sos_training_items").update({review_answer:answer,review_is_correct:isCorrect,review_response_seconds:responseSeconds,review_answered_at:new Date().toISOString()}).eq("id",itemId).eq("session_id",sessionId);
     if(update.error)return NextResponse.json({message:update.error.message},{status:400});
-    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:isCorrect?"REVIEW_ITEM_CORRECTED":"REVIEW_ITEM_RETRY_WRONG",detail:{question:Number(body.question??0),responseSeconds,isCorrect}});
-    return NextResponse.json({success:true,isCorrect,correctAnswer:isCorrect?"":correctAnswer});
+    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:isCorrect?"REVIEW_ITEM_CORRECTED":"REVIEW_ITEM_RETRY_WRONG",detail:{question:Number(body.question??0),responseSeconds,isCorrect,attemptNo}});
+    if(isCorrect)return NextResponse.json({success:true,isCorrect:true,attemptNo,completed:true});
+
+    if(attemptNo<=2){
+      const hint=await generateReviewHint({
+        problem:{title:bank?.title??generated?.topic,subject:bank?.subject??generated?.subject,unit:bank?.unit??generated?.subunit,topic:bank?.topic??generated?.topic,difficulty:bank?.difficulty??generated?.difficulty,generatedText:generated?.question},
+        studentAnswer:answer,attempt:attemptNo,weakness:session.weakness_snapshot??session.target_snapshot
+      });
+      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:"REVIEW_HINT_USED",detail:{question:Number(body.question??0),level:attemptNo,hint}});
+      return NextResponse.json({success:true,isCorrect:false,attemptNo,hintLevel:attemptNo,hint,completed:false});
+    }
+    return NextResponse.json({success:true,isCorrect:false,attemptNo,revealAnswer:true,correctAnswer,solution:String(generated?.solution??""),completed:false});
+  }
+
+  if(action==="complete_review_explanation"){
+    if(!["DIAGNOSIS","TRAINING"].includes(String(session.phase))||String(session.status)!=="RETRAIN")
+      return NextResponse.json({message:"오답 교정 진행 상태가 아닙니다."},{status:409});
+    const itemId=String(body.itemId??"");
+    if(!itemId)return NextResponse.json({message:"오답 문항이 없습니다."},{status:400});
+    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:"REVIEW_ITEM_EXPLAINED",detail:{question:Number(body.question??0)}});
+    return NextResponse.json({success:true,completed:true});
   }
 
   if(action==="submit_review"){
-    if(String(session.phase)!=="TRAINING"||String(session.status)!=="RETRAIN")
-      return NextResponse.json({message:"오답 진행 상태가 아닙니다."},{status:409});
+    if(!["DIAGNOSIS","TRAINING"].includes(String(session.phase))||String(session.status)!=="RETRAIN")
+      return NextResponse.json({message:"오답 교정 진행 상태가 아닙니다."},{status:409});
 
     const reviewAnswers=(body.answers??{}) as Record<string,unknown>;
     const reviewSeconds=(body.responseSeconds??{}) as Record<string,unknown>;
@@ -261,6 +305,23 @@ export async function POST(request:Request){
       .eq("session_id",sessionId).eq("is_correct",false).order("item_order");
     if(itemsResult.error)return NextResponse.json({message:itemsResult.error.message},{status:400});
     const wrongItems=itemsResult.data??[];
+
+    if(String(session.phase)==="DIAGNOSIS"){
+      const explanationLogs=await supabase.from("sos_training_activity_logs").select("item_id,event_type").eq("session_id",sessionId).eq("event_type","REVIEW_ITEM_EXPLAINED");
+      const explained=new Set((explanationLogs.data??[]).map((l:any)=>String(l.item_id)));
+      const reviewRows=await supabase.from("sos_training_items").select("id,review_answer,review_is_correct").eq("session_id",sessionId).eq("is_correct",false);
+      if(reviewRows.error)return NextResponse.json({message:reviewRows.error.message},{status:400});
+      const unfinished=(reviewRows.data??[]).filter((r:any)=>r.review_is_correct!==true&&!explained.has(String(r.id)));
+      if(unfinished.length)return NextResponse.json({message:`아직 교정하지 않은 진단 오답이 ${unfinished.length}문항 있습니다.`},{status:400});
+      const update=await supabase.from("sos_training_sessions").update({status:"COMPLETED",decision:"AI_WEAKNESS_ANALYSIS",updated_at:new Date().toISOString()}).eq("id",sessionId);
+      if(update.error)return NextResponse.json({message:update.error.message},{status:400});
+      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"REVIEW_COMPLETED",detail:{phase:"DIAGNOSIS",corrected:(reviewRows.data??[]).filter((r:any)=>r.review_is_correct===true).length,total:(reviewRows.data??[]).length}});
+      let ai:any=null;
+      try{ai=await analyzeDiagnosisAndCreateFirstTraining({supabase,studentId:String(student.id),diagnosisSessionId:sessionId});}
+      catch(error){ai={error:error instanceof Error?error.message:"AI 취약점 분석 실패"};}
+      return NextResponse.json({success:true,phase:"DIAGNOSIS",status:"COMPLETED",ai,nextStep:ai?.created?"FIRST_TRAINING_ASSIGNED":ai?.nextStep??"AI_REVIEW_REQUIRED"});
+    }
+
     if(!wrongItems.length){
       const meter=await currentTargetMeter(supabase,String(student.id),session);
       const goal=clampMeter(session.goal_meter,Number(session.baseline_meter)||meter);
@@ -383,13 +444,11 @@ export async function POST(request:Request){
     const phase=String(session.phase);
 
     if(phase==="DIAGNOSIS"){
-      const update=await supabase.from("sos_training_sessions").update({status:"COMPLETED",correct_count:correct,decision:"AI_WEAKNESS_ANALYSIS",updated_at:new Date().toISOString()}).eq("id",sessionId);
+      const wrong=total-correct;
+      const update=await supabase.from("sos_training_sessions").update({status:"RETRAIN",correct_count:correct,decision:wrong>0?"DIAGNOSIS_REVIEW_REQUIRED":"DIAGNOSIS_RESULT_REVIEW_READY",updated_at:new Date().toISOString()}).eq("id",sessionId);
       if(update.error)return NextResponse.json({message:update.error.message},{status:400});
-      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate}});
-      let ai:any=null;
-      try{ai=await analyzeDiagnosisAndCreateFirstTraining({supabase,studentId:String(student.id),diagnosisSessionId:sessionId});}
-      catch(error){ai={error:error instanceof Error?error.message:"AI 취약점 분석 실패"};}
-      return NextResponse.json({success:true,phase,status:"COMPLETED",correct,total,rate,decision:"AI_WEAKNESS_ANALYSIS",results,ai,nextStep:ai?.created?"FIRST_TRAINING_ASSIGNED":ai?.nextStep??"AI_REVIEW_REQUIRED"});
+      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,reviewRequired:wrong>0,reportReady:true}});
+      return NextResponse.json({success:true,phase,status:"RETRAIN",correct,total,rate,decision:wrong>0?"DIAGNOSIS_REVIEW_REQUIRED":"DIAGNOSIS_RESULT_REVIEW_READY",results,wrongCount:wrong,nextStep:"REPORT"});
     }
 
     const meter=await currentTargetMeter(supabase,String(student.id),session);

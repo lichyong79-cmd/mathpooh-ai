@@ -447,3 +447,30 @@
 .sos-training-report{padding:4px 0 24px}.sos-report-head{padding:22px;border:1px solid #dce8df;border-radius:18px;background:#f7fbf8;text-align:center}.sos-report-head small{font-weight:1000;color:#26764a}.sos-report-head h3{margin:5px 0 1px;font-size:30px}.sos-report-head>strong{font-size:15px;color:#3f6c50}.sos-report-head p{margin:10px 0 0;color:#66736b;font-size:13px}
 .sos-report-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin:16px 0}.sos-report-item{min-height:112px;border:1px solid #dce4de;border-radius:14px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}.sos-report-item .num{font-size:12px;font-weight:900;color:#68736c}.sos-report-item>b{font-size:27px;line-height:1}.sos-report-item small{color:#778179}.sos-report-item em{font-style:normal;font-size:11px;font-weight:1000}.sos-report-item.correct{background:#f3fbf5;border-color:#cce4d2;color:#237247}.sos-report-item.wrong{background:#fff6f5;border-color:#efc9c4;color:#b84538;cursor:pointer}.sos-report-item.wrong:hover{transform:translateY(-1px);box-shadow:0 5px 14px rgba(130,50,40,.08)}.sos-report-item.reviewed{background:#f7f8f7;border-color:#cfd7d1;color:#567060}.sos-report-review-state{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:15px 17px;border:1px solid #dce8df;border-radius:14px;background:#fff}.sos-report-review-state>b{color:#245f40}.sos-report-review-state span{flex:1;color:#6c766f;font-size:12px;min-width:220px}.sos-report-review-state button{border:0;border-radius:10px;padding:11px 16px;background:#23683f;color:#fff;font-weight:1000}.sos-report-review-state button:disabled{opacity:.4;cursor:not-allowed}
 @media(max-width:760px){.sos-report-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+
+/* SOS226 · 단계별 시각 언어 */
+.sos-session-main{--stage:#267a4c;--stage-soft:#edf8f1;--stage-line:#b9dfc7}
+.sos-session-main.theme-diagnosis{--stage:#4968b2;--stage-soft:#eef3ff;--stage-line:#cbd8f5}
+.sos-session-main.theme-training1{--stage:#24784a;--stage-soft:#edf8f1;--stage-line:#c4e3cf}
+.sos-session-main.theme-training2{--stage:#9a5b21;--stage-soft:#fff4e8;--stage-line:#f0cfaa}
+.sos-session-main .sos-session-head{border-top:5px solid var(--stage);background:linear-gradient(180deg,var(--stage-soft),#fff)}
+.sos-session-main .sos-session-head>div>small,.sos-session-main .sos-training-focus small{color:var(--stage)!important}
+.sos-session-main .sos-session-head>span,.sos-session-main .flow-node.now i{background:var(--stage)!important;color:#fff!important}
+.sos-session-main .flow-node.now{border-color:var(--stage)!important;background:var(--stage-soft)!important;color:var(--stage)!important}
+.sos-session-main .sos-training-focus,.sos-session-main .sos-diagnosis-progress,.sos-session-main .sos-start-box{border-color:var(--stage-line)!important;background:var(--stage-soft)!important}
+.sos-session-main .sos-diagnosis-question{border-top:4px solid var(--stage)!important}
+.sos-session-list button{border-left:5px solid transparent}
+.sos-session-list button.selected{border-left-color:#24784a}
+.sos-session-list button:has(b:first-child){transition:.15s ease}
+.sos-review-hint{margin:0 0 13px;padding:14px 16px;border-radius:13px;background:#fff8df;border:1px solid #f1d98f;color:#59450b}
+.sos-review-hint small,.sos-review-hint b,.sos-review-hint span{display:block}.sos-review-hint small{font-weight:900;color:#916c00;margin-bottom:5px}.sos-review-hint b{font-size:16px;line-height:1.55}.sos-review-hint span{font-size:12px;margin-top:6px;color:#7b682d}
+.sos-review-hint.level-2{background:#fff0dd;border-color:#edc18d;color:#693d10}
+.sos-review-solution{margin:0 0 13px;padding:15px 17px;border-radius:13px;background:#fff0ee;border:1px solid #edbbb5}.sos-review-solution small{font-weight:900;color:#b44537}.sos-review-solution h4{margin:4px 0 8px}.sos-review-solution>b{display:block;color:#9e3529;font-size:17px}.sos-review-solution p{white-space:pre-wrap;line-height:1.65;margin:9px 0 0}
+.sos-training-report.diagnosis-report .sos-report-head{background:#eef3ff;border-color:#cbd8f5}.sos-training-report.diagnosis-report .sos-report-head small{color:#4968b2}
+.sos-training-review.diagnosis-review .sos-training-focus{background:#eef3ff!important;border-color:#cbd8f5!important}
+@media(max-width:700px){.sos-session-main .sos-session-head{border-top-width:4px}}
+
+.student-review-history{margin-top:8px;padding:8px 10px;border-radius:9px;background:#f6f7fb;border:1px solid #e3e7f3}.student-review-history b,.student-review-history span{display:block}.student-review-history b{font-size:12px;color:#405b9a}.student-review-history span{font-size:11px;color:#77808b;margin-top:2px}
+
+.sos-session-list button.stage-diagnosis{--card-stage:#4968b2}.sos-session-list button.stage-training1{--card-stage:#24784a}.sos-session-list button.stage-training2{--card-stage:#9a5b21}.sos-session-list button.stage-diagnosis,.sos-session-list button.stage-training1,.sos-session-list button.stage-training2{border-left:5px solid color-mix(in srgb,var(--card-stage) 35%,transparent)}.sos-session-list button.selected{border-left-color:var(--card-stage,#24784a)!important}.sos-session-list button.selected em{color:var(--card-stage,#24784a)!important}

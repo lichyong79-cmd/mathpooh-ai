@@ -400,17 +400,17 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
           <h3>나의 진단·훈련</h3>
           {sessions.map((session:any)=><button
             key={session.id}
-            className={String(session.id)===String(active?.id)?"selected":""}
+            className={`${String(session.id)===String(active?.id)?"selected":""} ${session.phase==="DIAGNOSIS"?"stage-diagnosis":Number(session.round_no)===2?"stage-training2":"stage-training1"}`}
             onClick={()=>setActiveId(String(session.id))}
           >
-            <div><b>{session.phase==="DIAGNOSIS"?`진단 ${session.round_no}차`:"맞춤 훈련"}</b><span>{session.target_snapshot?.subunit??"소단원"}</span></div>
+            <div><b>{session.phase==="DIAGNOSIS"?`진단 ${session.round_no}차`:session.cycle_kind==="HOMEWORK"?"완성 확인 숙제":Number(session.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</b><span>{session.target_snapshot?.subunit??"소단원"}</span></div>
             <em>{session.status==="ASSIGNED"?"시작 전":session.status==="IN_PROGRESS"?"진행 중":session.status==="PASSED"?"통과":session.status==="RETRAIN"?"오답 필수":"완료"}</em>
             <small>{session.correct_count===null||session.correct_count===undefined?`${session.total_count}문항`:`${session.correct_count}/${session.total_count} 정답`}</small>
           </button>)}
           {!sessions.length?<p>아직 배정된 진단·훈련이 없습니다.</p>:null}
         </aside>
 
-        <section className="sos-session-main">
+        <section className={`sos-session-main ${active?.phase==="DIAGNOSIS"?"theme-diagnosis":active?.round_no===2?"theme-training2":"theme-training1"}`}>
           {!active?<div className="student-section-empty"><b>진행할 진단·훈련을 선택하세요.</b><span>관리자가 SOS 진단을 생성하면 이곳에 표시됩니다.</span></div>:<>
             <SosFlowTree session={active}/>
             <header className="sos-session-head">
@@ -432,8 +432,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             </div>:null}
 
             {active.status==="IN_PROGRESS"&&active.phase==="DIAGNOSIS"?<SosDiagnosisRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              const w=json?.ai?.weakness;
-              setNotice(json?.ai?.created?`진단 완료 · AI 취약점: ${w?.weaknessTitle||"취약점 확인"} · 1차 맞춤훈련 10문항이 준비되었습니다.`:json?.ai?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED"?`진단 완료 · 뚜렷한 취약점이 없어 가장 약한 바로미터 영역으로 2차 진단 3문항이 자동 배정되었습니다.`:json?.ai?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS"?`2차 진단까지 완료 · 현재 뚜렷한 취약점이 확인되지 않았습니다.`:json?.ai?.error?`진단 완료 · AI 분석 확인 필요 (${json.ai.error})`:`진단 완료 · ${json.correct}/${json.total} 정답`);
+              setNotice(`진단 응시 완료 · ${json.correct}/${json.total} 정답 · 성적표에서 오답을 교정한 뒤 AI 취약점 분석으로 넘어갑니다.`);
               await load();await onRefresh();
             }}/>:null}
 
@@ -441,6 +440,12 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
               if(json.status==="RETRAIN")setNotice(`1차 훈련 완료 · ${json.correct}/${json.total} 정답 · 오답 ${json.wrongCount}문항을 반드시 다시 풀어야 합니다.`);
               else if(json.homework)setNotice(`완성 확인 숙제 완료 · ${json.correct}/${json.total} 정답`);
               else setNotice(`훈련 완료 · 바로미터 ${Number(json.meter??0).toFixed(2)} / 목표 ${Number(json.goal??0).toFixed(2)}`);
+              await load();await onRefresh();
+            }}/>:null}
+
+            {active.status==="RETRAIN"&&active.phase==="DIAGNOSIS"?<SosTrainingReview session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
+              const w=json?.ai?.weakness;
+              setNotice(json?.ai?.created?`진단 교정 완료 · AI가 '${w?.weaknessTitle||"취약점"}'을 확인했습니다. 1차 맞춤훈련 10문항이 준비되었습니다.`:json?.ai?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED"?"1차 진단 교정 완료 · 취약점 확정을 위해 2차 진단 3문항이 준비되었습니다.":json?.ai?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS"?"2차 진단까지 완료 · 현재 뚜렷한 취약점이 확인되지 않았습니다.":json?.ai?.error?`진단 교정 완료 · AI 분석 확인 필요 (${json.ai.error})`:"진단 교정과 AI 분석이 완료되었습니다.");
               await load();await onRefresh();
             }}/>:null}
 
@@ -452,11 +457,12 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             {["COMPLETED","PASSED"].includes(String(active.status))?<div className="sos-complete-box">
               <b>{active.status==="PASSED"?"훈련 통과":active.phase==="DIAGNOSIS"?"진단 완료":"학습 완료"}</b>
               <strong>{active.correct_count??0}/{active.total_count}</strong>
-              <p>{active.phase==="DIAGNOSIS"?"문항별 결과를 확인하세요. 다음 단계에서 AI가 풀이 데이터와 함께 취약점을 분석합니다.":active.status==="PASSED"?"이 소단원 훈련을 통과했습니다.":"추가 훈련이 필요합니다."}</p>
+              <p>{active.phase==="DIAGNOSIS"?"진단·오답 교정이 완료되었습니다. 이 최초 정오답과 풀이시간·풀이사진은 그대로 보존되며 AI 취약점 분석의 근거가 됩니다.":active.status==="PASSED"?"이 소단원 훈련을 통과했습니다.":"이번 훈련 결과가 기록되었습니다."}</p>
               {active.phase==="DIAGNOSIS"?<div className="sos-diagnosis-result-list">{activeItems.map((item:any,index:number)=><article key={item.id} className={item.isCorrect===true?"correct":"wrong"}>
                 <div className="result-no"><b>{index+1}번</b><em>{item.isCorrect===true?"정답":"오답"}</em></div>
                 <div className="result-answer"><span>내 답 <strong>{item.studentAnswer||"-"}</strong></span><span>정답 <strong>{item.problem?.correctAnswer||"-"}</strong></span></div>
                 <div className="result-time"><span>풀이시간 <strong>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</strong></span><span>사진제출 <strong>{Math.floor(Number(item.photoSubmitSeconds??0)/60)}:{String(Number(item.photoSubmitSeconds??0)%60).padStart(2,"0")}</strong></span></div>
+                {item.isCorrect===false?<div className="student-review-history"><b>{item.reviewCompleted?(item.reviewIsCorrect===true?"✓ 스스로 오답 교정":"✓ 정답·풀이 확인 완료"):"오답 교정 미완료"}</b><span>재도전 {item.reviewAttemptCount??0}회 · 힌트 {item.reviewHintLevel??0}단계</span></div>:null}
               </article>)}</div>:<div className="sos-report-grid">{activeItems.map((item:any)=><div key={item.id} className={`sos-report-item ${item.isCorrect===true?"correct":"wrong"} ${item.reviewAnswer?"reviewed":""}`}><span className="num">{item.order}번</span><b>{item.isCorrect===true?"O":"X"}</b><small>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</small><em>{item.isCorrect===true?"정답":item.reviewAnswer?"오답완료 ✓":"오답"}</em></div>)}</div>}
             </div>:null}
           </>}

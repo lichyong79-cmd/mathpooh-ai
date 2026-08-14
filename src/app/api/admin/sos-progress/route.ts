@@ -77,6 +77,9 @@ export async function GET(){
           reviewIsCorrect:item.review_is_correct,
           reviewResponseSeconds:item.review_response_seconds===null||item.review_response_seconds===undefined?null:Number(item.review_response_seconds),
           reviewAnsweredAt:item.review_answered_at??null,
+          reviewAttemptCount:(logMap.get(String(session.id))??[]).filter((l:any)=>String(l.item_id)===String(item.id)&&["REVIEW_ITEM_RETRY_WRONG","REVIEW_ITEM_CORRECTED"].includes(String(l.event_type))).length,
+          reviewHints:(logMap.get(String(session.id))??[]).filter((l:any)=>String(l.item_id)===String(item.id)&&String(l.event_type)==="REVIEW_HINT_USED").map((l:any)=>({level:Number(l.detail?.level??0),hint:String(l.detail?.hint??""),occurredAt:l.occurred_at})),
+          reviewExplained:(logMap.get(String(session.id))??[]).some((l:any)=>String(l.item_id)===String(item.id)&&String(l.event_type)==="REVIEW_ITEM_EXPLAINED"),
           solutionPhotoUrl:await signedUrl(ctx.supabase,"sos-solution-photos",item.solution_photo_path),
           generated:Boolean(generated),
           problem:{

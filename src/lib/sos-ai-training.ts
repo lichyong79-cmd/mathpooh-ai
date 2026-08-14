@@ -31,6 +31,26 @@ async function openAiJson(prompt:string,schema:any,content?:any[]){
   try{return JSON.parse(text);}catch{throw new Error("AI 분석 결과 형식을 읽지 못했습니다.");}
 }
 
+
+export async function generateReviewHint(args:{problem:any;studentAnswer:string;attempt:number;weakness?:any}){
+  const {problem,studentAnswer,attempt,weakness}=args;
+  const level=Math.max(1,Math.min(2,Number(attempt)||1));
+  const fallback=level===1
+    ? `${problem?.topic||problem?.title||problem?.unit||"핵심 개념"}에서 어떤 조건을 먼저 식으로 옮겨야 하는지 찾아보세요.`
+    : `${problem?.topic||problem?.title||problem?.unit||"핵심 개념"}의 정의·공식을 먼저 적고, 문제의 조건을 하나씩 대입해 보세요.`;
+  try{
+    const data=await openAiJson(`당신은 한국 고등수학 SOS 오답 코치입니다. 학생에게 정답이나 최종 수치를 절대 말하지 말고, 스스로 다시 풀 수 있는 짧은 힌트 한 개만 주세요.
+힌트 단계: ${level}/2 (${level===1?"핵심 개념을 떠올리게 하는 가벼운 힌트":"첫 힌트보다 구체적인 풀이 방향"})
+문항 정보: ${JSON.stringify({title:problem?.title,subject:problem?.subject,unit:problem?.unit,topic:problem?.topic,question:problem?.generatedText||problem?.generatedQuestion||"이미지 문항",difficulty:problem?.difficulty})}
+학생의 직전 오답: ${studentAnswer}
+진단 취약점: ${JSON.stringify(weakness||{})}
+반드시 한국어 1~2문장으로만 답하고 정답·선택지 번호·최종 계산값을 노출하지 마세요.`,{
+      type:"object",additionalProperties:false,properties:{hint:{type:"string"}},required:["hint"]
+    });
+    return String(data?.hint||fallback).trim();
+  }catch{return fallback;}
+}
+
 function compactDna(problem:any){
   const dna=problem?.problem_dna??{};
   const basic=dna?.basic??{};
