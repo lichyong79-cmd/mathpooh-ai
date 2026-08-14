@@ -145,6 +145,15 @@ export async function POST(request:Request){
 
   const session:any=sessionResult.data;
 
+  if(action==="recover_diagnosis"){
+    if(String(session.phase)!=="DIAGNOSIS"||!["COMPLETED","PASSED"].includes(String(session.status)))
+      return NextResponse.json({message:"완료된 진단만 이어서 준비할 수 있습니다."},{status:409});
+    try{
+      const ai=await analyzeDiagnosisAndCreateFirstTraining({supabase,studentId:String(student.id),diagnosisSessionId:sessionId});
+      return NextResponse.json({success:true,ai});
+    }catch(error){return NextResponse.json({message:error instanceof Error?error.message:"기존 진단 이어가기 실패"},{status:500});}
+  }
+
   if(action==="start"){
     if(["COMPLETED","PASSED"].includes(String(session.status)))
       return NextResponse.json({message:"이미 완료한 학습입니다."},{status:409});

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import "./student.css";
 import "./exam-updates.css";
@@ -321,12 +321,24 @@ function StudentResultModal({
 }
 
 
+function SosFlowTree({session}:{session:any}){
+  const phase=String(session?.phase??""); const status=String(session?.status??""); const round=Number(session?.round_no??1); const kind=String(session?.cycle_kind??""); const decision=String(session?.decision??"");
+  const diagnosis=phase==="DIAGNOSIS", training=phase==="TRAINING", review=status==="RETRAIN", done=["COMPLETED","PASSED"].includes(status);
+  const current=diagnosis?`진단 ${round}차`:kind==="HOMEWORK"?"유사문항 숙제 3제":review?`${round}차 훈련 오답`:`${round}차 훈련`;
+  const unknownDiagnosis=diagnosis&&!done, unknownTraining=training&&!done&&!review; const passedFirst=decision==="FIRST_TRAINING_PASSED"||kind==="HOMEWORK"; const secondPath=round===2||decision==="SECOND_TRAINING_REQUIRED";
+  return <section className="sos-flow-map"><div className="sos-flow-title"><small>SOS 학습지도</small><b>현재 위치 · {current}</b><span>결과에 따라 다음 길이 열립니다.</span></div><div className="sos-flow-line">
+    <div className="flow-node done"><i>✓</i><span>모의고사</span></div><em>→</em><div className="flow-node done"><i>✓</i><span>취약지점 후보</span></div><em>→</em><div className={`flow-node ${diagnosis&&round===1&&!done?"now":"done"}`}><i>{diagnosis&&round===1&&!done?"●":"✓"}</i><span>1차 진단</span></div><em>→</em>
+    {unknownDiagnosis?<div className="flow-node unknown"><i>?</i><span>다음 경로</span></div>:diagnosis&&round===2?<><div className="flow-node done"><i>?</i><span>취약점 재확인</span></div><em>→</em><div className="flow-node now"><i>●</i><span>2차 진단</span></div><em>→</em><div className="flow-node unknown"><i>?</i><span>다음 경로</span></div></>:<><div className="flow-node done"><i>✓</i><span>취약점 확정</span></div><em>→</em><div className={`flow-node ${training&&round===1&&!review&&!done?"now":round>1||review||done?"done":""}`}><i>{training&&round===1&&!review&&!done?"●":"✓"}</i><span>1차 훈련 10제</span></div><em>→</em><div className={`flow-node ${training&&round===1&&review?"now":round>1||done?"done":unknownTraining?"pending":""}`}><i>{training&&round===1&&review?"●":round>1||done?"✓":"?"}</i><span>오답</span></div><em>→</em>{unknownTraining||review?<div className="flow-node unknown"><i>?</i><span>목표 판정</span></div>:passedFirst?<div className={`flow-node ${kind==="HOMEWORK"&&!done?"now":kind==="HOMEWORK"&&done?"done":"pending"}`}><i>{kind==="HOMEWORK"&&!done?"●":kind==="HOMEWORK"&&done?"✓":"→"}</i><span>유사문항 숙제 3제</span></div>:secondPath?<><div className={`flow-node ${training&&round===2&&!review&&!done?"now":"done"}`}><i>{training&&round===2&&!review&&!done?"●":"✓"}</i><span>2차 유사훈련 10제</span></div><em>→</em><div className={`flow-node ${training&&round===2&&review?"now":done?"done":"pending"}`}><i>{training&&round===2&&review?"●":done?"✓":"?"}</i><span>오답 · 종료</span></div></>:<div className="flow-node unknown"><i>?</i><span>다음 경로</span></div>}</>}
+  </div>{(unknownDiagnosis||unknownTraining||review)?<p className="sos-flow-help"><b>?</b> 현재 단계 결과가 나온 뒤 다음 과정이 결정됩니다.</p>:null}</section>;
+}
+
 function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | void }) {
   const [data,setData]=useState<any>({sessions:[],subunitMeters:[]});
   const [loading,setLoading]=useState(true);
   const [activeId,setActiveId]=useState("");
   const [busy,setBusy]=useState("");
   const [notice,setNotice]=useState("");
+  const recoveryTried=useRef<Set<string>>(new Set());
 
   const load=useCallback(async()=>{
     setLoading(true);
@@ -335,7 +347,16 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
       const json=await response.json();
       if(!response.ok||json?.success!==true)throw new Error(json?.message||"진단·훈련을 불러오지 못했습니다.");
       setData(json);
-      const open=(json.sessions??[]).find((x:any)=>["IN_PROGRESS","ASSIGNED","RETRAIN"].includes(String(x.status)));
+      const allSessions=Array.isArray(json.sessions)?json.sessions:[];
+      const trainingParents=new Set(allSessions.filter((x:any)=>x.phase==="TRAINING"&&x.parent_session_id).map((x:any)=>String(x.parent_session_id)));
+      const legacyDiagnosis=allSessions.find((x:any)=>x.phase==="DIAGNOSIS"&&["COMPLETED","PASSED"].includes(String(x.status))&&!trainingParents.has(String(x.id))&&String(x.decision??"")!=="NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS"&&!recoveryTried.current.has(String(x.id)));
+      if(legacyDiagnosis){
+        recoveryTried.current.add(String(legacyDiagnosis.id)); setNotice("기존 진단 결과를 이어서 분석하고 1차 훈련을 준비하고 있습니다...");
+        const recover=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"recover_diagnosis",sessionId:legacyDiagnosis.id})}); const recovered=await recover.json(); if(!recover.ok)throw new Error(recovered?.message||"기존 진단 이어가기 실패");
+        const refreshed=await fetch("/api/student/sos-training",{cache:"no-store"}); const refreshedJson=await refreshed.json(); if(!refreshed.ok||refreshedJson?.success!==true)throw new Error(refreshedJson?.message||"훈련 준비 결과를 불러오지 못했습니다."); setData(refreshedJson);
+        const ready=(refreshedJson.sessions??[]).find((x:any)=>x.phase==="TRAINING"&&String(x.parent_session_id)===String(legacyDiagnosis.id)&&x.status==="ASSIGNED"); const second=(refreshedJson.sessions??[]).find((x:any)=>x.phase==="DIAGNOSIS"&&String(x.parent_session_id)===String(legacyDiagnosis.id)&&x.status==="ASSIGNED"); setActiveId(String(ready?.id??second?.id??legacyDiagnosis.id)); setNotice(ready?"기존 진단 분석 완료 · 1차 훈련 10문항이 준비되었습니다. 시작 버튼을 눌러 주세요.":second?"기존 진단 분석 완료 · 2차 진단이 준비되었습니다.":"기존 진단 분석이 완료되었습니다."); return;
+      }
+      const open=allSessions.find((x:any)=>["IN_PROGRESS","ASSIGNED","RETRAIN"].includes(String(x.status)));
       setActiveId((current:string)=>current||String(open?.id??""));
     }catch(error){setNotice(error instanceof Error?error.message:"진단·훈련 조회 실패");}
     finally{setLoading(false);}
@@ -391,6 +412,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
 
         <section className="sos-session-main">
           {!active?<div className="student-section-empty"><b>진행할 진단·훈련을 선택하세요.</b><span>관리자가 SOS 진단을 생성하면 이곳에 표시됩니다.</span></div>:<>
+            <SosFlowTree session={active}/>
             <header className="sos-session-head">
               <div><small>{active.phase==="DIAGNOSIS"?"SOS DIAGNOSIS":"SOS TRAINING"}</small><h3>{active.target_snapshot?.subunit??"소단원"} · {active.phase==="DIAGNOSIS"?`진단 ${active.round_no}차`:active.cycle_kind==="HOMEWORK"?"유사문항 숙제":active.round_no===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</h3><p>{active.target_snapshot?.subject??""} {active.target_snapshot?.majorUnit?`· ${active.target_snapshot.majorUnit}`:""} · 시작 미터 {Number(active.target_snapshot?.studentDifficultyMeter??0).toFixed(2)}</p></div>
               <span>{active.total_count}문항</span>
@@ -406,7 +428,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
                 <p>답안 확정부터 풀이사진 제출까지 걸린 시간도 별도로 기록됩니다.</p>
                 <p className="warn">응시 중 다른 웹페이지·앱으로 이동하면 화면 이탈 기록이 저장되고 즉시 경고가 표시됩니다.</p>
               </div>:<div className="sos-guide-list"><p><strong>AI 취약점:</strong> {active.weakness_snapshot?.weaknessTitle||active.target_snapshot?.weaknessTitle||"맞춤 보완 영역"}</p><p>{active.weakness_snapshot?.weaknessDetail||active.target_snapshot?.weaknessDetail||"취약점을 집중 또는 포함하는 문항으로 훈련합니다."}</p><p>문항별 <strong>정오답과 풀이시간</strong>이 바로미터에 반영됩니다.</p><p>틀린 문항은 훈련 종료 전 <strong>오답을 반드시 다시 풉니다.</strong></p>{Number(active.baseline_meter)>0&&Number(active.goal_meter)>0?<p>이번 목표: <strong>{Number(active.baseline_meter).toFixed(2)} → {Number(active.goal_meter).toFixed(2)}</strong></p>:null}</div>}
-              <button disabled={!!busy} onClick={()=>void start(active)}>{busy==="start"?"준비 중...":active.phase==="DIAGNOSIS"?"안내 확인 · 진단 시작":active.cycle_kind==="HOMEWORK"?"유사문항 숙제 시작":"훈련 시작"}</button>
+              <button disabled={!!busy} onClick={()=>void start(active)}>{busy==="start"?"준비 중...":active.phase==="DIAGNOSIS"?"안내 확인 · 진단 시작":active.cycle_kind==="HOMEWORK"?"유사문항 숙제 시작":active.round_no===2?"2차 훈련 시작":"1차 훈련 시작"}</button>
             </div>:null}
 
             {active.status==="IN_PROGRESS"&&active.phase==="DIAGNOSIS"?<SosDiagnosisRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{

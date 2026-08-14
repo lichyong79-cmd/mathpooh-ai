@@ -141,7 +141,7 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   if(!weakness.weaknessDetected){
     if(Number(diagnosis.round_no??1)<2){
       const second=await createSecondDiagnosisFromWeakest({supabase,studentId,parentDiagnosis:diagnosis});
-      return {...second, created:false, weakness};
+      return {...second,created:false,weakness};
     }
     await supabase.from("sos_training_sessions").update({decision:"NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);
     return {created:false,weakness,nextStep:"DIAGNOSIS_COMPLETE_NO_WEAKNESS"};
