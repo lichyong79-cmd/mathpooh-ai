@@ -457,7 +457,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
                 <div className="result-no"><b>{index+1}번</b><em>{item.isCorrect===true?"정답":"오답"}</em></div>
                 <div className="result-answer"><span>내 답 <strong>{item.studentAnswer||"-"}</strong></span><span>정답 <strong>{item.problem?.correctAnswer||"-"}</strong></span></div>
                 <div className="result-time"><span>풀이시간 <strong>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</strong></span><span>사진제출 <strong>{Math.floor(Number(item.photoSubmitSeconds??0)/60)}:{String(Number(item.photoSubmitSeconds??0)%60).padStart(2,"0")}</strong></span></div>
-              </article>)}</div>:null}
+              </article>)}</div>:<div className="sos-report-grid">{activeItems.map((item:any)=><div key={item.id} className={`sos-report-item ${item.isCorrect===true?"correct":"wrong"} ${item.reviewAnswer?"reviewed":""}`}><span className="num">{item.order}번</span><b>{item.isCorrect===true?"O":"X"}</b><small>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</small><em>{item.isCorrect===true?"정답":item.reviewAnswer?"오답완료 ✓":"오답"}</em></div>)}</div>}
             </div>:null}
           </>}
         </section>

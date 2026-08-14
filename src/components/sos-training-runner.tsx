@@ -12,8 +12,11 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
   const items:any[]=Array.isArray(session?.items)?session.items:[];
   const initialAnswers=useMemo(()=>Object.fromEntries(items.map((x:any)=>[String(x.id),String(x.studentAnswer??"")])),[items]);
   const initialSeconds=useMemo(()=>Object.fromEntries(items.map((x:any)=>[String(x.id),Number(x.responseSeconds??0)||0])),[items]);
-  const firstOpen=useMemo(()=>Math.max(0,items.findIndex((x:any)=>!String(x.studentAnswer??"").trim())),[items]);
-  const [index,setIndex]=useState(firstOpen>=0?firstOpen:0);
+  const firstOpen=useMemo(()=>{
+    const i=items.findIndex((x:any)=>!String(x.studentAnswer??"").trim());
+    return i>=0?i:Math.max(0,items.length-1);
+  },[items]);
+  const [index,setIndex]=useState(firstOpen);
   const [answer,setAnswer]=useState("");
   const [answers,setAnswers]=useState<Record<string,string>>(initialAnswers);
   const [seconds,setSeconds]=useState<Record<string,number>>(initialSeconds);
@@ -26,6 +29,17 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
   const elapsed=frozenElapsed??Math.max(1,Math.floor((now-started)/1000));
   const answeredCount=items.filter((x:any)=>String(answers[String(x.id)]??x.studentAnswer??"").trim()).length;
   const progress=items.length?Math.round((answeredCount/items.length)*100):0;
+
+  // 답이 저장된 연속 구간까지만 다음 문항 접근을 허용한다.
+  const maxUnlocked=useMemo(()=>{
+    let unlocked=0;
+    for(let i=0;i<items.length;i++){
+      const id=String(items[i]?.id??"");
+      if(String(answers[id]??items[i]?.studentAnswer??"").trim())unlocked=Math.min(items.length-1,i+1);
+      else break;
+    }
+    return unlocked;
+  },[answers,items]);
 
   useEffect(()=>{const id=window.setInterval(()=>{if(!busy)setNow(Date.now());},1000);return()=>window.clearInterval(id);},[busy]);
   useEffect(()=>{
@@ -47,7 +61,7 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
     if(!item)return false;
     const value=answer.trim();
     if(!value){
-      if(requireAnswer)onNotice("답을 입력해 주세요.");
+      if(requireAnswer)onNotice("답을 입력해야 다음 문항으로 넘어갈 수 있습니다.");
       return !requireAnswer;
     }
     const sec=Math.max(1,elapsed);
@@ -63,8 +77,16 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
 
   async function moveTo(target:number){
     if(busy||target<0||target>=items.length||target===index)return;
-    // 입력해 둔 답이 있으면 이동 전에 저장. 빈칸이어도 이전/다른 문항 이동은 허용한다.
-    if(answer.trim()){
+    // 미래 문항 건너뛰기 금지. 답을 저장한 문항과 바로 다음 문항까지만 접근 가능.
+    if(target>maxUnlocked){
+      onNotice(`${maxUnlocked+1}번 문항의 답을 먼저 입력해 주세요.`);
+      return;
+    }
+    // 앞으로 갈 때는 현재 답이 필수. 뒤로 갈 때는 자유롭게 확인/수정 가능.
+    if(target>index){
+      const ok=await persistCurrent(true);
+      if(!ok)return;
+    }else if(answer.trim()){
       const ok=await persistCurrent(false);
       if(!ok)return;
     }
@@ -82,38 +104,29 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
   async function submitAll(){
     if(!item||busy)return;
     const currentValue=answer.trim();
-    const mergedAnswers={...answers,...(currentValue?{[itemId]:currentValue}:{})};
+    if(!currentValue){onNotice("답을 입력해야 훈련을 제출할 수 있습니다.");return;}
+    const finalElapsed=Math.max(1,elapsed);
+    const mergedAnswers={...answers,[itemId]:currentValue};
+    const finalSeconds={...seconds,[itemId]:finalElapsed};
     const missingIndexes=items.map((x:any,i:number)=>String(mergedAnswers[String(x.id)]??x.studentAnswer??"").trim()?null:i).filter((x:any)=>x!==null) as number[];
     if(missingIndexes.length){
       const first=missingIndexes[0];
-      onNotice(`미응답 ${missingIndexes.length}문항이 있습니다. ${first+1}번 문항으로 이동했습니다.`);
+      onNotice(`${first+1}번 문항의 답을 먼저 입력해 주세요.`);
       setIndex(first);
       return;
     }
-    if(!window.confirm(`${label} ${items.length}문항을 제출할까요?`))return;
+    if(!window.confirm(`${label} ${items.length}문항을 제출하고 성적표를 확인할까요?`))return;
 
-    // 최종 제출을 누르는 순간 마지막 문항 풀이시간을 고정한다.
-    const finalElapsed=Math.max(1,elapsed);
     setFrozenElapsed(finalElapsed);
     setBusy(true);
     try{
-      let finalAnswers={...mergedAnswers};
-      let finalSeconds={...seconds,[itemId]:finalElapsed};
-      if(currentValue){
-        const saved=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_training_item",sessionId:session.id,itemId,answer:currentValue,responseSeconds:finalElapsed,question:index+1})});
-        const savedJson=await saved.json();
-        if(!saved.ok)throw new Error(savedJson.message||"마지막 문항 저장 실패");
-      }
-      const response=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"submit",sessionId:session.id,answers:finalAnswers,responseSeconds:finalSeconds})});
+      const saved=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_training_item",sessionId:session.id,itemId,answer:currentValue,responseSeconds:finalElapsed,question:index+1})});
+      const savedJson=await saved.json();
+      if(!saved.ok)throw new Error(savedJson.message||"마지막 문항 저장 실패");
+
+      const response=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"submit",sessionId:session.id,answers:mergedAnswers,responseSeconds:finalSeconds})});
       const json=await response.json();
-      if(!response.ok){
-        // 서버가 미응답을 발견하더라도 학생이 바로 찾을 수 있도록 이동시킨다.
-        if(String(json?.message??"").includes("미응답")){
-          const firstMissing=items.findIndex((x:any)=>!String(finalAnswers[String(x.id)]??x.studentAnswer??"").trim());
-          if(firstMissing>=0)setIndex(firstMissing);
-        }
-        throw new Error(json.message||"훈련 제출 실패");
-      }
+      if(!response.ok)throw new Error(json.message||"훈련 제출 실패");
       await onCompleted(json);
     }catch(e){
       setFrozenElapsed(null);
@@ -132,10 +145,11 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
       <div className="sos-training-jump" aria-label="훈련 문항 이동">
         {items.map((x:any,i:number)=>{
           const id=String(x.id); const done=Boolean(String(answers[id]??x.studentAnswer??"").trim());
-          return <button key={id} type="button" disabled={busy} className={`${i===index?"now":""} ${done?"done":"missing"}`} onClick={()=>void moveTo(i)}>{i+1}</button>;
+          const locked=i>maxUnlocked;
+          return <button key={id} type="button" disabled={busy||locked} className={`${i===index?"now":""} ${done?"done":"missing"} ${locked?"locked":""}`} onClick={()=>void moveTo(i)}>{i+1}</button>;
         })}
       </div>
-      <p className="sos-training-jump-help">초록색은 답안 저장 완료 · 빈 원은 미응답 · 번호를 눌러 앞 문항으로 돌아갈 수 있습니다.</p>
+      <p className="sos-training-jump-help">답을 입력해야 다음 문항이 열립니다. 이전 문항은 언제든 돌아가 답을 수정할 수 있습니다.</p>
     </section>
     <article className="sos-diagnosis-question sos-training-question">
       <header>
@@ -151,7 +165,7 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
         <p>문항별 풀이시간이 기록되어 바로미터 산정에 함께 반영됩니다.</p>
         <div className="sos-training-actions">
           <button type="button" className="secondary" disabled={busy||index===0} onClick={()=>void moveTo(index-1)}>← 이전 문항</button>
-          <button type="button" disabled={busy} onClick={()=>void next()}>{busy?"채점·분석 중...":index===items.length-1?"훈련 제출":"답 저장 · 다음 문항"}</button>
+          <button type="button" disabled={busy||!answer.trim()} onClick={()=>void next()}>{busy?"채점·분석 중...":index===items.length-1?"훈련 제출 · 성적표 보기":"답 저장 · 다음 문항"}</button>
         </div>
       </div>
     </article>
