@@ -321,15 +321,80 @@ function StudentResultModal({
 }
 
 
-function SosFlowTree({session}:{session:any}){
-  const phase=String(session?.phase??""); const status=String(session?.status??""); const round=Number(session?.round_no??1); const kind=String(session?.cycle_kind??""); const decision=String(session?.decision??"");
-  const diagnosis=phase==="DIAGNOSIS", training=phase==="TRAINING", review=status==="RETRAIN", done=["COMPLETED","PASSED"].includes(status);
-  const current=diagnosis?`진단 ${round}차`:kind==="HOMEWORK"?"유사문항 숙제 3제":review?`${round}차 훈련 오답`:`${round}차 훈련`;
-  const unknownDiagnosis=diagnosis&&!done, unknownTraining=training&&!done&&!review; const passedFirst=decision==="FIRST_TRAINING_PASSED"||kind==="HOMEWORK"; const secondPath=round===2||decision==="SECOND_TRAINING_REQUIRED";
-  return <section className="sos-flow-map"><div className="sos-flow-title"><small>SOS 학습지도</small><b>현재 위치 · {current}</b><span>결과에 따라 다음 길이 열립니다.</span></div><div className="sos-flow-line">
-    <div className="flow-node done"><i>✓</i><span>모의고사</span></div><em>→</em><div className="flow-node done"><i>✓</i><span>취약지점 후보</span></div><em>→</em><div className={`flow-node ${diagnosis&&round===1&&!done?"now":"done"}`}><i>{diagnosis&&round===1&&!done?"●":"✓"}</i><span>1차 진단</span></div><em>→</em>
-    {unknownDiagnosis?<div className="flow-node unknown"><i>?</i><span>다음 경로</span></div>:diagnosis&&round===2?<><div className="flow-node done"><i>?</i><span>취약점 재확인</span></div><em>→</em><div className="flow-node now"><i>●</i><span>2차 진단</span></div><em>→</em><div className="flow-node unknown"><i>?</i><span>다음 경로</span></div></>:<><div className="flow-node done"><i>✓</i><span>취약점 확정</span></div><em>→</em><div className={`flow-node ${training&&round===1&&!review&&!done?"now":round>1||review||done?"done":""}`}><i>{training&&round===1&&!review&&!done?"●":"✓"}</i><span>1차 훈련 10제</span></div><em>→</em><div className={`flow-node ${training&&round===1&&review?"now":round>1||done?"done":unknownTraining?"pending":""}`}><i>{training&&round===1&&review?"●":round>1||done?"✓":"?"}</i><span>오답</span></div><em>→</em>{unknownTraining||review?<div className="flow-node unknown"><i>?</i><span>목표 판정</span></div>:passedFirst?<div className={`flow-node ${kind==="HOMEWORK"&&!done?"now":kind==="HOMEWORK"&&done?"done":"pending"}`}><i>{kind==="HOMEWORK"&&!done?"●":kind==="HOMEWORK"&&done?"✓":"→"}</i><span>유사문항 숙제 3제</span></div>:secondPath?<><div className={`flow-node ${training&&round===2&&!review&&!done?"now":"done"}`}><i>{training&&round===2&&!review&&!done?"●":"✓"}</i><span>2차 유사훈련 10제</span></div><em>→</em><div className={`flow-node ${training&&round===2&&review?"now":done?"done":"pending"}`}><i>{training&&round===2&&review?"●":done?"✓":"?"}</i><span>오답 · 종료</span></div></>:<div className="flow-node unknown"><i>?</i><span>다음 경로</span></div>}</>}
-  </div>{(unknownDiagnosis||unknownTraining||review)?<p className="sos-flow-help"><b>?</b> 현재 단계 결과가 나온 뒤 다음 과정이 결정됩니다.</p>:null}</section>;
+function SosFlowTree({session,sessions,onSelect}:{session:any;sessions:any[];onSelect:(id:string)=>void}){
+  const all=Array.isArray(sessions)?sessions:[];
+  const by=(phase:string,round:number,kind?:string)=>all.find((x:any)=>String(x.phase)===phase&&Number(x.round_no??1)===round&&(!kind||String(x.cycle_kind??"")===kind));
+  const diagnosis1=by("DIAGNOSIS",1);
+  const diagnosis2=by("DIAGNOSIS",2);
+  const training1=all.find((x:any)=>String(x.phase)==="TRAINING"&&Number(x.round_no??1)===1&&String(x.cycle_kind??"")!=="HOMEWORK");
+  const training2=all.find((x:any)=>String(x.phase)==="TRAINING"&&Number(x.round_no??1)===2&&String(x.cycle_kind??"")!=="HOMEWORK");
+  const homework=all.find((x:any)=>String(x.phase)==="TRAINING"&&String(x.cycle_kind??"")==="HOMEWORK");
+  const activeId=String(session?.id??"");
+
+  const completed=(x:any)=>!!x&&["COMPLETED","PASSED"].includes(String(x.status));
+  const inReview=(x:any)=>!!x&&String(x.status)==="RETRAIN";
+  const started=(x:any)=>!!x&&["IN_PROGRESS","RETRAIN","COMPLETED","PASSED"].includes(String(x.status));
+  const wrongCount=(x:any)=>Math.max(0,Number(x?.total_count??0)-Number(x?.correct_count??0));
+  const reviewDone=(x:any)=>!!x&&completed(x)&&wrongCount(x)>0;
+  const isActive=(x:any)=>!!x&&String(x.id)===activeId;
+
+  type Node={key:string;label:string;session?:any;state:"done"|"now"|"pending"|"unknown";sub?:string;review?:boolean};
+  const nodes:Node[]=[];
+  nodes.push({key:"candidate",label:"취약지점 후보",state:"done"});
+
+  if(diagnosis1){
+    const d1ExamDone=started(diagnosis1)&&String(diagnosis1.status)!=="IN_PROGRESS";
+    nodes.push({key:"d1",label:"1차 진단",session:diagnosis1,state:String(diagnosis1.status)==="IN_PROGRESS"?"now":d1ExamDone?"done":isActive(diagnosis1)?"now":"pending"});
+    if(inReview(diagnosis1)||reviewDone(diagnosis1)) nodes.push({key:"d1r",label:"진단 오답",session:diagnosis1,review:true,state:inReview(diagnosis1)?"now":"done",sub:inReview(diagnosis1)?"진행중":"완료"});
+  }
+
+  if(diagnosis2){
+    nodes.push({key:"d2",label:"2차 진단",session:diagnosis2,state:String(diagnosis2.status)==="IN_PROGRESS"?"now":started(diagnosis2)&&String(diagnosis2.status)!=="IN_PROGRESS"?"done":isActive(diagnosis2)?"now":"pending"});
+    if(inReview(diagnosis2)||reviewDone(diagnosis2)) nodes.push({key:"d2r",label:"진단 오답",session:diagnosis2,review:true,state:inReview(diagnosis2)?"now":"done",sub:inReview(diagnosis2)?"진행중":"완료"});
+  }
+
+  if(training1||training2||homework) nodes.push({key:"weak",label:"취약점 확정",state:"done"});
+
+  if(training1){
+    const t1ExamDone=inReview(training1)||completed(training1);
+    nodes.push({key:"t1",label:"1차 훈련 10제",session:training1,state:String(training1.status)==="IN_PROGRESS"?"now":t1ExamDone?"done":isActive(training1)?"now":"pending"});
+    if(inReview(training1)||reviewDone(training1)) nodes.push({key:"t1r",label:"1차 훈련 오답",session:training1,review:true,state:inReview(training1)?"now":"done",sub:inReview(training1)?"진행중":"완료"});
+  }
+
+  if(training1&&completed(training1)) nodes.push({key:"judge1",label:"목표 판정",state:"done"});
+  else if(training1&&inReview(training1)) nodes.push({key:"judge1",label:"목표 판정",state:"unknown",sub:"오답 완료 후"});
+
+  if(homework){
+    nodes.push({key:"hw",label:"유사문항 숙제 3제",session:homework,state:String(homework.status)==="IN_PROGRESS"||inReview(homework)?"now":completed(homework)?"done":isActive(homework)?"now":"pending",sub:inReview(homework)?"오답 진행중":undefined});
+  }
+
+  if(training2){
+    const t2ExamDone=inReview(training2)||completed(training2);
+    nodes.push({key:"t2",label:"2차 유사훈련 10제",session:training2,state:String(training2.status)==="IN_PROGRESS"?"now":t2ExamDone?"done":isActive(training2)?"now":"pending"});
+    if(inReview(training2)||reviewDone(training2)) nodes.push({key:"t2r",label:"2차 훈련 오답",session:training2,review:true,state:inReview(training2)?"now":"done",sub:inReview(training2)?"진행중":"완료"});
+    if(completed(training2)) nodes.push({key:"finish",label:"이번 SOS 종료",state:"done"});
+    else if(inReview(training2)) nodes.push({key:"finish",label:"이번 SOS 종료",state:"unknown",sub:"오답 완료 후"});
+  }
+
+  const currentNode=nodes.find(n=>n.state==="now");
+  const currentLabel=currentNode?.label??(session?.phase==="DIAGNOSIS"?`진단 ${Number(session?.round_no??1)}차`:`${Number(session?.round_no??1)}차 훈련`);
+  const clickable=(n:Node)=>!!n.session;
+
+  return <section className="sos-flow-map">
+    <div className="sos-flow-title"><small>SOS 학습지도</small><b>현재 위치 · {currentLabel}</b><span>완료한 단계는 눌러 당시 결과를 다시 볼 수 있습니다.</span></div>
+    <div className="sos-flow-line">
+      {nodes.map((node,index)=><div key={node.key} className="flow-node-wrap">
+        <button type="button" disabled={!clickable(node)} onClick={()=>node.session&&onSelect(String(node.session.id))} className={`flow-node ${node.state} ${node.review&&node.state==="now"?"review-now":""} ${node.session&&String(node.session.id)===activeId?"selected":""}`}>
+          <i>{node.state==="done"?"✓":node.state==="now"?"●":node.state==="unknown"?"?":"·"}</i>
+          <span>{node.label}</span>
+          {node.sub?<small>{node.sub}</small>:null}
+          {node.state==="now"?<strong>진행중</strong>:null}
+        </button>
+        {index<nodes.length-1?<em>→</em>:null}
+      </div>)}
+    </div>
+    <p className="sos-flow-help"><b>i</b> 초록 체크는 완료, 크게 강조된 칸은 지금 진행 중인 단계입니다. 완료된 진단·훈련·오답 칸을 누르면 아래에서 그 결과를 확인할 수 있습니다.</p>
+  </section>;
 }
 
 function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | void }) {
@@ -412,7 +477,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
 
         <section className={`sos-session-main ${active?.phase==="DIAGNOSIS"?"theme-diagnosis":active?.round_no===2?"theme-training2":"theme-training1"}`}>
           {!active?<div className="student-section-empty"><b>진행할 진단·훈련을 선택하세요.</b><span>관리자가 SOS 진단을 생성하면 이곳에 표시됩니다.</span></div>:<>
-            <SosFlowTree session={active}/>
+            <SosFlowTree session={active} sessions={sessions} onSelect={(id)=>setActiveId(id)}/>
             <header className="sos-session-head">
               <div><small>{active.phase==="DIAGNOSIS"?"SOS DIAGNOSIS":"SOS TRAINING"}</small><h3>{active.target_snapshot?.subunit??"소단원"} · {active.phase==="DIAGNOSIS"?`진단 ${active.round_no}차`:active.cycle_kind==="HOMEWORK"?"유사문항 숙제":active.round_no===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</h3><p>{active.target_snapshot?.subject??""} {active.target_snapshot?.majorUnit?`· ${active.target_snapshot.majorUnit}`:""} · 시작 미터 {Number(active.target_snapshot?.studentDifficultyMeter??0).toFixed(2)}</p></div>
               <span>{active.total_count}문항</span>
