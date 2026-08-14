@@ -422,15 +422,13 @@
 @media(max-width:700px){.sos-diagnosis-question>header{align-items:flex-start}.sos-diagnosis-question>header>div:first-child{display:block}.sos-diagnosis-progress i{width:30px}.sos-prep-screen{min-height:430px}.sos-prep-screen strong{width:125px;height:125px;font-size:64px}.sos-answer-lock-box label{align-items:stretch;flex-direction:column}.sos-answer-lock-box label span{align-self:flex-start}.sos-photo-button{width:100%;min-width:0}}
 
 /* SOS213: 학생 진단 원본 문제번호 숨김 + 문항별 결과 */
-.sos-diagnosis-image{position:relative}
-.sos-diagnosis-image:after{content:"";position:absolute;left:22px;top:22px;width:72px;height:44px;background:#fff;z-index:2;pointer-events:none}
 .sos-diagnosis-result-list{display:grid;gap:10px;margin-top:22px;text-align:left}
 .sos-diagnosis-result-list article{display:grid;grid-template-columns:110px minmax(180px,1fr) minmax(220px,1fr);align-items:center;gap:14px;padding:15px 17px;border:1px solid #e3e8e5;border-radius:14px;background:#fff}
 .sos-diagnosis-result-list article.correct{border-left:5px solid #23865a}.sos-diagnosis-result-list article.wrong{border-left:5px solid #d74b4b}
 .sos-diagnosis-result-list .result-no{display:flex;align-items:center;gap:10px}.sos-diagnosis-result-list .result-no b{font-size:18px}.sos-diagnosis-result-list .result-no em{font-style:normal;font-weight:900;font-size:13px;padding:4px 8px;border-radius:999px;background:#f1f4f2}
 .sos-diagnosis-result-list article.correct .result-no em{color:#16734a;background:#e9f7ef}.sos-diagnosis-result-list article.wrong .result-no em{color:#b83232;background:#fff0f0}
 .sos-diagnosis-result-list .result-answer,.sos-diagnosis-result-list .result-time{display:flex;gap:18px;flex-wrap:wrap}.sos-diagnosis-result-list span{color:#667085;font-size:13px}.sos-diagnosis-result-list span strong{margin-left:5px;color:#1f2937;font-size:15px}
-@media(max-width:760px){.sos-diagnosis-result-list article{grid-template-columns:1fr}.sos-diagnosis-image:after{left:18px;top:18px;width:58px;height:38px}}
+@media(max-width:760px){.sos-diagnosis-result-list article{grid-template-columns:1fr}}
 
 /* SOS221 training cycle */
 .sos-training-focus{margin-bottom:14px;padding:18px 20px;border:1px solid #dce9df;border-radius:18px;background:#f7fbf8}.sos-training-focus small{font-weight:800;color:#3b7b4b}.sos-training-focus h3{margin:4px 0 6px;font-size:22px}.sos-training-focus p{margin:0;color:#5f6f64}.sos-training-focus>i{display:block;height:8px;margin-top:12px;background:#e7eee9;border-radius:999px;overflow:hidden}.sos-training-focus>i>em{display:block;height:100%;background:#4c8b5b;border-radius:999px}.sos-training-focus.review{background:#fff9f2;border-color:#f2dfc7}.sos-training-role{margin:0 0 12px;padding:9px 12px;border-radius:10px;background:#f2f6f3;color:#4e6555;font-size:13px}.sos-generated-question{white-space:pre-wrap;text-align:left;font-size:18px;line-height:1.75;padding:22px;background:white;border:1px solid #e5e9e6;border-radius:14px;color:#1f2a22}.sos-training-question .sos-diagnosis-image{min-height:180px}.sos-training-review .sos-answer-lock-box p{color:#7a6345}
@@ -487,3 +485,12 @@
 .flow-node.review-now{border-color:#d97706;background:#fff4e6;color:#9a4f05;box-shadow:0 8px 24px rgba(217,119,6,.2)}.flow-node.review-now i,.flow-node.review-now strong{background:#d97706;color:#fff}
 .flow-node.selected:not(.now){outline:2px solid rgba(33,128,79,.18);outline-offset:2px}.flow-node small{display:block;margin-top:4px;font-size:10px;font-weight:900;color:inherit;opacity:.82}.flow-node:disabled{opacity:1}
 @media(max-width:700px){.flow-node.now{min-width:104px;transform:none}.sos-flow-line{padding-top:7px}}
+
+
+/* SOS229 · 문제은행 원본 문항번호 → SOS 미니 로고 마스킹 */
+.sos-problem-image-wrap{position:relative;display:inline-block;max-width:100%;line-height:0}
+.sos-problem-image-wrap>img{display:block;max-width:100%;height:auto}
+.sos-origin-number-mask{position:absolute;z-index:5;left:0;top:0;width:76px;height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;background:#fff;border-radius:0 0 8px 0;pointer-events:none;overflow:hidden;box-shadow:7px 5px 10px rgba(255,255,255,.98)}
+.sos-origin-number-mask img{display:block!important;width:58px!important;height:34px!important;object-fit:contain!important;max-width:none!important}
+.sos-origin-number-mask span{display:block;margin-top:-3px;color:#176b43;font-size:7px;font-weight:1000;line-height:1;letter-spacing:.12em;white-space:nowrap}
+@media(max-width:700px){.sos-origin-number-mask{width:62px;height:49px}.sos-origin-number-mask img{width:48px!important;height:29px!important}.sos-origin-number-mask span{font-size:6px}}

@@ -2,6 +2,7 @@
 
 import type React from "react";
 import {useEffect,useMemo,useState} from "react";
+import SosProblemImage from "./sos-problem-image";
 
 function fmt(seconds:number){const s=Math.max(0,Math.floor(seconds));return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;}
 type ReviewedState={answer:string;seconds:number;isCorrect:boolean;completed:boolean;explained?:boolean};
@@ -56,7 +57,7 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
   if(item){const done=Boolean(reviewed[String(item.id)]?.completed);const attempt=feedback?.attemptNo??Number(item.reviewAttemptCount??0);return <div className={`sos-training-review ${diagnosis?"diagnosis-review":"training-review"}`}>
     <section className="sos-training-focus review"><small>{diagnosis?"진단 오답 교정":"훈련 오답 교정"} · {item.order}번</small><h3>정답을 외우지 말고, 다시 생각해서 풀어보세요.</h3><p>첫 답 <b>{item.studentAnswer||"-"}</b> · 첫 풀이시간 <b>{fmt(Number(item.responseSeconds??0))}</b> · 재도전 <b>{attempt}/3</b></p></section>
     <article className="sos-diagnosis-question sos-training-question"><header><div><b>{item.order}번 오답</b><span>{done?"교정 완료":attempt===0?"정답을 보지 않고 다시 풀기":attempt<3?`힌트 ${attempt}단계 사용 중`:"정답·핵심풀이 확인 단계"}</span></div><div className="solve"><small>재풀이시간</small><strong>{fmt(elapsed)}</strong></div></header>
-      <div className="sos-diagnosis-image">{item.problem?.imageUrl?<img src={item.problem.imageUrl} alt={`${item.order}번 오답 문제`}/>:item.generated?<div className="sos-generated-question">{item.problem?.generatedText}</div>:<p>문항 이미지가 없습니다.</p>}</div>
+      <div className="sos-diagnosis-image">{item.problem?.imageUrl?<SosProblemImage src={item.problem.imageUrl} alt={`${item.order}번 오답 문제`} maskOriginalNumber={!item.generated&&(diagnosis||Number(session?.round_no??1)===1)}/>:item.generated?<div className="sos-generated-question">{item.problem?.generatedText}</div>:<p>문항 이미지가 없습니다.</p>}</div>
       <div className="sos-answer-lock-box">
         {feedback?.hint&&!feedback.revealAnswer?<div className={`sos-review-hint level-${feedback.hintLevel}`}><small>풀이 힌트 {feedback.hintLevel}/2</small><b>{feedback.hint}</b><span>정답은 아직 공개하지 않습니다. 힌트를 이용해 다시 풀어보세요.</span></div>:null}
         {feedback?.revealAnswer?<div className="sos-review-solution"><small>3회 재도전 완료</small><h4>정답과 핵심 풀이를 확인하세요.</h4><b>정답 · {feedback.correctAnswer||item.problem?.correctAnswer||"-"}</b>{feedback.solution?<p>{feedback.solution}</p>:<p>정답에 도달하는 데 필요한 정의·공식과 조건 연결을 다시 확인하세요. 다음 유사문항에서는 같은 풀이 구조를 스스로 적용해야 합니다.</p>}</div>:null}

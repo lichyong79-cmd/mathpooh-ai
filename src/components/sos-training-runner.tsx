@@ -2,6 +2,7 @@
 
 import type React from "react";
 import {useEffect,useMemo,useState} from "react";
+import SosProblemImage from "./sos-problem-image";
 
 function fmt(seconds:number){
   const s=Math.max(0,Math.floor(seconds));
@@ -158,7 +159,7 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
       </header>
       {role?<p className="sos-training-role">{role}</p>:null}
       <div className="sos-diagnosis-image">
-        {item.problem?.imageUrl?<img src={item.problem.imageUrl} alt={`${index+1}번 문제`}/>:generated?<div className="sos-generated-question">{item.problem?.generatedText||"AI 유사문항"}</div>:<p>문항 이미지가 없습니다.</p>}
+        {item.problem?.imageUrl?<SosProblemImage src={item.problem.imageUrl} alt={`${index+1}번 문제`} maskOriginalNumber={!generated&&Number(session?.round_no??1)===1}/>:generated?<div className="sos-generated-question">{item.problem?.generatedText||"AI 유사문항"}</div>:<p>문항 이미지가 없습니다.</p>}
       </div>
       <div className="sos-answer-lock-box">
         <label><span>정답</span><input autoFocus disabled={busy} value={answer} onChange={(e:React.ChangeEvent<HTMLInputElement>)=>setAnswer(e.target.value)} placeholder="정답을 입력하세요" onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void next();}}/></label>
