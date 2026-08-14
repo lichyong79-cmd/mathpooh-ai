@@ -158,6 +158,11 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
         <div className="solve"><small>풀이시간</small><strong>{fmt(elapsed)}</strong></div>
       </header>
       {role?<p className="sos-training-role">{role}</p>:null}
+      {generated?<div className={`sos-generated-origin ${String(session?.cycle_kind)==="HOMEWORK"?"homework":"second"}`}>
+        <b>{String(session?.cycle_kind)==="HOMEWORK"?"AI 유사문항 숙제":"AI 유사문항 · 2차 훈련"}</b>
+        <span>{Number(item.problem?.sourceTrainingOrder)>0?`1차 훈련 ${item.problem.sourceTrainingOrder}번에서 파생 · `:""}핵심유형: {item.problem?.coreType||item.problem?.topic||"취약유형 보완"}</span>
+        {item.problem?.generatedReason?<small>{item.problem.generatedReason}</small>:null}
+      </div>:null}
       <div className="sos-diagnosis-image">
         {item.problem?.imageUrl?<SosProblemImage src={item.problem.imageUrl} alt={`${index+1}번 문제`} maskOriginalNumber={!generated&&Number(session?.round_no??1)===1}/>:generated?<div className="sos-generated-question">{item.problem?.generatedText||"AI 유사문항"}</div>:<p>문항 이미지가 없습니다.</p>}
       </div>

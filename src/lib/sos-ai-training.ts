@@ -241,24 +241,52 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
       const question=String(problem?.question??"").trim();
       const solution=String(problem?.solution??"").trim();
       if(!question||!solution)return `${index+1}번 문제/풀이가 비어 있음`;
-      if(/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end)\b/.test(question))return `${index+1}번 본문에 LaTeX 명령이 남아 있음`;
+      if(/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end|left|right|begin|end)\b/.test(question))return `${index+1}번 본문에 LaTeX 명령이 남아 있음`;
+      if(question.length<18)return `${index+1}번 문제 본문이 너무 짧음`;
       return "";
     }).filter(Boolean);
-    if(candidate.length===count&&!invalid.length){list=candidate;break;}
-    invalidReason=candidate.length!==count?`문항 수 ${candidate.length}/${count}`:invalid.join(", ");
+    if(candidate.length===count&&!invalid.length){
+      try{
+        const verifySchema={type:"object",additionalProperties:false,required:["checks"],properties:{checks:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["index","valid","computedAnswer","reason"],properties:{index:{type:"integer",minimum:1,maximum:count},valid:{type:"boolean"},computedAnswer:{type:"string"},reason:{type:"string"}}}}}};
+        const verified=await openAiJson(`당신은 MATHPOOH SOS 생성문항 최종 검수자입니다. 아래 ${count}개 수학문항을 출제자 답을 믿지 말고 각각 처음부터 독립적으로 풀어 검증하세요.\n\n검수 기준:\n1) 주어진 조건만으로 풀이가 가능해야 합니다.\n2) 조건끼리 모순이 없어야 합니다.\n3) 정답이 유일해야 합니다.\n4) 실제 계산 결과가 -999~999 범위 정수 하나여야 합니다.\n5) 제공 answer와 직접 계산한 computedAnswer가 정확히 같아야 합니다.\n6) 문제 문장이 학생이 화면에서 읽고 바로 풀 수 있을 만큼 완결되어야 합니다.\n하나라도 어기면 valid=false로 하세요.\n\n문항: ${JSON.stringify(candidate.map((p:any,i:number)=>({index:i+1,question:p.question,claimedAnswer:p.answer,solution:p.solution,topic:p.topic})))}`,verifySchema);
+        const checks=Array.isArray(verified?.checks)?verified.checks:[];
+        const verifyErrors=checks.map((c:any)=>{
+          const idx=Number(c?.index)||0;
+          const original=idx>=1&&idx<=candidate.length?candidate[idx-1]:null;
+          const claimed=String(original?.answer??"").trim();
+          const computed=String(c?.computedAnswer??"").trim();
+          if(c?.valid!==true)return `${idx||"?"}번 검수 실패(${String(c?.reason??"원인 미상")})`;
+          if(!/^-?\d+$/.test(computed)||computed!==claimed)return `${idx||"?"}번 재계산값 불일치(${claimed}≠${computed||"빈값"})`;
+          return "";
+        }).filter(Boolean);
+        if(checks.length===count&&!verifyErrors.length){list=candidate;break;}
+        invalidReason=checks.length!==count?`검수 응답 수 ${checks.length}/${count}`:verifyErrors.join(", ");
+      }catch(error){
+        invalidReason=`AI 최종검수 실패: ${error instanceof Error?error.message:"검수 오류"}`;
+      }
+    }else invalidReason=candidate.length!==count?`문항 수 ${candidate.length}/${count}`:invalid.join(", ");
   }
   if(list.length!==count)throw new Error(`AI 유사문항 검증 실패: ${invalidReason||"정수 정답/문항 완결성 조건 미충족"}`);
   const target=s.target_snapshot??{};
-  const normalized=list.map((p:any,index:number)=>({
-    ...p,
-    subject:target.subject??target.sourceSubject??"",
-    majorUnit:target.majorUnit??target.sourceMajorUnit??"",
-    subunit:target.subunit??target.sourceUnit??"",
-    subunitKey:target.subunitKey??"",
-    meter:clampMeter(p.meter,p.difficulty),
-    generated:true,
-    generatedIndex:index+1,
-  }));
+  const normalized=list.map((p:any,index:number)=>{
+    const sourceItem=ranked[index%Math.max(1,ranked.length)]??null;
+    const sourceProblem=sourceItem?.problem_bank_questions??{};
+    return {
+      ...p,
+      subject:target.subject??target.sourceSubject??"",
+      majorUnit:target.majorUnit??target.sourceMajorUnit??"",
+      subunit:target.subunit??target.sourceUnit??"",
+      subunitKey:target.subunitKey??"",
+      meter:clampMeter(p.meter,p.difficulty),
+      generated:true,
+      generatedIndex:index+1,
+      sourceTrainingOrder:Number(sourceItem?.item_order??0)||null,
+      sourceProblemId:sourceProblem?.id??null,
+      sourceTopic:String(sourceProblem?.topic??""),
+      coreType:String(p.topic??weakness?.focusConcepts?.[0]??weakness?.weaknessTitle??"핵심 취약유형"),
+      generationKind:kind,
+    };
+  });
   const session=await supabase.from("sos_training_sessions").insert({
     student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:{...target,generatedSimilar:true,homework:kind==="HOMEWORK"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:kind==="HOMEWORK"?3:2,total_count:count,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:kind
   }).select().single();

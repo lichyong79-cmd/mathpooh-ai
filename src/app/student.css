@@ -494,3 +494,10 @@
 .sos-origin-number-mask img{display:block!important;width:58px!important;height:34px!important;object-fit:contain!important;max-width:none!important}
 .sos-origin-number-mask span{display:block;margin-top:-3px;color:#176b43;font-size:7px;font-weight:1000;line-height:1;letter-spacing:.12em;white-space:nowrap}
 @media(max-width:700px){.sos-origin-number-mask{width:62px;height:49px}.sos-origin-number-mask img{width:48px!important;height:29px!important}.sos-origin-number-mask span{font-size:6px}}
+
+/* SOS231 · AI 유사문항 출처/핵심유형 안내 */
+.sos-generated-origin{margin:0 0 12px;padding:11px 13px;border-radius:12px;border:1px solid #ead8bf;background:#fff8ef;color:#6c4a20;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sos-generated-origin b{font-size:13px;font-weight:1000;padding:4px 8px;border-radius:999px;background:#f39b34;color:#fff;white-space:nowrap}
+.sos-generated-origin span{font-size:13px;font-weight:900}.sos-generated-origin small{width:100%;font-size:11px;line-height:1.5;color:#806743}
+.sos-generated-origin.homework{border-color:#d8e8ce;background:#f5fbf1;color:#315c2e}.sos-generated-origin.homework b{background:#5e9b52}
+.sos-generated-question{font-size:19px;line-height:1.9;letter-spacing:-.01em;word-break:keep-all;overflow-wrap:anywhere}

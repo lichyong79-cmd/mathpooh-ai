@@ -57,6 +57,10 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
   if(item){const done=Boolean(reviewed[String(item.id)]?.completed);const attempt=feedback?.attemptNo??Number(item.reviewAttemptCount??0);return <div className={`sos-training-review ${diagnosis?"diagnosis-review":"training-review"}`}>
     <section className="sos-training-focus review"><small>{diagnosis?"진단 오답 교정":"훈련 오답 교정"} · {item.order}번</small><h3>정답을 외우지 말고, 다시 생각해서 풀어보세요.</h3><p>첫 답 <b>{item.studentAnswer||"-"}</b> · 첫 풀이시간 <b>{fmt(Number(item.responseSeconds??0))}</b> · 재도전 <b>{attempt}/3</b></p></section>
     <article className="sos-diagnosis-question sos-training-question"><header><div><b>{item.order}번 오답</b><span>{done?"교정 완료":attempt===0?"정답을 보지 않고 다시 풀기":attempt<3?`힌트 ${attempt}단계 사용 중`:"정답·핵심풀이 확인 단계"}</span></div><div className="solve"><small>재풀이시간</small><strong>{fmt(elapsed)}</strong></div></header>
+      {item.generated?<div className={`sos-generated-origin ${String(session?.cycle_kind)==="HOMEWORK"?"homework":"second"}`}>
+        <b>{String(session?.cycle_kind)==="HOMEWORK"?"AI 유사문항 숙제":"AI 유사문항 · 2차 훈련"}</b>
+        <span>{Number(item.problem?.sourceTrainingOrder)>0?`1차 훈련 ${item.problem.sourceTrainingOrder}번에서 파생 · `:""}핵심유형: {item.problem?.coreType||item.problem?.topic||"취약유형 보완"}</span>
+      </div>:null}
       <div className="sos-diagnosis-image">{item.problem?.imageUrl?<SosProblemImage src={item.problem.imageUrl} alt={`${item.order}번 오답 문제`} maskOriginalNumber={!item.generated&&(diagnosis||Number(session?.round_no??1)===1)}/>:item.generated?<div className="sos-generated-question">{item.problem?.generatedText}</div>:<p>문항 이미지가 없습니다.</p>}</div>
       <div className="sos-answer-lock-box">
         {feedback?.hint&&!feedback.revealAnswer?<div className={`sos-review-hint level-${feedback.hintLevel}`}><small>풀이 힌트 {feedback.hintLevel}/2</small><b>{feedback.hint}</b><span>정답은 아직 공개하지 않습니다. 힌트를 이용해 다시 풀어보세요.</span></div>:null}
