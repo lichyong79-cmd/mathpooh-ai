@@ -34,7 +34,7 @@ export async function GET(){
       all((f,t)=>ctx.supabase.from("students").select("id,name,school,grade,status").range(f,t)),
       all((f,t)=>ctx.supabase
         .from("sos_training_sessions")
-        .select("id,student_id,phase,status,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,training_meter,review_meter,cycle_kind,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,problem_id,item_order,student_answer,is_correct,response_seconds,answered_at,revealed_at,answer_locked_at,solution_photo_path,photo_submitted_at,photo_submit_seconds,screen_exit_count,generated_problem,review_answer,review_is_correct,review_response_seconds,review_answered_at,problem_bank_questions(id,problem_code,title,subject,unit,topic,difficulty,difficulty_meter,question_image_path,answer))")
+        .select("id,student_id,parent_session_id,phase,status,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,training_meter,review_meter,cycle_kind,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,problem_id,item_order,student_answer,is_correct,response_seconds,answered_at,revealed_at,answer_locked_at,solution_photo_path,photo_submitted_at,photo_submit_seconds,screen_exit_count,generated_problem,review_answer,review_is_correct,review_response_seconds,review_answered_at,problem_bank_questions(id,problem_code,title,subject,unit,topic,difficulty,difficulty_meter,question_image_path,answer))")
         .order("created_at",{ascending:false}).range(f,t)),
       all((f,t)=>ctx.supabase
         .from("sos_student_subunit_meters")
@@ -45,6 +45,11 @@ export async function GET(){
         .select("id,session_id,item_id,event_type,detail,occurred_at")
         .order("occurred_at",{ascending:true}).range(f,t)),
     ]);
+
+    const resetLogResult=await ctx.supabase.from("sos_admin_reset_logs").select("id,target_session_id,reset_scope,admin_email,detail,created_at").order("created_at",{ascending:true});
+    if(resetLogResult.error)throw resetLogResult.error;
+    const resetLogMap=new Map<string,any[]>();
+    for(const log of resetLogResult.data??[]){const key=String(log.target_session_id??"");if(!key)continue;const list=resetLogMap.get(key)??[];list.push(log);resetLogMap.set(key,list);}
 
     const studentMap=new Map(students.map((s:any)=>[String(s.id),s]));
     const meterMap=new Map<string,any>();
@@ -112,6 +117,7 @@ export async function GET(){
         student:studentMap.get(String(session.student_id))??null,
         phase:session.phase,
         status:session.status,
+        parentSessionId:session.parent_session_id??null,
         roundNo:Number(session.round_no??1),
         subject:String(snapshot.subject??snapshot.sourceSubject??""),
         majorUnit:String(snapshot.majorUnit??""),
@@ -134,7 +140,10 @@ export async function GET(){
         startedAt:startedCandidates.length?new Date(Math.min(...startedCandidates)).toISOString():null,
         submittedAt:["COMPLETED","PASSED","RETRAIN"].includes(String(session.status))&&submittedCandidates.length?new Date(Math.max(...submittedCandidates)).toISOString():null,
         updatedAt:session.updated_at,
-        logs:(logMap.get(String(session.id))??[]).map((log:any)=>({id:log.id,eventType:log.event_type,detail:log.detail??{},occurredAt:log.occurred_at,itemId:log.item_id??null})),
+        logs:[
+          ...(logMap.get(String(session.id))??[]).map((log:any)=>({id:log.id,eventType:log.event_type,detail:log.detail??{},occurredAt:log.occurred_at,itemId:log.item_id??null})),
+          ...(resetLogMap.get(String(session.id))??[]).map((log:any)=>({id:`admin-reset-${log.id}`,eventType:"ADMIN_RESET",detail:{scope:log.reset_scope,adminEmail:log.admin_email,...(log.detail??{})},occurredAt:log.created_at,itemId:null})),
+        ].sort((a:any,b:any)=>new Date(a.occurredAt).getTime()-new Date(b.occurredAt).getTime()),
         items,
       };
     }));
