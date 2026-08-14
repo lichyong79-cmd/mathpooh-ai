@@ -140,7 +140,7 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
     <section className="sos-training-focus">
       <small>{label}</small>
       <h3>{weakness||"맞춤 취약점 훈련"}</h3>
-      {baseline>0&&goal>0?<p>시작 바로미터 <b>{baseline.toFixed(2)}</b> → 이번 목표 <b>{goal.toFixed(2)}</b></p>:null}
+      {baseline>0&&goal>0?<><p>시작 바로미터 <b>{baseline.toFixed(2)}</b> → 이번 목표 <b>{goal.toFixed(2)}</b></p><small className="sos-term-help">바로미터는 현재 취약영역의 실력을 나타내는 지표입니다. 최초 정오답·문항난이도·풀이시간과 오답 교정 결과를 함께 반영합니다.</small></>:null}
       <i><em style={{width:`${progress}%`}}/></i>
       <div className="sos-training-jump" aria-label="훈련 문항 이동">
         {items.map((x:any,i:number)=>{

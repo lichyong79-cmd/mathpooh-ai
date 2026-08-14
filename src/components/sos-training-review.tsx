@@ -19,7 +19,17 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
   const item=wrong.find((x:any)=>String(x.id)===String(selectedId))??null;
   const elapsed=Math.max(1,Math.floor((now-started)/1000));
   const correct=all.filter((x:any)=>x.isCorrect===true).length; const rate=all.length?Math.round(correct/all.length*100):0;
-  const completedCount=wrong.filter((x:any)=>reviewed[String(x.id)]?.completed).length;
+  const completedCount=wrong.filter((x:any)=>reviewed[String(x.id)]?.completed||x.reviewCompleted).length;
+  const correctedCount=wrong.filter((x:any)=>x.reviewIsCorrect===true||reviewed[String(x.id)]?.isCorrect===true).length;
+  const explainedCount=wrong.filter((x:any)=>Boolean(x.reviewExplained||reviewed[String(x.id)]?.explained)).length;
+  const explanationRequiredCount=wrong.filter((x:any)=>{
+    const id=String(x.id);
+    if(x.reviewIsCorrect===true||reviewed[id]?.isCorrect===true)return false;
+    if(x.reviewExplained||reviewed[id]?.explained)return true;
+    if(id===String(selectedId)&&feedback?.revealAnswer)return true;
+    return Number(x.reviewAttemptCount??0)>=3;
+  }).length;
+  const reportTitle=diagnosis?`진단 ${session?.round_no}차 성적표`:String(session?.cycle_kind)==="HOMEWORK"?"유사문항 숙제 성적표":Number(session?.round_no)===2?"2차 훈련 성적표":"1차 훈련 성적표";
 
   useEffect(()=>{const id=window.setInterval(()=>{if(!busy)setNow(Date.now());},1000);return()=>window.clearInterval(id);},[busy]);
   useEffect(()=>{if(item){setAnswer("");setFeedback(item.reviewLastHint?{ok:false,attemptNo:Number(item.reviewAttemptCount??0),hint:item.reviewLastHint,hintLevel:Number(item.reviewHintLevel??0)}:null);setStarted(Date.now());setNow(Date.now());}},[selectedId,item?.id]);
@@ -55,8 +65,12 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
         <div className="sos-training-actions"><button type="button" className="secondary" disabled={busy} onClick={()=>setSelectedId(null)}>← 성적표로</button>{!done&&!feedback?.revealAnswer?<button disabled={busy||!answer.trim()} onClick={()=>void saveReview()}>{busy?"채점 중...":attempt?"힌트 적용 · 다시 채점":"다시 채점"}</button>:feedback?.revealAnswer?<button disabled={busy} onClick={()=>void completeExplanation()}>{busy?"저장 중...":"풀이 확인 완료 · 성적표로"}</button>:<button onClick={()=>setSelectedId(null)}>교정 완료 · 성적표로</button>}</div>
       </div></article></div>}
 
-  return <div className={`sos-training-report ${diagnosis?"diagnosis-report":"training-report"}`}><section className="sos-report-head"><small>{diagnosis?`진단 ${session?.round_no}차 성적표`:Number(session?.round_no)===2?"2차 훈련 성적표":"1차 훈련 성적표"}</small><h3>{correct} / {all.length} 정답</h3><strong>정답률 {rate}%</strong><p>{wrong.length?<><b>X 문항을 눌러 오답 교정</b>하세요. 첫 실패에는 힌트①, 두 번째 실패에는 힌트②, 세 번째 실패 후에만 정답과 핵심풀이가 공개됩니다.</>:<>전 문항을 맞혔습니다. 결과를 확인하고 다음 단계로 이동하세요.</>}</p></section>
+  return <div className={`sos-training-report ${diagnosis?"diagnosis-report":"training-report"}`}><section className="sos-report-head"><small>{reportTitle}</small><div className="sos-report-metrics">
+      <div><h3>{correct} / {all.length}</h3><b>최초 정답</b><span>처음 풀었을 때 스스로 맞힌 문항입니다.</span></div>
+      <div><h3>{correctedCount} / {wrong.length}</h3><b>교정완료</b><span>틀린 문항을 다시 풀어 스스로 정답을 찾아낸 문항입니다.</span></div>
+      <div><h3>{explainedCount} / {explanationRequiredCount}</h3><b>풀이확인</b><span>3회 재도전 후 정답·핵심풀이 확인이 필요했던 문항 중 확인 완료한 문항입니다.</span></div>
+    </div><strong>최초 정답률 {rate}%</strong><p>{wrong.length?<><b>X 문항을 눌러 오답 교정</b>하세요. 첫 실패에는 힌트①, 두 번째 실패에는 힌트②, 세 번째 실패 후에만 정답과 핵심풀이가 공개됩니다.</>:<>전 문항을 맞혔습니다. 결과를 확인하고 다음 단계로 이동하세요.</>}</p></section>
     <div className="sos-report-grid">{all.map((x:any)=>{const isWrong=x.isCorrect===false;const done=Boolean(reviewed[String(x.id)]?.completed||x.reviewCompleted);return <button key={x.id} type="button" disabled={!isWrong||busy} className={`sos-report-item ${isWrong?"wrong":"correct"} ${done?"reviewed":""}`} onClick={()=>{if(isWrong){setSelectedId(String(x.id));onNotice("");}}}><span className="num">{x.order}번</span><b>{isWrong?"X":"O"}</b><small>{fmt(Number(x.responseSeconds??0))}</small>{isWrong?<em>{done?x.reviewIsCorrect===true||reviewed[String(x.id)]?.isCorrect?"교정완료 ✓":"풀이확인 ✓":"오답하기"}</em>:<em>정답</em>}</button>})}</div>
-    {wrong.length?<div className="sos-report-review-state"><b>오답 교정 {completedCount}/{wrong.length}</b><span>모든 오답의 교정을 마치면 {diagnosis?"AI 취약점 분석":"바로미터 판정"}으로 넘어갑니다.</span><button type="button" disabled={busy||completedCount!==wrong.length} onClick={()=>void finishReview()}>{busy?diagnosis?"AI 분석 준비 중...":"바로미터 계산 중...":diagnosis?"오답 완료 · AI 취약점 분석":"오답 완료 · 결과 확인"}</button></div>:<div className="sos-report-review-state success"><b>전 문항 정답</b><span>오답 대상이 없습니다.</span><button type="button" disabled={busy} onClick={()=>void finishReview()}>{busy?"결과 처리 중...":diagnosis?"진단 결과 확정 · AI 분석":"훈련 결과 확인"}</button></div>}
+    {wrong.length?<div className="sos-report-review-state"><b>오답 과정 {completedCount}/{wrong.length}</b><span>교정완료와 풀이확인을 모두 마치면 {diagnosis?"AI 취약점 분석":"바로미터 판정"}으로 넘어갑니다.</span><button type="button" disabled={busy||completedCount!==wrong.length} onClick={()=>void finishReview()}>{busy?diagnosis?"AI 분석 준비 중...":"바로미터 계산 중...":diagnosis?"오답 완료 · AI 취약점 분석":"오답 완료 · 결과 확인"}</button></div>:<div className="sos-report-review-state success"><b>전 문항 정답</b><span>오답 대상이 없습니다.</span><button type="button" disabled={busy} onClick={()=>void finishReview()}>{busy?"결과 처리 중...":diagnosis?"진단 결과 확정 · AI 분석":"훈련 결과 확인"}</button></div>}
   </div>;
 }

@@ -47,7 +47,8 @@ export async function generateReviewHint(args:{problem:any;studentAnswer:string;
 반드시 한국어 1~2문장으로만 답하고 정답·선택지 번호·최종 계산값을 노출하지 마세요.`,{
       type:"object",additionalProperties:false,properties:{hint:{type:"string"}},required:["hint"]
     });
-    return String(data?.hint||fallback).trim();
+    const aiHint=String(data?.hint??"").trim();
+    return aiHint||fallback;
   }catch{return fallback;}
 }
 
@@ -227,9 +228,26 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
   }).slice(0,5);
   const sourceSummary=ranked.map((i:any)=>({order:i.item_order,correct:i.is_correct,seconds:i.response_seconds,reviewCorrect:i.review_is_correct,reviewSeconds:i.review_response_seconds,problem:compactDna(i.problem_bank_questions??{})}));
   const schema={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["question","answer","solution","difficulty","meter","topic","reason"],properties:{question:{type:"string"},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"}}}}}};
-  const generated=await openAiJson(`당신은 MATHPOOH SOS 수학 유사·변형문항 생성 엔진입니다.\n취약점: ${weakness.weaknessTitle??s.target_snapshot?.weaknessTitle??""}\n상세: ${weakness.weaknessDetail??s.target_snapshot?.weaknessDetail??""}\n1차 훈련에서 특히 다시 확인할 문항 DNA/결과: ${JSON.stringify(sourceSummary)}\n\n정확히 ${count}개의 새로운 문항을 생성하세요.\n- 숫자만 바꾸는 복제는 금지합니다. 핵심 풀이 DNA는 유지하되 조건, 수치, 표현, 질문 구조를 변형합니다.\n- 외부 그림 없이도 풀 수 있도록 문항을 완결된 한국어 텍스트로 작성합니다.\n- 답이 유일하고 조건이 충분한지 스스로 검증합니다.\n- solution에는 검산 가능한 핵심 풀이를 간결하게 씁니다.\n- ${kind==="HOMEWORK"?"1차 통과자의 완성 확인 숙제이므로 적정~약간 도전 수준":"1차 미달자의 2차 정식훈련이므로 쉬운 확인부터 시작해 점진적으로 올립니다"}.`,schema);
-  const list=generated.problems??[];
-  if(list.length!==count)throw new Error(`유사문항 생성 수가 맞지 않습니다. ${list.length}/${count}`);
+  let list:any[]=[];
+  let invalidReason="";
+  for(let generationAttempt=1;generationAttempt<=3;generationAttempt++){
+    const generated=await openAiJson(`당신은 MATHPOOH SOS 수학 유사·변형문항 생성 엔진입니다.\n취약점: ${weakness.weaknessTitle??s.target_snapshot?.weaknessTitle??""}\n상세: ${weakness.weaknessDetail??s.target_snapshot?.weaknessDetail??""}\n1차 훈련에서 특히 다시 확인할 문항 DNA/결과: ${JSON.stringify(sourceSummary)}\n\n정확히 ${count}개의 새로운 문항을 생성하세요.\n- 숫자만 바꾸는 복제는 금지합니다. 핵심 풀이 DNA는 유지하되 조건, 수치, 표현, 질문 구조를 변형합니다.\n- 외부 그림 없이도 풀 수 있도록 문항을 완결된 한국어 텍스트로 작성합니다.\n- 모든 문항의 최종 정답은 반드시 -999부터 999 사이의 정수 하나여야 합니다. 분수, 소수, 식, 구간, 복수정답은 절대 금지합니다.\n- answer에는 정수만 문자열로 기록합니다. 예: -3, 0, 17.\n- 생성 후 직접 풀어서 조건이 모순되지 않는지, 정보가 충분한지, 정답이 유일한지, solution의 최종값과 answer가 정확히 일치하는지 검산합니다.\n- 문제 본문에는 \\frac, \\lim 같은 LaTeX 명령을 쓰지 말고 학생 화면에서 그대로 읽을 수 있는 일반 텍스트/유니코드 수식으로 작성합니다.\n- solution에는 검산 가능한 핵심 풀이를 간결하게 씁니다.\n- ${kind==="HOMEWORK"?"1차 통과자의 완성 확인 숙제이므로 적정~약간 도전 수준":"1차 미달자의 2차 정식훈련이므로 쉬운 확인부터 시작해 점진적으로 올립니다"}.\n${invalidReason?`이전 생성은 검증에서 탈락했습니다: ${invalidReason}. 같은 오류를 반복하지 마세요.`:""}`,schema);
+    const candidate=Array.isArray(generated?.problems)?generated.problems:[];
+    const invalid=candidate.map((problem:any,index:number)=>{
+      const answer=String(problem?.answer??"").trim();
+      if(!/^-?\d+$/.test(answer))return `${index+1}번 정답이 정수가 아님(${answer||"빈값"})`;
+      const value=Number(answer);
+      if(!Number.isSafeInteger(value)||value < -999||value > 999)return `${index+1}번 정답 범위 오류(${answer})`;
+      const question=String(problem?.question??"").trim();
+      const solution=String(problem?.solution??"").trim();
+      if(!question||!solution)return `${index+1}번 문제/풀이가 비어 있음`;
+      if(/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end)\b/.test(question))return `${index+1}번 본문에 LaTeX 명령이 남아 있음`;
+      return "";
+    }).filter(Boolean);
+    if(candidate.length===count&&!invalid.length){list=candidate;break;}
+    invalidReason=candidate.length!==count?`문항 수 ${candidate.length}/${count}`:invalid.join(", ");
+  }
+  if(list.length!==count)throw new Error(`AI 유사문항 검증 실패: ${invalidReason||"정수 정답/문항 완결성 조건 미충족"}`);
   const target=s.target_snapshot??{};
   const normalized=list.map((p:any,index:number)=>({
     ...p,

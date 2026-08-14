@@ -306,6 +306,20 @@ export async function POST(request:Request){
     if(itemsResult.error)return NextResponse.json({message:itemsResult.error.message},{status:400});
     const wrongItems=itemsResult.data??[];
 
+    if(String(session.cycle_kind)==="HOMEWORK"){
+      const explanationLogs=await supabase.from("sos_training_activity_logs").select("item_id,event_type").eq("session_id",sessionId).eq("event_type","REVIEW_ITEM_EXPLAINED");
+      const explained=new Set((explanationLogs.data??[]).map((l:any)=>String(l.item_id)));
+      const reviewRows=await supabase.from("sos_training_items").select("id,review_is_correct").eq("session_id",sessionId).eq("is_correct",false);
+      if(reviewRows.error)return NextResponse.json({message:reviewRows.error.message},{status:400});
+      const unfinished=(reviewRows.data??[]).filter((r:any)=>r.review_is_correct!==true&&!explained.has(String(r.id)));
+      if(unfinished.length)return NextResponse.json({message:`아직 교정하지 않은 숙제 오답이 ${unfinished.length}문항 있습니다.`},{status:400});
+      const current=await currentTargetMeter(supabase,String(student.id),session);
+      const update=await supabase.from("sos_training_sessions").update({status:"PASSED",decision:"HOMEWORK_DONE",review_meter:current,updated_at:new Date().toISOString()}).eq("id",sessionId);
+      if(update.error)return NextResponse.json({message:update.error.message},{status:400});
+      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"REVIEW_COMPLETED",detail:{phase:"HOMEWORK",corrected:(reviewRows.data??[]).filter((r:any)=>r.review_is_correct===true).length,total:(reviewRows.data??[]).length}});
+      return NextResponse.json({success:true,phase:"TRAINING",status:"PASSED",decision:"HOMEWORK_DONE",homework:true,meter:current,goal:current,passed:true});
+    }
+
     if(String(session.phase)==="DIAGNOSIS"){
       const explanationLogs=await supabase.from("sos_training_activity_logs").select("item_id,event_type").eq("session_id",sessionId).eq("event_type","REVIEW_ITEM_EXPLAINED");
       const explained=new Set((explanationLogs.data??[]).map((l:any)=>String(l.item_id)));
@@ -456,10 +470,10 @@ export async function POST(request:Request){
     const wrong=total-correct;
 
     if(String(session.cycle_kind)==="HOMEWORK"){
-      const update=await supabase.from("sos_training_sessions").update({status:"PASSED",correct_count:correct,decision:"HOMEWORK_DONE",training_meter:meter,review_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
+      const update=await supabase.from("sos_training_sessions").update({status:"RETRAIN",correct_count:correct,decision:wrong>0?"HOMEWORK_REVIEW_REQUIRED":"HOMEWORK_RESULT_REVIEW_READY",training_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
       if(update.error)return NextResponse.json({message:update.error.message},{status:400});
-      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,homework:true}});
-      return NextResponse.json({success:true,phase,status:"PASSED",correct,total,rate,decision:"HOMEWORK_DONE",results,meter,goal,homework:true});
+      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,homework:true,reviewRequired:wrong>0,reportReady:true}});
+      return NextResponse.json({success:true,phase,status:"RETRAIN",correct,total,rate,decision:wrong>0?"HOMEWORK_REVIEW_REQUIRED":"HOMEWORK_RESULT_REVIEW_READY",results,meter,goal,homework:true,wrongCount:wrong,nextStep:"REPORT"});
     }
 
     // SOS225: 훈련 제출 뒤에는 정오답 수와 관계없이 성적표를 먼저 보여준다.
