@@ -432,6 +432,39 @@ export async function POST(request:Request){
 
     let correct=0;
     const results:any[]=[];
+
+    // SOS235: AI 유사문항 3제 굳히기는 학습 기록만 남기고 바로미터에는 절대 반영하지 않는다.
+    // difficulty event / 학생 미터 / 문항 미터를 건드리는 recordTrainingResult 경로를 타지 않는다.
+    if(String(session.cycle_kind)==="HOMEWORK"){
+      const gradedAt=new Date().toISOString();
+      for(const item of items as any[]){
+        const studentAnswer=String(answers[String(item.id)]??fullById.get(String(item.id))?.student_answer??"").trim();
+        const generated:any=item.generated_problem??{};
+        const bank:any=Array.isArray(item.problem_bank_questions)?item.problem_bank_questions[0]:item.problem_bank_questions;
+        const correctAnswer=String(bank?.answer??generated?.answer??"").trim();
+        const isCorrect=answerMatches(studentAnswer,correctAnswer);
+        const responseSeconds=Math.max(1,Math.round(Number(seconds[String(item.id)]??fullById.get(String(item.id))?.response_seconds??0)||1));
+        if(isCorrect)correct++;
+        const update=await supabase.from("sos_training_items").update({
+          student_answer:studentAnswer,is_correct:isCorrect,response_seconds:responseSeconds,answered_at:gradedAt,
+          student_meter_before:null,student_meter_after:null,problem_meter_before:null,problem_meter_after:null,
+        }).eq("id",String(item.id)).eq("session_id",sessionId);
+        if(update.error)return NextResponse.json({message:update.error.message},{status:400});
+        results.push({itemId:item.id,ok:true,isCorrect,correctAnswer,barometerExcluded:true});
+      }
+      const total=items.length;
+      const rate=total?Math.round(correct/total*100):0;
+      const wrong=total-correct;
+      const current=await currentTargetMeter(supabase,String(student.id),session);
+      const update=await supabase.from("sos_training_sessions").update({
+        status:"RETRAIN",correct_count:correct,decision:wrong>0?"HOMEWORK_REVIEW_REQUIRED":"HOMEWORK_RESULT_REVIEW_READY",
+        training_meter:current,updated_at:gradedAt,
+      }).eq("id",sessionId);
+      if(update.error)return NextResponse.json({message:update.error.message},{status:400});
+      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase:"TRAINING",total,correct,rate,homework:true,barometerExcluded:true,reviewRequired:wrong>0,reportReady:true}});
+      return NextResponse.json({success:true,phase:"TRAINING",status:"RETRAIN",correct,total,rate,decision:wrong>0?"HOMEWORK_REVIEW_REQUIRED":"HOMEWORK_RESULT_REVIEW_READY",results,meter:current,goal:current,homework:true,barometerExcluded:true,wrongCount:wrong,nextStep:"REPORT"});
+    }
+
     const itemIds=items.map((x:any)=>String(x.id));
     const problemIds=[...new Set(items.map((x:any)=>String(x.problem_id??"")).filter(Boolean))];
     const [eventRows,priorProblemRows]=await Promise.all([
@@ -440,8 +473,8 @@ export async function POST(request:Request){
     ]);
     if(eventRows.error)return NextResponse.json({message:eventRows.error.message},{status:400});
     if(priorProblemRows.error)return NextResponse.json({message:priorProblemRows.error.message},{status:400});
-    const duplicateItems=new Set((eventRows.data??[]).map((x:any)=>String(x.training_item_id)));
-    const seenProblemIds=new Set((priorProblemRows.data??[]).map((x:any)=>String(x.problem_id)));
+    const duplicateItems=new Set<string>((eventRows.data??[]).map((x:any)=>String(x.training_item_id)));
+    const seenProblemIds=new Set<string>((priorProblemRows.data??[]).map((x:any)=>String(x.problem_id)));
     const meterCache=new Map<string,{id:string;meter:number;samples:number}>();
 
     // 수학적 순차 반영은 유지하되, 문항/중복/학생미터 조회는 캐시해 DB 왕복을 줄인다.
@@ -483,13 +516,6 @@ export async function POST(request:Request){
     const meter=await currentTargetMeter(supabase,String(student.id),session);
     const goal=clampMeter(session.goal_meter,Number(session.baseline_meter)||meter);
     const wrong=total-correct;
-
-    if(String(session.cycle_kind)==="HOMEWORK"){
-      const update=await supabase.from("sos_training_sessions").update({status:"RETRAIN",correct_count:correct,decision:wrong>0?"HOMEWORK_REVIEW_REQUIRED":"HOMEWORK_RESULT_REVIEW_READY",training_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
-      if(update.error)return NextResponse.json({message:update.error.message},{status:400});
-      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,homework:true,reviewRequired:wrong>0,reportReady:true}});
-      return NextResponse.json({success:true,phase,status:"RETRAIN",correct,total,rate,decision:wrong>0?"HOMEWORK_REVIEW_REQUIRED":"HOMEWORK_RESULT_REVIEW_READY",results,meter,goal,homework:true,wrongCount:wrong,nextStep:"REPORT"});
-    }
 
     // SOS225: 훈련 제출 뒤에는 정오답 수와 관계없이 성적표를 먼저 보여준다.
     // 오답이 있으면 X 문항을 교정하고, 전 문항 정답이면 성적표에서 바로 결과 확인으로 간다.

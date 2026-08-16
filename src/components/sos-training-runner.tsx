@@ -56,7 +56,8 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
   const weakness=String(session?.weakness_snapshot?.weaknessTitle??session?.target_snapshot?.weaknessTitle??"");
   const goal=Number(session?.goal_meter??session?.target_snapshot?.goalMeter??0);
   const baseline=Number(session?.baseline_meter??session?.target_snapshot?.baselineMeter??0);
-  const label=String(session?.cycle_kind)==="HOMEWORK"?"완성 확인 숙제":Number(session?.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련";
+  const homework=String(session?.cycle_kind)==="HOMEWORK";
+  const label=homework?"AI 유사문항 3제 굳히기":Number(session?.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련";
 
   async function persistCurrent(requireAnswer=false){
     if(!item)return false;
@@ -155,11 +156,11 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
     <article className="sos-diagnosis-question sos-training-question">
       <header>
         <div><b>{index+1}번</b><span>{item.problem?.unit??""} · {item.problem?.topic??""}</span></div>
-        <div className="solve"><small>풀이시간</small><strong>{fmt(elapsed)}</strong></div>
+        <div className="solve"><small>{homework?"시간제한":"풀이시간"}</small><strong>{homework?"없음":fmt(elapsed)}</strong></div>
       </header>
       {role?<p className="sos-training-role">{role}</p>:null}
       {generated?<div className={`sos-generated-origin ${String(session?.cycle_kind)==="HOMEWORK"?"homework":"second"}`}>
-        <b>{String(session?.cycle_kind)==="HOMEWORK"?"AI 유사문항 숙제":"AI 유사문항 · 2차 훈련"}</b>
+        <b>{homework?"AI 유사문항 3제 굳히기":"AI 유사문항 · 2차 훈련"}</b>
         <span>{Number(item.problem?.sourceTrainingOrder)>0?`1차 훈련 ${item.problem.sourceTrainingOrder}번에서 파생 · `:""}핵심유형: {item.problem?.coreType||item.problem?.topic||"취약유형 보완"}</span>
         {item.problem?.generatedReason?<small>{item.problem.generatedReason}</small>:null}
       </div>:null}
@@ -168,7 +169,7 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
       </div>
       <div className="sos-answer-lock-box">
         <label><span>정답</span><input autoFocus disabled={busy} value={answer} onChange={(e:React.ChangeEvent<HTMLInputElement>)=>setAnswer(e.target.value)} placeholder="정답을 입력하세요" onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void next();}}/></label>
-        <p>문항별 풀이시간이 기록되어 바로미터 산정에 함께 반영됩니다.</p>
+        <p>{homework?"시간 제한 없이 충분히 풀어도 됩니다. 최초 정답과 오답 교정 과정은 기록되지만 바로미터에는 반영되지 않습니다.":"문항별 풀이시간이 기록되어 바로미터 산정에 함께 반영됩니다."}</p>
         <div className="sos-training-actions">
           <button type="button" className="secondary" disabled={busy||index===0} onClick={()=>void moveTo(index-1)}>← 이전 문항</button>
           <button type="button" disabled={busy||!answer.trim()} onClick={()=>void next()}>{busy?"채점·분석 중...":index===items.length-1?"훈련 제출 · 성적표 보기":"답 저장 · 다음 문항"}</button>

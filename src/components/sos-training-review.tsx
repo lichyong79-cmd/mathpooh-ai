@@ -30,7 +30,7 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
     if(id===String(selectedId)&&feedback?.revealAnswer)return true;
     return Number(x.reviewAttemptCount??0)>=3;
   }).length;
-  const reportTitle=diagnosis?`진단 ${session?.round_no}차 성적표`:String(session?.cycle_kind)==="HOMEWORK"?"유사문항 숙제 성적표":Number(session?.round_no)===2?"2차 훈련 성적표":"1차 훈련 성적표";
+  const reportTitle=diagnosis?`진단 ${session?.round_no}차 성적표`:String(session?.cycle_kind)==="HOMEWORK"?"AI 유사문항 3제 굳히기 성적표":Number(session?.round_no)===2?"2차 훈련 성적표":"1차 훈련 성적표";
 
   useEffect(()=>{const id=window.setInterval(()=>{if(!busy)setNow(Date.now());},1000);return()=>window.clearInterval(id);},[busy]);
   useEffect(()=>{if(item){setAnswer("");setFeedback(item.reviewLastHint?{ok:false,attemptNo:Number(item.reviewAttemptCount??0),hint:item.reviewLastHint,hintLevel:Number(item.reviewHintLevel??0)}:null);setStarted(Date.now());setNow(Date.now());}},[selectedId,item?.id]);
@@ -58,7 +58,7 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
     <section className="sos-training-focus review"><small>{diagnosis?"진단 오답 교정":"훈련 오답 교정"} · {item.order}번</small><h3>정답을 외우지 말고, 다시 생각해서 풀어보세요.</h3><p>첫 답 <b>{item.studentAnswer||"-"}</b> · 첫 풀이시간 <b>{fmt(Number(item.responseSeconds??0))}</b> · 재도전 <b>{attempt}/3</b></p></section>
     <article className="sos-diagnosis-question sos-training-question"><header><div><b>{item.order}번 오답</b><span>{done?"교정 완료":attempt===0?"정답을 보지 않고 다시 풀기":attempt<3?`힌트 ${attempt}단계 사용 중`:"정답·핵심풀이 확인 단계"}</span></div><div className="solve"><small>재풀이시간</small><strong>{fmt(elapsed)}</strong></div></header>
       {item.generated?<div className={`sos-generated-origin ${String(session?.cycle_kind)==="HOMEWORK"?"homework":"second"}`}>
-        <b>{String(session?.cycle_kind)==="HOMEWORK"?"AI 유사문항 숙제":"AI 유사문항 · 2차 훈련"}</b>
+        <b>{String(session?.cycle_kind)==="HOMEWORK"?"AI 유사문항 3제 굳히기":"AI 유사문항 · 2차 훈련"}</b>
         <span>{Number(item.problem?.sourceTrainingOrder)>0?`1차 훈련 ${item.problem.sourceTrainingOrder}번에서 파생 · `:""}핵심유형: {item.problem?.coreType||item.problem?.topic||"취약유형 보완"}</span>
       </div>:null}
       <div className="sos-diagnosis-image">{item.problem?.imageUrl?<SosProblemImage src={item.problem.imageUrl} alt={`${item.order}번 오답 문제`} maskOriginalNumber={!item.generated&&(diagnosis||Number(session?.round_no??1)===1)}/>:item.generated?<div className="sos-generated-question">{item.problem?.generatedText}</div>:<p>문항 이미지가 없습니다.</p>}</div>
@@ -76,6 +76,6 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
       <div><h3>{explainedCount} / {explanationRequiredCount}</h3><b>풀이확인</b><span>3회 재도전 후 정답·핵심풀이 확인이 필요했던 문항 중 확인 완료한 문항입니다.</span></div>
     </div><strong>최초 정답률 {rate}%</strong><p>{wrong.length?<><b>X 문항을 눌러 오답 교정</b>하세요. 첫 실패에는 힌트①, 두 번째 실패에는 힌트②, 세 번째 실패 후에만 정답과 핵심풀이가 공개됩니다.</>:<>전 문항을 맞혔습니다. 결과를 확인하고 다음 단계로 이동하세요.</>}</p></section>
     <div className="sos-report-grid">{all.map((x:any)=>{const isWrong=x.isCorrect===false;const done=Boolean(reviewed[String(x.id)]?.completed||x.reviewCompleted);return <button key={x.id} type="button" disabled={!isWrong||busy} className={`sos-report-item ${isWrong?"wrong":"correct"} ${done?"reviewed":""}`} onClick={()=>{if(isWrong){setSelectedId(String(x.id));onNotice("");}}}><span className="num">{x.order}번</span><b>{isWrong?"X":"O"}</b><small>{fmt(Number(x.responseSeconds??0))}</small>{isWrong?<em>{done?x.reviewIsCorrect===true||reviewed[String(x.id)]?.isCorrect?"교정완료 ✓":"풀이확인 ✓":"오답하기"}</em>:<em>정답</em>}</button>})}</div>
-    {wrong.length?<div className="sos-report-review-state"><b>오답 과정 {completedCount}/{wrong.length}</b><span>교정완료와 풀이확인을 모두 마치면 {diagnosis?"AI 취약점 분석":"바로미터 판정"}으로 넘어갑니다.</span><button type="button" disabled={busy||completedCount!==wrong.length} onClick={()=>void finishReview()}>{busy?diagnosis?"AI 분석 준비 중...":"바로미터 계산 중...":diagnosis?"오답 완료 · AI 취약점 분석":"오답 완료 · 결과 확인"}</button></div>:<div className="sos-report-review-state success"><b>전 문항 정답</b><span>오답 대상이 없습니다.</span><button type="button" disabled={busy} onClick={()=>void finishReview()}>{busy?"결과 처리 중...":diagnosis?"진단 결과 확정 · AI 분석":"훈련 결과 확인"}</button></div>}
+    {wrong.length?<div className="sos-report-review-state"><b>오답 과정 {completedCount}/{wrong.length}</b><span>교정완료와 풀이확인을 모두 마치면 {diagnosis?"AI 취약점 분석":String(session?.cycle_kind)==="HOMEWORK"?"SOS 최종 완료":"바로미터 판정"}으로 넘어갑니다.</span><button type="button" disabled={busy||completedCount!==wrong.length} onClick={()=>void finishReview()}>{busy?diagnosis?"AI 분석 준비 중...":String(session?.cycle_kind)==="HOMEWORK"?"완료 처리 중...":"바로미터 계산 중...":diagnosis?"오답 완료 · AI 취약점 분석":String(session?.cycle_kind)==="HOMEWORK"?"오답 완료 · SOS 마무리":"오답 완료 · 결과 확인"}</button></div>:<div className="sos-report-review-state success"><b>전 문항 정답</b><span>오답 대상이 없습니다.</span><button type="button" disabled={busy} onClick={()=>void finishReview()}>{busy?"결과 처리 중...":diagnosis?"진단 결과 확정 · AI 분석":"훈련 결과 확인"}</button></div>}
   </div>;
 }

@@ -366,7 +366,9 @@ function SosFlowTree({session,sessions,onSelect}:{session:any;sessions:any[];onS
   else if(training1&&inReview(training1)) nodes.push({key:"judge1",label:"목표 판정",state:"unknown",sub:"오답 완료 후"});
 
   if(homework){
-    nodes.push({key:"hw",label:"유사문항 숙제 3제",session:homework,state:String(homework.status)==="IN_PROGRESS"||inReview(homework)?"now":completed(homework)?"done":isActive(homework)?"now":"pending",sub:inReview(homework)?"오답 진행중":undefined});
+    nodes.push({key:"hw",label:"AI 유사문항 3제 굳히기",session:homework,state:String(homework.status)==="IN_PROGRESS"||inReview(homework)?"now":completed(homework)?"done":isActive(homework)?"now":"pending",sub:inReview(homework)?"오답 진행중":undefined});
+    if(completed(homework)) nodes.push({key:"finish-hw",label:"SOS 공략 완료",state:"done"});
+    else if(inReview(homework)) nodes.push({key:"finish-hw",label:"SOS 공략 완료",state:"unknown",sub:"교정 완료 후"});
   }
 
   if(training2){
@@ -378,7 +380,8 @@ function SosFlowTree({session,sessions,onSelect}:{session:any;sessions:any[];onS
   }
 
   const currentNode=nodes.find(n=>n.state==="now");
-  const currentLabel=currentNode?.label??(session?.phase==="DIAGNOSIS"?`진단 ${Number(session?.round_no??1)}차`:`${Number(session?.round_no??1)}차 훈련`);
+  const terminalDone=!!session&&session.phase==="TRAINING"&&completed(session)&&(String(session.cycle_kind)==="HOMEWORK"||Number(session.round_no)===2);
+  const currentLabel=currentNode?.label??(terminalDone?"SOS 공략 완료":session?.phase==="DIAGNOSIS"?`진단 ${Number(session?.round_no??1)}차`:`${Number(session?.round_no??1)}차 훈련`);
   const clickable=(n:Node)=>!!n.session;
 
   return <section className="sos-flow-map">
@@ -396,6 +399,46 @@ function SosFlowTree({session,sessions,onSelect}:{session:any;sessions:any[];onS
     </div>
     <p className="sos-flow-help"><b>i</b> 초록 체크는 완료, 크게 강조된 칸은 지금 진행 중인 단계입니다. 완료된 진단·훈련·오답 칸을 누르면 아래에서 그 결과를 확인할 수 있습니다.</p>
   </section>;
+}
+
+
+function SosFinalCompletion({terminal,sessions,meters,onSelect}:{terminal:any;sessions:any[];meters:any[];onSelect:(id:string)=>void}){
+  const [showResults,setShowResults]=useState(false);
+  const byId=new Map((sessions??[]).map((x:any)=>[String(x.id),x]));
+  const chain:any[]=[]; const seen=new Set<string>(); let cursor:any=terminal;
+  while(cursor&&!seen.has(String(cursor.id))){chain.unshift(cursor);seen.add(String(cursor.id));cursor=cursor.parent_session_id?byId.get(String(cursor.parent_session_id)):null;}
+  const training1=chain.find((x:any)=>x.phase==="TRAINING"&&Number(x.round_no)===1);
+  const diagnosis=chain.find((x:any)=>x.phase==="DIAGNOSIS")??chain[0];
+  const key=String(terminal?.target_snapshot?.subunitKey??training1?.target_snapshot?.subunitKey??"");
+  const meterRow=(meters??[]).find((m:any)=>String(m.subunit_key)===key);
+  const baseline=Number(training1?.baseline_meter??training1?.target_snapshot?.baselineMeter??diagnosis?.target_snapshot?.studentDifficultyMeter??0);
+  const goal=Number(training1?.goal_meter??training1?.target_snapshot?.goalMeter??0);
+  const finalMeter=Number(meterRow?.difficulty_meter??terminal?.review_meter??terminal?.training_meter??baseline);
+  const delta=baseline>0?finalMeter-baseline:0;
+  const firstCorrect=chain.filter((x:any)=>x.phase==="TRAINING").reduce((n:number,x:any)=>n+Number(x.correct_count??0),0);
+  const totalSolved=chain.filter((x:any)=>x.phase==="TRAINING").reduce((n:number,x:any)=>n+Number(x.total_count??0),0);
+  const homework=String(terminal?.cycle_kind)==="HOMEWORK";
+  const stageLabel=(x:any)=>x.phase==="DIAGNOSIS"?`진단 ${x.round_no}차`:String(x.cycle_kind)==="HOMEWORK"?"AI 유사문항 3제 굳히기":Number(x.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련";
+  return <div className="sos-final-completion">
+    <div className="sos-confetti" aria-hidden="true">{Array.from({length:34},(_,i)=><i key={i} style={{left:`${(i*37)%100}%`,animationDelay:`-${(i%9)*.17}s`,animationDuration:`${2.2+(i%5)*.22}s`}}/>)}</div>
+    <section className="sos-final-hero">
+      <div className="sos-final-badge">✓ SOS COMPLETE</div>
+      <h2>SOS 공략 완료!</h2>
+      <h3>금주의 학습이 모두 종료되었습니다.</h3>
+      <p>{homework?"1차 훈련 통과 후 AI 유사문항 3제 굳히기와 필요한 오답 교정까지 모두 완료했습니다.":"2차 훈련과 남은 오답 교정까지 모두 완료했습니다."}</p>
+    </section>
+    <section className="sos-final-summary">
+      <article><small>공략 영역</small><b>{terminal?.target_snapshot?.subunit??"SOS 취약영역"}</b><span>{terminal?.weakness_snapshot?.weaknessTitle??training1?.weakness_snapshot?.weaknessTitle??"맞춤 취약점 보완"}</span></article>
+      <article><small>바로미터</small><b>{baseline>0?baseline.toFixed(2):"-"} → {finalMeter>0?finalMeter.toFixed(2):"-"}</b><span>{delta>=0?"+":""}{delta.toFixed(2)} 변화 {goal>0?`· 목표 ${goal.toFixed(2)}`:""}</span></article>
+      <article><small>훈련 기록</small><b>{firstCorrect}/{totalSolved}</b><span>최초 정답 합계 · {homework?"3제 굳히기는 바로미터 미반영":"2차 훈련까지 반영"}</span></article>
+    </section>
+    <div className="sos-final-route">{chain.map((x:any,index:number)=><span key={x.id}><i>✓</i>{stageLabel(x)}{index<chain.length-1?<em>→</em>:null}</span>)}</div>
+    <button type="button" className="sos-final-result-button" onClick={()=>setShowResults(v=>!v)}>{showResults?"결과 닫기":"전체 결과보기"}</button>
+    {showResults?<section className="sos-final-results">
+      <header><b>이번 SOS 전체 과정</b><span>완료한 단계별 최초 정답과 교정 결과를 다시 확인할 수 있습니다.</span></header>
+      <div>{chain.map((x:any)=><button key={x.id} type="button" onClick={()=>onSelect(String(x.id))}><span>{stageLabel(x)}</span><b>{x.correct_count===null||x.correct_count===undefined?"완료":`${x.correct_count}/${x.total_count}`}</b><em>{String(x.status)==="PASSED"?"완료 ✓":String(x.status)==="COMPLETED"?"완료":"기록"}</em></button>)}</div>
+    </section>:null}
+  </div>;
 }
 
 function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | void }) {
@@ -433,6 +476,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   const sessions=Array.isArray(data.sessions)?data.sessions:[];
   const active=sessions.find((x:any)=>String(x.id)===activeId)??null;
   const activeItems=Array.isArray(active?.items)?active.items:[];
+  const finalCompleted=Boolean(active&&active.phase==="TRAINING"&&["COMPLETED","PASSED"].includes(String(active.status))&&(String(active.cycle_kind)==="HOMEWORK"||Number(active.round_no)===2));
 
   async function start(session:any){
     setBusy("start");setNotice("");
@@ -469,7 +513,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             className={`${String(session.id)===String(active?.id)?"selected":""} ${session.phase==="DIAGNOSIS"?"stage-diagnosis":Number(session.round_no)===2?"stage-training2":"stage-training1"}`}
             onClick={()=>setActiveId(String(session.id))}
           >
-            <div><b>{session.phase==="DIAGNOSIS"?`진단 ${session.round_no}차`:session.cycle_kind==="HOMEWORK"?"완성 확인 숙제":Number(session.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</b><span>{session.target_snapshot?.subunit??"소단원"}</span></div>
+            <div><b>{session.phase==="DIAGNOSIS"?`진단 ${session.round_no}차`:session.cycle_kind==="HOMEWORK"?"AI 유사문항 3제 굳히기":Number(session.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</b><span>{session.target_snapshot?.subunit??"소단원"}</span></div>
             <em>{session.status==="ASSIGNED"?"시작 전":session.status==="IN_PROGRESS"?"진행 중":session.status==="PASSED"?"통과":session.status==="RETRAIN"?"오답 필수":"완료"}</em>
             <small>{session.correct_count===null||session.correct_count===undefined?`${session.total_count}문항`:`${session.correct_count}/${session.total_count} 정답`}</small>
           </button>)}
@@ -480,12 +524,12 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
           {!active?<div className="student-section-empty"><b>진행할 진단·훈련을 선택하세요.</b><span>관리자가 SOS 진단을 생성하면 이곳에 표시됩니다.</span></div>:<>
             <SosFlowTree session={active} sessions={sessions} onSelect={(id)=>setActiveId(id)}/>
             <header className="sos-session-head">
-              <div><small>{active.phase==="DIAGNOSIS"?"SOS DIAGNOSIS":"SOS TRAINING"}</small><h3>{active.target_snapshot?.subunit??"소단원"} · {active.phase==="DIAGNOSIS"?`진단 ${active.round_no}차`:active.cycle_kind==="HOMEWORK"?"유사문항 숙제":active.round_no===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</h3><p>{active.target_snapshot?.subject??""} {active.target_snapshot?.majorUnit?`· ${active.target_snapshot.majorUnit}`:""} · 시작 미터 {Number(active.target_snapshot?.studentDifficultyMeter??0).toFixed(2)}</p></div>
+              <div><small>{active.phase==="DIAGNOSIS"?"SOS DIAGNOSIS":"SOS TRAINING"}</small><h3>{active.target_snapshot?.subunit??"소단원"} · {active.phase==="DIAGNOSIS"?`진단 ${active.round_no}차`:active.cycle_kind==="HOMEWORK"?"AI 유사문항 3제 굳히기":active.round_no===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</h3><p>{active.target_snapshot?.subject??""} {active.target_snapshot?.majorUnit?`· ${active.target_snapshot.majorUnit}`:""} · 시작 미터 {Number(active.target_snapshot?.studentDifficultyMeter??0).toFixed(2)}</p></div>
               <span>{active.total_count}문항</span>
             </header>
 
             {active.status==="ASSIGNED"?<div className="sos-start-box sos-diagnosis-guide">
-              <b>{active.phase==="DIAGNOSIS"?"SOS 진단 응시 안내":"현재 수준에 맞춘 10문항 훈련입니다."}</b>
+              <b>{active.phase==="DIAGNOSIS"?"SOS 진단 응시 안내":active.cycle_kind==="HOMEWORK"?"AI 유사문항 3제 굳히기":"현재 수준에 맞춘 10문항 훈련입니다."}</b>
               {active.phase==="DIAGNOSIS"?<div className="sos-guide-list">
                 <p>진단은 현재 취약지점을 정확하게 찾기 위한 평가입니다.</p>
                 <p><strong>풀이 사진을 촬영할 수 있는 휴대폰·태블릿 등의 기기를 미리 준비</strong>해 주세요.</p>
@@ -493,8 +537,8 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
                 <p>답안을 확정하면 수정할 수 없으며, 이어서 <strong>종이에 작성한 풀이 사진을 반드시 제출</strong>해야 합니다.</p>
                 <p>답안 확정부터 풀이사진 제출까지 걸린 시간도 별도로 기록됩니다.</p>
                 <p className="warn">응시 중 다른 웹페이지·앱으로 이동하면 화면 이탈 기록이 저장되고 즉시 경고가 표시됩니다.</p>
-              </div>:<div className="sos-guide-list"><p><strong>AI 취약점:</strong> {active.weakness_snapshot?.weaknessTitle||active.target_snapshot?.weaknessTitle||"맞춤 보완 영역"}</p><p>{active.weakness_snapshot?.weaknessDetail||active.target_snapshot?.weaknessDetail||"취약점을 집중 또는 포함하는 문항으로 훈련합니다."}</p><p>문항별 <strong>정오답과 풀이시간</strong>이 바로미터에 반영됩니다.</p><p>틀린 문항은 훈련 종료 전 <strong>오답을 반드시 다시 풉니다.</strong></p>{Number(active.baseline_meter)>0&&Number(active.goal_meter)>0?<><p>이번 목표: <strong>{Number(active.baseline_meter).toFixed(2)} → {Number(active.goal_meter).toFixed(2)}</strong></p><small className="sos-term-help">바로미터는 이 취약영역의 현재 실력을 보여주는 지표입니다. 훈련을 통해 목표선까지 끌어올리는 것이 이번 SOS의 목표입니다.</small></>:null}</div>}
-              <button disabled={!!busy} onClick={()=>void start(active)}>{busy==="start"?"준비 중...":active.phase==="DIAGNOSIS"?"안내 확인 · 진단 시작":active.cycle_kind==="HOMEWORK"?"유사문항 숙제 시작":active.round_no===2?"2차 훈련 시작":"1차 훈련 시작"}</button>
+              </div>:active.cycle_kind==="HOMEWORK"?<div className="sos-guide-list"><p><strong>원문 기반 제한변형</strong>으로 만든 AI 유사문항 3제를 풀어 학습을 굳힙니다.</p><p><strong>시간 제한은 없습니다.</strong> 충분히 생각해서 풀어도 됩니다.</p><p>최초 정답과 오답 교정 완료 여부는 기록되지만 <strong>바로미터에는 반영되지 않습니다.</strong></p><p>틀리면 기존과 동일하게 힌트① → 재도전 → 힌트② → 재도전 → 정답·핵심풀이 확인 순서로 교정합니다.</p></div>:<div className="sos-guide-list"><p><strong>AI 취약점:</strong> {active.weakness_snapshot?.weaknessTitle||active.target_snapshot?.weaknessTitle||"맞춤 보완 영역"}</p><p>{active.weakness_snapshot?.weaknessDetail||active.target_snapshot?.weaknessDetail||"취약점을 집중 또는 포함하는 문항으로 훈련합니다."}</p><p>문항별 <strong>정오답과 풀이시간</strong>이 바로미터에 반영됩니다.</p><p>틀린 문항은 훈련 종료 전 <strong>오답을 반드시 다시 풉니다.</strong></p>{Number(active.baseline_meter)>0&&Number(active.goal_meter)>0?<><p>이번 목표: <strong>{Number(active.baseline_meter).toFixed(2)} → {Number(active.goal_meter).toFixed(2)}</strong></p><small className="sos-term-help">바로미터는 이 취약영역의 현재 실력을 보여주는 지표입니다. 훈련을 통해 목표선까지 끌어올리는 것이 이번 SOS의 목표입니다.</small></>:null}</div>}
+              <button disabled={!!busy} onClick={()=>void start(active)}>{busy==="start"?"준비 중...":active.phase==="DIAGNOSIS"?"안내 확인 · 진단 시작":active.cycle_kind==="HOMEWORK"?"3제 굳히기 시작":active.round_no===2?"2차 훈련 시작":"1차 훈련 시작"}</button>
             </div>:null}
 
             {active.status==="IN_PROGRESS"&&active.phase==="DIAGNOSIS"?<SosDiagnosisRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
@@ -503,8 +547,8 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             }}/>:null}
 
             {active.status==="IN_PROGRESS"&&active.phase!=="DIAGNOSIS"?<SosTrainingRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              if(json.status==="RETRAIN")setNotice(`1차 훈련 완료 · ${json.correct}/${json.total} 정답 · 오답 ${json.wrongCount}문항을 반드시 다시 풀어야 합니다.`);
-              else if(json.homework)setNotice(`완성 확인 숙제 완료 · ${json.correct}/${json.total} 정답`);
+              if(json.homework)setNotice(`3제 굳히기 풀이 완료 · 최초정답 ${json.correct}/${json.total} · ${json.wrongCount?`오답 ${json.wrongCount}문항을 교정해 주세요.`:"오답 없이 완료했습니다."} · 바로미터 미반영`);
+              else if(json.status==="RETRAIN")setNotice(`${Number(active.round_no)===2?"2차":"1차"} 훈련 완료 · ${json.correct}/${json.total} 정답 · 오답 ${json.wrongCount}문항을 반드시 다시 풀어야 합니다.`);
               else setNotice(`훈련 완료 · 바로미터 ${Number(json.meter??0).toFixed(2)} / 목표 ${Number(json.goal??0).toFixed(2)}`);
               await load();await onRefresh();
             }}/>:null}
@@ -516,11 +560,15 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             }}/>:null}
 
             {active.status==="RETRAIN"&&active.phase==="TRAINING"?<SosTrainingReview session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              setNotice(json.passed?`오답 완료 · 목표 바로미터 달성 ${Number(json.meter).toFixed(2)} ≥ ${Number(json.goal).toFixed(2)} · 유사문항 3개 숙제가 생성됩니다.`:`오답 완료 · 현재 ${Number(json.meter).toFixed(2)} / 목표 ${Number(json.goal).toFixed(2)} · 2차 AI 유사훈련 10문항이 생성됩니다.`);
+              if(String(active.cycle_kind)==="HOMEWORK")setNotice("AI 유사문항 3제 굳히기와 오답 교정까지 모두 완료했습니다.");
+              else if(Number(active.round_no)===2)setNotice("2차 훈련 오답 교정까지 모두 완료했습니다.");
+              else setNotice(json.passed?`오답 완료 · 목표 바로미터 달성 ${Number(json.meter).toFixed(2)} ≥ ${Number(json.goal).toFixed(2)} · AI 유사문항 3제 굳히기가 생성됩니다.`:`오답 완료 · 현재 ${Number(json.meter).toFixed(2)} / 목표 ${Number(json.goal).toFixed(2)} · 2차 AI 유사훈련 10문항이 생성됩니다.`);
               await load();await onRefresh();
             }}/>:null}
 
-            {["COMPLETED","PASSED"].includes(String(active.status))?<div className="sos-complete-box">
+            {finalCompleted?<SosFinalCompletion terminal={active} sessions={sessions} meters={latestMeters} onSelect={(id)=>setActiveId(id)}/>:null}
+
+            {!finalCompleted&&["COMPLETED","PASSED"].includes(String(active.status))?<div className="sos-complete-box">
               <b>{active.status==="PASSED"?"훈련 통과":active.phase==="DIAGNOSIS"?"진단 완료":"학습 완료"}</b>
               <strong>{active.correct_count??0}/{active.total_count}</strong>
               <p>{active.phase==="DIAGNOSIS"?"진단·오답 교정이 완료되었습니다. 이 최초 정오답과 풀이시간·풀이사진은 그대로 보존되며 AI 취약점 분석의 근거가 됩니다.":active.status==="PASSED"?"이 소단원 훈련을 통과했습니다.":"이번 훈련 결과가 기록되었습니다."}</p>
