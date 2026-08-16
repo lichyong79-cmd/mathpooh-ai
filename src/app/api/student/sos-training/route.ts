@@ -277,7 +277,7 @@ export async function POST(request:Request){
     const attemptNo=(priorLogs.data??[]).length+1;
     const update=await supabase.from("sos_training_items").update({review_answer:answer,review_is_correct:isCorrect,review_response_seconds:responseSeconds,review_answered_at:new Date().toISOString()}).eq("id",itemId).eq("session_id",sessionId);
     if(update.error)return NextResponse.json({message:update.error.message},{status:400});
-    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:isCorrect?"REVIEW_ITEM_CORRECTED":"REVIEW_ITEM_RETRY_WRONG",detail:{question:Number(body.question??0),responseSeconds,isCorrect,attemptNo}});
+    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:isCorrect?"REVIEW_ITEM_CORRECTED":"REVIEW_ITEM_RETRY_WRONG",detail:{question:Number(body.question??0),responseSeconds,isCorrect,attemptNo,answer}});
     if(isCorrect)return NextResponse.json({success:true,isCorrect:true,attemptNo,completed:true});
 
     if(attemptNo<=2){
