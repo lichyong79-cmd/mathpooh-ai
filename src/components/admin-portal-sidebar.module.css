@@ -15,3 +15,14 @@
 .content{min-width:0;margin-left:280px;transition:margin-left .2s ease}
 .collapsed .sidebar{width:78px}.collapsed .content{margin-left:78px}.collapsed .brandCopy,.collapsed .workspace div,.collapsed .groupTitle,.collapsed .label,.collapsed .badge,.collapsed .footer{display:none}.collapsed .brand{justify-content:center;padding-left:0;padding-right:0}.collapsed .brand img{width:38px;height:38px}.collapsed .collapse{position:absolute;right:-15px;top:66px;background:#242424;color:#fff;border-color:#4b4b4b}.collapsed .workspace,.collapsed .item{justify-content:center;padding-left:11px}.collapsed .nested .item:before{display:none}.collapsed .icon{width:auto;font-size:15px}
 @media(max-width:900px){.sidebar{width:78px}.content{margin-left:78px}.brandCopy,.workspace div,.groupTitle,.label,.badge,.footer{display:none}.brand{justify-content:center;padding-left:0;padding-right:0}.brand img{width:38px;height:38px}.collapse{display:none}.workspace,.item,.nested .item{justify-content:center;padding-left:11px}.nested .item:before{display:none}.icon{width:auto;font-size:15px}}
+
+
+/* SOS234 · Admin navigation polish */
+.shell{background:linear-gradient(180deg,#f4f7f5,#f7f9f8)}
+.sidebar{width:274px;padding:15px 12px;background:linear-gradient(180deg,#151917 0%,#181d1a 100%);border-right:1px solid #283029;box-shadow:8px 0 28px rgba(6,18,10,.12)}
+.brand{padding:9px 10px 17px}.brand img{width:45px;height:45px;border-radius:13px}.brandCopy strong{font-size:17px}.brandCopy span{font-size:9px;letter-spacing:.06em;color:#809087}.collapse{border-color:#39443c;background:#212722}.collapse:hover{background:#2a332c}
+.workspace{margin:13px 2px 14px;padding:11px 12px;border-color:#344039;background:linear-gradient(135deg,#232a25,#1e2520)}.workspace b{background:#e9f3eb;color:#236d3c}.workspace span{color:#89978f}
+.nav{padding-right:2px}.group{margin-bottom:12px}.groupTitle{height:28px;margin:2px 13px;color:#78867e;font-size:11px;letter-spacing:.04em}.item{height:43px;border-radius:10px;color:#c7d0ca;font-size:14px}.nested .item{padding-left:31px}.nested .item:before{left:18px;background:#303a33}.item:hover{background:#222a24}.item.active{background:linear-gradient(90deg,#203d2b,#253329);box-shadow:inset 3px 0 #4aad69,inset 0 0 0 1px #334b3b;color:#fff}.item.active .icon{color:#75c98d}.icon{color:#aeb8b1}.footer{border-top-color:#2a332c}.footer span{color:#77837b}
+.content{margin-left:274px}
+.collapsed .sidebar{width:78px}.collapsed .content{margin-left:78px}
+@media(max-width:900px){.sidebar{width:78px}.content{margin-left:78px}}

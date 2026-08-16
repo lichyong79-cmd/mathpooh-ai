@@ -465,3 +465,16 @@ body{font-size:16px;line-height:1.5}
 .ai-upload-grid.four-fields{grid-template-columns:1.3fr 1.1fr .9fr}
 @media(max-width:980px){.ai-upload-grid.four-fields{grid-template-columns:1fr 1fr}}
 @media(max-width:620px){.ai-upload-grid.four-fields{grid-template-columns:1fr}}
+
+
+/* SOS234 · Admin workspace visual system */
+:root{--sos-admin-green:#246f43;--sos-admin-green2:#2f8a55;--sos-admin-soft:#eef7f1;--sos-admin-border:#dfe8e2;--sos-admin-shadow:0 8px 26px rgba(28,69,42,.06)}
+.admin-app,.main-area{background:linear-gradient(180deg,#f5f8f6 0,#f7f9f8 100%)}
+.topbar{height:82px;border-bottom-color:#e2e9e4;box-shadow:0 3px 14px rgba(29,71,43,.035);background:rgba(255,255,255,.96);backdrop-filter:blur(14px)}.topbar p{color:#758179}.topbar h1{letter-spacing:-.035em}
+.page-content{padding-top:24px}.page-title-row{margin-bottom:20px}.page-title-row h2{letter-spacing:-.04em}.page-title-row p{line-height:1.6}
+.primary-button{background:linear-gradient(135deg,#237144,#2f8953);box-shadow:0 7px 18px rgba(35,113,68,.17)}.primary-button:hover{filter:brightness(.96);transform:translateY(-1px)}.secondary-button{border-color:#d7e2da;color:#4e5f55}.secondary-button:hover{background:#f6f9f7}
+.panel,.mini-stat{border-color:var(--sos-admin-border);box-shadow:var(--sos-admin-shadow)}.panel{border-radius:17px}.mini-stat{border-radius:16px}.mini-stat.emphasis{background:linear-gradient(135deg,#f5faf6,#eef8f1);border-color:#cfe3d5}
+.student-toolbar select,.field select,.field input,.global-search{border-color:#d9e4dc;background:#fff}.student-toolbar select:focus,.field select:focus,.field input:focus,.global-search:focus-within{border-color:#7fb693;box-shadow:0 0 0 3px rgba(47,138,85,.09)}
+.table-head{background:#f6f9f7;color:#607068;border-bottom-color:#e4ebe6}.table-row{border-bottom-color:#edf1ee}.table-row.clickable:hover{background:#f5faf7}.pill.green,.pill.blue{background:#eaf6ee;color:#237144}.pill.orange{background:#fff4e6;color:#9a5b21}.pill.red{background:#fff0ef;color:#b13f39}
+.student-modal,.student-drawer{border:1px solid #dfe8e2}.modal-head,.drawer-head{background:#fbfdfb}.detail-score{background:linear-gradient(135deg,#225f3b,#3d8d59)}
+@media(max-width:760px){.page-content{padding-left:16px;padding-right:16px}.topbar{padding:0 18px}}
