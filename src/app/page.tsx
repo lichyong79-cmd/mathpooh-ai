@@ -1,4 +1,5 @@
 "use client";
+import {isSosReview,isSosStarted,isSosOpen} from "@/lib/sos-stage-state";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -332,8 +333,8 @@ function SosFlowTree({session,sessions,onSelect}:{session:any;sessions:any[];onS
   const activeId=String(session?.id??"");
 
   const completed=(x:any)=>!!x&&["COMPLETED","PASSED"].includes(String(x.status));
-  const inReview=(x:any)=>!!x&&String(x.status)==="RETRAIN";
-  const started=(x:any)=>!!x&&["IN_PROGRESS","RETRAIN","COMPLETED","PASSED"].includes(String(x.status));
+  const inReview=(x:any)=>!!x&&isSosReview(x);
+  const started=(x:any)=>!!x&&isSosStarted(x);
   const wrongCount=(x:any)=>Math.max(0,Number(x?.total_count??0)-Number(x?.correct_count??0));
   const reviewDone=(x:any)=>!!x&&completed(x)&&wrongCount(x)>0;
   const isActive=(x:any)=>!!x&&String(x.id)===activeId;
@@ -421,7 +422,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
         const refreshed=await fetch("/api/student/sos-training",{cache:"no-store"}); const refreshedJson=await refreshed.json(); if(!refreshed.ok||refreshedJson?.success!==true)throw new Error(refreshedJson?.message||"훈련 준비 결과를 불러오지 못했습니다."); setData(refreshedJson);
         const ready=(refreshedJson.sessions??[]).find((x:any)=>x.phase==="TRAINING"&&String(x.parent_session_id)===String(legacyDiagnosis.id)&&x.status==="ASSIGNED"); const second=(refreshedJson.sessions??[]).find((x:any)=>x.phase==="DIAGNOSIS"&&String(x.parent_session_id)===String(legacyDiagnosis.id)&&x.status==="ASSIGNED"); setActiveId(String(ready?.id??second?.id??legacyDiagnosis.id)); setNotice(ready?"기존 진단 분석 완료 · 1차 훈련 10문항이 준비되었습니다. 시작 버튼을 눌러 주세요.":second?"기존 진단 분석 완료 · 2차 진단이 준비되었습니다.":"기존 진단 분석이 완료되었습니다."); return;
       }
-      const open=allSessions.find((x:any)=>["IN_PROGRESS","ASSIGNED","RETRAIN"].includes(String(x.status)));
+      const open=allSessions.find((x:any)=>isSosOpen(x));
       setActiveId((current:string)=>current||String(open?.id??""));
     }catch(error){setNotice(error instanceof Error?error.message:"진단·훈련 조회 실패");}
     finally{setLoading(false);}

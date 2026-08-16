@@ -37,9 +37,16 @@ function shouldTrack(input:RequestInfo|URL,init?:RequestInit){
   const url=typeof input==="string"?input:input instanceof URL?input.toString():input.url;
   const method=String(init?.method??(typeof Request!=="undefined"&&input instanceof Request?input.method:"GET")).toUpperCase();
   if(!url.includes("/api/")||method==="GET"||method==="HEAD")return false;
-  const action=readAction(init);
-  if(["activity","reveal"].includes(action))return false;
-  return true;
+  const action=readAction(init).toLowerCase();
+  const u=url.toLowerCase();
+  // 큰 로더는 실제로 기다릴 만한 작업만 추적한다. 문항 저장/로그/힌트는 로컬 버튼 상태로 처리.
+  if(u.includes("/api/admin/sos-progress/reset"))return true;
+  if(u.includes("/api/student/sos-training"))return ["recover_diagnosis","start","submit","submit_review"].includes(action);
+  if(u.includes("training-engine"))return true;
+  if(u.includes("analysis")||u.includes("reanaly")||u.includes("recommend"))return true;
+  if(u.includes("regrade")||u.includes("barometer"))return true;
+  if(u.includes("pdf")||u.includes("materialize"))return true;
+  return false;
 }
 
 export default function GlobalWaitOverlay(){

@@ -76,31 +76,34 @@ export async function recordTrainingResult(args:{
   itemId:string;
   studentAnswer:string;
   responseSeconds?:number|null;
+  preloadedItem?:any;
+  knownDuplicate?:boolean;
+  meterCache?:Map<string,{id:string;meter:number;samples:number}>;
+  seenProblemIds?:Set<string>;
 }) {
   const {supabase,studentId,itemId}=args;
 
-  const itemResult=await supabase
-    .from("sos_training_items")
-    .select("id,session_id,problem_id,is_correct,generated_problem,sos_training_sessions(student_id,phase,target_snapshot,cycle_kind),problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,difficulty_meter_samples,difficulty_meter_unique_students,problem_dna,answer)")
-    .eq("id",itemId)
-    .single();
-
-  if(itemResult.error||!itemResult.data)
-    throw new Error(itemResult.error?.message||"훈련 문항을 찾을 수 없습니다.");
-
-  const item:any=itemResult.data;
+  let item:any=args.preloadedItem??null;
+  if(!item){
+    const itemResult=await supabase
+      .from("sos_training_items")
+      .select("id,session_id,problem_id,is_correct,generated_problem,sos_training_sessions(student_id,phase,target_snapshot,cycle_kind),problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,difficulty_meter_samples,difficulty_meter_unique_students,problem_dna,answer)")
+      .eq("id",itemId)
+      .single();
+    if(itemResult.error||!itemResult.data)throw new Error(itemResult.error?.message||"훈련 문항을 찾을 수 없습니다.");
+    item=itemResult.data;
+  }
   const session:any=item.sos_training_sessions??{};
   if(String(session?.student_id??"")!==studentId)
     throw new Error("학생과 진단·훈련 문항이 일치하지 않습니다.");
 
-  const existingEvent=await supabase
-    .from("sos_difficulty_events")
-    .select("id")
-    .eq("training_item_id",itemId)
-    .maybeSingle();
-
-  if(existingEvent.error) throw existingEvent.error;
-  if(existingEvent.data) {
+  let duplicate=args.knownDuplicate===true;
+  if(args.knownDuplicate===undefined){
+    const existingEvent=await supabase.from("sos_difficulty_events").select("id").eq("training_item_id",itemId).maybeSingle();
+    if(existingEvent.error)throw existingEvent.error;
+    duplicate=!!existingEvent.data;
+  }
+  if(duplicate) {
     return {
       duplicate:true,
       isCorrect:item.is_correct===true,
@@ -134,7 +137,8 @@ export async function recordTrainingResult(args:{
   if(!info.key) throw new Error("훈련 소단원 키를 찾을 수 없습니다.");
 
   const problemBefore=clampMeter(problem.difficulty_meter,Number(problem.difficulty)||3);
-  const studentMeterRow=await loadSubunitMeter(supabase,studentId,info,problemBefore);
+  const cachedMeter=args.meterCache?.get(info.key);
+  const studentMeterRow=cachedMeter??await loadSubunitMeter(supabase,studentId,info,problemBefore);
   const isCorrect=answerMatches(args.studentAnswer,problem.answer);
   const responseSeconds=Number.isFinite(Number(args.responseSeconds))
     ? Math.max(0,Math.round(Number(args.responseSeconds)))
@@ -159,15 +163,14 @@ export async function recordTrainingResult(args:{
   let firstStudentSample=false;
 
   if(bankProblem&&item.problem_id){
-    const priorStudent=await supabase
-      .from("sos_difficulty_events")
-      .select("id")
-      .eq("problem_id",String(item.problem_id))
-      .eq("student_id",studentId)
-      .limit(1);
-    if(priorStudent.error) throw priorStudent.error;
-
-    firstStudentSample=(priorStudent.data??[]).length===0;
+    if(args.seenProblemIds){
+      firstStudentSample=!args.seenProblemIds.has(String(item.problem_id));
+      args.seenProblemIds.add(String(item.problem_id));
+    }else{
+      const priorStudent=await supabase.from("sos_difficulty_events").select("id").eq("problem_id",String(item.problem_id)).eq("student_id",studentId).limit(1);
+      if(priorStudent.error)throw priorStudent.error;
+      firstStudentSample=(priorStudent.data??[]).length===0;
+    }
     const uniqueBefore=Math.max(0,Number(bankProblem.difficulty_meter_unique_students??0));
     uniqueAfter=uniqueBefore+(firstStudentSample?1:0);
     problemAfter=firstStudentSample
@@ -190,6 +193,7 @@ export async function recordTrainingResult(args:{
     })
     .eq("id",studentMeterRow.id);
   if(meterUpdate.error) throw meterUpdate.error;
+  args.meterCache?.set(info.key,{id:studentMeterRow.id,meter:studentAfter,samples:studentMeterRow.samples+(homework?0:1)});
 
   if(bankProblem&&item.problem_id){
     const problemUpdate=await supabase

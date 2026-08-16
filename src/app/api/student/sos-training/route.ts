@@ -414,19 +414,13 @@ export async function POST(request:Request){
 
     const itemsResult=await supabase
       .from("sos_training_items")
-      .select("id,item_order")
+      .select("id,session_id,problem_id,item_order,student_answer,response_seconds,solution_photo_path,answer_locked_at,is_correct,generated_problem,sos_training_sessions(student_id,phase,target_snapshot,cycle_kind),problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,difficulty_meter_samples,difficulty_meter_unique_students,problem_dna,answer)")
       .eq("session_id",sessionId)
       .order("item_order");
-
     if(itemsResult.error)return NextResponse.json({message:itemsResult.error.message},{status:400});
     const items=itemsResult.data??[];
-
-    if(items.length!==Number(session.total_count))
-      return NextResponse.json({message:`문항 구성이 올바르지 않습니다. ${items.length}/${session.total_count}`},{status:409});
-
-    const fullItems=await supabase.from("sos_training_items").select("id,student_answer,response_seconds,solution_photo_path,answer_locked_at").eq("session_id",sessionId).order("item_order");
-    if(fullItems.error)return NextResponse.json({message:fullItems.error.message},{status:400});
-    const fullById=new Map<string,any>((fullItems.data??[]).map((x:any)=>[String(x.id),x] as [string,any]));
+    if(items.length!==Number(session.total_count))return NextResponse.json({message:`문항 구성이 올바르지 않습니다. ${items.length}/${session.total_count}`},{status:409});
+    const fullById=new Map<string,any>(items.map((x:any)=>[String(x.id),x] as [string,any]));
     const missing=items.filter((item:any)=>!String(answers[String(item.id)]??fullById.get(String(item.id))?.student_answer??"").trim());
     if(missing.length)return NextResponse.json({message:`미응답 ${missing.length}문항이 있습니다. 모두 답한 뒤 제출해 주세요.`},{status:400});
     if(String(session.phase)==="DIAGNOSIS"){
@@ -438,8 +432,19 @@ export async function POST(request:Request){
 
     let correct=0;
     const results:any[]=[];
+    const itemIds=items.map((x:any)=>String(x.id));
+    const problemIds=[...new Set(items.map((x:any)=>String(x.problem_id??"")).filter(Boolean))];
+    const [eventRows,priorProblemRows]=await Promise.all([
+      itemIds.length?supabase.from("sos_difficulty_events").select("training_item_id").in("training_item_id",itemIds):Promise.resolve({data:[],error:null}),
+      problemIds.length?supabase.from("sos_difficulty_events").select("problem_id").eq("student_id",String(student.id)).in("problem_id",problemIds):Promise.resolve({data:[],error:null}),
+    ]);
+    if(eventRows.error)return NextResponse.json({message:eventRows.error.message},{status:400});
+    if(priorProblemRows.error)return NextResponse.json({message:priorProblemRows.error.message},{status:400});
+    const duplicateItems=new Set((eventRows.data??[]).map((x:any)=>String(x.training_item_id)));
+    const seenProblemIds=new Set((priorProblemRows.data??[]).map((x:any)=>String(x.problem_id)));
+    const meterCache=new Map<string,{id:string;meter:number;samples:number}>();
 
-    // 문항 순서대로 반영해야 학생 미터가 다음 문항에 순차적으로 이어진다.
+    // 수학적 순차 반영은 유지하되, 문항/중복/학생미터 조회는 캐시해 DB 왕복을 줄인다.
     for(const item of items as any[]){
       try{
         const result=await recordTrainingResult({
@@ -448,6 +453,10 @@ export async function POST(request:Request){
           itemId:String(item.id),
           studentAnswer:String(answers[String(item.id)]??fullById.get(String(item.id))?.student_answer??""),
           responseSeconds:Number(seconds[String(item.id)]??fullById.get(String(item.id))?.response_seconds??0)||null,
+          preloadedItem:item,
+          knownDuplicate:duplicateItems.has(String(item.id)),
+          meterCache,
+          seenProblemIds,
         });
         if(result.isCorrect)correct++;
         results.push({itemId:item.id,ok:true,...result});
