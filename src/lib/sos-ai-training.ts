@@ -137,15 +137,37 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   const {supabase,studentId,diagnosisSessionId}=args;
   const diagResult=await supabase
     .from("sos_training_sessions")
-    .select("id,student_id,phase,status,round_no,target_snapshot,sos_training_items(id,problem_id,item_order,student_answer,is_correct,response_seconds,solution_photo_path,problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path,answer))")
+    .select("id,student_id,phase,status,round_no,decision,updated_at,target_snapshot,sos_training_items(id,problem_id,item_order,student_answer,is_correct,response_seconds,solution_photo_path,problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path,answer))")
     .eq("id",diagnosisSessionId).eq("student_id",studentId).single();
   if(diagResult.error||!diagResult.data) throw new Error(diagResult.error?.message||"진단 결과를 찾을 수 없습니다.");
   const diagnosis:any=diagResult.data;
   if(diagnosis.phase!=="DIAGNOSIS"||!['COMPLETED','PASSED'].includes(String(diagnosis.status))) throw new Error("완료된 진단만 AI 분석할 수 있습니다.");
 
-  const existing=await supabase.from("sos_training_sessions").select("id").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",diagnosisSessionId).limit(1);
+  const existing=await supabase.from("sos_training_sessions").select("id,status,created_at,sos_training_items(id,student_answer,answered_at,revealed_at)").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",diagnosisSessionId).eq("round_no",1).eq("cycle_kind","BANK_TRAINING").order("created_at",{ascending:true});
   if(existing.error)throw existing.error;
-  if((existing.data??[]).length)return {created:false,existing:true,sessionId:String(existing.data?.[0]?.id??"")};
+  if((existing.data??[]).length){
+    const canonical=(existing.data??[]).find((x:any)=>String(x.status)!=="ASSIGNED"||(x.sos_training_items??[]).some((i:any)=>String(i.student_answer??"").trim()||i.answered_at||i.revealed_at))??existing.data?.[0];
+    return {created:false,existing:true,sessionId:String(canonical?.id??"")};
+  }
+
+  // SOS237: 동일 진단 완료 요청이 중복 도착해도 1차 훈련 AI 생성은 한 요청만 수행한다.
+  // 현재 decision 값을 compare-and-set 조건으로 사용해 레이스를 차단한다. 5분 이상 멈춘 잠금은 복구 요청이 회수할 수 있다.
+  const currentDecision=String(diagnosis.decision??"");
+  const lockAge=Date.now()-new Date(diagnosis.updated_at??0).getTime();
+  if(currentDecision==="AI_TRAINING_CREATING"&&Number.isFinite(lockAge)&&lockAge<5*60*1000)
+    return {created:false,creating:true,nextStep:"AI_TRAINING_CREATING"};
+  let lockQuery=supabase.from("sos_training_sessions")
+    .update({decision:"AI_TRAINING_CREATING",updated_at:new Date().toISOString()})
+    .eq("id",diagnosisSessionId).eq("student_id",studentId);
+  lockQuery=currentDecision?lockQuery.eq("decision",currentDecision):lockQuery.is("decision",null);
+  const lock=await lockQuery.select("id");
+  if(lock.error)throw lock.error;
+  if(!(lock.data??[]).length){
+    const after=await supabase.from("sos_training_sessions").select("id").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",diagnosisSessionId).eq("round_no",1).eq("cycle_kind","BANK_TRAINING").order("created_at",{ascending:true}).limit(1);
+    if(after.error)throw after.error;
+    if((after.data??[]).length)return {created:false,existing:true,sessionId:String(after.data?.[0]?.id??"")};
+    return {created:false,creating:true,nextStep:"AI_TRAINING_CREATING"};
+  }
 
   const target=diagnosis.target_snapshot??{};
   const content:any[]=[{type:"input_text",text:`당신은 MATHPOOH SOS 수학 취약점 진단 엔진입니다.\n아래 3개 진단문항의 문항 DNA, 정오답, 풀이시간, 학생 풀이사진을 함께 보고 이 학생에게 실제로 훈련할 만한 취약점이 있는지 판단하세요.\n\n규칙:\n- 단순히 틀렸다는 이유만으로 취약점이라고 하지 말고, 3문항에서 반복되거나 풀이사진/시간으로 확인되는 사고과정의 약점을 찾습니다.\n- 계산실수와 개념/조건해석/접근전략 약점을 구분합니다.\n- 취약점이 있으면 한 번의 10문항 훈련으로 집중할 수 있게 가장 핵심적인 1개 축으로 표현합니다.\n- weaknessDetected=false라면 이유를 명확히 씁니다.\n- 학생에게 보여줄 weaknessTitle은 짧고 이해하기 쉽게, weaknessDetail은 2문장 이내로 씁니다.\n\n타겟 정보: ${JSON.stringify(target)}\n진단 데이터: ${JSON.stringify((diagnosis.sos_training_items??[]).map((item:any)=>({order:item.item_order,answer:item.student_answer,correct:item.is_correct,seconds:item.response_seconds,problem:compactDna(item.problem_bank_questions??{})})))}`}];
@@ -158,7 +180,7 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   }};
   const weakness=await openAiJson("",weaknessSchema,content);
 
-  await supabase.from("sos_training_sessions").update({weakness_snapshot:weakness,decision:weakness.weaknessDetected?"WEAKNESS_FOUND":"NO_CLEAR_WEAKNESS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);
+  await supabase.from("sos_training_sessions").update({weakness_snapshot:weakness,decision:weakness.weaknessDetected?"AI_TRAINING_CREATING":"NO_CLEAR_WEAKNESS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);
   if(!weakness.weaknessDetected){
     if(Number(diagnosis.round_no??1)<2){
       const second=await createSecondDiagnosisFromWeakest({supabase,studentId,parentDiagnosis:diagnosis});
@@ -203,23 +225,36 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   selectedProblems.sort((a:any,b:any)=>a.meter-b.meter||String(a.id).localeCompare(String(b.id)));
 
   const snapshot={...target,weaknessTitle:weakness.weaknessTitle,weaknessDetail:weakness.weaknessDetail,focusConcepts:weakness.focusConcepts,baselineMeter:baseline,goalMeter:goal,studentDifficultyMeter:baseline,studentDifficultyLabel:meterLabel(baseline),aiTraining:true};
+  const duplicateCheck=await supabase.from("sos_training_sessions").select("id").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",diagnosisSessionId).eq("round_no",1).eq("cycle_kind","BANK_TRAINING").order("created_at",{ascending:true}).limit(1);
+  if(duplicateCheck.error)throw duplicateCheck.error;
+  if((duplicateCheck.data??[]).length){
+    await supabase.from("sos_training_sessions").update({decision:"FIRST_TRAINING_ASSIGNED",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId).eq("decision","AI_TRAINING_CREATING");
+    return {created:false,existing:true,sessionId:String(duplicateCheck.data?.[0]?.id??"")};
+  }
   const sessionResult=await supabase.from("sos_training_sessions").insert({
     student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:snapshot,weakness_snapshot:weakness,parent_session_id:diagnosisSessionId,round_no:1,total_count:10,baseline_meter:baseline,goal_meter:goal,cycle_kind:"BANK_TRAINING"
   }).select().single();
-  if(sessionResult.error||!sessionResult.data)throw new Error(sessionResult.error?.message||"1차 훈련 생성 실패");
+  if(sessionResult.error||!sessionResult.data){await supabase.from("sos_training_sessions").update({decision:"AI_WEAKNESS_ANALYSIS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId).eq("decision","AI_TRAINING_CREATING");throw new Error(sessionResult.error?.message||"1차 훈련 생성 실패");}
   const session:any=sessionResult.data;
   const itemResult=await supabase.from("sos_training_items").insert(selectedProblems.map((p:any,index:number)=>({session_id:session.id,problem_id:p.id,item_order:index+1,item_role:`${p.aiRole} · ${p.aiReason}`,subunit_key:key||problemSubunit(p).key})));
-  if(itemResult.error){await supabase.from("sos_training_sessions").delete().eq("id",session.id);throw itemResult.error;}
+  if(itemResult.error){await supabase.from("sos_training_sessions").delete().eq("id",session.id);await supabase.from("sos_training_sessions").update({decision:"AI_WEAKNESS_ANALYSIS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId).eq("decision","AI_TRAINING_CREATING");throw itemResult.error;}
+  await supabase.from("sos_training_sessions").update({decision:"FIRST_TRAINING_ASSIGNED",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId).eq("decision","AI_TRAINING_CREATING");
   return {created:true,weakness,session,baselineMeter:baseline,goalMeter:goal};
 }
 
 export async function generateSimilarTraining(args:{supabase:any;studentId:string;firstTrainingSessionId:string;count:3|10;kind:"HOMEWORK"|"SECOND_TRAINING"}){
   const {supabase,studentId,firstTrainingSessionId,count,kind}=args;
   const source=await supabase.from("sos_training_sessions")
-    .select("id,student_id,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,sos_training_items(id,item_order,is_correct,response_seconds,review_is_correct,review_response_seconds,problem_meter_before,problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path,answer))")
+    .select("id,student_id,status,decision,updated_at,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,sos_training_items(id,item_order,is_correct,response_seconds,review_is_correct,review_response_seconds,problem_meter_before,problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path,answer))")
     .eq("id",firstTrainingSessionId).eq("student_id",studentId).single();
   if(source.error||!source.data)throw new Error(source.error?.message||"1차 훈련 결과를 찾을 수 없습니다.");
   const s:any=source.data;
+
+  // SOS237: 이미 생성된 2차/3제는 그대로 재사용한다. 최종 insert 직전에도 한 번 더 확인한다.
+  const existing=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",kind==="HOMEWORK"?3:2).order("created_at",{ascending:true}).limit(1);
+  if(existing.error)throw existing.error;
+  if((existing.data??[]).length)return {session:existing.data?.[0],problems:[],existing:true};
+
   const weakness=s.weakness_snapshot??{};
   const ranked=(s.sos_training_items??[]).slice().sort((a:any,b:any)=>{
     const ap=(a.is_correct===false?100:0)+(a.review_is_correct===false?60:0)+Math.min(60,Number(a.response_seconds??0)/5);
@@ -364,6 +399,9 @@ ${invalidReason?`이전 생성은 검증에서 탈락했습니다: ${invalidReas
       barometerExcluded:kind==="HOMEWORK",
     };
   });
+  const duplicateCheck=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",kind==="HOMEWORK"?3:2).order("created_at",{ascending:true}).limit(1);
+  if(duplicateCheck.error)throw duplicateCheck.error;
+  if((duplicateCheck.data??[]).length)return {session:duplicateCheck.data?.[0],problems:[],existing:true};
   const session=await supabase.from("sos_training_sessions").insert({
     student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:{...target,generatedSimilar:true,homework:kind==="HOMEWORK",barometerExcluded:kind==="HOMEWORK",generationPolicy:"SOURCE_LIMITED_TRANSFORM_V1"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:kind==="HOMEWORK"?3:2,total_count:count,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:kind
   }).select().single();
