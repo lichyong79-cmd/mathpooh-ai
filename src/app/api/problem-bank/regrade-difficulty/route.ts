@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const { data: problem, error } = await supabase
       .from("problem_bank_questions")
-      .select("id,subject,question_image_path,problem_dna,difficulty")
+      .select("id,subject,question_image_path,problem_dna,difficulty,answer")
       .eq("id", problemId)
       .single();
     if (error || !problem) {
@@ -73,6 +73,7 @@ export async function POST(request: NextRequest) {
         imageUrl: imageDataUrl,
         dna: problem.problem_dna,
         references,
+        officialAnswer: problem.answer,
         timeoutMs: 180_000,
       });
     } catch (judgeError) {
@@ -83,11 +84,12 @@ export async function POST(request: NextRequest) {
     const current = normalizeDifficulty(problem.difficulty);
     const dna = applyJudgedDifficulty(problem.problem_dna, result, current || null);
 
+    // SOS240: 미판정/검토필요는 기존 difficulty를 절대 덮어쓰지 않는다.
+    // dryRun=false여도 검증 메타데이터만 저장하고, 확정 가능한 graded 결과만 실제 난이도를 갱신한다.
     if (!dryRun) {
-      const { error: updateError } = await supabase
-        .from("problem_bank_questions")
-        .update({ difficulty: result.final_grade, problem_dna: dna, updated_at: new Date().toISOString() })
-        .eq("id", problemId);
+      const updatePayload: any = { problem_dna: dna, updated_at: new Date().toISOString() };
+      if (result.decision === "graded" && result.final_grade && !result.review_required) updatePayload.difficulty = result.final_grade;
+      const { error: updateError } = await supabase.from("problem_bank_questions").update(updatePayload).eq("id", problemId);
       if (updateError) return NextResponse.json({ success: false, message: updateError.message }, { status: 500 });
     }
 
@@ -96,11 +98,23 @@ export async function POST(request: NextRequest) {
       problemId,
       difficulty: result.final_grade,
       previousDifficulty: current || null,
+      decision: result.decision,
+      reviewRequired: result.review_required,
+      reviewReason: result.review_reason,
+      solutionVerified: result.solution_verified,
+      answerConsistency: result.answer_consistency,
+      solvedAnswer: result.solve?.solved_answer ?? "",
+      solveConfidence: result.solve?.confidence ?? 0,
+      reasoningSteps: result.solve?.reasoning_steps ?? 0,
+      conditionTransformations: result.solve?.condition_transformations ?? 0,
+      calculationLoad: result.solve?.calculation_load ?? 0,
+      insightLoad: result.solve?.insight_load ?? 0,
       reason: result.reason,
       confidence: result.confidence,
       csatPointEquivalent: result.csat_point_equivalent,
       csatDifficultyBand: result.csat_difficulty_band,
       dryRun,
+      applied: !dryRun && result.decision === "graded" && !!result.final_grade && !result.review_required,
       version: DIFFICULTY_JUDGE_VERSION,
     });
   } catch (error) {

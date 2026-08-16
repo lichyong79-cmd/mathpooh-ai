@@ -48,6 +48,9 @@ export function difficultyFromBand(band: unknown): DifficultyValue | "" { return
 export function difficultyNumber(value: unknown, fallback=4) { const v=normalizeDifficulty(value); return v ? Number(v) : fallback; }
 
 export function normalizeProblemDifficulty(value: unknown, dna?: any, fallback: DifficultyValue | "" = "") : DifficultyValue | "" {
+  // SOS240: AI가 재풀이 검증에 실패해 미판정으로 표시한 문항은 저장된 과거 숫자를
+  // 정상 확정 난이도처럼 보여주지 않는다. 관리자 확정은 항상 우선한다.
+  if (dna?.difficulty?.admin_fixed !== true && String(dna?.difficulty?.difficulty_decision ?? "") === "unclassified") return fallback;
   const raw=String(value ?? "").trim();
   const version=String(dna?.difficulty?.scale_version ?? dna?.difficulty?.difficulty_scale_version ?? "");
   if (version === DIFFICULTY_SCALE_VERSION) return normalizeDifficulty(raw, fallback);

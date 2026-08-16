@@ -311,9 +311,17 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         imageUrl: signed.data.signedUrl,
         dna,
         references,
+        officialAnswer: question.answer,
       });
       dna = applyJudgedDifficulty(dna, judgement, String(dna.difficulty?.final_grade ?? "") || null) as ProblemDNA;
-      difficultyJudged = true;
+      difficultyJudged = judgement.decision === "graded" && !!judgement.final_grade && !judgement.review_required;
+      if (!difficultyJudged) {
+        dna.summary = {
+          ...(dna.summary ?? {}),
+          review_required: true,
+          review_reasons: [...new Set([...(Array.isArray(dna.summary?.review_reasons) ? dna.summary.review_reasons : []), `난이도 재풀이 검증: ${judgement.review_reason || "미판정/검토 필요"}`])],
+        } as ProblemDNA["summary"];
+      }
     } catch (judgeError) {
       // 판정 호출이 실패해도 분석 결과 자체는 살린다. 근거 기반 계산값이 남는다.
       console.warn("[analyze] difficulty judge skipped:", judgeError instanceof Error ? judgeError.message : judgeError);
