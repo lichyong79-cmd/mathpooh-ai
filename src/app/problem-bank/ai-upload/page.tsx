@@ -951,6 +951,8 @@ export default function AnalysisWorkspacePage() {
   const [preview, setPreview] = useState("");
   const [solutionPreviewUrl, setSolutionPreviewUrl] = useState("");
   const [manualSolutionCropOpen, setManualSolutionCropOpen] = useState(false);
+  const [manualRecognitionMode, setManualRecognitionMode] = useState(false);
+  const [manualRecognitionQuestionNo, setManualRecognitionQuestionNo] = useState("");
 
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
@@ -1359,9 +1361,13 @@ export default function AnalysisWorkspacePage() {
   function handlePointerUp() {
     const completedRect = draft;
     const targetQuestion = activeQuestion;
-    if (completedRect && completedRect.width >= 1 && completedRect.height >= 1 && targetQuestion) {
+    if (completedRect && completedRect.width >= 1 && completedRect.height >= 1) {
       setSelection(completedRect);
-      void saveCrop(completedRect, targetQuestion);
+      if (workflowStep === 1 && manualRecognitionMode) {
+        void saveManualRecognition(completedRect);
+      } else if (targetQuestion) {
+        void saveCrop(completedRect, targetQuestion);
+      }
     }
     setDraft(null);
     startRef.current = null;
@@ -1457,6 +1463,78 @@ export default function AnalysisWorkspacePage() {
       setMessage(`${stage === "recognition" ? "문제인식" : stage === "crop" ? "자르기" : "문항분석"} 전체 취소 완료${preserved ? ` · 문제은행 등록 ${preserved}문항은 보존` : ""}`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "전체 취소에 실패했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function saveManualRecognition(rect: Rect) {
+    if (!workspace?.analysis?.id) {
+      setError("분석 정보가 없습니다.");
+      return;
+    }
+    const questionNo = Number(manualRecognitionQuestionNo);
+    if (!Number.isInteger(questionNo) || questionNo < 1) {
+      setError("수동 인식할 문항번호를 먼저 입력해 주세요.");
+      return;
+    }
+
+    setBusy("manual-recognition");
+    setError("");
+    setMessage("");
+    try {
+      let target = questions.find((question) => Number(question.question_no) === questionNo) ?? null;
+      if (!target) {
+        const createResponse = await fetch("/api/analysis/questions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            analysisId: workspace.analysis.id,
+            questionNo,
+            pageNo,
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+          }),
+        });
+        const createPayload = await createResponse.json();
+        if (!createResponse.ok || !createPayload.success) throw new Error(createPayload.message || "수동 인식 문항 추가에 실패했습니다.");
+        target = createPayload.question as Question;
+      }
+      if (!target) throw new Error("수동 인식 문항 정보를 만들지 못했습니다.");
+
+      const reviewResult = {
+        ...(target.review_result ?? {}),
+        recognition_manual: true,
+        recognition_manual_at: new Date().toISOString(),
+        crop_manual: true,
+        crop_engine_version: CROP_ENGINE_VERSION,
+      };
+      const patchResponse = await fetch(`/api/analysis/questions/${target.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_no: questionNo,
+          page_no: pageNo,
+          crop_x: rect.x,
+          crop_y: rect.y,
+          crop_width: rect.width,
+          crop_height: rect.height,
+          status: "WAITING",
+          review_reason: "관리자가 1단계 문제인식 영역을 수동 보정했습니다.",
+          review_result: reviewResult,
+        }),
+      });
+      const patchPayload = await patchResponse.json();
+      if (!patchResponse.ok || !patchPayload.success) throw new Error(patchPayload.message || "수동 인식 좌표 저장에 실패했습니다.");
+
+      await loadWorkspace(workspace.source.id);
+      setActiveQuestionId(target.id);
+      setManualRecognitionQuestionNo("");
+      setMessage(`${questionNo}번 수동 인식 완료 · 이 좌표를 2단계 자르기가 그대로 사용합니다.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "수동 문제인식에 실패했습니다.");
     } finally {
       setBusy("");
     }
@@ -1793,6 +1871,39 @@ export default function AnalysisWorkspacePage() {
     setMessage(`${activeQuestion.question_no}번 공식 해설을 직접 연결했습니다.`);
   }
 
+
+  async function rematchOfficialSolution(question: Question) {
+    if (!workspace?.solutionUrl) {
+      setError("등록된 공식 해설 PDF가 없습니다.");
+      return;
+    }
+    setBusy("solution-rematch");
+    setError("");
+    setMessage("");
+    try {
+      const ready = await waitForOfficialSolutionReady(20000);
+      if (!ready) throw new Error("해설 PDF 문항번호 인식 준비가 끝나지 않았습니다. 잠시 후 다시 시도해 주세요.");
+
+      // '다시 자동 매칭'은 이전 앵커를 재사용하지 않고 해설 PDF 번호 인식부터 새로 수행한다.
+      const doc = solutionPdfDocRef.current;
+      if (!doc) throw new Error("해설 PDF를 불러오지 못했습니다.");
+      const expected = questions.map((item) => Number(item.question_no));
+      const rebuilt = await buildDocumentAnchors(doc, expected.length ? expected : undefined);
+      solutionAnchorsRef.current = rebuilt;
+      setSolutionAnchors(rebuilt);
+      const found = rebuilt.byQuestionNo.get(Number(question.question_no));
+      if (!found) throw new Error(`${question.question_no}번 해설 번호를 자동으로 찾지 못했습니다. 기존 '해설 PDF에서 직접 긁기'를 이용해 주세요.`);
+      const matched = await materializeOfficialSolution(question);
+      if (!matched) throw new Error(`${question.question_no}번 공식 해설 자동 매칭에 실패했습니다.`);
+      await loadWorkspace(workspace.source.id);
+      setSolutionPreviewUrl("");
+      setMessage(`${question.question_no}번 공식 해설만 다시 자동 매칭했습니다. 문제·DNA·분석 결과는 변경하지 않았습니다.`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "공식 해설 다시 자동 매칭에 실패했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
 
   async function patchQuestionStatus(question: Question, status: "APPROVED" | "REJECTED" | "REVIEW") {
     const response = await fetch(`/api/analysis/questions/${question.id}`, {
@@ -2246,7 +2357,7 @@ export default function AnalysisWorkspacePage() {
       return;
     }
     const missingAnchors = anchors?.hasTextLayer
-      ? questions.filter((question) => !anchors.byQuestionNo.has(Number(question.question_no)))
+      ? questions.filter((question) => !anchors.byQuestionNo.has(Number(question.question_no)) && question.review_result?.recognition_manual !== true)
       : [];
     if (missingAnchors.length) {
       setError(`문항 위치 ${missingAnchors.length}개가 아직 정확히 잡히지 않았습니다. 문제 인식을 다시 해주세요.`);
@@ -2312,12 +2423,14 @@ export default function AnalysisWorkspacePage() {
     : viewMode === "failed" ? failedQuestions
     : questions;
   const missingRecognitionAnchors = anchors?.hasTextLayer
-    ? questions.filter((question) => !anchors.byQuestionNo.has(Number(question.question_no)))
+    ? questions.filter((question) => !anchors.byQuestionNo.has(Number(question.question_no)) && question.review_result?.recognition_manual !== true)
     : [];
   const busyInfo: Record<string, { title: string; detail: string }> = {
     load: { title: "분석 화면을 불러오는 중", detail: "시험지와 기존 작업 내용을 준비하고 있습니다." },
     pdf: { title: "시험지를 불러오는 중", detail: "PDF 화면과 문항 좌표를 준비하고 있습니다." },
     analysis: { title: "AI 문제인식 작동 중", detail: "AI가 시험지의 문항 위치와 번호를 찾고 있습니다." },
+    "manual-recognition": { title: "수동 문제인식 저장 중", detail: "지정한 문항번호와 드래그 영역을 인식 좌표로 저장하고 있습니다." },
+    "solution-rematch": { title: "공식 해설 다시 매칭 중", detail: "문항 분석은 유지하고 해설 PDF의 문항번호 위치만 다시 찾고 있습니다." },
     fill: { title: "빠진 문항을 채우는 중", detail: "PDF에서 누락된 문항번호를 찾아 추가하고 있습니다." },
     recrop: { title: "전체 자르기 처리 중", detail: "인식 좌표를 보정하고 문항 이미지를 순서대로 저장하고 있습니다." },
     crop: { title: "수동 자르기 저장 중", detail: "저장이 완료될 때까지 화면을 조작하지 마세요." },
@@ -2650,7 +2763,7 @@ export default function AnalysisWorkspacePage() {
                   <button
                     key={question.id}
                     className={`${question.id === activeQuestion?.id ? "active" : ""} ${hasValidCrop(question) ? "cropped" : ""}`}
-                    onClick={() => setActiveQuestionId(question.id)}
+                    onClick={() => { setActiveQuestionId(question.id); if (workflowStep === 1 && manualRecognitionMode) setManualRecognitionQuestionNo(String(question.question_no)); }}
                   >
                     {question.question_no}
                   </button>
@@ -2667,7 +2780,22 @@ export default function AnalysisWorkspacePage() {
                 <button disabled={pageNo <= 1} onClick={() => setPageNo((value) => value - 1)}>이전 페이지</button>
                 <b>{pageCount ? `${pageNo} / ${pageCount}` : "PDF 로딩"}</b>
                 <button disabled={!pageCount || pageNo >= pageCount} onClick={() => setPageNo((value) => value + 1)}>다음 페이지</button>
-                <span>{activeQuestion ? `${activeQuestion.question_no}번 영역을 드래그` : "문항을 선택하세요"}</span>
+                <span>{workflowStep === 1
+                  ? (manualRecognitionMode ? "문항번호 입력 → 실제 문항 영역을 드래그" : "자동 인식 결과를 확인하세요")
+                  : (activeQuestion ? `${activeQuestion.question_no}번 영역을 드래그` : "문항을 선택하세요")}</span>
+                {workflowStep === 1 ? <div className="manual-recognition-tools">
+                  <button type="button" className={manualRecognitionMode ? "active" : ""} onClick={() => { setManualRecognitionMode((value) => !value); setDraft(null); }}>
+                    {manualRecognitionMode ? "수동 인식 종료" : "＋ 수동 인식"}
+                  </button>
+                  {manualRecognitionMode ? <input
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={manualRecognitionQuestionNo}
+                    onChange={(event) => setManualRecognitionQuestionNo(event.target.value.replace(/[^0-9]/g, ""))}
+                    placeholder="문항번호"
+                    aria-label="수동 인식 문항번호"
+                  /> : null}
+                </div> : null}
                 {workspace.examUrl ? <a href={workspace.examUrl} target="_blank" rel="noreferrer">원본 새 창</a> : null}
               </div>
 
@@ -2677,11 +2805,11 @@ export default function AnalysisWorkspacePage() {
                 {pdfDoc ? (
                   <div
                     ref={overlayRef}
-                    className="overlay"
-                    onPointerDown={workflowStep === 1 ? undefined : handlePointerDown}
-                    onPointerMove={workflowStep === 1 ? undefined : handlePointerMove}
-                    onPointerUp={workflowStep === 1 ? undefined : handlePointerUp}
-                    onPointerCancel={workflowStep === 1 ? undefined : handlePointerCancel}
+                    className={`overlay ${workflowStep === 1 && manualRecognitionMode ? "manual-recognition-active" : ""}`}
+                    onPointerDown={workflowStep === 1 && !manualRecognitionMode ? undefined : handlePointerDown}
+                    onPointerMove={workflowStep === 1 && !manualRecognitionMode ? undefined : handlePointerMove}
+                    onPointerUp={workflowStep === 1 && !manualRecognitionMode ? undefined : handlePointerUp}
+                    onPointerCancel={workflowStep === 1 && !manualRecognitionMode ? undefined : handlePointerCancel}
                   >
                     {workflowStep === 1 ? questions
                       .filter((question) => Number(question.page_no) === pageNo && hasValidCrop(question))
@@ -2690,7 +2818,7 @@ export default function AnalysisWorkspacePage() {
                         return (
                           <div
                             key={question.id}
-                            className="crop-box recognition-box"
+                            className={`crop-box recognition-box ${question.review_result?.recognition_manual === true ? "manual" : ""}`}
                             style={{
                               left: `${rect.x}%`,
                               top: `${rect.y}%`,
@@ -2751,7 +2879,10 @@ export default function AnalysisWorkspacePage() {
                         <small>{activeQuestion.question_no}번 공식 해설 확인</small>
                         <strong>{officialSolutionOf(activeQuestion, Boolean(workspace?.solutionUrl)).label}</strong>
                       </div>
-                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                        {workspace.solutionUrl ? <button type="button" disabled={busy === "solution-rematch" || solutionAnchorBusy} onClick={() => void rematchOfficialSolution(activeQuestion)}>
+                          {busy === "solution-rematch" ? "해설 재매칭 중..." : "↻ 해설 다시 자동 매칭"}
+                        </button> : null}
                         {workspace.solutionUrl ? <button type="button" onClick={() => setManualSolutionCropOpen(true)}>해설 PDF에서 직접 긁기</button> : null}
                         {workspace.solutionUrl ? <a href={workspace.solutionUrl} target="_blank" rel="noreferrer">전체 원본 해설지</a> : null}
                       </div>
@@ -2860,8 +2991,12 @@ export default function AnalysisWorkspacePage() {
         section.workspace-grid.recognition-mode{grid-template-columns:205px minmax(760px,1fr)}
         section.workspace-grid.recognition-mode .review-panel{display:none}
         section.workspace-grid.recognition-mode .overlay{cursor:default}
+        section.workspace-grid.recognition-mode .overlay.manual-recognition-active{cursor:crosshair}
+        .manual-recognition-tools{display:flex;align-items:center;gap:6px;margin-left:auto}.manual-recognition-tools button{white-space:nowrap}.manual-recognition-tools button.active{background:#285c31;color:#fff;border-color:#285c31}.manual-recognition-tools input{width:92px;height:36px;border:1px solid #cfd5e1;border-radius:8px;padding:0 9px;font-weight:900}
         .crop-box.recognition-box{border:3px solid #2f6937;background:rgba(47,105,55,.08)}
+        .crop-box.recognition-box.manual{border-color:#1e5aa8;background:rgba(30,90,168,.09)}
         .crop-box.recognition-box b{position:absolute;left:-3px;top:-27px;background:#2f6937;color:#fff;padding:4px 9px;border-radius:7px 7px 0 0;font-size:14px}
+        .crop-box.recognition-box.manual b{background:#1e5aa8}
         section.all-crops-grid.crop-three-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
         section.all-crops-grid.crop-three-grid .crop-card{min-width:0;min-height:520px;padding:14px}
         section.all-crops-grid.crop-three-grid .card-open{grid-template-rows:400px auto auto auto;gap:10px}
