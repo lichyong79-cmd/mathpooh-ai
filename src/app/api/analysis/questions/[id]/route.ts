@@ -26,6 +26,31 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     if ("review_reason" in body) patch.review_reason = typeof body.review_reason === "string" ? body.review_reason.trim() || null : null;
     if (["review_result","question_type","subject","unit","topic","difficulty","summary"].some((key) => key in body)) patch.review_result = resultData;
     const supabase = createClient();
+
+    // SOS249: 분석 검수 화면에서 관리자가 난이도를 직접 바꾸면 DNA에도 동일하게 확정/잠금한다.
+    if ("difficulty" in body) {
+      const manualDifficulty = String(body.difficulty ?? "").trim();
+      if (/^[1-8]$/.test(manualDifficulty)) {
+        const current = await supabase.from("analysis_questions").select("ai_result,review_result").eq("id", id).single();
+        if (current.data) {
+          const merged = { ...(current.data.ai_result ?? {}), ...(current.data.review_result ?? {}) } as Record<string, any>;
+          const dna = merged.problem_dna && typeof merged.problem_dna === "object" ? structuredClone(merged.problem_dna) : null;
+          if (dna?.difficulty) {
+            dna.difficulty.final_grade = Number(manualDifficulty);
+            dna.difficulty.scale_version = "sos8-v1";
+            dna.difficulty.admin_fixed = true;
+            dna.difficulty.admin_fixed_at = new Date().toISOString();
+            dna.difficulty.admin_fixed_source = "analysis-review-admin";
+            dna.difficulty.difficulty_source = "admin-fixed";
+            dna.difficulty.difficulty_decision = "graded";
+            dna.difficulty.difficulty_review_required = false;
+            dna.difficulty.difficulty_review_reason = "";
+            patch.review_result = { ...(current.data.review_result ?? {}), ...resultData, problem_dna: dna };
+          }
+        }
+      }
+    }
+
     const result = await supabase.from("analysis_questions").update(patch).eq("id", id).select("*").single();
     if (result.error) throw result.error;
     return NextResponse.json({ success: true, question: result.data });

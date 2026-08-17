@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { PROBLEM_DNA_VERSION, collectProblemDnaTags, problemDnaEmbeddingText, type ProblemDNA } from "@/lib/problem-dna";
+import { PROBLEM_DNA_VERSION, applyOperationalDifficultyPolicy, collectProblemDnaTags, problemDnaEmbeddingText, type ProblemDNA } from "@/lib/problem-dna";
 import { canonicalSubject } from "@/lib/subject";
 
 type AnalysisQuestion = {
@@ -255,7 +255,10 @@ export async function registerQuestions(
     const subject = resolvedSubject(result, source);
     // 저장되는 DNA의 과목도 같은 값으로 맞춰 두 곳이 어긋나지 않게 한다.
     const dna = rawDna
-      ? ({ ...rawDna, basic: { ...(rawDna.basic ?? {}), subject } } as ProblemDNA)
+      ? applyOperationalDifficultyPolicy(
+          ({ ...rawDna, basic: { ...(rawDna.basic ?? {}), subject } } as ProblemDNA),
+          `${String(source.source ?? "")} ${String(source.title ?? "")}`,
+        )
       : rawDna;
     return {
       source_file_id: source.id,

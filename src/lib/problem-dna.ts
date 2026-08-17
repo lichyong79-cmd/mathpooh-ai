@@ -220,6 +220,53 @@ export function applyCalculatedDifficulty(dna: ProblemDNA) {
   return dna;
 }
 
+/**
+ * SOS249 운영 난이도 단일 기준.
+ * 신규 AI 분석 / 문제은행 등록 직전 / DNA 재계산 보조가 모두 이 함수를 사용한다.
+ * 관리자가 확정한 문항은 절대 덮어쓰지 않는다.
+ */
+export function applyOperationalDifficultyPolicy(dna: ProblemDNA, sourceLabel = "") {
+  if (!dna?.difficulty) return dna;
+  if ((dna.difficulty as Record<string, unknown>).admin_fixed === true) return dna;
+
+  applyCalculatedDifficulty(dna);
+  const difficulty = dna.difficulty as Record<string, unknown>;
+  const beforeCap = Number(dna.difficulty.final_grade);
+  const source = String(sourceLabel ?? "").normalize("NFKC");
+  const ebsWorkbook = /수능특강|수능완성|수특|수완/.test(source);
+
+  // 수특/수완은 운영상 킬러(8)로 자동 확정하지 않는다. 최고 준킬러(7).
+  // 다른 출처는 1~8 전체 범위를 그대로 사용한다.
+  if (ebsWorkbook && beforeCap === 8) {
+    dna.difficulty.final_grade = 7;
+    difficulty.source_cap_applied = true;
+    difficulty.source_cap_from = 8;
+    difficulty.source_cap_to = 7;
+    difficulty.source_cap_reason = "EBS 수특/수완 자동분류는 킬러 확정 금지";
+  } else {
+    difficulty.source_cap_applied = false;
+  }
+
+  difficulty.scale_version = "sos8-v1";
+  difficulty.classification_policy = "sos249-dna-operational-v1";
+  difficulty.difficulty_source = "dna-local-operational";
+  difficulty.difficulty_decision = "graded";
+  difficulty.difficulty_review_required = false;
+  difficulty.difficulty_review_reason = "";
+  difficulty.dna_recalculate_version = "dna-local-v2";
+  difficulty.dna_recalculated_at = new Date().toISOString();
+  return dna;
+}
+
+/** 추가 AI 재풀이가 필요한 '예외'만 선별한다. 최종 난이도 기본값은 위 운영 DNA 기준이다. */
+export function shouldVerifyOperationalDifficulty(dna: ProblemDNA) {
+  const difficulty = dna?.difficulty as Record<string, unknown> | undefined;
+  if (!difficulty || difficulty.admin_fixed === true) return false;
+  const final = Number(dna.difficulty.final_grade);
+  const confidence = Number(dna.summary?.ai_confidence ?? 0);
+  return difficulty.band_conflict === true || final >= 7 || (Number.isFinite(confidence) && confidence > 0 && confidence < 0.72);
+}
+
 export function validateProblemDNA(value: unknown): { valid: boolean; errors: string[]; dna?: ProblemDNA } {
   const errors: string[] = [];
   if (!isRecord(value)) return { valid: false, errors: ["DNA가 객체가 아닙니다."] };

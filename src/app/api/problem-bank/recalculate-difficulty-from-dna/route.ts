@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
-import { calculateDifficultyLevel, difficultyLevelFromBand, evidenceDifficultyLevel } from "@/lib/problem-dna";
+import { applyOperationalDifficultyPolicy } from "@/lib/problem-dna";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
 
     const result = await supabase
       .from("problem_bank_questions")
-      .select("id,difficulty,problem_dna")
+      .select("id,difficulty,problem_dna,source_name,title")
       .eq("status", "ACTIVE")
       .order("created_at", { ascending: true })
       .range(offset, offset + limit - 1);
@@ -35,22 +35,11 @@ export async function POST(request: NextRequest) {
         if (!dna?.difficulty) { skippedNoDna++; continue; }
         if (dna.difficulty.admin_fixed === true) { skippedFixed++; continue; }
 
-        const final = calculateDifficultyLevel(dna);
-        const evidence = evidenceDifficultyLevel(dna.difficulty);
-        const band = difficultyLevelFromBand(dna.difficulty.csat_difficulty_band);
-        const nextDna = {
-          ...dna,
-          difficulty: {
-            ...dna.difficulty,
-            final_grade: final,
-            scale_version: "sos8-v1",
-            evidence_grade: evidence,
-            band_grade: band || null,
-            band_conflict: Boolean(band) && Math.abs(evidence-band)>=2,
-            dna_recalculated_at: new Date().toISOString(),
-            dna_recalculate_version: "dna-local-v1",
-          },
-        };
+        const nextDna = applyOperationalDifficultyPolicy(
+          structuredClone(dna),
+          `${String(row.source_name ?? "")} ${String(row.title ?? "")}`,
+        );
+        const final = Number(nextDna.difficulty.final_grade);
         const update = await supabase.from("problem_bank_questions")
           .update({ difficulty:String(final), problem_dna:nextDna, updated_at:new Date().toISOString() })
           .eq("id", row.id);

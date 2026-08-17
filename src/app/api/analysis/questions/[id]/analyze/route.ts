@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
-import { PROBLEM_DNA_VERSION, applyCalculatedDifficulty, legacyFieldsFromDNA, problemDnaQuestionSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
-import { applyJudgedDifficulty, difficultyReferenceText, judgeDifficulty } from "@/lib/difficulty-judge";
+import { PROBLEM_DNA_VERSION, applyOperationalDifficultyPolicy, shouldVerifyOperationalDifficulty, legacyFieldsFromDNA, problemDnaQuestionSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
+import { difficultyReferenceText, judgeDifficulty } from "@/lib/difficulty-judge";
 import { canonicalSubject } from "@/lib/subject";
 
 export const runtime = "nodejs";
@@ -222,7 +222,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     if (analysisResult.error || !analysisResult.data) throw analysisResult.error ?? new Error("분석 정보를 찾을 수 없습니다.");
     const sourceResult = await supabase
       .from("source_files")
-      .select("title,grade,subject,solution_pdf_path")
+      .select("title,source,grade,subject,solution_pdf_path")
       .eq("id", analysisResult.data.source_file_id)
       .single();
     if (sourceResult.error) throw sourceResult.error;
@@ -294,37 +294,67 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       });
     }
 
-    dna = applyCalculatedDifficulty(dna);
+    // SOS249: 기존 4천여 문항을 복구한 DNA 계산식과 신규문항 계산식을 완전히 동일하게 고정한다.
+    dna = applyOperationalDifficultyPolicy(
+      dna,
+      `${String(source?.source ?? "")} ${String(source?.title ?? "")}`,
+    );
 
     // v164: 과목은 문제등록에 입력한 시험지 과목을 최종 기준으로 고정한다.
     const canonical = canonicalSubject(source?.subject, dna.basic?.subject);
     dna.basic = { ...(dna.basic ?? {}), subject: canonical } as ProblemDNA["basic"];
 
-    // v164: 난이도는 난이도 탭과 같은 8단계 전용 엔진으로 한 번 더 확정한다.
-    // 관리자가 확정해 둔 기준 문항을 함께 넣어 기존 1300문항과 같은 잣대를 적용한다.
+    // SOS249: 모든 신규문항에 비싼 독립 재풀이를 다시 돌리지 않는다.
+    // 기본 난이도는 위 DNA 운영 단일 기준으로 확정하고, 밴드충돌/준킬러 이상/낮은 신뢰도만 예외 검증한다.
+    // 예외 검증 결과도 자동으로 기준값을 덮지 않고, 큰 충돌만 관리자 검토로 보낸다.
     let difficultyJudged = false;
-    try {
-      const references = await difficultyReferenceText(supabase, canonical);
-      const judgement = await judgeDifficulty({
-        apiKey,
-        model: process.env.OPENAI_DIFFICULTY_MODEL || model,
-        imageUrl: signed.data.signedUrl,
-        dna,
-        references,
-        officialAnswer: question.answer,
-      });
-      dna = applyJudgedDifficulty(dna, judgement, String(dna.difficulty?.final_grade ?? "") || null) as ProblemDNA;
-      difficultyJudged = judgement.decision === "graded" && !!judgement.final_grade && !judgement.review_required;
-      if (!difficultyJudged) {
-        dna.summary = {
-          ...(dna.summary ?? {}),
-          review_required: true,
-          review_reasons: [...new Set([...(Array.isArray(dna.summary?.review_reasons) ? dna.summary.review_reasons : []), `난이도 재풀이 검증: ${judgement.review_reason || "미판정/검토 필요"}`])],
-        } as ProblemDNA["summary"];
+    const localDifficulty = Number(dna.difficulty?.final_grade || 0);
+    if (shouldVerifyOperationalDifficulty(dna)) {
+      try {
+        const references = await difficultyReferenceText(supabase, canonical);
+        const judgement = await judgeDifficulty({
+          apiKey,
+          model: process.env.OPENAI_DIFFICULTY_MODEL || model,
+          imageUrl: signed.data.signedUrl,
+          dna,
+          references,
+          officialAnswer: question.answer,
+        });
+        difficultyJudged = judgement.decision === "graded" && !!judgement.final_grade && !judgement.review_required;
+        const verifiedGrade = Number(judgement.final_grade || 0);
+        const gradeGap = verifiedGrade && localDifficulty ? Math.abs(verifiedGrade-localDifficulty) : 0;
+        const difficultyMeta = dna.difficulty as unknown as Record<string, unknown>;
+        difficultyMeta.verification_attempted = true;
+        difficultyMeta.verification_grade = judgement.final_grade;
+        difficultyMeta.verification_confidence = judgement.confidence;
+        difficultyMeta.verification_reason = judgement.reason;
+        difficultyMeta.verification_version = "sos249-selective-verify-v1";
+        difficultyMeta.verification_gap = gradeGap;
+        difficultyMeta.verification_review_required = judgement.review_required || judgement.decision !== "graded" || gradeGap >= 2;
+
+        if (difficultyMeta.verification_review_required === true) {
+          dna.summary = {
+            ...(dna.summary ?? {}),
+            review_required: true,
+            review_reasons: [...new Set([
+              ...(Array.isArray(dna.summary?.review_reasons) ? dna.summary.review_reasons : []),
+              `난이도 예외검증 필요: DNA ${localDifficulty}단계 / 재풀이 ${judgement.final_grade ?? "미판정"}${gradeGap ? ` / 차이 ${gradeGap}단계` : ""}`,
+            ])],
+          } as ProblemDNA["summary"];
+        }
+      } catch (judgeError) {
+        // 검증 API 실패가 신규문항의 기본 DNA 분류를 없애지는 않는다.
+        const difficultyMeta = dna.difficulty as unknown as Record<string, unknown>;
+        difficultyMeta.verification_attempted = true;
+        difficultyMeta.verification_failed = true;
+        difficultyMeta.verification_error = judgeError instanceof Error ? judgeError.message : String(judgeError);
+        difficultyMeta.verification_version = "sos249-selective-verify-v1";
+        console.warn("[analyze] selective difficulty verify skipped:", difficultyMeta.verification_error);
       }
-    } catch (judgeError) {
-      // 판정 호출이 실패해도 분석 결과 자체는 살린다. 근거 기반 계산값이 남는다.
-      console.warn("[analyze] difficulty judge skipped:", judgeError instanceof Error ? judgeError.message : judgeError);
+    } else {
+      const difficultyMeta = dna.difficulty as unknown as Record<string, unknown>;
+      difficultyMeta.verification_attempted = false;
+      difficultyMeta.verification_version = "sos249-selective-verify-v1";
     }
 
     const validation = validateProblemDNA(dna);
