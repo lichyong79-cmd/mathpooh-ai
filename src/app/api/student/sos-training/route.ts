@@ -166,7 +166,7 @@ export async function POST(request:Request){
 
   const sessionResult=await supabase
     .from("sos_training_sessions")
-    .select("id,student_id,phase,status,total_count,round_no,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,cycle_kind,parent_session_id")
+    .select("id,student_id,phase,status,total_count,correct_count,decision,round_no,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,cycle_kind,parent_session_id")
     .eq("id",sessionId)
     .eq("student_id",student.id)
     .single();
@@ -191,17 +191,22 @@ export async function POST(request:Request){
     const round=Number(session.round_no??1);
     const kind=String(session.cycle_kind??"STANDARD");
     const snapshot:any=session.target_snapshot??{};
-    const cycleId=String(session.operation_cycle_id??snapshot?.operationCycleId??snapshot?.cycleId??"");
+    const currentCycle=cycleFromSnapshot(snapshot);
+    const cycleKey=String(currentCycle?.id??"UNASSIGNED");
 
     try{
-      let q=supabase.from("sos_training_sessions")
+      const all=await supabase.from("sos_training_sessions")
         .select("id,phase,status,round_no,cycle_kind,parent_session_id,total_count,correct_count,decision,target_snapshot,created_at")
         .eq("student_id",String(student.id))
         .order("created_at",{ascending:true});
-      if(cycleId) q=q.eq("operation_cycle_id",cycleId);
-      const all=await q;
       if(all.error)throw all.error;
-      const cycleSessions=all.data??[];
+
+      // 회차는 별도 DB 컬럼이 아니라 target_snapshot에서 계산한다.
+      // 같은 회차만 메모리에서 안전하게 필터링한다.
+      const cycleSessions=(all.data??[]).filter((x:any)=>{
+        const c=cycleFromSnapshot(x?.target_snapshot??{});
+        return String(c?.id??"UNASSIGNED")===cycleKey;
+      });
 
       const isOpen=(x:any)=>["ASSIGNED","IN_PROGRESS","RETRAIN"].includes(String(x?.status));
       const isDone=(x:any)=>["COMPLETED","PASSED"].includes(String(x?.status));
