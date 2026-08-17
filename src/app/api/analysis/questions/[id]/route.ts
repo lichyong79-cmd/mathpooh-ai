@@ -15,7 +15,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const resultData = (body.review_result && typeof body.review_result === "object" ? body.review_result : {
       question_type: body.question_type || "unknown", subject: typeof body.subject === "string" ? body.subject.trim() || null : null,
       unit: typeof body.unit === "string" ? body.unit.trim() || null : null, topic: typeof body.topic === "string" ? body.topic.trim() || null : null,
-      difficulty: body.difficulty || "2", summary: typeof body.summary === "string" ? body.summary.trim() || null : null,
+      difficulty: typeof body.difficulty === "string" ? body.difficulty.trim() : "", summary: typeof body.summary === "string" ? body.summary.trim() || null : null,
     }) as Record<string, unknown>;
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if ("question_no" in body) patch.question_no = Math.max(1, Number(body.question_no));

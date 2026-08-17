@@ -1691,7 +1691,7 @@ export default function AnalysisWorkspacePage() {
       subject: String(form.get("subject") ?? ""),
       unit: String(form.get("unit") ?? ""),
       topic: String(form.get("topic") ?? ""),
-      difficulty: String(form.get("difficulty") ?? "2"),
+      difficulty: String(form.get("difficulty") ?? ""),
       summary: String(form.get("summary") ?? ""),
     };
 
@@ -2936,7 +2936,7 @@ export default function AnalysisWorkspacePage() {
                     <label>단원<input name="unit" defaultValue={valueOf(activeQuestion, "unit")} /></label>
                     <label>세부 유형<input name="topic" defaultValue={valueOf(activeQuestion, "topic")} /></label>
                     <label>난이도
-                      <select name="difficulty" defaultValue={valueOf(activeQuestion, "difficulty") || "2"}>
+                      <select name="difficulty" defaultValue={valueOf(activeQuestion, "difficulty") || ""}><option value="">미분류 · AI/관리자 확인 필요</option>
                         {DIFFICULTY_SCALE.map((d)=><option key={d.value} value={d.value}>{d.label}</option>)}
                       </select>
                     </label>

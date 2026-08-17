@@ -47,7 +47,7 @@ const emptyDraft: Draft = {
   subject: "",
   unit: "",
   topic: "",
-  difficulty: "2",
+  difficulty: "",
   question_type: "unknown",
   answer: "",
   summary: "",
@@ -284,7 +284,23 @@ export default function ProblemBankClient() {
           "Content-Type": "application/json",
           Prefer: "return=representation",
         },
-        body: JSON.stringify({ ...draft, updated_at: new Date().toISOString() }),
+        body: JSON.stringify({
+          ...draft,
+          problem_dna: draft.difficulty
+            ? {
+                ...(selected.problem_dna ?? {}),
+                difficulty: {
+                  ...((selected.problem_dna as any)?.difficulty ?? {}),
+                  final_grade: Number(draft.difficulty),
+                  scale_version: "sos8-v1",
+                  admin_fixed: true,
+                  admin_fixed_at: new Date().toISOString(),
+                  admin_fixed_source: "problem-bank-admin",
+                },
+              }
+            : selected.problem_dna,
+          updated_at: new Date().toISOString(),
+        }),
       });
       if (!response.ok) throw new Error(await response.text());
       const rows = (await response.json()) as Problem[];
