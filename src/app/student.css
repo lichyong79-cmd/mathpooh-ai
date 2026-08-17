@@ -487,13 +487,24 @@
 @media(max-width:700px){.flow-node.now{min-width:104px;transform:none}.sos-flow-line{padding-top:7px}}
 
 
-/* SOS229 · 문제은행 원본 문항번호 → SOS 미니 로고 마스킹 */
+/* SOS252.2 · 문제은행 원본 번호만 가리고 본문은 보존 */
 .sos-problem-image-wrap{position:relative;display:inline-block;max-width:100%;line-height:0}
 .sos-problem-image-wrap>img{display:block;max-width:100%;height:auto}
-.sos-origin-number-mask{position:absolute;z-index:5;left:0;top:0;width:76px;height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;background:#fff;border-radius:0 0 8px 0;pointer-events:none;overflow:hidden;box-shadow:7px 5px 10px rgba(255,255,255,.98)}
-.sos-origin-number-mask img{display:block!important;width:58px!important;height:34px!important;object-fit:contain!important;max-width:none!important}
-.sos-origin-number-mask span{display:block;margin-top:-3px;color:#176b43;font-size:7px;font-weight:1000;line-height:1;letter-spacing:.12em;white-space:nowrap}
-@media(max-width:700px){.sos-origin-number-mask{width:62px;height:49px}.sos-origin-number-mask img{width:48px!important;height:29px!important}.sos-origin-number-mask span{font-size:6px}}
+.sos-origin-mask-layer{position:absolute;z-index:5;inset:0;pointer-events:none}
+.sos-origin-number-cover{
+  position:absolute;left:4.2%;top:7.5%;width:8.8%;height:7.2%;
+  background:#fff;border-radius:2px;
+}
+.sos-origin-logo{
+  position:absolute;left:4.1%;top:3.0%;width:8.6%;height:5.2%;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;
+}
+.sos-origin-logo img{display:block!important;width:100%!important;height:78%!important;object-fit:contain!important;max-width:none!important}
+.sos-origin-logo span{display:block;margin-top:-2px;color:#176b43;font-size:clamp(5px,.65vw,8px);font-weight:1000;line-height:1;letter-spacing:.1em;white-space:nowrap}
+@media(max-width:700px){
+  .sos-origin-number-cover{left:4%;top:7.2%;width:9.2%;height:7.5%}
+  .sos-origin-logo{left:4%;top:2.8%;width:9%;height:5.4%}
+}
 
 /* SOS231 · AI 유사문항 출처/핵심유형 안내 */
 .sos-generated-origin{margin:0 0 12px;padding:11px 13px;border-radius:12px;border:1px solid #ead8bf;background:#fff8ef;color:#6c4a20;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -549,3 +560,12 @@
 
 /* SOS250 · 공통 장시간 작업 진행 정보 */
 .mathpooh-time-copy{display:flex;justify-content:space-between;gap:12px;margin-top:8px;font-size:12px;font-weight:800;color:#65736a}.mathpooh-current-label{display:block;margin:7px 0 3px;padding:7px 10px;border-radius:8px;background:#eef6f1;color:#216e45;font-size:12px}.mathpooh-loader.is-compact .mathpooh-time-copy{font-size:10px}
+
+/* SOS253 · 모든 완료/통과 화면의 다음 단계 CTA */
+.sos-next-stage-cta{
+  width:100%;margin-top:18px;padding:15px 18px;border:0;border-radius:12px;
+  background:#197447;color:#fff;font-size:16px;font-weight:900;cursor:pointer;
+  box-shadow:0 8px 20px rgba(25,116,71,.16);
+}
+.sos-next-stage-cta:hover{filter:brightness(.97)}
+.sos-next-stage-cta:disabled{opacity:.55;cursor:wait}

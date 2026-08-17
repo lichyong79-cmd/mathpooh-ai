@@ -185,6 +185,61 @@ export async function POST(request:Request){
     }catch(error){return NextResponse.json({message:error instanceof Error?error.message:"기존 진단 이어가기 실패"},{status:500});}
   }
 
+  if(action==="ensure_next"){
+    // SOS253: 완료된 단계 뒤에 있어야 할 다음 세션이 누락된 경우 서버에서 안전하게 복구한다.
+    // 각 생성 함수 자체가 중복 세션을 재사용하므로 새로고침/중복 클릭에도 중복 생성되지 않는다.
+    const phase=String(session.phase??"");
+    const round=Number(session.round_no??1);
+    const kind=String(session.cycle_kind??"STANDARD");
+
+    try{
+      if(phase==="DIAGNOSIS"){
+        if(round===1 && String(session.decision)==="PERFECT_DIAGNOSIS_AUTO_NEXT"){
+          const next=await createAutomaticSecondDiagnosis({
+            supabase,
+            studentId:String(student.id),
+            parentDiagnosis:{...session,id:sessionId,target_snapshot:session.target_snapshot},
+          });
+          return NextResponse.json({success:true,next,nextStep:next?.nextStep??"SECOND_DIAGNOSIS_ASSIGNED"});
+        }
+        if(["COMPLETED","PASSED"].includes(String(session.status))){
+          const ai=await analyzeDiagnosisAndCreateFirstTraining({
+            supabase,studentId:String(student.id),diagnosisSessionId:sessionId
+          });
+          return NextResponse.json({
+            success:true,next:ai,
+            nextStep:ai?.created?"FIRST_TRAINING_ASSIGNED":ai?.nextStep??"DIAGNOSIS_COMPLETE_NO_WEAKNESS"
+          });
+        }
+        return NextResponse.json({message:"아직 다음 진단·훈련을 만들 단계가 아닙니다."},{status:409});
+      }
+
+      if(phase==="TRAINING" && kind!=="HOMEWORK" && round===1 && ["COMPLETED","PASSED"].includes(String(session.status))){
+        const meter=await currentTargetMeter(supabase,String(student.id),session);
+        const goal=clampMeter(session.goal_meter,Number(session.baseline_meter)||meter);
+        const scoreRate=Number(session.total_count)>0?Number(session.correct_count??0)/Number(session.total_count):0;
+        const passed=String(session.decision)==="FIRST_TRAINING_PASSED" || scoreRate>=0.9 || meter>=goal;
+        const next=await generateSimilarTraining({
+          supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,
+          count:passed?3:10,kind:passed?"HOMEWORK":"SECOND_TRAINING"
+        });
+        return NextResponse.json({
+          success:true,next,
+          nextStep:passed?"HOMEWORK_ASSIGNED":"SECOND_TRAINING_ASSIGNED",
+          passed,meter,goal,scoreRate
+        });
+      }
+
+      return NextResponse.json({success:true,next:null,nextStep:"FINAL_COMPLETE"});
+    }catch(error){
+      return NextResponse.json({
+        success:false,
+        message:error instanceof Error?error.message:"다음 학습 자동 준비 실패",
+        retryable:true
+      },{status:500});
+    }
+  }
+
   if(action==="start"){
     if(["COMPLETED","PASSED"].includes(String(session.status)))
       return NextResponse.json({message:"이미 완료한 학습입니다."},{status:409});
@@ -351,7 +406,11 @@ export async function POST(request:Request){
     if(!wrongItems.length){
       const meter=await currentTargetMeter(supabase,String(student.id),session);
       const goal=clampMeter(session.goal_meter,Number(session.baseline_meter)||meter);
-      const passed=meter>=goal;
+      const scoreRate=Number(session.total_count)>0?Number(session.correct_count??0)/Number(session.total_count):0;
+      const scorePassed=Number(session.round_no)===1&&scoreRate>=0.9;
+      const meterPassed=meter>=goal;
+      const passed=meterPassed||scorePassed;
+      const passReason=meterPassed?"METER_GOAL":scorePassed?"SCORE_90":"NONE";
       let next:any=null;
       let finalStatus="COMPLETED";
       let decision="SECOND_TRAINING_DONE";
@@ -360,7 +419,7 @@ export async function POST(request:Request){
         else{decision="SECOND_TRAINING_REQUIRED";try{next=await generateSimilarTraining({supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,count:10,kind:"SECOND_TRAINING"});}catch(error){next={error:error instanceof Error?error.message:"2차 유사훈련 생성 실패"};}}
       }else if(Number(session.round_no)===2){finalStatus=passed?"PASSED":"COMPLETED";decision=passed?"SECOND_TRAINING_PASSED":"SECOND_TRAINING_FINISHED_TARGET_MISSED";}
       await supabase.from("sos_training_sessions").update({status:finalStatus,decision,review_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
-      return NextResponse.json({success:true,recovered:0,total:0,reviewBonus:0,meter,goal,passed,status:finalStatus,decision,next});
+      return NextResponse.json({success:true,recovered:0,total:0,reviewBonus:0,meter,goal,passed,passReason,status:finalStatus,decision,next});
     }
 
     let recovered=0;
@@ -385,7 +444,11 @@ export async function POST(request:Request){
     meter=clampMeter(meter+cappedBonus,meter);
     await setTargetMeter(supabase,String(student.id),session,meter);
     const goal=clampMeter(session.goal_meter,Number(session.baseline_meter)||meter);
-    const passed=meter>=goal;
+    const scoreRate=Number(session.total_count)>0?Number(session.correct_count??0)/Number(session.total_count):0;
+    const scorePassed=Number(session.round_no)===1&&scoreRate>=0.9;
+    const meterPassed=meter>=goal;
+    const passed=meterPassed||scorePassed;
+    const passReason=meterPassed?"METER_GOAL":scorePassed?"SCORE_90":"NONE";
 
     let next:any=null;
     let finalStatus="COMPLETED";
@@ -407,8 +470,8 @@ export async function POST(request:Request){
 
     const sessionUpdate=await supabase.from("sos_training_sessions").update({status:finalStatus,decision,review_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
     if(sessionUpdate.error)return NextResponse.json({message:sessionUpdate.error.message},{status:400});
-    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"REVIEW_COMPLETED",detail:{recovered,total:wrongItems.length,meter,goal,passed,decision}});
-    return NextResponse.json({success:true,recovered,total:wrongItems.length,reviewBonus:cappedBonus,meter,goal,passed,status:finalStatus,decision,next});
+    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"REVIEW_COMPLETED",detail:{recovered,total:wrongItems.length,meter,goal,passed,passReason,decision}});
+    return NextResponse.json({success:true,recovered,total:wrongItems.length,reviewBonus:cappedBonus,meter,goal,passed,passReason,status:finalStatus,decision,next});
   }
 
   if(action==="submit"){
