@@ -186,15 +186,91 @@ export async function POST(request:Request){
   }
 
   if(action==="ensure_next"){
-    // SOS253: 완료된 단계 뒤에 있어야 할 다음 세션이 누락된 경우 서버에서 안전하게 복구한다.
-    // 각 생성 함수 자체가 중복 세션을 재사용하므로 새로고침/중복 클릭에도 중복 생성되지 않는다.
+    // SOS254: 부모-자식 연결만 보지 않고 같은 학생/같은 회차의 전체 세션을 보고 실제 누락 단계만 복구한다.
     const phase=String(session.phase??"");
     const round=Number(session.round_no??1);
     const kind=String(session.cycle_kind??"STANDARD");
+    const snapshot:any=session.target_snapshot??{};
+    const cycleId=String(session.operation_cycle_id??snapshot?.operationCycleId??snapshot?.cycleId??"");
 
     try{
+      let q=supabase.from("sos_training_sessions")
+        .select("id,phase,status,round_no,cycle_kind,parent_session_id,total_count,correct_count,decision,target_snapshot,created_at")
+        .eq("student_id",String(student.id))
+        .order("created_at",{ascending:true});
+      if(cycleId) q=q.eq("operation_cycle_id",cycleId);
+      const all=await q;
+      if(all.error)throw all.error;
+      const cycleSessions=all.data??[];
+
+      const isOpen=(x:any)=>["ASSIGNED","IN_PROGRESS","RETRAIN"].includes(String(x?.status));
+      const isDone=(x:any)=>["COMPLETED","PASSED"].includes(String(x?.status));
+
+      const firstTraining = cycleSessions.find((x:any)=>
+        String(x.phase)==="TRAINING" &&
+        Number(x.round_no)===1 &&
+        String(x.cycle_kind)!=="HOMEWORK"
+      ) ?? null;
+
+      const secondTraining = cycleSessions.find((x:any)=>
+        String(x.phase)==="TRAINING" &&
+        Number(x.round_no)===2 &&
+        String(x.cycle_kind)!=="HOMEWORK"
+      ) ?? null;
+
+      const homework = cycleSessions.find((x:any)=>
+        String(x.phase)==="TRAINING" &&
+        String(x.cycle_kind)==="HOMEWORK"
+      ) ?? null;
+
+      const secondDiagnosis = cycleSessions.find((x:any)=>
+        String(x.phase)==="DIAGNOSIS" &&
+        Number(x.round_no)===2
+      ) ?? null;
+
+      // 이미 다음 단계가 있으면 절대 새로 만들지 않고 그대로 반환
+      if(homework && (isOpen(homework)||isDone(homework))){
+        return NextResponse.json({success:true,next:homework,nextStep:"HOMEWORK_ASSIGNED",existing:true});
+      }
+      if(secondTraining && (isOpen(secondTraining)||isDone(secondTraining))){
+        return NextResponse.json({success:true,next:secondTraining,nextStep:"SECOND_TRAINING_ASSIGNED",existing:true});
+      }
+
+      // 같은 회차에 1차훈련이 이미 있으면 진단에서 절대로 1차훈련을 다시 생성하지 않는다.
       if(phase==="DIAGNOSIS"){
+        if(firstTraining && (isOpen(firstTraining)||isDone(firstTraining))){
+          // 기존 1차훈련이 완료됐으면 그 결과로 다음 단계를 복구
+          if(isDone(firstTraining)){
+            const meter=await currentTargetMeter(supabase,String(student.id),firstTraining);
+            const goal=clampMeter(firstTraining.goal_meter,Number(firstTraining.baseline_meter)||meter);
+            const scoreRate=Number(firstTraining.total_count)>0
+              ?Number(firstTraining.correct_count??0)/Number(firstTraining.total_count)
+              :0;
+            const passed=String(firstTraining.decision)==="FIRST_TRAINING_PASSED" || scoreRate>=0.9 || meter>=goal;
+
+            const next=await generateSimilarTraining({
+              supabase,
+              studentId:String(student.id),
+              firstTrainingSessionId:String(firstTraining.id),
+              count:passed?3:10,
+              kind:passed?"HOMEWORK":"SECOND_TRAINING"
+            });
+            return NextResponse.json({
+              success:true,next,
+              nextStep:passed?"HOMEWORK_ASSIGNED":"SECOND_TRAINING_ASSIGNED",
+              repairedFromExistingFirstTraining:true,
+              passed,meter,goal,scoreRate
+            });
+          }
+          return NextResponse.json({
+            success:true,next:firstTraining,nextStep:"FIRST_TRAINING_ASSIGNED",existing:true
+          });
+        }
+
         if(round===1 && String(session.decision)==="PERFECT_DIAGNOSIS_AUTO_NEXT"){
+          if(secondDiagnosis && (isOpen(secondDiagnosis)||isDone(secondDiagnosis))){
+            return NextResponse.json({success:true,next:secondDiagnosis,nextStep:"SECOND_DIAGNOSIS_ASSIGNED",existing:true});
+          }
           const next=await createAutomaticSecondDiagnosis({
             supabase,
             studentId:String(student.id),
@@ -202,7 +278,8 @@ export async function POST(request:Request){
           });
           return NextResponse.json({success:true,next,nextStep:next?.nextStep??"SECOND_DIAGNOSIS_ASSIGNED"});
         }
-        if(["COMPLETED","PASSED"].includes(String(session.status))){
+
+        if(isDone(session)){
           const ai=await analyzeDiagnosisAndCreateFirstTraining({
             supabase,studentId:String(student.id),diagnosisSessionId:sessionId
           });
@@ -211,17 +288,24 @@ export async function POST(request:Request){
             nextStep:ai?.created?"FIRST_TRAINING_ASSIGNED":ai?.nextStep??"DIAGNOSIS_COMPLETE_NO_WEAKNESS"
           });
         }
+
         return NextResponse.json({message:"아직 다음 진단·훈련을 만들 단계가 아닙니다."},{status:409});
       }
 
-      if(phase==="TRAINING" && kind!=="HOMEWORK" && round===1 && ["COMPLETED","PASSED"].includes(String(session.status))){
+      if(phase==="TRAINING" && kind!=="HOMEWORK" && round===1 && isDone(session)){
         const meter=await currentTargetMeter(supabase,String(student.id),session);
         const goal=clampMeter(session.goal_meter,Number(session.baseline_meter)||meter);
-        const scoreRate=Number(session.total_count)>0?Number(session.correct_count??0)/Number(session.total_count):0;
+        const scoreRate=Number(session.total_count)>0
+          ?Number(session.correct_count??0)/Number(session.total_count)
+          :0;
         const passed=String(session.decision)==="FIRST_TRAINING_PASSED" || scoreRate>=0.9 || meter>=goal;
+
         const next=await generateSimilarTraining({
-          supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,
-          count:passed?3:10,kind:passed?"HOMEWORK":"SECOND_TRAINING"
+          supabase,
+          studentId:String(student.id),
+          firstTrainingSessionId:sessionId,
+          count:passed?3:10,
+          kind:passed?"HOMEWORK":"SECOND_TRAINING"
         });
         return NextResponse.json({
           success:true,next,

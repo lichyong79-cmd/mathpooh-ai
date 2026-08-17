@@ -504,6 +504,13 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
     :[];
 
   const nextChildFor=(parent:any)=>{
+    if(!parent)return null;
+    // SOS254: 1차훈련 다음은 같은 회차의 HOMEWORK/2차훈련을 우선 찾는다.
+    if(String(parent.phase)==="TRAINING"&&Number(parent.round_no)===1&&String(parent.cycle_kind)!=="HOMEWORK"){
+      const sameCycleNext=visibleSessions.find((x:any)=>String(x.cycle_kind)==="HOMEWORK")
+        ??visibleSessions.find((x:any)=>String(x.phase)==="TRAINING"&&Number(x.round_no)===2&&String(x.cycle_kind)!=="HOMEWORK");
+      if(sameCycleNext)return sameCycleNext;
+    }
     const children=childSessions(parent);
     return children.find((x:any)=>isSosOpen(x))
       ??children.find((x:any)=>["ASSIGNED","IN_PROGRESS","RETRAIN"].includes(String(x.status)))
@@ -588,8 +595,28 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   const latestMeters=Array.isArray(data.subunitMeters)?data.subunitMeters:[];
 
   const selectedCycle=cycleRows.find((c:any)=>String(c.id)===selectedCycleId)??null;
-  const selectedOpen=visibleSessions.find((x:any)=>isSosOpen(x));
-  const recoverableParent=visibleSessions.find((x:any)=>expectedNextKind(x)&&!nextChildFor(x))??null;
+  const completedFirstTrainingForCycle=visibleSessions.find((x:any)=>
+    String(x.phase)==="TRAINING"&&Number(x.round_no)===1&&String(x.cycle_kind)!=="HOMEWORK"&&["COMPLETED","PASSED"].includes(String(x.status))
+  )??null;
+  const selectedOpen=visibleSessions.find((x:any)=>{
+    if(!isSosOpen(x))return false;
+    // SOS254: 이미 같은 회차에 완료된 1차훈련이 있으면 뒤늦게 잘못 생성된 중복 1차훈련은 현재 할 일로 올리지 않음
+    if(completedFirstTrainingForCycle && String(x.phase)==="TRAINING"&&Number(x.round_no)===1&&String(x.cycle_kind)!=="HOMEWORK")return false;
+    return true;
+  });
+  const cycleHomework=visibleSessions.find((x:any)=>String(x.cycle_kind)==="HOMEWORK")??null;
+  const cycleSecondTraining=visibleSessions.find((x:any)=>String(x.phase)==="TRAINING"&&Number(x.round_no)===2&&String(x.cycle_kind)!=="HOMEWORK")??null;
+  const cycleFirstTraining=visibleSessions.find((x:any)=>String(x.phase)==="TRAINING"&&Number(x.round_no)===1&&String(x.cycle_kind)!=="HOMEWORK")??null;
+  const cycleSecondDiagnosis=visibleSessions.find((x:any)=>String(x.phase)==="DIAGNOSIS"&&Number(x.round_no)===2)??null;
+
+  // SOS254: 다음 단계 유무는 부모-자식 링크가 아니라 같은 회차의 실제 단계 존재 여부로 판단
+  let recoverableParent:any=null;
+  if(!selectedOpen && !cycleHomework && !cycleSecondTraining && cycleFirstTraining && ["COMPLETED","PASSED"].includes(String(cycleFirstTraining.status))){
+    recoverableParent=cycleFirstTraining;
+  }else if(!selectedOpen && !cycleFirstTraining){
+    recoverableParent=visibleSessions.find((x:any)=>expectedNextKind(x))??null;
+  }
+
   const selectedCompleted=visibleSessions.length>0&&!selectedOpen&&!recoverableParent;
   const today=new Date().toISOString().slice(0,10);
   const selectedIsPast=Boolean(selectedCycle?.endDate&&selectedCycle.endDate<today);
