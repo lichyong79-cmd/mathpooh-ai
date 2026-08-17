@@ -121,7 +121,7 @@ export default function SosResultsPage(){
           {(selected.items??[]).map((item:any,index:number)=><article className={`problem-card ${item.isCorrect===true?"correct":item.isCorrect===false?"wrong":""} ${selected.phase==="DIAGNOSIS"?"diagnosis":selected.roundNo===2?"training2":"training1"}`} key={item.id}>
             <div className="problem-title"><b>{index+1}번</b><em>{item.isCorrect===true?"✓ 정답":item.isCorrect===false?"✕ 오답":"채점 전"}</em></div>
             <div className="problem-info"><span>난이도 <b>{item.problem?.difficulty||"-"}</b></span><span>문항미터 <b>{item.problem?.difficultyMeter===null?"-":Number(item.problem.difficultyMeter).toFixed(2)}</b></span><span>화면이탈 <b>{item.screenExitCount??0}회</b></span></div>
-            {item.problem?.imageUrl?<div className="question-image"><img src={item.problem.imageUrl} alt={`${index+1}번 문항`}/></div>:item.generated?<div className="generated-question">{item.problem?.generatedText||"AI 유사문항"}</div>:<div className="no-image">문항 이미지 없음</div>}
+            {item.problem?.imageUrl?<div className="question-image"><img src={item.problem.imageUrl} alt={`${index+1}번 문항`}/></div>:<div className="no-image">문항 이미지 없음</div>}
             <div className="answer-grid">
               <div><small>학생 답</small><b>{item.studentAnswer||"-"}</b></div>
               <div><small>정답</small><b>{item.problem?.correctAnswer||"-"}</b></div>

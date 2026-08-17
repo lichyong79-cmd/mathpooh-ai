@@ -1923,33 +1923,31 @@ export default function AnalysisWorkspacePage() {
 
   async function registerPendingQuestions(targets: Question[]) {
     if (!workspace?.analysis?.id || targets.length === 0) return;
-    setBusy("register-pending");
-    setError("");
-    setMessage("");
+    setBusy("register-pending"); setError(""); setMessage("");
+    const chunkSize=20;
+    const chunks:Array<Question[]>=[];
+    for(let i=0;i<targets.length;i+=chunkSize)chunks.push(targets.slice(i,i+chunkSize));
+    setQueueProgress({done:0,total:chunks.length});
+    let registered=0,blocked=0,duplicates=0;const warnings:string[]=[];
     try {
-      const response = await fetch("/api/problem-bank/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          analysisId: workspace.analysis.id,
-          questionIds: targets.map((item) => item.id),
-        }),
-      });
-      const raw = await response.text();
-      let payload: any = null;
-      try { payload = raw ? JSON.parse(raw) : null; } catch {
-        throw new Error(`문제은행 등록 응답이 JSON이 아닙니다. HTTP ${response.status}`);
+      for(let i=0;i<chunks.length;i++){
+        const chunk=chunks[i];
+        const response=await fetch("/api/problem-bank/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({analysisId:workspace.analysis.id,questionIds:chunk.map(item=>item.id)})});
+        const raw=await response.text(); let payload:any=null;
+        try{payload=raw?JSON.parse(raw):null;}catch{throw new Error(`문제은행 등록 응답이 JSON이 아닙니다. HTTP ${response.status}`);}
+        // 묶음 전체가 보류된 400은 전체 작업을 멈추지 않는다.
+        if(!response.ok||!payload?.success){
+          if(response.status===400){warnings.push(payload?.message||`${i+1}번째 묶음 등록 대상 없음`);}
+          else throw new Error(apiErrorMessage(payload,"문제은행 등록에 실패했습니다.",response.status));
+        }else{
+          registered+=Number(payload.registered??0); blocked+=Number(payload.blocked??0); duplicates+=Number(payload.duplicates??0);
+        }
+        setQueueProgress({done:i+1,total:chunks.length});
       }
-      if (!response.ok || !payload?.success) throw new Error(apiErrorMessage(payload, "문제은행 등록에 실패했습니다.", response.status));
-      await loadWorkspace(workspace.source.id);
-      await loadSources();
-      setViewMode("registered");
-      setMessage(`${Number(payload.registered ?? targets.length)}문항을 문제은행에 등록했습니다.`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "문제은행 등록에 실패했습니다.");
-    } finally {
-      setBusy("");
-    }
+      await loadWorkspace(workspace.source.id); await loadSources(); setViewMode("registered");
+      setMessage(`문제은행 등록 완료 · 신규 ${registered}문항${duplicates?` · 중복 ${duplicates}`:""}${blocked?` · 보류 ${blocked}`:""}${warnings.length?` · 확인 ${warnings.length}묶음`:""}`);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "문제은행 등록에 실패했습니다."); }
+    finally { setQueueProgress({done:0,total:0}); setBusy(""); }
   }
 
   async function approveForPending(question: Question) {
@@ -2445,7 +2443,7 @@ export default function AnalysisWorkspacePage() {
     "reset-analysis": { title: "문항분석 전체 취소 중", detail: "문항을 분석 대기 상태로 되돌리고 있습니다." },
   };
   const currentBusyInfo = busy ? busyInfo[busy] ?? { title: "처리 중", detail: "작업이 끝날 때까지 잠시 기다려 주세요." } : null;
-  const showQueueProgress = ["queue", "recrop", "fill"].includes(busy) && queueProgress.total > 0;
+  const showQueueProgress = ["queue", "recrop", "fill", "register-pending"].includes(busy) && queueProgress.total > 0;
 
   function moveToAdminPage(target: string) {
     if (!target || target === "analysis") return;
@@ -2650,6 +2648,7 @@ export default function AnalysisWorkspacePage() {
           detail={currentBusyInfo.detail}
           current={showQueueProgress ? queueProgress.done : undefined}
           total={showQueueProgress ? queueProgress.total : undefined}
+          currentLabel={showQueueProgress ? (busy === "register-pending" ? `문제은행 등록 ${Math.min(queueProgress.done + 1, queueProgress.total)}번째 묶음 처리` : `${questions[Math.min(queueProgress.done, Math.max(0, questions.length - 1))]?.question_no ?? Math.min(queueProgress.done + 1, queueProgress.total)}번 문항`) : undefined}
           kind={busy === "recrop" || busy === "crop" ? "crop" : busy === "save" || busy === "register-pending" ? "save" : busy === "load" || busy === "pdf" ? "loading" : "analysis"}
         />
       ) : null}

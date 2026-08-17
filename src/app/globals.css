@@ -478,3 +478,6 @@ body{font-size:16px;line-height:1.5}
 .table-head{background:#f6f9f7;color:#607068;border-bottom-color:#e4ebe6}.table-row{border-bottom-color:#edf1ee}.table-row.clickable:hover{background:#f5faf7}.pill.green,.pill.blue{background:#eaf6ee;color:#237144}.pill.orange{background:#fff4e6;color:#9a5b21}.pill.red{background:#fff0ef;color:#b13f39}
 .student-modal,.student-drawer{border:1px solid #dfe8e2}.modal-head,.drawer-head{background:#fbfdfb}.detail-score{background:linear-gradient(135deg,#225f3b,#3d8d59)}
 @media(max-width:760px){.page-content{padding-left:16px;padding-right:16px}.topbar{padding:0 18px}}
+
+/* SOS250 · 공통 장시간 작업 진행 정보 */
+.mathpooh-time-copy{display:flex;justify-content:space-between;gap:12px;margin-top:8px;font-size:12px;font-weight:800;color:#65736a}.mathpooh-current-label{display:block;margin:7px 0 3px;padding:7px 10px;border-radius:8px;background:#eef6f1;color:#216e45;font-size:12px}.mathpooh-loader.is-compact .mathpooh-time-copy{font-size:10px}
