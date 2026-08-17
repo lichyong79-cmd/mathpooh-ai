@@ -468,7 +468,13 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
         const ready=(refreshedJson.sessions??[]).find((x:any)=>x.phase==="TRAINING"&&String(x.parent_session_id)===String(legacyDiagnosis.id)&&x.status==="ASSIGNED"); const second=(refreshedJson.sessions??[]).find((x:any)=>x.phase==="DIAGNOSIS"&&String(x.parent_session_id)===String(legacyDiagnosis.id)&&x.status==="ASSIGNED"); setActiveId(String(ready?.id??second?.id??legacyDiagnosis.id)); setNotice(ready?"기존 진단 분석 완료 · 1차 훈련 10문항이 준비되었습니다. 시작 버튼을 눌러 주세요.":second?"기존 진단 분석 완료 · 2차 진단이 준비되었습니다.":"기존 진단 분석이 완료되었습니다."); return;
       }
       const open=allSessions.find((x:any)=>isSosOpen(x));
-      setActiveId((current:string)=>current||String(open?.id??""));
+      setActiveId((current:string)=>{
+        const currentSession=allSessions.find((x:any)=>String(x.id)===String(current));
+        // SOS251: 완료된 진단/훈련에 화면이 붙어 있지 않도록 새로 생성된 열린 세션을 최우선 선택한다.
+        // 특히 진단 3/3 정답 → AI 분석 → 2차 진단 생성 시 학생이 "학습 종료"로 오해하지 않게 즉시 다음 단계로 이동.
+        if(open && (!currentSession || !isSosOpen(currentSession))) return String(open.id);
+        return current||String(open?.id??"");
+      });
     }catch(error){setNotice(error instanceof Error?error.message:"진단·훈련 조회 실패");}
     finally{setLoading(false);}
   },[]);
@@ -480,7 +486,16 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   useEffect(()=>{if(!cycleRows.length)return;const valid=cycleRows.some((c:any)=>String(c.id)===selectedCycleId);if(valid)return;const openCycle=cycleRows.find((c:any)=>c.sessions.some((x:any)=>isSosOpen(x)));setSelectedCycleId(String((openCycle??cycleRows[0]).id));},[cycleRows,selectedCycleId]);
   const visibleSessions=selectedCycleId?sessions.filter((x:any)=>String(x.learningCycle?.id??"UNASSIGNED")===selectedCycleId):sessions;
   const active=visibleSessions.find((x:any)=>String(x.id)===activeId)??null;
-  useEffect(()=>{if(!visibleSessions.length){setActiveId("");return;}if(!active){const open=visibleSessions.find((x:any)=>isSosOpen(x));setActiveId(String(open?.id??visibleSessions[0].id));}},[selectedCycleId,visibleSessions.length,activeId]);
+  useEffect(()=>{
+    if(!visibleSessions.length){setActiveId("");return;}
+    const open=visibleSessions.find((x:any)=>isSosOpen(x));
+    // SOS251: 현재 선택이 완료 세션인데 같은 회차에 진행 가능한 다음 단계가 있으면 자동으로 그 단계 선택.
+    if(open && (!active || !isSosOpen(active))){
+      setActiveId(String(open.id));
+      return;
+    }
+    if(!active)setActiveId(String(visibleSessions[0].id));
+  },[selectedCycleId,visibleSessions.length,activeId,active?.status]);
   const activeItems=Array.isArray(active?.items)?active.items:[];
   const finalCompleted=Boolean(active&&active.phase==="TRAINING"&&["COMPLETED","PASSED"].includes(String(active.status))&&(String(active.cycle_kind)==="HOMEWORK"||Number(active.round_no)===2));
 
@@ -561,7 +576,9 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             </div>:null}
 
             {active.status==="IN_PROGRESS"&&active.phase==="DIAGNOSIS"?<SosDiagnosisRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              setNotice(`진단 응시 완료 · ${json.correct}/${json.total} 정답 · 성적표에서 오답을 교정한 뒤 AI 취약점 분석으로 넘어갑니다.`);
+              setNotice(json.correct===json.total
+                ? `진단 응시 완료 · ${json.correct}/${json.total} 정답 · 오답이 없어 바로 AI 취약점 분석 후 다음 진단/훈련을 준비합니다.`
+                : `진단 응시 완료 · ${json.correct}/${json.total} 정답 · 성적표에서 오답을 교정한 뒤 AI 취약점 분석으로 넘어갑니다.`);
               await load();await onRefresh();
             }}/>:null}
 
@@ -574,7 +591,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
 
             {active.status==="RETRAIN"&&active.phase==="DIAGNOSIS"?<SosTrainingReview session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
               const w=json?.ai?.weakness;
-              setNotice(json?.ai?.created?`진단 교정 완료 · AI가 '${w?.weaknessTitle||"취약점"}'을 확인했습니다. 1차 맞춤훈련 10문항이 준비되었습니다.`:json?.ai?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED"?"1차 진단 교정 완료 · 취약점 확정을 위해 2차 진단 3문항이 준비되었습니다.":json?.ai?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS"?"2차 진단까지 완료 · 현재 뚜렷한 취약점이 확인되지 않았습니다.":json?.ai?.error?`진단 교정 완료 · AI 분석 확인 필요 (${json.ai.error})`:"진단 교정과 AI 분석이 완료되었습니다.");
+              setNotice(json?.ai?.created?`진단 교정 완료 · AI가 '${w?.weaknessTitle||"취약점"}'을 확인했습니다. 1차 맞춤훈련 10문항이 준비되었습니다.`:json?.ai?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED"?"1차 진단에서 뚜렷한 취약점이 없어 바로미터가 가장 낮은 다른 영역의 2차 진단 3문항이 자동 준비되었습니다.":json?.ai?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS"?"2차 진단까지 완료 · 현재 뚜렷한 취약점이 확인되지 않았습니다.":json?.ai?.error?`진단 교정 완료 · AI 분석 확인 필요 (${json.ai.error})`:"진단 교정과 AI 분석이 완료되었습니다.");
               await load();await onRefresh();
             }}/>:null}
 
