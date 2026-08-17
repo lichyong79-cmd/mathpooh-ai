@@ -51,7 +51,22 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
   }
   async function finishReview(){
     const missing=wrong.filter(x=>!reviewed[String(x.id)]?.completed);if(missing.length){onNotice(`아직 교정이 끝나지 않은 오답이 ${missing.length}개 있습니다.`);return;}setBusy(true);onNotice("");
-    try{const answers=Object.fromEntries(wrong.map(x=>[String(x.id),reviewed[String(x.id)]?.answer||x.reviewAnswer||x.studentAnswer||"확인완료"]));const responseSeconds=Object.fromEntries(wrong.map(x=>[String(x.id),reviewed[String(x.id)]?.seconds||x.reviewResponseSeconds||1]));const r=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"submit_review",sessionId:session.id,answers,responseSeconds})});const j=await r.json();if(!r.ok)throw new Error(j.message||"오답 제출 실패");await onCompleted(j);}catch(e){onNotice(e instanceof Error?e.message:"오답 제출 실패");}finally{setBusy(false);}
+    try{
+      const answers=Object.fromEntries(wrong.map(x=>[String(x.id),reviewed[String(x.id)]?.answer||x.reviewAnswer||x.studentAnswer||"확인완료"]));
+      const responseSeconds=Object.fromEntries(wrong.map(x=>[String(x.id),reviewed[String(x.id)]?.seconds||x.reviewResponseSeconds||1]));
+      const controller=new AbortController();
+      const timeout=window.setTimeout(()=>controller.abort(),60000);
+      let r:Response;
+      try{
+        r=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},signal:controller.signal,body:JSON.stringify({action:"submit_review",sessionId:session.id,answers,responseSeconds})});
+      }finally{window.clearTimeout(timeout);}
+      const j=await r.json();
+      if(!r.ok)throw new Error(j.message||"오답 제출 실패");
+      await onCompleted(j);
+    }catch(e){
+      if(e instanceof Error&&e.name==="AbortError")onNotice("바로미터 계산/다음 학습 준비가 오래 걸려 중단했습니다. 저장된 오답 기록은 유지됩니다. 새로고침 후 다시 눌러 주세요.");
+      else onNotice(e instanceof Error?e.message:"오답 제출 실패");
+    }finally{setBusy(false);}
   }
 
   if(item){const done=Boolean(reviewed[String(item.id)]?.completed);const attempt=feedback?.attemptNo??Number(item.reviewAttemptCount??0);return <div className={`sos-training-review ${diagnosis?"diagnosis-review":"training-review"}`}>

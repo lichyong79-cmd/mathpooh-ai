@@ -182,9 +182,16 @@ function outputText(payload: any) {
 
 async function requestStructured(args: { apiKey:string; model:string; imageUrl:string; prompt:string; schema:any; schemaName:string; timeoutMs:number; effort?:"low"|"medium" }) {
   let lastError: DifficultyVerificationError = new DifficultyVerificationError("unknown", "AI 난이도 검증 실패", args.schemaName);
-  // SOS245: Responses API의 max_output_tokens에는 보이는 JSON뿐 아니라 reasoning token도 포함된다.
-  // 1800 토큰에서 빈 응답이 반복됐으므로 여유를 높이고, 실패 원인을 구조화해서 상위 UI에 전달한다.
-  for (let attempt=1; attempt<=2; attempt++) {
+  // SOS247: max_output_tokens 실패가 반복되는 문항은 토큰만 계속 올리지 않고
+  // 2~3차 시도에서 reasoning effort를 low로 낮춰 최종 구조화 JSON까지 도달시키는 fallback을 사용한다.
+  // 1차: 기존 품질 유지(medium/5000) -> 2차: low/8000 -> 3차: low/12000.
+  const attemptPlans = [
+    { effort: args.effort ?? "medium", maxOutputTokens: 5000 },
+    { effort: "low" as const, maxOutputTokens: 8000 },
+    { effort: "low" as const, maxOutputTokens: 12000 },
+  ];
+  for (let attempt=1; attempt<=attemptPlans.length; attempt++) {
+    const plan=attemptPlans[attempt-1];
     try {
       const response = await fetch("https://api.openai.com/v1/responses", {
         method:"POST",
@@ -192,9 +199,9 @@ async function requestStructured(args: { apiKey:string; model:string; imageUrl:s
         body:JSON.stringify({
           model:args.model,
           input:[{ role:"user", content:[{type:"input_text",text:args.prompt},{type:"input_image",image_url:args.imageUrl,detail:"high"}] }],
-          reasoning:{ effort:args.effort ?? "medium" },
+          reasoning:{ effort:plan.effort },
           text:{ format:{ type:"json_schema", name:args.schemaName, strict:true, schema:args.schema } },
-          max_output_tokens: attempt === 1 ? 5000 : 7000,
+          max_output_tokens: plan.maxOutputTokens,
           store:false,
         }),
         signal:AbortSignal.timeout(args.timeoutMs),
@@ -209,7 +216,7 @@ async function requestStructured(args: { apiKey:string; model:string; imageUrl:s
           args.schemaName,
           raw.slice(0,1200),
         );
-        if(attempt<2 && response.status>=500) continue;
+        if(attempt<attemptPlans.length && response.status>=500) continue;
         throw lastError;
       }
 
@@ -217,7 +224,7 @@ async function requestStructured(args: { apiKey:string; model:string; imageUrl:s
       try { payload = raw ? JSON.parse(raw) : {}; }
       catch {
         lastError = new DifficultyVerificationError("response_json_parse", "OpenAI 응답 JSON을 읽지 못했습니다.", args.schemaName, raw.slice(0,1200));
-        if(attempt<2) continue;
+        if(attempt<attemptPlans.length) continue;
         throw lastError;
       }
 
@@ -234,7 +241,7 @@ async function requestStructured(args: { apiKey:string; model:string; imageUrl:s
           args.schemaName,
           `status=${String(payload?.status)} / output_types=${JSON.stringify((payload?.output??[]).map((x:any)=>x?.type))}`,
         );
-        if(attempt<2 && reason!=="content_filter") continue;
+        if(attempt<attemptPlans.length && reason!=="content_filter") continue;
         throw lastError;
       }
 
@@ -246,14 +253,14 @@ async function requestStructured(args: { apiKey:string; model:string; imageUrl:s
           args.schemaName,
           `status=${String(payload?.status ?? "unknown")} / incomplete=${JSON.stringify(payload?.incomplete_details ?? null)} / output_types=${JSON.stringify((payload?.output??[]).map((x:any)=>x?.type))}`,
         );
-        if(attempt<2) continue;
+        if(attempt<attemptPlans.length) continue;
         throw lastError;
       }
 
       try { return JSON.parse(text); }
       catch {
         lastError = new DifficultyVerificationError("structured_json_parse", "AI 구조화 난이도 JSON 파싱에 실패했습니다.", args.schemaName, text.slice(0,1200));
-        if(attempt<2) continue;
+        if(attempt<attemptPlans.length) continue;
         throw lastError;
       }
     } catch (error) {
@@ -263,7 +270,7 @@ async function requestStructured(args: { apiKey:string; model:string; imageUrl:s
       } else {
         lastError=new DifficultyVerificationError("unknown", error instanceof Error?error.message:String(error), args.schemaName);
       }
-      if(attempt>=2 || lastError.failureType==="http_429" || lastError.failureType==="incomplete_content_filter") break;
+      if(attempt>=attemptPlans.length || lastError.failureType==="http_429" || lastError.failureType==="incomplete_content_filter") break;
     }
   }
   throw lastError;

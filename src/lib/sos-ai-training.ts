@@ -14,16 +14,25 @@ async function openAiJson(prompt:string,schema:any,content?:any[]){
   const apiKey=process.env.OPENAI_API_KEY;
   if(!apiKey) throw new Error("OPENAI_API_KEY가 없습니다.");
   const model=process.env.OPENAI_ANALYSIS_MODEL||process.env.OPENAI_MODEL||"gpt-5-mini";
-  const response=await fetch("https://api.openai.com/v1/responses",{
-    method:"POST",
-    headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
-    body:JSON.stringify({
-      model,
-      input:[{role:"user",content:content??[{type:"input_text",text:prompt}]}],
-      reasoning:{effort:"medium"},
-      text:{format:{type:"json_schema",name:"sos_training_engine",strict:true,schema}},
-    }),
-  });
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),45000);
+  let response:Response;
+  try{
+    response=await fetch("https://api.openai.com/v1/responses",{
+      method:"POST",
+      headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
+      signal:controller.signal,
+      body:JSON.stringify({
+        model,
+        input:[{role:"user",content:content??[{type:"input_text",text:prompt}]}],
+        reasoning:{effort:"medium"},
+        text:{format:{type:"json_schema",name:"sos_training_engine",strict:true,schema}},
+      }),
+    });
+  }catch(error){
+    if(error instanceof Error&&error.name==="AbortError")throw new Error("AI 문항 생성 시간이 45초를 초과했습니다.");
+    throw error;
+  }finally{clearTimeout(timeout);}
   const payload=await response.json();
   if(!response.ok) throw new Error(payload?.error?.message||"AI 연결에 실패했습니다.");
   const text=outputText(payload);

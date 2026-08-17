@@ -280,7 +280,7 @@ export default function DifficultyManagementPage() {
         for(const target of batch){const result:any=map.get(String(target.id)); if(result?.ok||result?.success){ok++;rows.push({...target,before:norm(target.difficulty,target.problem_dna),result:{...result,ok:true}});}else{fail++;rows.push({...target,before:norm(target.difficulty,target.problem_dna),result:{...result,ok:false}});}}
         setTestResults([...rows]); const done=Math.min(i+8,targets.length);setProgress({mode:"sample",done,total:targets.length,ok,fail});setMessage(`표본 재검증 중 · ${done}/${targets.length} · 성공 ${ok} · 미판정/실패 ${fail}`);
       }
-      setMessage(`SOS245 표본 재검증 완료 · ${targets.length}문항. 아래에서 기존↔신규 판정과 미판정/검토필요를 확인하세요. DB 난이도는 아직 변경하지 않았습니다.`);
+      setMessage(`SOS247 표본 재검증 완료 · ${targets.length}문항. 아래에서 기존↔신규 판정과 미판정/검토필요를 확인하세요. DB 난이도는 아직 변경하지 않았습니다.`);
     }catch(e){setError(e instanceof Error?e.message:"표본 재검증에 실패했습니다.");}finally{setRunning(false);setProgress(null);}
   }
 
@@ -340,7 +340,7 @@ export default function DifficultyManagementPage() {
     if(running)return;
     const targets=items.filter(x=>x.problem_dna?.difficulty?.admin_fixed!==true && !!x.question_image_path);
     if(!targets.length){setMessage("전체 재검증 대상이 없습니다.");return;}
-    if(!window.confirm(`SOS245 재풀이 검증 엔진으로 ${targets.length}문항을 전체 재판정합니다.\n\n- 관리자 확정 문항은 보존\n- AI가 실제로 재풀이 후 검증\n- 미판정/검토필요는 기존 난이도를 덮어쓰지 않음\n- 확신도 높은 검증 통과 문항만 새 난이도 적용\n\nAI 호출량이 많습니다. 표본 결과를 확인한 뒤 실행하는 것을 권장합니다. 계속할까요?`))return;
+    if(!window.confirm(`SOS247 재풀이 검증 엔진으로 ${targets.length}문항을 전체 재판정합니다.\n\n- 관리자 확정 문항은 보존\n- AI가 실제로 재풀이 후 검증\n- 미판정/검토필요는 기존 난이도를 덮어쓰지 않음\n- 확신도 높은 검증 통과 문항만 새 난이도 적용\n\nAI 호출량이 많습니다. 표본 결과를 확인한 뒤 실행하는 것을 권장합니다. 계속할까요?`))return;
     setRunning(true);setMessage("");setError("");setTestResults([]);setProgress({mode:"full",done:0,total:targets.length,ok:0,fail:0});
     const referenceIds=buildReferenceIds();let ok=0,fail=0,applied=0,review=0;
     try{
@@ -437,7 +437,7 @@ export default function DifficultyManagementPage() {
   <main className="difficulty-page">
     <div className="difficulty-wrap">
       <div className="difficulty-header">
-        <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>SOS245는 검증실패를 원인별로 추적하고 난이도로 위장하지 않습니다. AI가 문제를 먼저 재풀이하고 검증한 뒤 8단계 난이도를 판정하며, 불확실하면 미판정/검토필요로 분리합니다.</p></div>
+        <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>SOS247은 검증실패를 원인별로 추적하고 max_output_tokens 문항은 저추론 fallback으로 재검증합니다. AI가 문제를 먼저 재풀이하고 검증한 뒤 8단계 난이도를 판정하며, 불확실하면 미판정/검토필요로 분리합니다.</p></div>
         <div className="header-buttons"><button onClick={()=>location.href="/problem-bank/barometer"}>학생·문항 바로미터</button><button onClick={()=>location.href="/admin?menu=sos-learning"}>관리자 홈</button><button onClick={()=>location.href="/problem-bank"}>SOS 문제은행</button></div>
       </div>
 
@@ -462,7 +462,7 @@ export default function DifficultyManagementPage() {
       </div>
 
       {testResults.length>0 && <section className="test-section">
-        <div className="test-section-head"><div><b>SOS245 난이도 재검증 결과</b><span>현재값과 새 재풀이 검증 결과를 비교합니다. 미판정/검토필요는 자동 적용하지 않습니다.</span></div><strong>{testResults.length}문항</strong></div>
+        <div className="test-section-head"><div><b>SOS247 난이도 재검증 결과</b><span>현재값과 새 재풀이 검증 결과를 비교합니다. 미판정/검토필요는 자동 적용하지 않습니다.</span></div><strong>{testResults.length}문항</strong></div>
         <div className="sample-summary"><div><b>{sampleSummary.kept}</b><span>기준 유지</span></div><div><b>{sampleSummary.changed}</b><span>기준과 변경</span></div><div><b>{sampleSummary.unclassified}</b><span>미판정</span></div><div><b>{sampleSummary.review}</b><span>검토필요</span></div><div className="failure-summary"><b>{sampleSummary.failed}</b><span>검증실패</span></div><div className="matrix"><strong>집계</strong><span>{sampleSummary.accounted}/{sampleSummary.total} · {sampleSummary.accounted===sampleSummary.total?"정상":"⚠ 중복/누락 확인"}</span><strong>주요 이동</strong><span>{sampleSummary.matrix.slice(0,8).map(([key,count])=>`${key.replace(/^(\d)→(\d)$/,(m,a,b)=>`${difficultyLabel(a)}→${difficultyLabel(b)}`)} ${count}`).join(" · ")||"변경 없음"}</span></div></div>
         <div className="test-grid">{testResults.map((x)=><article key={x.id} className={`test-card ${x.result?.ok ? (x.before !== String(x.result.difficulty) ? "changed" : "same") : "failed"}`}>
           <div className="test-card-head"><div><b>{x.question_no}번</b><span>{x.subject} · {x.unit}</span></div><code>{x.problem_code}</code></div>
