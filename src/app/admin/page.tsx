@@ -20,6 +20,7 @@ import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
 import { DIFFICULTY_SCALE, DIFFICULTY_WEIGHTS, difficultyLabel, difficultyNumber } from "@/lib/difficulty-scale";
 import { SUBJECTS, normalizeSubject } from "@/lib/subject";
+import { getSosCalendarWeek, listSosCalendarWeeks, sosStageLabel, weekFromSnapshot } from "@/lib/sos-week";
 import {
   SOURCE_WORKFLOW_LABEL,
   SOURCE_WORKFLOW_ORDER,
@@ -1747,6 +1748,8 @@ function RecommendPage() {
   const [diagnosisCandidates, setDiagnosisCandidates] = useState<any[]>([]);
   const [selectedDiagnosisIds, setSelectedDiagnosisIds] = useState<string[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
+  const [selectedWeekStart,setSelectedWeekStart]=useState(()=>getSosCalendarWeek(new Date()).start);
+  const [selectedExamKey,setSelectedExamKey]=useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1784,6 +1787,8 @@ function RecommendPage() {
     setDiagnosisErrorForNo1("");
     setDiagnosisCandidates([]);
     setSelectedDiagnosisIds([]);
+    setSelectedWeekStart(getSosCalendarWeek(new Date()).start);
+    setSelectedExamKey("");
   }, [selectedId]);
 
   const allSourceCandidates = useMemo(
@@ -1791,10 +1796,15 @@ function RecommendPage() {
     [selected, sessions],
   );
 
+  const examKeyOf=(exam:any)=>String(exam?.attemptId??exam?.attempt_id??exam?.examId??exam?.exam_id??exam?.title??"");
+  const examOptions=useMemo(()=>{const m=new Map<string,any>();for(const c of allSourceCandidates){const k=examKeyOf(c.sourceExam);if(k&&!m.has(k))m.set(k,c.sourceExam);}return [...m.entries()].map(([key,exam])=>({key,exam}));},[allSourceCandidates]);
+  useEffect(()=>{if(!examOptions.length){setSelectedExamKey("");return;}if(!selectedExamKey||!examOptions.some(x=>x.key===selectedExamKey))setSelectedExamKey(examOptions[0].key);},[examOptions,selectedExamKey]);
   const visibleSourceCandidates = useMemo(
-    () => allSourceCandidates.filter((candidate) => !rejectedSourceKeys.includes(candidate.key)),
-    [allSourceCandidates, rejectedSourceKeys],
+    () => allSourceCandidates.filter((candidate) => !rejectedSourceKeys.includes(candidate.key) && (!selectedExamKey||examKeyOf(candidate.sourceExam)===selectedExamKey)),
+    [allSourceCandidates, rejectedSourceKeys,selectedExamKey],
   );
+  const weekOptions=useMemo(()=>listSosCalendarWeeks(new Date(),10,4).reverse(),[]);
+  const selectedWeek=getSosCalendarWeek(selectedWeekStart);
 
   const target = visibleSourceCandidates[0] ?? null;
   const history = Array.isArray(selected?.performance?.history) ? selected.performance.history : [];
@@ -1879,7 +1889,7 @@ function RecommendPage() {
     try {
       const response = await fetch("/api/admin/training-engine", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
         action:"assign-diagnosis-selected", studentId:selected.id, problemIds:selectedDiagnosisIds,
-        target:{ units:unit?[{label:unit,rate:0}]:selected.weakUnits, types:type?[{label:type,rate:0}]:selected.weakTypes, sourceAttemptId, sourceExamId:exam?.examId??exam?.exam_id??null, sourceExamTitle:exam?.title??"실전모의고사", sourceSubject:item?.subject??exam?.subject??null, sourceUnit:unit||null, sourceMajorUnit:item?.majorUnit??null, sourceMiddleUnit:item?.middleUnit??null, sourceMinorUnit:item?.minorUnit??null, sourceDetailedTopic:item?.detailedTopic??item?.type??item?.topic??null, sourceQuestionType:item?.questionType??null, sourceProblemTypes:Array.isArray(item?.problemTypes)?item.problemTypes:[], sourceQuestionNo:sosQuestionNo(item), sourceDifficulty:sosDifficulty(item?.difficulty), sourcePriority:confirmedTarget.priority, sourceVerdict:confirmedTarget.verdict, sosNo:1 }
+        target:{ units:unit?[{label:unit,rate:0}]:selected.weakUnits, types:type?[{label:type,rate:0}]:selected.weakTypes, sourceAttemptId, sourceExamId:exam?.examId??exam?.exam_id??null, sourceExamTitle:exam?.title??"실전모의고사", sourceSubject:item?.subject??exam?.subject??null, sourceUnit:unit||null, sourceMajorUnit:item?.majorUnit??null, sourceMiddleUnit:item?.middleUnit??null, sourceMinorUnit:item?.minorUnit??null, sourceDetailedTopic:item?.detailedTopic??item?.type??item?.topic??null, sourceQuestionType:item?.questionType??null, sourceProblemTypes:Array.isArray(item?.problemTypes)?item.problemTypes:[], sourceQuestionNo:sosQuestionNo(item), sourceDifficulty:sosDifficulty(item?.difficulty), sourcePriority:confirmedTarget.priority, sourceVerdict:confirmedTarget.verdict, sosNo:1, sosWeek:selectedWeek, sosWeekKey:selectedWeek.key, sosWeekStart:selectedWeek.start, sosWeekEnd:selectedWeek.end, sosWeekLabel:selectedWeek.label, sosWeekDateLabel:selectedWeek.dateLabel }
       })});
       const data=await response.json();
       if(!response.ok) throw new Error(data.message||"진단 3문항 배정 실패");
@@ -1963,6 +1973,7 @@ function RecommendPage() {
           <button className="primary-button">배정</button>
           <button className="secondary-button" onClick={()=>location.href="/admin/sos-progress"}>진행</button>
           <button className="secondary-button" onClick={()=>location.href="/admin/sos-results"}>결과</button>
+          <button className="secondary-button" onClick={()=>location.href="/admin/sos-status"}>학습현황</button>
         </div>
         <p>SOS_NO1은 문제은행 문항이 아니라 학생이 실제로 틀린 실전모의고사 문항 중 가장 먼저 해결할 1문항입니다.</p>
       </div>
@@ -2002,6 +2013,22 @@ function RecommendPage() {
             <b>{latestExam ? `${latestExam.score ?? "-"}점 · 오답/미응답 ${latestWrongCount}문항` : "-"}</b>
             <small>이번 시험 오답이 없으면 이전 시험의 미해결 오답을 확인합니다.</small>
           </div>
+
+          <section style={{margin:"16px 0",padding:16,border:"1px solid #dbe7df",borderRadius:16,background:"#fff"}}>
+            <div style={{display:"grid",gridTemplateColumns:"minmax(220px,1fr) minmax(240px,1.5fr)",gap:12}}>
+              <label style={{display:"grid",gap:6,fontSize:12,fontWeight:900,color:"#475467"}}>SOS 학습주차
+                <select value={selectedWeekStart} onChange={(e)=>setSelectedWeekStart(e.target.value)} style={{minHeight:44,border:"1px solid #cfd8d2",borderRadius:10,padding:"0 10px",fontWeight:900}}>
+                  {weekOptions.map(w=><option key={w.key} value={w.start}>{w.label} · {w.dateLabel}</option>)}
+                </select>
+              </label>
+              <label style={{display:"grid",gap:6,fontSize:12,fontWeight:900,color:"#475467"}}>기준 시험
+                <select value={selectedExamKey} onChange={(e)=>{setSelectedExamKey(e.target.value);setRejectedSourceKeys([]);setConfirmedTarget(null);setDiagnosisCandidates([]);setSelectedDiagnosisIds([]);}} style={{minHeight:44,border:"1px solid #cfd8d2",borderRadius:10,padding:"0 10px",fontWeight:900}}>
+                  {examOptions.map(({key,exam})=><option key={key} value={key}>{exam?.title||"실전모의고사"} · {exam?.submittedAt?new Date(exam.submittedAt).toLocaleDateString("ko-KR"):exam?.examDate?new Date(exam.examDate).toLocaleDateString("ko-KR"):"응시기록"}</option>)}
+                </select>
+              </label>
+            </div>
+            <div style={{marginTop:10,padding:"9px 11px",borderRadius:10,background:"#eef7f1",color:"#216e45",fontSize:12,fontWeight:800}}>이후 진단 → 1차훈련 → 2차훈련/오답 → 3제 굳히기까지 모두 <b>{selectedWeek.label} · {selectedWeek.dateLabel}</b>로 자동 귀속됩니다.</div>
+          </section>
 
           {noSosNeeded ? (
             <section style={{margin:"18px 0",padding:28,border:"2px solid #8ec7a1",borderRadius:18,background:"#f4fbf6"}}>
@@ -2116,7 +2143,7 @@ function RecommendPage() {
             <b>진단·훈련 생성 이력</b>
             {sessions.length ? sessions.map((session: any) =>
               <span key={session.id} className={session.phase === "DIAGNOSIS" ? "diagnosis" : "training"} style={{display:"inline-flex",alignItems:"center",gap:6}}>
-                {session.phase === "DIAGNOSIS" ? `진단 ${session.round_no ?? 1}차 · ${session.question_count ?? 3}문항` : `훈련 · ${session.question_count ?? 10}문항`} · {session.status}
+                {`${weekFromSnapshot(session.target_snapshot,session.created_at).label} · ${sosStageLabel(session)} · ${session.question_count ?? session.total_count ?? (session.phase==="DIAGNOSIS"?3:10)}문항`} · {session.status}
                 {["DRAFT","ASSIGNED"].includes(String(session.status)) ? <button type="button" disabled={saving} onClick={()=>void cancelTrainingSession(session)} style={{border:"1px solid #e7b3b3",background:"#fff",color:"#b42318",borderRadius:999,padding:"3px 8px",fontSize:11,fontWeight:900,cursor:"pointer"}}>생성 취소</button> : null}
               </span>
             ) : <span>아직 생성된 진단·훈련이 없습니다.</span>}

@@ -125,7 +125,7 @@ async function createSecondDiagnosisFromWeakest(args:{supabase:any;studentId:str
   }
   if(picked.length<3)throw new Error(`2차 진단 문항이 부족합니다. ${picked.length}/3문항`);
   picked.sort((a:any,b:any)=>a.meter-b.meter||String(a.id).localeCompare(String(b.id)));
-  const snapshot={subject:weakest.subject,majorUnit:weakest.major_unit,subunit:weakest.subunit,subunitKey:weakest.subunit_key,studentDifficultyMeter:meter,studentDifficultyLabel:meterLabel(meter),autoSecondDiagnosis:true,previousTarget:parentDiagnosis.target_snapshot??{}};
+  const snapshot={...(parentDiagnosis.target_snapshot??{}),subject:weakest.subject,majorUnit:weakest.major_unit,subunit:weakest.subunit,subunitKey:weakest.subunit_key,studentDifficultyMeter:meter,studentDifficultyLabel:meterLabel(meter),autoSecondDiagnosis:true,previousTarget:parentDiagnosis.target_snapshot??{}};
   const session=await supabase.from("sos_training_sessions").insert({student_id:studentId,phase:"DIAGNOSIS",status:"ASSIGNED",target_snapshot:snapshot,parent_session_id:parentDiagnosis.id,round_no:2,total_count:3,cycle_kind:"SECOND_DIAGNOSIS"}).select().single();
   if(session.error||!session.data)throw new Error(session.error?.message||"2차 진단 생성 실패");
   const items=await supabase.from("sos_training_items").insert(picked.map((p:any,index:number)=>({session_id:session.data.id,problem_id:p.id,item_order:index+1,item_role:`최약 바로미터 2차 진단 · ${weakest.subunit}`,subunit_key:weakest.subunit_key})));

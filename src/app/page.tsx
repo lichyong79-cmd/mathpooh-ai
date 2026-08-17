@@ -18,6 +18,7 @@ import {
   type LandmarkSummary,
 } from "@/lib/landmark";
 import {difficultyLabel, DIFFICULTY_WEIGHTS} from "@/lib/difficulty-scale";
+import {getSosCalendarWeek,sosStageLabel} from "@/lib/sos-week";
 
 type Attempt = {
   id: string;
@@ -447,6 +448,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   const [activeId,setActiveId]=useState("");
   const [busy,setBusy]=useState("");
   const [notice,setNotice]=useState("");
+  const [selectedWeekKey,setSelectedWeekKey]=useState("");
   const recoveryTried=useRef<Set<string>>(new Set());
 
   const load=useCallback(async()=>{
@@ -474,7 +476,12 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   useEffect(()=>{void load();},[load]);
 
   const sessions=Array.isArray(data.sessions)?data.sessions:[];
-  const active=sessions.find((x:any)=>String(x.id)===activeId)??null;
+  const currentWeek=getSosCalendarWeek(new Date());
+  const weekRows=useMemo(()=>{const map=new Map<string,any>();for(const session of sessions){const week=session.cycleWeek??getSosCalendarWeek(session.created_at);const key=String(week.key);const row=map.get(key)??{...week,sessions:[]};row.sessions.push(session);map.set(key,row);}return [...map.values()].sort((a:any,b:any)=>String(b.start).localeCompare(String(a.start)));},[sessions]);
+  useEffect(()=>{if(!weekRows.length)return;const valid=weekRows.some((w:any)=>String(w.key)===selectedWeekKey);if(valid)return;const current=weekRows.find((w:any)=>String(w.key)===currentWeek.key);const openWeek=weekRows.find((w:any)=>w.sessions.some((x:any)=>isSosOpen(x)));setSelectedWeekKey(String((current??openWeek??weekRows[0]).key));},[weekRows,selectedWeekKey,currentWeek.key]);
+  const visibleSessions=selectedWeekKey?sessions.filter((x:any)=>String(x.cycleWeek?.key??getSosCalendarWeek(x.created_at).key)===selectedWeekKey):sessions;
+  const active=visibleSessions.find((x:any)=>String(x.id)===activeId)??null;
+  useEffect(()=>{if(!visibleSessions.length){setActiveId("");return;}if(!active){const open=visibleSessions.find((x:any)=>isSosOpen(x));setActiveId(String(open?.id??visibleSessions[0].id));}},[selectedWeekKey,visibleSessions.length,activeId]);
   const activeItems=Array.isArray(active?.items)?active.items:[];
   const finalCompleted=Boolean(active&&active.phase==="TRAINING"&&["COMPLETED","PASSED"].includes(String(active.status))&&(String(active.cycle_kind)==="HOMEWORK"||Number(active.round_no)===2));
 
@@ -495,10 +502,22 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
 
   const latestMeters=Array.isArray(data.subunitMeters)?data.subunitMeters:[];
 
+  const selectedWeek=weekRows.find((w:any)=>String(w.key)===selectedWeekKey)??null;
+  const selectedOpen=visibleSessions.find((x:any)=>isSosOpen(x));
+  const selectedCompleted=visibleSessions.length>0&&!selectedOpen;
+  const selectedIsPast=Boolean(selectedWeek&&String(selectedWeek.end)<currentWeek.start);
+  const sourceTitles=[...new Set(visibleSessions.map((x:any)=>String(x.sourceExam?.title??x.target_snapshot?.sourceExamTitle??"")).filter(Boolean))];
+  const backlogWeeks=weekRows.filter((w:any)=>String(w.end)<currentWeek.start&&w.sessions.some((x:any)=>isSosOpen(x)));
+
   return <div className="sos-live-wrap">
+    <section className="sos-learning-status">
+      <div className="sos-week-picker"><div><small>SOS 학습현황</small><h3>{selectedWeek?`${selectedWeek.label} · ${selectedWeek.dateLabel}`:"SOS 학습주차"}</h3><p>{sourceTitles.length?`기준시험 · ${sourceTitles.join(" / ")}`:"선택한 주차의 SOS 기록을 확인하세요."}</p></div><select value={selectedWeekKey} onChange={(e)=>{setSelectedWeekKey(e.target.value);setActiveId("");}}>{weekRows.map((w:any)=><option key={w.key} value={w.key}>{w.label} · {w.dateLabel}{w.sessions.some((x:any)=>isSosOpen(x))?" · 진행중":" · 완료"}</option>)}</select></div>
+      <div className="sos-now-task"><span>{selectedOpen?selectedIsPast?"밀린 SOS":"지금 해야 할 SOS":selectedCompleted?"이 주차 SOS 완료":"SOS 없음"}</span><b>{selectedOpen?sosStageLabel(selectedOpen):selectedCompleted?"모든 학습 완료":"배정된 학습이 없습니다."}</b><p>{selectedOpen?`${selectedOpen.target_snapshot?.subunit??"소단원"} · ${Number(selectedOpen.correct_count??0)}/${Number(selectedOpen.total_count??0)} 정답/진행 기록`:selectedCompleted?"지난 진단·훈련 결과를 아래에서 다시 확인할 수 있습니다.":"관리자가 SOS를 배정하면 이곳에 표시됩니다."}</p>{selectedOpen?<button type="button" onClick={()=>setActiveId(String(selectedOpen.id))}>이어하기 →</button>:null}</div>
+      {backlogWeeks.length?<div className="sos-backlog"><b>밀린 SOS</b><div>{backlogWeeks.map((w:any)=><button type="button" key={w.key} onClick={()=>{setSelectedWeekKey(String(w.key));setActiveId("");}}><span>{w.label}</span><small>{w.dateLabel}</small><em>{sosStageLabel(w.sessions.find((x:any)=>isSosOpen(x)))}</em></button>)}</div></div>:null}
+    </section>
     <section className="sos-live-summary">
-      <article><span>대기·진행</span><b>{sessions.filter((x:any)=>["ASSIGNED","IN_PROGRESS","RETRAIN"].includes(String(x.status))).length}</b><small>진단/훈련</small></article>
-      <article><span>완료</span><b>{sessions.filter((x:any)=>["COMPLETED","PASSED"].includes(String(x.status))).length}</b><small>누적 세션</small></article>
+      <article><span>대기·진행</span><b>{visibleSessions.filter((x:any)=>["ASSIGNED","IN_PROGRESS","RETRAIN"].includes(String(x.status))).length}</b><small>진단/훈련</small></article>
+      <article><span>완료</span><b>{visibleSessions.filter((x:any)=>["COMPLETED","PASSED"].includes(String(x.status))).length}</b><small>누적 세션</small></article>
       <article><span>소단원 미터</span><b>{latestMeters.length}</b><small>측정된 영역</small></article>
     </section>
 
@@ -508,7 +527,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
       <div className="sos-live-layout">
         <aside className="sos-session-list">
           <h3>나의 진단·훈련</h3>
-          {sessions.map((session:any)=><button
+          {visibleSessions.map((session:any)=><button
             key={session.id}
             className={`${String(session.id)===String(active?.id)?"selected":""} ${session.phase==="DIAGNOSIS"?"stage-diagnosis":Number(session.round_no)===2?"stage-training2":"stage-training1"}`}
             onClick={()=>setActiveId(String(session.id))}
@@ -517,12 +536,12 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             <em>{session.status==="ASSIGNED"?"시작 전":session.status==="IN_PROGRESS"?"진행 중":session.status==="PASSED"?"통과":session.status==="RETRAIN"?"오답 필수":"완료"}</em>
             <small>{session.correct_count===null||session.correct_count===undefined?`${session.total_count}문항`:`${session.correct_count}/${session.total_count} 정답`}</small>
           </button>)}
-          {!sessions.length?<p>아직 배정된 진단·훈련이 없습니다.</p>:null}
+          {!visibleSessions.length?<p>선택한 주차에 배정된 진단·훈련이 없습니다.</p>:null}
         </aside>
 
         <section className={`sos-session-main ${active?.phase==="DIAGNOSIS"?"theme-diagnosis":active?.round_no===2?"theme-training2":"theme-training1"}`}>
           {!active?<div className="student-section-empty"><b>진행할 진단·훈련을 선택하세요.</b><span>관리자가 SOS 진단을 생성하면 이곳에 표시됩니다.</span></div>:<>
-            <SosFlowTree session={active} sessions={sessions} onSelect={(id)=>setActiveId(id)}/>
+            <SosFlowTree session={active} sessions={visibleSessions} onSelect={(id)=>setActiveId(id)}/>
             <header className="sos-session-head">
               <div><small>{active.phase==="DIAGNOSIS"?"SOS DIAGNOSIS":"SOS TRAINING"}</small><h3>{active.target_snapshot?.subunit??"소단원"} · {active.phase==="DIAGNOSIS"?`진단 ${active.round_no}차`:active.cycle_kind==="HOMEWORK"?"AI 유사문항 3제 굳히기":active.round_no===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</h3><p>{active.target_snapshot?.subject??""} {active.target_snapshot?.majorUnit?`· ${active.target_snapshot.majorUnit}`:""} · 시작 미터 {Number(active.target_snapshot?.studentDifficultyMeter??0).toFixed(2)}</p></div>
               <span>{active.total_count}문항</span>
@@ -566,7 +585,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
               await load();await onRefresh();
             }}/>:null}
 
-            {finalCompleted?<SosFinalCompletion terminal={active} sessions={sessions} meters={latestMeters} onSelect={(id)=>setActiveId(id)}/>:null}
+            {finalCompleted?<SosFinalCompletion terminal={active} sessions={visibleSessions} meters={latestMeters} onSelect={(id)=>setActiveId(id)}/>:null}
 
             {!finalCompleted&&["COMPLETED","PASSED"].includes(String(active.status))?<div className="sos-complete-box">
               <b>{active.status==="PASSED"?"훈련 통과":active.phase==="DIAGNOSIS"?"진단 완료":"학습 완료"}</b>

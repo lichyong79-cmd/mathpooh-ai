@@ -5,6 +5,7 @@ import { answerMatches, recordTrainingResult } from "@/lib/sos-training-result";
 import { analyzeDiagnosisAndCreateFirstTraining, generateSimilarTraining, generateReviewHint } from "@/lib/sos-ai-training";
 import { clampMeter } from "@/lib/difficulty-meter";
 import { reviewBonus } from "@/lib/sos-training-policy";
+import { weekFromSnapshot } from "@/lib/sos-week";
 
 async function context(){
   const user=await getSessionUser();
@@ -61,6 +62,8 @@ export async function GET(){
   if(result.error)return NextResponse.json({message:result.error.message},{status:400});
 
   const rawSessions=result.data??[];
+  const sessionMap=new Map(rawSessions.map((s:any)=>[String(s.id),s]));
+  const rootOf=(session:any)=>{let cur=session;const seen=new Set<string>();while(cur?.parent_session_id&&!seen.has(String(cur.id))){seen.add(String(cur.id));const parent=sessionMap.get(String(cur.parent_session_id));if(!parent)break;cur=parent;}return cur??session;};
   const sessionIds=rawSessions.map((s:any)=>String(s.id)).filter(Boolean);
   const reviewLogMap=new Map<string,any[]>();
   if(sessionIds.length){
@@ -131,7 +134,9 @@ export async function GET(){
           },
         };
       }));
-    return {...session,items};
+    const root:any=rootOf(session);
+    const cycleWeek=weekFromSnapshot(root?.target_snapshot??session?.target_snapshot,root?.created_at??session?.created_at);
+    return {...session,items,cycleWeek,cycleRootId:String(root?.id??session.id),sourceExam:{id:root?.target_snapshot?.sourceExamId??session?.target_snapshot?.sourceExamId??null,title:root?.target_snapshot?.sourceExamTitle??session?.target_snapshot?.sourceExamTitle??"기준 시험",attemptId:root?.target_snapshot?.sourceAttemptId??session?.target_snapshot?.sourceAttemptId??null}};
   }));
 
   const meters=await supabase
