@@ -5,7 +5,7 @@ import { answerMatches, recordTrainingResult } from "@/lib/sos-training-result";
 import { analyzeDiagnosisAndCreateFirstTraining, generateSimilarTraining, generateReviewHint } from "@/lib/sos-ai-training";
 import { clampMeter } from "@/lib/difficulty-meter";
 import { reviewBonus } from "@/lib/sos-training-policy";
-import { weekFromSnapshot } from "@/lib/sos-week";
+import { cycleFromSnapshot } from "@/lib/sos-cycle";
 
 async function context(){
   const user=await getSessionUser();
@@ -135,8 +135,8 @@ export async function GET(){
         };
       }));
     const root:any=rootOf(session);
-    const cycleWeek=weekFromSnapshot(root?.target_snapshot??session?.target_snapshot,root?.created_at??session?.created_at);
-    return {...session,items,cycleWeek,cycleRootId:String(root?.id??session.id),sourceExam:{id:root?.target_snapshot?.sourceExamId??session?.target_snapshot?.sourceExamId??null,title:root?.target_snapshot?.sourceExamTitle??session?.target_snapshot?.sourceExamTitle??"기준 시험",attemptId:root?.target_snapshot?.sourceAttemptId??session?.target_snapshot?.sourceAttemptId??null}};
+    const learningCycle=cycleFromSnapshot(root?.target_snapshot??session?.target_snapshot);
+    return {...session,items,learningCycle,cycleRootId:String(root?.id??session.id),sourceExam:{id:root?.target_snapshot?.sourceExamId??session?.target_snapshot?.sourceExamId??null,title:root?.target_snapshot?.sourceExamTitle??session?.target_snapshot?.sourceExamTitle??"기준 시험",attemptId:root?.target_snapshot?.sourceAttemptId??session?.target_snapshot?.sourceAttemptId??null}};
   }));
 
   const meters=await supabase

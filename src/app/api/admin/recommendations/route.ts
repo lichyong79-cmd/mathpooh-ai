@@ -18,12 +18,13 @@ const related = (left: unknown, right: unknown) => {
 export async function GET() {
   const ctx = await adminContext();
   if (!ctx) return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
-  const [{ data: students, error: studentError }, { data: attempts, error: attemptError }, activeCountResult] = await Promise.all([
+  const [{ data: students, error: studentError }, { data: attempts, error: attemptError }, activeCountResult, {data:sosSessions,error:sosError}] = await Promise.all([
     ctx.supabase.from("students").select("id,name,school,grade,status").neq("status", "퇴원").order("name"),
     ctx.supabase.from("exam_attempts").select("id,student_id,exam_id,status,answers,submitted_at,score,correct_count").eq("status", "submitted"),
     ctx.supabase.from("problem_bank_questions").select("id", { count: "exact", head: true }).eq("status", "ACTIVE"),
+    ctx.supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,round_no,cycle_kind,target_snapshot,correct_count,total_count,created_at").order("created_at",{ascending:false}),
   ]);
-  if (studentError || attemptError || activeCountResult.error) return NextResponse.json({ message: studentError?.message || attemptError?.message || activeCountResult.error?.message }, { status: 400 });
+  if (studentError || attemptError || activeCountResult.error || sosError) return NextResponse.json({ message: studentError?.message || attemptError?.message || activeCountResult.error?.message || sosError?.message }, { status: 400 });
 
   // Supabase/PostgREST의 단일 응답 1,000행 제한을 피해서 SOS 추천 후보 전체를 읽는다.
   const problems: any[] = [];
@@ -64,7 +65,8 @@ export async function GET() {
     }).filter((item) => item.matchScore > 0).sort((a, b) => b.matchScore - a.matchScore).slice(0, 12);
     const latestExam = performance.history[0] ?? null;
     const missedCount = latestExam ? latestExam.wrongNumbers.length + latestExam.unansweredNumbers.length : 0;
-    return { ...student, performance, weakUnits, weakTypes, candidates, latestExam, missedCount };
+    const studentSos=(sosSessions??[]).filter((x:any)=>String(x.student_id)===String(student.id)).map((x:any)=>({id:x.id,parentSessionId:x.parent_session_id,phase:x.phase,status:x.status,roundNo:Number(x.round_no??1),cycleKind:x.cycle_kind??"STANDARD",correct:Number(x.correct_count??0),total:Number(x.total_count??0),createdAt:x.created_at,learningCycleId:String(x.target_snapshot?.learningCycleId??""),learningCycleName:String(x.target_snapshot?.learningCycleName??""),sourceExamTitle:String(x.target_snapshot?.sourceExamTitle??"")}));
+    return { ...student, performance, weakUnits, weakTypes, candidates, latestExam, missedCount, sosSessions:studentSos };
   }).filter((student) => student.performance.summary.examCount > 0);
   return NextResponse.json({ students: rows, problemCount: activeCountResult.count ?? problems.length, trainingProblemCount: problems.length });
 }

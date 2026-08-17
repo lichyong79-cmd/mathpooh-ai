@@ -11,7 +11,7 @@ function statusText(status:string){
   if(status==="COMPLETED")return "완료";
   return status||"-";
 }
-function phaseText(phase:string){return phase==="DIAGNOSIS"?"진단":"훈련";}
+function phaseText(r:any){if(r?.phase==="DIAGNOSIS")return `진단 ${Number(r?.roundNo??1)}차`;if(String(r?.cycleKind)==="HOMEWORK")return "AI 유사문항 3제 굳히기";return Number(r?.roundNo??1)===2?"2차훈련":"1차훈련";}
 function timeText(value:any){
   if(!value)return "-";
   const d=new Date(value);
@@ -40,7 +40,7 @@ export default function SosResultsPage(){
   const [keyword,setKeyword]=useState("");
   const [phase,setPhase]=useState("DIAGNOSIS");
   const [status,setStatus]=useState("전체");
-  const [week,setWeek]=useState("전체");
+  const [cycle,setCycle]=useState("전체");
   const [autoRefresh,setAutoRefresh]=useState(true);
   const [selectedId,setSelectedId]=useState<string>("");
 
@@ -62,14 +62,14 @@ export default function SosResultsPage(){
     return()=>window.clearInterval(timer);
   },[autoRefresh]);
 
-  const weekOptions=useMemo(()=>[...new Map(rows.filter((r:any)=>r.cycleWeek?.key).map((r:any)=>[r.cycleWeek.key,r.cycleWeek])).values()],[rows]);
+  const cycleOptions=useMemo(()=>[...new Map(rows.filter((r:any)=>r.learningCycle?.id).map((r:any)=>[r.learningCycle.id,r.learningCycle])).values()],[rows]);
   const filtered=useMemo(()=>rows.filter((r:any)=>{
     const text=`${r.student?.name??""} ${r.student?.school??""} ${r.student?.grade??""} ${r.subject} ${r.majorUnit} ${r.subunit}`.toLowerCase();
     return (!keyword||text.includes(keyword.toLowerCase()))
       &&(phase==="전체"||r.phase===phase)
       &&(status==="전체" ? ["COMPLETED","PASSED","RETRAIN"].includes(String(r.status)) : r.status===status)
-      &&(week==="전체"||r.cycleWeek?.key===week);
-  }),[rows,keyword,phase,status,week]);
+      &&(cycle==="전체"||r.learningCycle?.id===cycle);
+  }),[rows,keyword,phase,status,cycle]);
   const selected=useMemo(()=>rows.find((r:any)=>String(r.id)===selectedId)??null,[rows,selectedId]);
 
   return <AdminPortalShell current="sos-learning">
@@ -90,7 +90,7 @@ export default function SosResultsPage(){
 
       <section className="filters">
         <input value={keyword} onChange={(e:any)=>setKeyword(e.target.value)} placeholder="학생·학교·반·소단원 검색"/>
-        <select value={week} onChange={(e:any)=>setWeek(e.target.value)}><option>전체</option>{weekOptions.map((w:any)=><option key={w.key} value={w.key}>{w.label} · {w.dateLabel}</option>)}</select><div className="result-subtabs"><button className={phase==="DIAGNOSIS"?"active":""} onClick={()=>setPhase("DIAGNOSIS")}>진단결과</button><button className={phase==="TRAINING"?"active":""} onClick={()=>setPhase("TRAINING")}>훈련결과</button></div>
+        <select value={cycle} onChange={(e:any)=>setCycle(e.target.value)}><option>전체</option>{cycleOptions.map((w:any)=><option key={w.id} value={w.id}>{w.name} · {w.dateLabel}</option>)}</select><div className="result-subtabs"><button className={phase==="DIAGNOSIS"?"active":""} onClick={()=>setPhase("DIAGNOSIS")}>진단결과</button><button className={phase==="TRAINING"?"active":""} onClick={()=>setPhase("TRAINING")}>훈련결과</button></div>
         <select value={status} onChange={(e:any)=>setStatus(e.target.value)}><option>전체</option><option value="ASSIGNED">미응시</option><option value="IN_PROGRESS">진행중</option><option value="COMPLETED">완료</option><option value="PASSED">통과</option><option value="RETRAIN">재훈련</option></select>
         <label><input type="checkbox" checked={autoRefresh} onChange={(e:any)=>setAutoRefresh(e.target.checked)}/> 15초 자동새로고침</label>
       </section>
@@ -99,7 +99,7 @@ export default function SosResultsPage(){
         <div className="row head"><span>학생</span><span>구분</span><span>과목·소단원</span><span>상태</span><span>진도</span><span>결과</span><span>시작</span><span>경과</span><span>바로미터</span><span>상세</span></div>
         {loading?<MATHPOOHLoader title="SOS 결과를 가져오는 중입니다" detail="진단·훈련 결과와 학생별 상세 데이터를 준비하고 있습니다." kind="loading" audience="admin"/>:filtered.length?filtered.map((r:any)=><div className={`row ${selectedId===String(r.id)?"selected":""}`} key={r.id}>
           <span><b>{r.student?.name??"학생정보없음"}</b><small>{r.student?.school??"-"} · {r.student?.grade??"-"}</small></span>
-          <span><b>{phaseText(r.phase)} {r.phase==="DIAGNOSIS"?`${r.roundNo}차`:""}</b><small>{r.cycleWeek?`${r.cycleWeek.label} · ${r.cycleWeek.dateLabel}`:"주차 미지정"}</small><small>{r.total}문항</small></span>
+          <span><b>{phaseText(r)}</b><small>{r.learningCycle?`${r.learningCycle.name} · ${r.learningCycle.dateLabel}`:"회차 미지정"}</small><small>{r.total}문항</small></span>
           <span><b>{r.subject||"-"}</b><small>{r.majorUnit?`${r.majorUnit} · `:""}{r.subunit||"-"}</small></span>
           <span><em className={`status ${String(r.status).toLowerCase()}`}>{statusText(r.status)}</em><small>{r.decision||""}</small></span>
           <span><b>{r.answered}/{r.total}</b><i><em style={{width:`${r.total?Math.min(100,r.answered/r.total*100):0}%`}}/></i></span>
@@ -113,7 +113,7 @@ export default function SosResultsPage(){
 
       {selected?<section className="detail-panel">
         <div className="detail-head">
-          <div><small>{selected.cycleWeek?`${selected.cycleWeek.label} · ${selected.cycleWeek.dateLabel} · `:""}{phaseText(selected.phase)} {selected.phase==="DIAGNOSIS"?`${selected.roundNo}차`:""} 결과 상세</small><h2>{selected.student?.name??"학생"} · {selected.subject||"-"} {selected.subunit?`· ${selected.subunit}`:""}</h2><p>{selected.correct}/{selected.total} 정답 · {selected.total?Math.round(selected.correct/selected.total*100):0}% · {statusText(selected.status)}</p></div>
+          <div><small>{selected.learningCycle?`${selected.learningCycle.name} · ${selected.learningCycle.dateLabel} · `:""}{phaseText(selected)} 결과 상세</small><h2>{selected.student?.name??"학생"} · {selected.subject||"-"} {selected.subunit?`· ${selected.subunit}`:""}</h2><p>{selected.correct}/{selected.total} 정답 · {selected.total?Math.round(selected.correct/selected.total*100):0}% · {statusText(selected.status)}</p></div>
           <button onClick={()=>setSelectedId("")}>닫기</button>
         </div>
         {selected.phase==="TRAINING"?<div className="training-result-summary"><div><small>AI 취약점</small><b>{selected.weakness?.weaknessTitle||"-"}</b><span>{selected.weakness?.weaknessDetail||""}</span></div><div><small>바로미터</small><b>{selected.baselineMeter===null?"-":Number(selected.baselineMeter).toFixed(2)} → {selected.reviewMeter!==null&&selected.reviewMeter!==undefined?Number(selected.reviewMeter).toFixed(2):selected.trainingMeter!==null&&selected.trainingMeter!==undefined?Number(selected.trainingMeter).toFixed(2):"-"}</b><span>목표 {selected.goalMeter===null?"-":Number(selected.goalMeter).toFixed(2)}</span></div></div>:null}
