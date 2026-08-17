@@ -155,26 +155,46 @@ function outputText(payload: any) {
 }
 
 async function requestStructured(args: { apiKey:string; model:string; imageUrl:string; prompt:string; schema:any; schemaName:string; timeoutMs:number; effort?:"low"|"medium" }) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method:"POST",
-    headers:{ Authorization:`Bearer ${args.apiKey}`, "Content-Type":"application/json" },
-    body:JSON.stringify({
-      model:args.model,
-      input:[{ role:"user", content:[{type:"input_text",text:args.prompt},{type:"input_image",image_url:args.imageUrl,detail:"high"}] }],
-      reasoning:{ effort:args.effort ?? "medium" },
-      text:{ format:{ type:"json_schema", name:args.schemaName, strict:true, schema:args.schema } },
-      max_output_tokens:1800,
-      store:false,
-    }),
-    signal:AbortSignal.timeout(args.timeoutMs),
-    cache:"no-store",
-  });
-  const raw=await response.text();
-  if(!response.ok) throw new Error(`AI 난이도 검증 실패 (${response.status}): ${raw.slice(0,800)}`);
-  const payload=JSON.parse(raw);
-  const text=outputText(payload);
-  if(!text) throw new Error("AI 난이도 검증 응답이 비었습니다.");
-  return JSON.parse(text);
+  let lastError = "AI 난이도 검증 실패";
+  // SOS244: 간헐적인 빈 응답/5xx는 같은 문항에서 1회 자동 재시도한다.
+  // 두 번 모두 실패하면 상위 UI가 `검증실패`로 분리하며 기존 난이도는 절대 바꾸지 않는다.
+  for (let attempt=1; attempt<=2; attempt++) {
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method:"POST",
+        headers:{ Authorization:`Bearer ${args.apiKey}`, "Content-Type":"application/json" },
+        body:JSON.stringify({
+          model:args.model,
+          input:[{ role:"user", content:[{type:"input_text",text:args.prompt},{type:"input_image",image_url:args.imageUrl,detail:"high"}] }],
+          reasoning:{ effort:args.effort ?? "medium" },
+          text:{ format:{ type:"json_schema", name:args.schemaName, strict:true, schema:args.schema } },
+          max_output_tokens:1800,
+          store:false,
+        }),
+        signal:AbortSignal.timeout(args.timeoutMs),
+        cache:"no-store",
+      });
+      const raw=await response.text();
+      if(!response.ok) {
+        lastError=`AI 난이도 검증 실패 (${response.status}): ${raw.slice(0,800)}`;
+        if(attempt<2 && response.status>=500) continue;
+        throw new Error(lastError);
+      }
+      const payload=JSON.parse(raw);
+      const text=outputText(payload);
+      if(!text) {
+        lastError=`AI 난이도 검증 응답이 비었습니다. (자동 재시도 ${attempt}/2)`;
+        if(attempt<2) continue;
+        throw new Error(lastError);
+      }
+      return JSON.parse(text);
+    } catch (error) {
+      lastError=error instanceof Error?error.message:String(error);
+      if(attempt>=2) break;
+      if(/\(429\)/.test(lastError)) break;
+    }
+  }
+  throw new Error(lastError);
 }
 
 /** 1차 독립 재풀이 → 2차 난이도 검증. */

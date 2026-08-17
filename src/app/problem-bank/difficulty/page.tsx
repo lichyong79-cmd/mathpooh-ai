@@ -103,6 +103,7 @@ export default function DifficultyManagementPage() {
   const [testResults, setTestResults] = useState<TestRow[]>([]);
   const [progress, setProgress] = useState<{ mode: "anomaly" | "sample" | "full"; done: number; total: number; ok: number; fail: number } | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [savedDifficulty, setSavedDifficulty] = useState<Record<string,string>>({});
 
   const load = useCallback(async () => {
@@ -148,9 +149,10 @@ export default function DifficultyManagementPage() {
     const changed=graded.filter(x=>x.before!==String(x.result?.difficulty)).length;
     const unclassified=testResults.filter(x=>x.result?.ok && (x.result?.decision==="unclassified" || !x.result?.difficulty)).length;
     const review=testResults.filter(x=>x.result?.ok && x.result?.reviewRequired).length;
+    const failed=testResults.filter(x=>!x.result?.ok).length;
     const matrix=new Map<string,number>();
     for(const x of graded){const key=`${x.before||"미분류"}→${String(x.result?.difficulty)}`;matrix.set(key,(matrix.get(key)||0)+1);}
-    return {graded:graded.length,changed,unclassified,review,matrix:[...matrix.entries()].sort((a,b)=>b[1]-a[1])};
+    return {graded:graded.length,changed,unclassified,review,failed,matrix:[...matrix.entries()].sort((a,b)=>b[1]-a[1])};
   },[testResults]);
 
   async function changeDifficulty(id:string, value:string) {
@@ -255,15 +257,61 @@ export default function DifficultyManagementPage() {
         for(const target of batch){const result:any=map.get(String(target.id)); if(result?.ok||result?.success){ok++;rows.push({...target,before:norm(target.difficulty,target.problem_dna),result:{...result,ok:true}});}else{fail++;rows.push({...target,before:norm(target.difficulty,target.problem_dna),result:{...result,ok:false}});}}
         setTestResults([...rows]); const done=Math.min(i+8,targets.length);setProgress({mode:"sample",done,total:targets.length,ok,fail});setMessage(`표본 재검증 중 · ${done}/${targets.length} · 성공 ${ok} · 미판정/실패 ${fail}`);
       }
-      setMessage(`SOS240 표본 재검증 완료 · ${targets.length}문항. 아래에서 기존↔신규 판정과 미판정/검토필요를 확인하세요. DB 난이도는 아직 변경하지 않았습니다.`);
+      setMessage(`SOS244 표본 재검증 완료 · ${targets.length}문항. 아래에서 기존↔신규 판정과 미판정/검토필요를 확인하세요. DB 난이도는 아직 변경하지 않았습니다.`);
     }catch(e){setError(e instanceof Error?e.message:"표본 재검증에 실패했습니다.");}finally{setRunning(false);setProgress(null);}
+  }
+
+  async function retryVerification(problemId:string) {
+    if (running || retryingId) return;
+    const target=testResults.find(x=>x.id===problemId) ?? items.find(x=>x.id===problemId);
+    if(!target) return;
+    setRetryingId(problemId);setError("");setMessage(`${target.question_no}번 검증을 다시 시도합니다...`);
+    try {
+      const referenceIds=buildReferenceIds();
+      const res=await fetch("/api/problem-bank/regrade-difficulty-batch",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({problemIds:[problemId],dryRun:true,referenceIds})
+      });
+      const data=await res.json().catch(()=>({}));
+      const result=Array.isArray(data.results)?data.results[0]:null;
+      const normalizedResult = result?.ok || result?.success ? {...result,ok:true} : {...(result||{}),ok:false,message:result?.message||data?.message||`검증 실패 (${res.status})`};
+      setTestResults(prev=>prev.map(row=>row.id===problemId?{...row,result:normalizedResult}:row));
+      if(normalizedResult.ok) setMessage(`${target.question_no}번 재검증 완료 · ${normalizedResult.decision==="unclassified"||!normalizedResult.difficulty?"미판정":difficultyLabel(normalizedResult.difficulty)}`);
+      else setMessage(`${target.question_no}번 재검증도 실패했습니다. 기존 난이도는 그대로 유지됩니다.`);
+    } catch(e) {
+      setError(e instanceof Error?e.message:"재검증에 실패했습니다.");
+    } finally { setRetryingId(null); }
+  }
+
+  async function retryAllFailures() {
+    if (running || retryingId) return;
+    const failedIds=testResults.filter(x=>!x.result?.ok).map(x=>x.id);
+    if(!failedIds.length){setMessage("재검증할 실패 문항이 없습니다.");return;}
+    setRunning(true);setError("");setMessage(`검증실패 ${failedIds.length}문항을 다시 검증합니다...`);
+    const referenceIds=buildReferenceIds();let recovered=0,stillFailed=0;
+    try {
+      for(let i=0;i<failedIds.length;i+=4){
+        const ids=failedIds.slice(i,i+4);
+        const res=await fetch("/api/problem-bank/regrade-difficulty-batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({problemIds:ids,dryRun:true,referenceIds})});
+        const data=await res.json().catch(()=>({}));const results=Array.isArray(data.results)?data.results:[];const map=new Map(results.map((r:any)=>[String(r.problemId),r]));
+        setTestResults(prev=>prev.map(row=>{
+          if(!ids.includes(row.id)) return row;
+          const r:any=map.get(row.id);
+          const next=r?.ok||r?.success?{...r,ok:true}:{...(r||{}),ok:false,message:r?.message||data?.message||"재검증 실패"};
+          if(next.ok) recovered++; else stillFailed++;
+          return {...row,result:next};
+        }));
+      }
+      setMessage(`검증실패 재시도 완료 · 복구 ${recovered} · 여전히 실패 ${stillFailed}. 실패 문항은 기존 난이도를 유지합니다.`);
+    } catch(e){setError(e instanceof Error?e.message:"실패 문항 재검증에 실패했습니다.");}
+    finally{setRunning(false);}
   }
 
   async function runVerifiedFullRegrade() {
     if(running)return;
     const targets=items.filter(x=>x.problem_dna?.difficulty?.admin_fixed!==true && !!x.question_image_path);
     if(!targets.length){setMessage("전체 재검증 대상이 없습니다.");return;}
-    if(!window.confirm(`SOS240 재풀이 검증 엔진으로 ${targets.length}문항을 전체 재판정합니다.\n\n- 관리자 확정 문항은 보존\n- AI가 실제로 재풀이 후 검증\n- 미판정/검토필요는 기존 난이도를 덮어쓰지 않음\n- 확신도 높은 검증 통과 문항만 새 난이도 적용\n\nAI 호출량이 많습니다. 표본 결과를 확인한 뒤 실행하는 것을 권장합니다. 계속할까요?`))return;
+    if(!window.confirm(`SOS244 재풀이 검증 엔진으로 ${targets.length}문항을 전체 재판정합니다.\n\n- 관리자 확정 문항은 보존\n- AI가 실제로 재풀이 후 검증\n- 미판정/검토필요는 기존 난이도를 덮어쓰지 않음\n- 확신도 높은 검증 통과 문항만 새 난이도 적용\n\nAI 호출량이 많습니다. 표본 결과를 확인한 뒤 실행하는 것을 권장합니다. 계속할까요?`))return;
     setRunning(true);setMessage("");setError("");setTestResults([]);setProgress({mode:"full",done:0,total:targets.length,ok:0,fail:0});
     const referenceIds=buildReferenceIds();let ok=0,fail=0,applied=0,review=0;
     try{
@@ -274,7 +322,7 @@ export default function DifficultyManagementPage() {
         for(const r of results){if(r?.ok||r?.success){ok++;if(r.applied)applied++;else review++;}else fail++;}
         const done=Math.min(i+8,targets.length);setProgress({mode:"full",done,total:targets.length,ok,fail});setMessage(`전체 재풀이 검증 중 · ${done}/${targets.length} · 적용 ${applied} · 검토/미판정 ${review} · 실패 ${fail}`);
       }
-      await load();setMessage(`SOS240 전체 재검증 완료 · 자동 적용 ${applied} · 검토/미판정 ${review} · 실패 ${fail}. 검토필요 문항은 기존 난이도를 보존했습니다.`);
+      await load();setMessage(`SOS244 전체 재검증 완료 · 자동 적용 ${applied} · 검토/미판정 ${review} · 실패 ${fail}. 검토필요 문항은 기존 난이도를 보존했습니다.`);
     }catch(e){setError(e instanceof Error?e.message:"전체 재검증에 실패했습니다.");}finally{setRunning(false);setProgress(null);}
   }
 
@@ -360,7 +408,7 @@ export default function DifficultyManagementPage() {
   <main className="difficulty-page">
     <div className="difficulty-wrap">
       <div className="difficulty-header">
-        <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>SOS240은 모르면 3점으로 보내지 않습니다. AI가 문제를 먼저 재풀이하고 검증한 뒤 8단계 난이도를 판정하며, 불확실하면 미판정/검토필요로 분리합니다.</p></div>
+        <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>SOS244는 검증실패를 난이도로 위장하지 않습니다. AI가 문제를 먼저 재풀이하고 검증한 뒤 8단계 난이도를 판정하며, 불확실하면 미판정/검토필요로 분리합니다.</p></div>
         <div className="header-buttons"><button onClick={()=>location.href="/problem-bank/barometer"}>학생·문항 바로미터</button><button onClick={()=>location.href="/admin?menu=sos-learning"}>관리자 홈</button><button onClick={()=>location.href="/problem-bank"}>SOS 문제은행</button></div>
       </div>
 
@@ -378,14 +426,15 @@ export default function DifficultyManagementPage() {
         <select value={subject} onChange={e=>setSubject(e.target.value)}>{subjects.map(x=><option key={x}>{x}</option>)}</select>
         <select value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option>전체</option>{DIFFICULTY_SCALE.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}<option value="미분류">미분류</option></select>
         <button disabled={running} onClick={runSampleRecheck} className="primary">① 표본 재풀이 검증</button>
-        <button disabled={running || testResults.length===0} title={testResults.length?"표본 결과 확인 후 전체 재판정":"먼저 표본 재풀이 검증을 실행하세요"} onClick={runVerifiedFullRegrade}>② 검증 엔진 전체 재판정</button>
+        {sampleSummary.failed>0 && <button disabled={running} onClick={retryAllFailures} className="retry-all">↻ 검증실패 {sampleSummary.failed}문항 다시 검증</button>}
+        <button disabled={running || testResults.length===0 || sampleSummary.failed>0} title={!testResults.length?"먼저 표본 재풀이 검증을 실행하세요":sampleSummary.failed>0?`검증실패 ${sampleSummary.failed}문항을 먼저 다시 검증하세요`:"표본 결과 확인 후 전체 재판정"} onClick={runVerifiedFullRegrade}>② 검증 엔진 전체 재판정</button>
         <button disabled={running} onClick={runAnomalyReview}>AI 이상 난이도 검토</button>
         <button disabled={running} onClick={runFullEightScaleReview} className="legacy-action">DNA만 재계산(보조)</button>
       </div>
 
       {testResults.length>0 && <section className="test-section">
-        <div className="test-section-head"><div><b>SOS240 난이도 재검증 결과</b><span>현재값과 새 재풀이 검증 결과를 비교합니다. 미판정/검토필요는 자동 적용하지 않습니다.</span></div><strong>{testResults.length}문항</strong></div>
-        <div className="sample-summary"><div><b>{sampleSummary.graded}</b><span>판정완료</span></div><div><b>{sampleSummary.changed}</b><span>기존과 변경</span></div><div><b>{sampleSummary.unclassified}</b><span>미판정</span></div><div><b>{sampleSummary.review}</b><span>검토필요</span></div><div className="matrix"><strong>주요 이동</strong><span>{sampleSummary.matrix.slice(0,8).map(([key,count])=>`${key.replace(/^(\d)→(\d)$/,(m,a,b)=>`${difficultyLabel(a)}→${difficultyLabel(b)}`)} ${count}`).join(" · ")||"변경 없음"}</span></div></div>
+        <div className="test-section-head"><div><b>SOS244 난이도 재검증 결과</b><span>현재값과 새 재풀이 검증 결과를 비교합니다. 미판정/검토필요는 자동 적용하지 않습니다.</span></div><strong>{testResults.length}문항</strong></div>
+        <div className="sample-summary"><div><b>{sampleSummary.graded}</b><span>판정완료</span></div><div><b>{sampleSummary.changed}</b><span>기존과 변경</span></div><div><b>{sampleSummary.unclassified}</b><span>미판정</span></div><div><b>{sampleSummary.review}</b><span>검토필요</span></div><div className="failure-summary"><b>{sampleSummary.failed}</b><span>검증실패</span></div><div className="matrix"><strong>주요 이동</strong><span>{sampleSummary.matrix.slice(0,8).map(([key,count])=>`${key.replace(/^(\d)→(\d)$/,(m,a,b)=>`${difficultyLabel(a)}→${difficultyLabel(b)}`)} ${count}`).join(" · ")||"변경 없음"}</span></div></div>
         <div className="test-grid">{testResults.map((x)=><article key={x.id} className={`test-card ${x.result?.ok ? (x.before !== String(x.result.difficulty) ? "changed" : "same") : "failed"}`}>
           <div className="test-card-head"><div><b>{x.question_no}번</b><span>{x.subject} · {x.unit}</span></div><code>{x.problem_code}</code></div>
           <div className="test-image-wrap"><TestProblemImage problemId={x.id} questionNo={x.question_no}/></div>
@@ -401,7 +450,10 @@ export default function DifficultyManagementPage() {
               <label><span>직접 수정</span><select disabled={savingId===x.id} value={norm(x.difficulty,x.problem_dna)} onChange={e=>void changeDifficulty(x.id,e.target.value)}><option value="" disabled>미분류</option>{DIFFICULTY_SCALE.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}</select></label>
             </div>
             {savedDifficulty[x.id] && <div className="saved-inline">✓ DB에 {difficultyLabel(savedDifficulty[x.id])}로 저장됨</div>}
-          </> : <div className="reason-box failure"><b>실패 이유</b><p>{x.result?.message || "AI 판정에 실패했습니다."}</p></div>}
+          </> : <>
+            <div className="reason-box failure"><b>검증실패 · 기존 난이도 유지</b><p>{x.result?.message || "AI 판정에 실패했습니다."}</p></div>
+            <div className="failure-actions"><button disabled={running || !!retryingId} onClick={()=>void retryVerification(x.id)}>{retryingId===x.id?"다시 검증 중...":"↻ 이 문항 다시 검증"}</button><span>검증이 성공하기 전에는 전체 재판정에 사용되지 않습니다.</span></div>
+          </>}
         </article>)}</div>
       </section>}
 
@@ -411,7 +463,7 @@ export default function DifficultyManagementPage() {
       </div>
     </div>
     <style jsx>{`
-      .difficulty-page{height:100vh;min-height:0;overflow-y:auto;overflow-x:hidden;background:#f5f7f6;padding:28px;font-family:Arial,"Noto Sans KR",sans-serif;color:#15231c}.difficulty-wrap{max-width:1560px;margin:0 auto}.difficulty-header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:20px}.eyebrow{font-size:12px;font-weight:900;color:#247a4b;letter-spacing:1px}.difficulty-header h1{margin:6px 0;font-size:30px}.difficulty-header p{margin:0;color:#66736c}.header-buttons{display:flex;gap:8px}.header-buttons button,.filter-bar button{border:1px solid #d9e1dc;background:#fff;border-radius:9px;padding:10px 14px;font-weight:800;cursor:pointer}.progress-card{background:#eff8f2;border:1px solid #b9dcc7;border-radius:13px;padding:14px 16px;margin-bottom:12px}.progress-copy{display:flex;justify-content:space-between;gap:12px;margin-bottom:9px}.progress-copy span{color:#4f6658;font-size:13px}.progress-track{height:10px;background:#dcebe1;border-radius:999px;overflow:hidden}.progress-track i{display:block;height:100%;background:#247a4b;transition:width .2s}.notice{padding:12px;border-radius:10px;margin-bottom:12px}.notice.success{background:#eaf7ef;border:1px solid #b7dfc6}.notice.error{background:#fff0f0;border:1px solid #efc0c0;color:#a52020}.difficulty-kpis{display:grid;grid-template-columns:repeat(11,minmax(0,1fr));gap:10px;margin-bottom:16px}.difficulty-kpis>div{background:#fff;border:1px solid #dfe6e2;border-radius:12px;padding:16px}.difficulty-kpis strong{display:block;font-size:28px;margin-top:6px}.difficulty-kpis .kpi-warn{background:#fff8ee;border-color:#ecd4a9}.difficulty-kpis .kpi-review{background:#fff1f1;border-color:#ecc5c5}.filter-bar{background:#fff;border:1px solid #dfe6e2;border-radius:14px;padding:14px;margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap}.filter-bar input{min-width:300px;flex:1;padding:10px;border:1px solid #d9e1dc;border-radius:8px}.filter-bar select,.bank-row select,.review-actions select{padding:9px;border:1px solid #d9e1dc;border-radius:8px;background:#fff}.filter-bar .primary{background:#207a49;color:#fff;border-color:#207a49}.filter-bar .legacy-action{color:#78847d;background:#f7f8f7}.filter-bar button:disabled,.review-actions button:disabled{opacity:.5;cursor:not-allowed}.test-section{background:#fff;border:1px solid #dfe6e2;border-radius:14px;padding:16px;margin-bottom:16px}.test-section-head{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:14px}.test-section-head>div{display:flex;flex-direction:column;gap:4px}.test-section-head b{font-size:18px}.test-section-head span{font-size:13px;color:#6e7a73}.test-section-head>strong{color:#247a4b}.sample-summary{display:grid;grid-template-columns:repeat(4,120px) minmax(240px,1fr);gap:8px;margin-bottom:14px}.sample-summary>div{padding:10px 12px;border-radius:10px;background:#f3f7f4;display:flex;flex-direction:column;gap:3px}.sample-summary b{font-size:20px;color:#255f3b}.sample-summary span{font-size:11px;color:#64756b}.sample-summary .matrix{justify-content:center}.sample-summary .matrix strong{font-size:11px;color:#315f43}.sample-summary .matrix span{line-height:1.45}.test-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.test-card{border:1px solid #dfe6e2;border-radius:13px;padding:14px;background:#fcfdfc;min-width:0}.test-card.changed{border-color:#e2bd74;box-shadow:inset 4px 0 0 #d49a2d}.test-card.failed{border-color:#edc7c7;box-shadow:inset 4px 0 0 #c94d4d}.test-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}.test-card-head>div{display:flex;flex-direction:column;gap:3px}.test-card-head b{font-size:18px}.test-card-head span{font-size:12px;color:#6f7b74}.test-card-head code{font-size:11px;color:#607168;max-width:52%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.test-image-wrap{height:560px;background:#eef2ef;border:1px solid #e0e6e2;border-radius:10px;overflow:hidden;display:block}.test-image-scroll{width:100%;height:100%;overflow-y:auto;overflow-x:hidden;background:#fff;padding:8px;overscroll-behavior:contain;scrollbar-gutter:stable}.test-image-scroll img{display:block;width:100%;height:auto;object-fit:contain}.test-image-empty{height:100%;display:flex;align-items:center;justify-content:center;color:#7b857f;font-size:13px}.test-title{font-weight:800;font-size:14px;line-height:1.45;margin:10px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.difficulty-compare{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;background:#f3f6f4;border-radius:10px;padding:10px}.difficulty-compare>div{display:flex;align-items:center;justify-content:center;gap:8px}.difficulty-compare small{color:#748078}.difficulty-compare strong{font-size:24px}.difficulty-compare .proposal{color:#1d7545}.difficulty-compare .fail-text{color:#b63737;font-size:16px}.ai-meta{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.ai-meta span{background:#eef5f1;color:#3b6650;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:800}.ai-meta .warn-chip{background:#fff0e6;color:#a34c18}.solve-box{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;margin:10px 0;padding:10px 12px;background:#f7faf8;border:1px solid #e0e8e3;border-radius:10px;font-size:12px}.solve-box b{grid-row:1/4;color:#315f43}.solve-box span{color:#50665a}.solve-box small{color:#a34c18;font-weight:800}.reason-box{border:1px solid #e3e9e5;border-radius:10px;padding:10px 12px;background:#fff}.reason-box b{font-size:12px;color:#607168}.reason-box p{margin:5px 0 0;line-height:1.55;font-size:13px}.reason-box.failure{background:#fff5f5;border-color:#efcece}.review-actions{display:flex;align-items:end;justify-content:space-between;gap:10px;margin-top:10px}.review-actions .keep{border:1px solid #cfd8d2;background:#fff;color:#41564a;border-radius:9px;padding:10px;font-weight:900;cursor:pointer}.review-actions .accept{flex:1;border:1px solid #247a4b;background:#247a4b;color:#fff;border-radius:9px;padding:10px;font-weight:900;cursor:pointer}.review-actions label{display:flex;flex-direction:column;gap:4px}.review-actions label span{font-size:11px;color:#6f7b74;font-weight:800}.saved-inline{margin-top:8px;padding:8px 10px;border-radius:8px;background:#eaf7ef;color:#17663b;font-size:12px;font-weight:900;text-align:center}.bank-table{background:#fff;border:1px solid #dfe6e2;border-radius:14px;overflow:hidden}.bank-row{display:grid;grid-template-columns:80px 150px 1.2fr 1fr 130px;gap:10px;padding:12px;border-top:1px solid #edf0ee;align-items:center}.bank-row.head{font-weight:800;background:#f0f5f2;border-top:0}.bank-row>span:nth-child(3){display:flex;flex-direction:column;gap:3px}.bank-row small{color:#78847d}.loading-row{padding:30px}@media(max-width:1050px){.test-grid{grid-template-columns:1fr}.difficulty-kpis{grid-template-columns:repeat(3,1fr)}.sample-summary{grid-template-columns:repeat(2,1fr)}.sample-summary .matrix{grid-column:1/-1}}@media(max-width:760px){.difficulty-page{padding:14px}.difficulty-header{flex-direction:column}.difficulty-kpis{grid-template-columns:repeat(2,1fr)}.test-image-wrap{height:460px}.bank-row{grid-template-columns:60px 1fr 95px}.bank-row>span:nth-child(2),.bank-row>span:nth-child(4),.bank-row.head>span:nth-child(2),.bank-row.head>span:nth-child(4){display:none}.progress-copy{flex-direction:column}}
+      .difficulty-page{height:100vh;min-height:0;overflow-y:auto;overflow-x:hidden;background:#f5f7f6;padding:28px;font-family:Arial,"Noto Sans KR",sans-serif;color:#15231c}.difficulty-wrap{max-width:1560px;margin:0 auto}.difficulty-header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:20px}.eyebrow{font-size:12px;font-weight:900;color:#247a4b;letter-spacing:1px}.difficulty-header h1{margin:6px 0;font-size:30px}.difficulty-header p{margin:0;color:#66736c}.header-buttons{display:flex;gap:8px}.header-buttons button,.filter-bar button{border:1px solid #d9e1dc;background:#fff;border-radius:9px;padding:10px 14px;font-weight:800;cursor:pointer}.progress-card{background:#eff8f2;border:1px solid #b9dcc7;border-radius:13px;padding:14px 16px;margin-bottom:12px}.progress-copy{display:flex;justify-content:space-between;gap:12px;margin-bottom:9px}.progress-copy span{color:#4f6658;font-size:13px}.progress-track{height:10px;background:#dcebe1;border-radius:999px;overflow:hidden}.progress-track i{display:block;height:100%;background:#247a4b;transition:width .2s}.notice{padding:12px;border-radius:10px;margin-bottom:12px}.notice.success{background:#eaf7ef;border:1px solid #b7dfc6}.notice.error{background:#fff0f0;border:1px solid #efc0c0;color:#a52020}.difficulty-kpis{display:grid;grid-template-columns:repeat(11,minmax(0,1fr));gap:10px;margin-bottom:16px}.difficulty-kpis>div{background:#fff;border:1px solid #dfe6e2;border-radius:12px;padding:16px}.difficulty-kpis strong{display:block;font-size:28px;margin-top:6px}.difficulty-kpis .kpi-warn{background:#fff8ee;border-color:#ecd4a9}.difficulty-kpis .kpi-review{background:#fff1f1;border-color:#ecc5c5}.filter-bar{background:#fff;border:1px solid #dfe6e2;border-radius:14px;padding:14px;margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap}.filter-bar input{min-width:300px;flex:1;padding:10px;border:1px solid #d9e1dc;border-radius:8px}.filter-bar select,.bank-row select,.review-actions select{padding:9px;border:1px solid #d9e1dc;border-radius:8px;background:#fff}.filter-bar .primary{background:#207a49;color:#fff;border-color:#207a49}.filter-bar .legacy-action{color:#78847d;background:#f7f8f7}.filter-bar .retry-all{color:#a33;background:#fff2f2;border-color:#efcaca}.filter-bar button:disabled,.review-actions button:disabled{opacity:.5;cursor:not-allowed}.test-section{background:#fff;border:1px solid #dfe6e2;border-radius:14px;padding:16px;margin-bottom:16px}.test-section-head{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:14px}.test-section-head>div{display:flex;flex-direction:column;gap:4px}.test-section-head b{font-size:18px}.test-section-head span{font-size:13px;color:#6e7a73}.test-section-head>strong{color:#247a4b}.sample-summary{display:grid;grid-template-columns:repeat(5,110px) minmax(240px,1fr);gap:8px;margin-bottom:14px}.sample-summary>div{padding:10px 12px;border-radius:10px;background:#f3f7f4;display:flex;flex-direction:column;gap:3px}.sample-summary b{font-size:20px;color:#255f3b}.sample-summary span{font-size:11px;color:#64756b}.sample-summary .failure-summary{background:#fff1f1}.sample-summary .failure-summary b{color:#a83333}.sample-summary .matrix{justify-content:center}.sample-summary .matrix strong{font-size:11px;color:#315f43}.sample-summary .matrix span{line-height:1.45}.test-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.test-card{border:1px solid #dfe6e2;border-radius:13px;padding:14px;background:#fcfdfc;min-width:0}.test-card.changed{border-color:#e2bd74;box-shadow:inset 4px 0 0 #d49a2d}.test-card.failed{border-color:#edc7c7;box-shadow:inset 4px 0 0 #c94d4d}.test-card-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}.test-card-head>div{display:flex;flex-direction:column;gap:3px}.test-card-head b{font-size:18px}.test-card-head span{font-size:12px;color:#6f7b74}.test-card-head code{font-size:11px;color:#607168;max-width:52%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.test-image-wrap{height:560px;background:#eef2ef;border:1px solid #e0e6e2;border-radius:10px;overflow:hidden;display:block}.test-image-scroll{width:100%;height:100%;overflow-y:auto;overflow-x:hidden;background:#fff;padding:8px;overscroll-behavior:contain;scrollbar-gutter:stable}.test-image-scroll img{display:block;width:100%;height:auto;object-fit:contain}.test-image-empty{height:100%;display:flex;align-items:center;justify-content:center;color:#7b857f;font-size:13px}.test-title{font-weight:800;font-size:14px;line-height:1.45;margin:10px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.difficulty-compare{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center;background:#f3f6f4;border-radius:10px;padding:10px}.difficulty-compare>div{display:flex;align-items:center;justify-content:center;gap:8px}.difficulty-compare small{color:#748078}.difficulty-compare strong{font-size:24px}.difficulty-compare .proposal{color:#1d7545}.difficulty-compare .fail-text{color:#b63737;font-size:16px}.ai-meta{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.ai-meta span{background:#eef5f1;color:#3b6650;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:800}.ai-meta .warn-chip{background:#fff0e6;color:#a34c18}.solve-box{display:grid;grid-template-columns:auto 1fr;gap:5px 12px;margin:10px 0;padding:10px 12px;background:#f7faf8;border:1px solid #e0e8e3;border-radius:10px;font-size:12px}.solve-box b{grid-row:1/4;color:#315f43}.solve-box span{color:#50665a}.solve-box small{color:#a34c18;font-weight:800}.reason-box{border:1px solid #e3e9e5;border-radius:10px;padding:10px 12px;background:#fff}.reason-box b{font-size:12px;color:#607168}.reason-box p{margin:5px 0 0;line-height:1.55;font-size:13px}.reason-box.failure{background:#fff5f5;border-color:#efcece}.failure-actions{margin-top:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.failure-actions button{border:1px solid #c94d4d;background:#fff;color:#a52f2f;border-radius:9px;padding:10px 12px;font-weight:900;cursor:pointer}.failure-actions button:disabled{opacity:.5;cursor:not-allowed}.failure-actions span{font-size:12px;color:#8a5a5a}.review-actions{display:flex;align-items:end;justify-content:space-between;gap:10px;margin-top:10px}.review-actions .keep{border:1px solid #cfd8d2;background:#fff;color:#41564a;border-radius:9px;padding:10px;font-weight:900;cursor:pointer}.review-actions .accept{flex:1;border:1px solid #247a4b;background:#247a4b;color:#fff;border-radius:9px;padding:10px;font-weight:900;cursor:pointer}.review-actions label{display:flex;flex-direction:column;gap:4px}.review-actions label span{font-size:11px;color:#6f7b74;font-weight:800}.saved-inline{margin-top:8px;padding:8px 10px;border-radius:8px;background:#eaf7ef;color:#17663b;font-size:12px;font-weight:900;text-align:center}.bank-table{background:#fff;border:1px solid #dfe6e2;border-radius:14px;overflow:hidden}.bank-row{display:grid;grid-template-columns:80px 150px 1.2fr 1fr 130px;gap:10px;padding:12px;border-top:1px solid #edf0ee;align-items:center}.bank-row.head{font-weight:800;background:#f0f5f2;border-top:0}.bank-row>span:nth-child(3){display:flex;flex-direction:column;gap:3px}.bank-row small{color:#78847d}.loading-row{padding:30px}@media(max-width:1050px){.test-grid{grid-template-columns:1fr}.difficulty-kpis{grid-template-columns:repeat(3,1fr)}.sample-summary{grid-template-columns:repeat(2,1fr)}.sample-summary .matrix{grid-column:1/-1}}@media(max-width:760px){.difficulty-page{padding:14px}.difficulty-header{flex-direction:column}.difficulty-kpis{grid-template-columns:repeat(2,1fr)}.test-image-wrap{height:460px}.bank-row{grid-template-columns:60px 1fr 95px}.bank-row>span:nth-child(2),.bank-row>span:nth-child(4),.bank-row.head>span:nth-child(2),.bank-row.head>span:nth-child(4){display:none}.progress-copy{flex-direction:column}}
     `}</style>
   </main>
   </AdminPortalShell>;
