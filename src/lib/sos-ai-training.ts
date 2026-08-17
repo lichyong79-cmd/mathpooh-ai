@@ -102,44 +102,162 @@ function relatedText(problem:any,terms:string[]){
 }
 
 
-async function createSecondDiagnosisFromWeakest(args:{supabase:any;studentId:string;parentDiagnosis:any}){
+
+function normText(value:any){
+  return String(value??"").normalize("NFKC").replace(/\s+/g,"").toLowerCase();
+}
+
+function targetTerms(target:any){
+  return [
+    target?.sourceDetailedTopic,target?.sourceMinorUnit,target?.sourceMiddleUnit,target?.sourceMajorUnit,
+    target?.sourceUnit,target?.subunit,target?.units?.[0]?.label,target?.types?.[0]?.label
+  ].map((x:any)=>String(x??"").trim()).filter(Boolean);
+}
+
+function targetProblemScore(problem:any,target:any){
+  const info=problemSubunit(problem);
+  const terms=targetTerms(target);
+  const pSubject=normText(info?.subject||problem?.subject);
+  const tSubject=normText(target?.sourceSubject||target?.subject);
+  if(tSubject && pSubject && pSubject!==tSubject && !pSubject.includes(tSubject) && !tSubject.includes(pSubject)) return -999;
+  let score=0;
+  const hay=normText(JSON.stringify(compactDna(problem)));
+  for(const term of terms){
+    const t=normText(term);
+    if(!t)continue;
+    if(normText(info?.subunit)===t) score+=110;
+    else if(hay.includes(t)) score+=45;
+  }
+  const sourceDifficulty=Number(target?.sourceDifficulty??0);
+  const d=Number(problem?.difficulty??0);
+  if(sourceDifficulty&&d)score+=Math.max(0,24-Math.abs(d-sourceDifficulty)*6);
+  return score;
+}
+
+async function pickThreeForTarget(args:{supabase:any;studentId:string;target:any;used:Set<string>;fallbackMeter?:number}){
+  const {supabase,studentId,target,used}=args;
+  const bank=await supabase.from("problem_bank_questions")
+    .select("id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna")
+    .eq("status","ACTIVE").eq("content_role","TRAINING");
+  if(bank.error)throw bank.error;
+
+  const ranked=(bank.data??[])
+    .filter((p:any)=>!used.has(String(p.id)))
+    .map((p:any)=>({...p,info:problemSubunit(p),meter:clampMeter(p.difficulty_meter,Number(p.difficulty)||3),targetScore:targetProblemScore(p,target)}))
+    .filter((p:any)=>p.targetScore>0)
+    .sort((a:any,b:any)=>b.targetScore-a.targetScore||String(a.id).localeCompare(String(b.id)));
+
+  if(ranked.length<3)return null;
+
+  const bestInfo=ranked[0].info;
+  let meter=Number(args.fallbackMeter)||Number(target?.studentDifficultyMeter)||Number(target?.sourceDifficulty)||3;
+  if(bestInfo?.key){
+    const meterRow=await supabase.from("sos_student_subunit_meters")
+      .select("difficulty_meter").eq("student_id",studentId).eq("subunit_key",bestInfo.key).maybeSingle();
+    if(!meterRow.error&&meterRow.data?.difficulty_meter!=null)meter=Number(meterRow.data.difficulty_meter);
+  }
+  meter=clampMeter(meter,3);
+
+  // 가장 잘 맞는 소단원을 우선 고정한 뒤, 현재 학생 수준 기준 쉬움/적정/도전 3문항 구성
+  const sameKey=ranked.filter((p:any)=>String(p.info?.key??"")===String(bestInfo?.key??""));
+  const pool=(sameKey.length>=3?sameKey:ranked).slice(0,40);
+  const targets=[clampMeter(meter-0.55),meter,clampMeter(meter+0.55)];
+  const picked:any[]=[];
+  const chosen=new Set<string>();
+  for(const t of targets){
+    const one=pool.filter((p:any)=>!chosen.has(String(p.id)))
+      .sort((a:any,b:any)=>Math.abs(a.meter-t)-Math.abs(b.meter-t)||b.targetScore-a.targetScore||String(a.id).localeCompare(String(b.id)))[0];
+    if(one){chosen.add(String(one.id));picked.push(one);}
+  }
+  if(picked.length<3)return null;
+  picked.sort((a:any,b:any)=>a.meter-b.meter||String(a.id).localeCompare(String(b.id)));
+  return {picked,info:bestInfo,meter};
+}
+
+export async function createAutomaticSecondDiagnosis(args:{supabase:any;studentId:string;parentDiagnosis:any}){
   const {supabase,studentId,parentDiagnosis}=args;
   const currentKey=String(parentDiagnosis?.target_snapshot?.subunitKey??"");
-  const meters=await supabase.from("sos_student_subunit_meters")
-    .select("subject,major_unit,subunit,subunit_key,difficulty_meter")
-    .eq("student_id",studentId).order("difficulty_meter",{ascending:true});
-  if(meters.error)throw meters.error;
-  const weakest=(meters.data??[]).find((m:any)=>String(m.subunit_key)!==currentKey)??null;
-  if(!weakest)return {created:false,nextStep:"NO_SECOND_DIAGNOSIS_TARGET"};
+
+  // 이미 2차 진단이 만들어졌다면 중복 생성 금지
+  const existing=await supabase.from("sos_training_sessions")
+    .select("id,status,target_snapshot").eq("student_id",studentId).eq("phase","DIAGNOSIS")
+    .eq("parent_session_id",parentDiagnosis.id).eq("round_no",2).order("created_at",{ascending:true}).limit(1);
+  if(existing.error)throw existing.error;
+  if((existing.data??[]).length)return {created:true,existing:true,session:existing.data?.[0],nextStep:"SECOND_DIAGNOSIS_ASSIGNED"};
 
   const usedResult=await supabase.from("sos_training_sessions").select("sos_training_items(problem_id)").eq("student_id",studentId);
   if(usedResult.error)throw usedResult.error;
   const used=new Set<string>();
   for(const ss of usedResult.data??[])for(const i of ss.sos_training_items??[])if(i.problem_id)used.add(String(i.problem_id));
 
-  const bank=await supabase.from("problem_bank_questions")
-    .select("id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna")
-    .eq("status","ACTIVE").eq("content_role","TRAINING");
-  if(bank.error)throw bank.error;
-  const pool=(bank.data??[]).map((p:any)=>({...p,info:problemSubunit(p),meter:clampMeter(p.difficulty_meter,Number(p.difficulty)||3)}))
-    .filter((p:any)=>!used.has(String(p.id))&&String(p.info?.key??"")===String(weakest.subunit_key));
-  if(pool.length<3)throw new Error(`2차 진단 문항이 부족합니다. ${pool.length}/3문항`);
-  const meter=clampMeter(weakest.difficulty_meter,3);
-  const targets=[clampMeter(meter-0.55),meter,clampMeter(meter+0.55)];
-  const picked:any[]=[];
-  const chosen=new Set<string>();
-  for(const t of targets){
-    const one=pool.filter((p:any)=>!chosen.has(String(p.id))).sort((a:any,b:any)=>Math.abs(a.meter-t)-Math.abs(b.meter-t)||String(a.id).localeCompare(String(b.id)))[0];
-    if(one){chosen.add(String(one.id));picked.push(one);}
+  const snapshot0=parentDiagnosis?.target_snapshot??{};
+  const queued=Array.isArray(snapshot0?.autoNextTargets)?snapshot0.autoNextTargets:[];
+
+  // 1순위: 관리자가 최초 SOS를 잡을 때 함께 저장해 둔 '다음 추천 핵심공략' 순서
+  for(const nextTarget of queued){
+    if(String(nextTarget?.sourceKey??"")===String(snapshot0?.sourceKey??""))continue;
+    const chosen=await pickThreeForTarget({supabase,studentId,target:nextTarget,used});
+    if(!chosen)continue;
+    const {picked,info,meter}=chosen;
+    if(String(info?.key??"")===currentKey)continue;
+
+    const snapshot={
+      ...snapshot0,...nextTarget,
+      subject:info.subject,majorUnit:info.major,subunit:info.subunit,subunitKey:info.key,
+      studentDifficultyMeter:meter,studentDifficultyLabel:meterLabel(meter),
+      autoSecondDiagnosis:true,autoTargetSource:"NEXT_RECOMMENDED_CORE",
+      previousTarget:snapshot0,
+      sosNo:Number(snapshot0?.sosNo??1)+1,
+    };
+    const session=await supabase.from("sos_training_sessions").insert({
+      student_id:studentId,phase:"DIAGNOSIS",status:"ASSIGNED",target_snapshot:snapshot,
+      parent_session_id:parentDiagnosis.id,round_no:2,total_count:3,cycle_kind:"SECOND_DIAGNOSIS"
+    }).select().single();
+    if(session.error||!session.data)throw new Error(session.error?.message||"2차 진단 생성 실패");
+    const items=await supabase.from("sos_training_items").insert(picked.map((p:any,index:number)=>({
+      session_id:session.data.id,problem_id:p.id,item_order:index+1,
+      item_role:`자동 추천 핵심공략 2차 진단 · ${info.subunit||p.unit||"연관문항"}`,subunit_key:info.key
+    })));
+    if(items.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw items.error;}
+    return {created:true,session:session.data,target:nextTarget,nextStep:"SECOND_DIAGNOSIS_ASSIGNED",autoTargetSource:"NEXT_RECOMMENDED_CORE"};
   }
-  if(picked.length<3)throw new Error(`2차 진단 문항이 부족합니다. ${picked.length}/3문항`);
-  picked.sort((a:any,b:any)=>a.meter-b.meter||String(a.id).localeCompare(String(b.id)));
-  const snapshot={...(parentDiagnosis.target_snapshot??{}),subject:weakest.subject,majorUnit:weakest.major_unit,subunit:weakest.subunit,subunitKey:weakest.subunit_key,studentDifficultyMeter:meter,studentDifficultyLabel:meterLabel(meter),autoSecondDiagnosis:true,previousTarget:parentDiagnosis.target_snapshot??{}};
-  const session=await supabase.from("sos_training_sessions").insert({student_id:studentId,phase:"DIAGNOSIS",status:"ASSIGNED",target_snapshot:snapshot,parent_session_id:parentDiagnosis.id,round_no:2,total_count:3,cycle_kind:"SECOND_DIAGNOSIS"}).select().single();
-  if(session.error||!session.data)throw new Error(session.error?.message||"2차 진단 생성 실패");
-  const items=await supabase.from("sos_training_items").insert(picked.map((p:any,index:number)=>({session_id:session.data.id,problem_id:p.id,item_order:index+1,item_role:`최약 바로미터 2차 진단 · ${weakest.subunit}`,subunit_key:weakest.subunit_key})));
-  if(items.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw items.error;}
-  return {created:true,session:session.data,target:weakest,nextStep:"SECOND_DIAGNOSIS_ASSIGNED"};
+
+  // 2순위: 이전 버전에서 생성된 세션처럼 추천목록이 없는 경우, 학생 바로미터 최저의 '다른 소단원'을 자동 선택
+  const meters=await supabase.from("sos_student_subunit_meters")
+    .select("subject,major_unit,subunit,subunit_key,difficulty_meter")
+    .eq("student_id",studentId).order("difficulty_meter",{ascending:true});
+  if(meters.error)throw meters.error;
+
+  for(const weakest of meters.data??[]){
+    if(String(weakest.subunit_key)===currentKey)continue;
+    const fallbackTarget={
+      sourceSubject:weakest.subject,sourceMajorUnit:weakest.major_unit,sourceUnit:weakest.subunit,
+      subunit:weakest.subunit,studentDifficultyMeter:weakest.difficulty_meter
+    };
+    const chosen=await pickThreeForTarget({supabase,studentId,target:fallbackTarget,used,fallbackMeter:Number(weakest.difficulty_meter)});
+    if(!chosen)continue;
+    const {picked,info,meter}=chosen;
+    const snapshot={
+      ...snapshot0,...fallbackTarget,
+      subject:info.subject,majorUnit:info.major,subunit:info.subunit,subunitKey:info.key,
+      studentDifficultyMeter:meter,studentDifficultyLabel:meterLabel(meter),
+      autoSecondDiagnosis:true,autoTargetSource:"LOWEST_OTHER_BAROMETER",
+      previousTarget:snapshot0,sosNo:Number(snapshot0?.sosNo??1)+1,
+    };
+    const session=await supabase.from("sos_training_sessions").insert({
+      student_id:studentId,phase:"DIAGNOSIS",status:"ASSIGNED",target_snapshot:snapshot,
+      parent_session_id:parentDiagnosis.id,round_no:2,total_count:3,cycle_kind:"SECOND_DIAGNOSIS"
+    }).select().single();
+    if(session.error||!session.data)throw new Error(session.error?.message||"2차 진단 생성 실패");
+    const items=await supabase.from("sos_training_items").insert(picked.map((p:any,index:number)=>({
+      session_id:session.data.id,problem_id:p.id,item_order:index+1,
+      item_role:`최저 바로미터 자동 2차 진단 · ${info.subunit||p.unit||"연관문항"}`,subunit_key:info.key
+    })));
+    if(items.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw items.error;}
+    return {created:true,session:session.data,target:weakest,nextStep:"SECOND_DIAGNOSIS_ASSIGNED",autoTargetSource:"LOWEST_OTHER_BAROMETER"};
+  }
+
+  return {created:false,nextStep:"NO_SECOND_DIAGNOSIS_TARGET"};
 }
 
 export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;studentId:string;diagnosisSessionId:string}){
@@ -192,7 +310,7 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   await supabase.from("sos_training_sessions").update({weakness_snapshot:weakness,decision:weakness.weaknessDetected?"AI_TRAINING_CREATING":"NO_CLEAR_WEAKNESS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);
   if(!weakness.weaknessDetected){
     if(Number(diagnosis.round_no??1)<2){
-      const second=await createSecondDiagnosisFromWeakest({supabase,studentId,parentDiagnosis:diagnosis});
+      const second=await createAutomaticSecondDiagnosis({supabase,studentId,parentDiagnosis:diagnosis});
       return {...second,created:false,weakness};
     }
     await supabase.from("sos_training_sessions").update({decision:"NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);

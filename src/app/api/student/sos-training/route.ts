@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { answerMatches, recordTrainingResult } from "@/lib/sos-training-result";
-import { analyzeDiagnosisAndCreateFirstTraining, generateSimilarTraining, generateReviewHint } from "@/lib/sos-ai-training";
+import { analyzeDiagnosisAndCreateFirstTraining, createAutomaticSecondDiagnosis, generateSimilarTraining, generateReviewHint } from "@/lib/sos-ai-training";
 import { clampMeter } from "@/lib/difficulty-meter";
 import { reviewBonus } from "@/lib/sos-training-policy";
 import { cycleFromSnapshot } from "@/lib/sos-cycle";
@@ -513,7 +513,38 @@ export async function POST(request:Request){
 
     if(phase==="DIAGNOSIS"){
       const wrong=total-correct;
-      const update=await supabase.from("sos_training_sessions").update({status:"RETRAIN",correct_count:correct,decision:wrong>0?"DIAGNOSIS_REVIEW_REQUIRED":"DIAGNOSIS_RESULT_REVIEW_READY",updated_at:new Date().toISOString()}).eq("id",sessionId);
+
+      // SOS252: 1차 진단 3/3 정답은 오답교정 화면에서 멈추지 않는다.
+      // 서버가 즉시 다음 추천 핵심공략 + 관련 진단 3문항을 자동 생성한다.
+      if(wrong===0 && Number(session.round_no??1)===1){
+        const complete=await supabase.from("sos_training_sessions").update({
+          status:"COMPLETED",correct_count:correct,decision:"PERFECT_DIAGNOSIS_AUTO_NEXT",updated_at:new Date().toISOString()
+        }).eq("id",sessionId);
+        if(complete.error)return NextResponse.json({message:complete.error.message},{status:400});
+
+        let next:any=null;
+        try{
+          next=await createAutomaticSecondDiagnosis({
+            supabase,studentId:String(student.id),
+            parentDiagnosis:{...session,id:sessionId,target_snapshot:session.target_snapshot}
+          });
+        }catch(error){
+          next={created:false,error:error instanceof Error?error.message:"2차 진단 자동 생성 실패",nextStep:"AUTO_SECOND_DIAGNOSIS_FAILED"};
+        }
+        await supabase.from("sos_training_activity_logs").insert({
+          session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",
+          detail:{phase,total,correct,rate,perfect:true,autoNext:true,nextStep:next?.nextStep,autoTargetSource:next?.autoTargetSource}
+        });
+        return NextResponse.json({
+          success:true,phase,status:"COMPLETED",correct,total,rate,results,wrongCount:0,
+          autoNext:true,nextStep:next?.nextStep??"AUTO_SECOND_DIAGNOSIS_FAILED",next,
+          message:next?.created?"1차 진단 만점 · 다음 추천 핵심공략의 2차 진단 3문항을 자동 준비했습니다.":"1차 진단 만점 · 다음 진단 자동 생성 확인이 필요합니다."
+        });
+      }
+
+      const update=await supabase.from("sos_training_sessions").update({
+        status:"RETRAIN",correct_count:correct,decision:wrong>0?"DIAGNOSIS_REVIEW_REQUIRED":"DIAGNOSIS_RESULT_REVIEW_READY",updated_at:new Date().toISOString()
+      }).eq("id",sessionId);
       if(update.error)return NextResponse.json({message:update.error.message},{status:400});
       await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,reviewRequired:wrong>0,reportReady:true}});
       return NextResponse.json({success:true,phase,status:"RETRAIN",correct,total,rate,decision:wrong>0?"DIAGNOSIS_REVIEW_REQUIRED":"DIAGNOSIS_RESULT_REVIEW_READY",results,wrongCount:wrong,nextStep:"REPORT"});

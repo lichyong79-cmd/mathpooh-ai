@@ -1912,6 +1912,32 @@ function RecommendPage() {
       : current.length >= 3 ? current : [...current, id]);
   };
 
+  const compactAutoNextTargets = () => visibleSourceCandidates
+    .filter((candidate:any)=>candidate?.key!==confirmedTarget?.key)
+    .slice(0,5)
+    .map((candidate:any)=>{
+      const q=candidate?.sourceQuestion??{};
+      const e=candidate?.sourceExam??{};
+      const unit=String(q?.unit??q?.minorUnit??q?.middleUnit??q?.subject??"").trim();
+      return {
+        sourceKey:String(candidate?.key??""),
+        sourceExamId:e?.examId??e?.exam_id??null,
+        sourceExamTitle:e?.title??"실전모의고사",
+        sourceSubject:q?.subject??e?.subject??null,
+        sourceUnit:unit||null,
+        sourceMajorUnit:q?.majorUnit??null,
+        sourceMiddleUnit:q?.middleUnit??null,
+        sourceMinorUnit:q?.minorUnit??null,
+        sourceDetailedTopic:q?.detailedTopic??q?.type??q?.topic??null,
+        sourceQuestionType:q?.questionType??null,
+        sourceProblemTypes:Array.isArray(q?.problemTypes)?q.problemTypes:[],
+        sourceQuestionNo:sosQuestionNo(q),
+        sourceDifficulty:sosDifficulty(q?.difficulty),
+        sourcePriority:candidate?.priority??null,
+        sourceVerdict:candidate?.verdict??null,
+      };
+    });
+
   const assignSelectedDiagnosis = async () => {
     if(!selectedCycle)return alert("먼저 운영 회차를 선택해 주세요.");
     if (!selected || !confirmedTarget || selectedDiagnosisIds.length !== 3) return alert("진단 문항을 3개 선택해 주세요.");
@@ -1924,7 +1950,7 @@ function RecommendPage() {
     try {
       const response = await fetch("/api/admin/training-engine", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({
         action:"assign-diagnosis-selected", studentId:selected.id, problemIds:selectedDiagnosisIds,
-        target:{ units:unit?[{label:unit,rate:0}]:selected.weakUnits, types:type?[{label:type,rate:0}]:selected.weakTypes, sourceAttemptId, sourceExamId:exam?.examId??exam?.exam_id??null, sourceExamTitle:exam?.title??"실전모의고사", sourceSubject:item?.subject??exam?.subject??null, sourceUnit:unit||null, sourceMajorUnit:item?.majorUnit??null, sourceMiddleUnit:item?.middleUnit??null, sourceMinorUnit:item?.minorUnit??null, sourceDetailedTopic:item?.detailedTopic??item?.type??item?.topic??null, sourceQuestionType:item?.questionType??null, sourceProblemTypes:Array.isArray(item?.problemTypes)?item.problemTypes:[], sourceQuestionNo:sosQuestionNo(item), sourceDifficulty:sosDifficulty(item?.difficulty), sourcePriority:confirmedTarget.priority, sourceVerdict:confirmedTarget.verdict, sosNo:1, ...cycleSnapshot }
+        target:{ units:unit?[{label:unit,rate:0}]:selected.weakUnits, types:type?[{label:type,rate:0}]:selected.weakTypes, sourceAttemptId, sourceExamId:exam?.examId??exam?.exam_id??null, sourceExamTitle:exam?.title??"실전모의고사", sourceSubject:item?.subject??exam?.subject??null, sourceUnit:unit||null, sourceMajorUnit:item?.majorUnit??null, sourceMiddleUnit:item?.middleUnit??null, sourceMinorUnit:item?.minorUnit??null, sourceDetailedTopic:item?.detailedTopic??item?.type??item?.topic??null, sourceQuestionType:item?.questionType??null, sourceProblemTypes:Array.isArray(item?.problemTypes)?item.problemTypes:[], sourceQuestionNo:sosQuestionNo(item), sourceDifficulty:sosDifficulty(item?.difficulty), sourcePriority:confirmedTarget.priority, sourceVerdict:confirmedTarget.verdict, sourceKey:String(confirmedTarget.key??""), autoNextTargets:compactAutoNextTargets(), sosNo:1, ...cycleSnapshot }
       })});
       const data=await response.json();
       if(!response.ok) throw new Error(data.message||"진단 3문항 배정 실패");

@@ -576,9 +576,13 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             </div>:null}
 
             {active.status==="IN_PROGRESS"&&active.phase==="DIAGNOSIS"?<SosDiagnosisRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              setNotice(json.correct===json.total
-                ? `진단 응시 완료 · ${json.correct}/${json.total} 정답 · 오답이 없어 바로 AI 취약점 분석 후 다음 진단/훈련을 준비합니다.`
-                : `진단 응시 완료 · ${json.correct}/${json.total} 정답 · 성적표에서 오답을 교정한 뒤 AI 취약점 분석으로 넘어갑니다.`);
+              if(json?.autoNext&&json?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED"){
+                setNotice(`1차 진단 ${json.correct}/${json.total} 만점 · 다음 추천 핵심공략과 진단 3문항을 자동 선정했습니다. 2차 진단으로 이어집니다.`);
+              }else{
+                setNotice(json.correct===json.total
+                  ? `진단 응시 완료 · ${json.correct}/${json.total} 정답 · 다음 진단을 자동 준비하고 있습니다.`
+                  : `진단 응시 완료 · ${json.correct}/${json.total} 정답 · 성적표에서 오답을 교정한 뒤 AI 취약점 분석으로 넘어갑니다.`);
+              }
               await load();await onRefresh();
             }}/>:null}
 
