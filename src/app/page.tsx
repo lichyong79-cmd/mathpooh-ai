@@ -450,7 +450,6 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   const [notice,setNotice]=useState("");
   const [selectedCycleId,setSelectedCycleId]=useState("");
   const nextRepairTriedRef=useRef<Set<string>>(new Set());
-  const recoveryTried=useRef<Set<string>>(new Set());
 
   const load=useCallback(async()=>{
     setLoading(true);
@@ -460,14 +459,6 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
       if(!response.ok||json?.success!==true)throw new Error(json?.message||"진단·훈련을 불러오지 못했습니다.");
       setData(json);
       const allSessions=Array.isArray(json.sessions)?json.sessions:[];
-      const trainingParents=new Set(allSessions.filter((x:any)=>x.phase==="TRAINING"&&x.parent_session_id).map((x:any)=>String(x.parent_session_id)));
-      const legacyDiagnosis=allSessions.find((x:any)=>x.phase==="DIAGNOSIS"&&["COMPLETED","PASSED"].includes(String(x.status))&&!trainingParents.has(String(x.id))&&String(x.decision??"")!=="NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS"&&!recoveryTried.current.has(String(x.id)));
-      if(legacyDiagnosis){
-        recoveryTried.current.add(String(legacyDiagnosis.id)); setNotice("기존 진단 결과를 이어서 분석하고 1차 훈련을 준비하고 있습니다...");
-        const recover=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"recover_diagnosis",sessionId:legacyDiagnosis.id})}); const recovered=await recover.json(); if(!recover.ok)throw new Error(recovered?.message||"기존 진단 이어가기 실패");
-        const refreshed=await fetch("/api/student/sos-training",{cache:"no-store"}); const refreshedJson=await refreshed.json(); if(!refreshed.ok||refreshedJson?.success!==true)throw new Error(refreshedJson?.message||"훈련 준비 결과를 불러오지 못했습니다."); setData(refreshedJson);
-        const ready=(refreshedJson.sessions??[]).find((x:any)=>x.phase==="TRAINING"&&String(x.parent_session_id)===String(legacyDiagnosis.id)&&x.status==="ASSIGNED"); const second=(refreshedJson.sessions??[]).find((x:any)=>x.phase==="DIAGNOSIS"&&String(x.parent_session_id)===String(legacyDiagnosis.id)&&x.status==="ASSIGNED"); setActiveId(String(ready?.id??second?.id??legacyDiagnosis.id)); setNotice(ready?"기존 진단 분석 완료 · 1차 훈련 10문항이 준비되었습니다. 시작 버튼을 눌러 주세요.":second?"기존 진단 분석 완료 · 2차 진단이 준비되었습니다.":"기존 진단 분석이 완료되었습니다."); return;
-      }
       const open=allSessions.find((x:any)=>isSosOpen(x));
       setActiveId((current:string)=>{
         const currentSession=allSessions.find((x:any)=>String(x.id)===String(current));
@@ -485,7 +476,21 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   const sessions=Array.isArray(data.sessions)?data.sessions:[];
   const cycleRows=useMemo(()=>{const map=new Map<string,any>();for(const session of sessions){const c=session.learningCycle??null;const id=String(c?.id??"UNASSIGNED");const row=map.get(id)??{id,name:c?.name??"기존 SOS",startDate:c?.startDate??"",endDate:c?.endDate??"",dateLabel:c?.dateLabel??"회차 미지정",sessions:[]};row.sessions.push(session);map.set(id,row);}return [...map.values()].sort((a:any,b:any)=>String(b.startDate||"9999").localeCompare(String(a.startDate||"")));},[sessions]);
   useEffect(()=>{if(!cycleRows.length)return;const valid=cycleRows.some((c:any)=>String(c.id)===selectedCycleId);if(valid)return;const openCycle=cycleRows.find((c:any)=>c.sessions.some((x:any)=>isSosOpen(x)));setSelectedCycleId(String((openCycle??cycleRows[0]).id));},[cycleRows,selectedCycleId]);
-  const visibleSessions=selectedCycleId?sessions.filter((x:any)=>String(x.learningCycle?.id??"UNASSIGNED")===selectedCycleId):sessions;
+  const rawVisibleSessions=selectedCycleId?sessions.filter((x:any)=>String(x.learningCycle?.id??"UNASSIGNED")===selectedCycleId):sessions;
+  // SOS255: 같은 회차/같은 단계가 중복 생성되어도 학생 화면에는 대표 세션 하나만 노출한다.
+  const visibleSessions=useMemo(()=>{
+    const rank=(x:any)=>["IN_PROGRESS","RETRAIN","ASSIGNED","PASSED","COMPLETED"].indexOf(String(x.status));
+    const key=(x:any)=>String(x.phase)==="DIAGNOSIS"?`D:${Number(x.round_no??1)}`:String(x.cycle_kind)==="HOMEWORK"?"T:HOMEWORK":`T:${Number(x.round_no??1)}`;
+    const map=new Map<string,any>();
+    for(const x of rawVisibleSessions){
+      const k=key(x), prev=map.get(k);
+      if(!prev){map.set(k,x);continue;}
+      const xr=rank(x), pr=rank(prev);
+      // 진행 가능한 세션 우선, 같은 상태면 더 최근 세션 우선.
+      if((xr>=0&&pr>=0&&xr<pr)||(xr===pr&&String(x.created_at??"")>String(prev.created_at??"")))map.set(k,x);
+    }
+    return [...map.values()].sort((a:any,b:any)=>String(b.created_at??"").localeCompare(String(a.created_at??"")));
+  },[rawVisibleSessions]);
   const active=visibleSessions.find((x:any)=>String(x.id)===activeId)??null;
   useEffect(()=>{
     if(!visibleSessions.length){setActiveId("");return;}

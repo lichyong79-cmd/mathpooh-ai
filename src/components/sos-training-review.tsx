@@ -76,7 +76,7 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
         <b>{String(session?.cycle_kind)==="HOMEWORK"?"AI 유사문항 3제 굳히기":"AI 유사문항 · 2차 훈련"}</b>
         <span>{Number(item.problem?.sourceTrainingOrder)>0?`1차 훈련 ${item.problem.sourceTrainingOrder}번에서 파생 · `:""}핵심유형: {item.problem?.coreType||item.problem?.topic||"취약유형 보완"}</span>
       </div>:null}
-      <div className="sos-diagnosis-image">{item.problem?.imageUrl?<SosProblemImage src={item.problem.imageUrl} alt={`${item.order}번 오답 문제`} maskOriginalNumber={!item.generated&&(diagnosis||Number(session?.round_no??1)===1)}/>:item.generated?<div className="sos-generated-question">{item.problem?.generatedText}</div>:<p>문항 이미지가 없습니다.</p>}</div>
+      <div className="sos-diagnosis-image">{item.problem?.imageUrl?<SosProblemImage src={item.problem.imageUrl} alt={`${item.order}번 오답 문제`} maskOriginalNumber={!item.generated&&(diagnosis||Number(session?.round_no??1)===1)}/>:item.generated?<div className="sos-generated-image-missing"><b>AI 문항 이미지 생성 실패</b><span>새로고침 후 다시 시도해 주세요.</span></div>:<p>문항 이미지가 없습니다.</p>}</div>
       <div className="sos-answer-lock-box">
         {feedback?.hint&&!feedback.revealAnswer?<div className={`sos-review-hint level-${feedback.hintLevel}`}><small>풀이 힌트 {feedback.hintLevel}/2</small><b>{feedback.hint}</b><span>정답은 아직 공개하지 않습니다. 힌트를 이용해 다시 풀어보세요.</span></div>:null}
         {feedback?.revealAnswer?<div className="sos-review-solution"><small>3회 재도전 완료</small><h4>정답과 핵심 풀이를 확인하세요.</h4><b>정답 · {feedback.correctAnswer||item.problem?.correctAnswer||"-"}</b>{feedback.solution?<p>{feedback.solution}</p>:<p>정답에 도달하는 데 필요한 정의·공식과 조건 연결을 다시 확인하세요. 다음 유사문항에서는 같은 풀이 구조를 스스로 적용해야 합니다.</p>}</div>:null}

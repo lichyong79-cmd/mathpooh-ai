@@ -504,8 +504,8 @@ export async function POST(request:Request){
       let finalStatus="COMPLETED";
       let decision="SECOND_TRAINING_DONE";
       if(Number(session.round_no)===1){
-        if(passed){finalStatus="PASSED";decision="FIRST_TRAINING_PASSED";try{next=await generateSimilarTraining({supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,count:3,kind:"HOMEWORK"});}catch(error){next={error:error instanceof Error?error.message:"유사문항 숙제 생성 실패"};}}
-        else{decision="SECOND_TRAINING_REQUIRED";try{next=await generateSimilarTraining({supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,count:10,kind:"SECOND_TRAINING"});}catch(error){next={error:error instanceof Error?error.message:"2차 유사훈련 생성 실패"};}}
+        if(passed){finalStatus="PASSED";decision="FIRST_TRAINING_PASSED";}
+        else{decision="SECOND_TRAINING_REQUIRED";}
       }else if(Number(session.round_no)===2){finalStatus=passed?"PASSED":"COMPLETED";decision=passed?"SECOND_TRAINING_PASSED":"SECOND_TRAINING_FINISHED_TARGET_MISSED";}
       await supabase.from("sos_training_sessions").update({status:finalStatus,decision,review_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
       return NextResponse.json({success:true,recovered:0,total:0,reviewBonus:0,meter,goal,passed,passReason,status:finalStatus,decision,next});
@@ -545,12 +545,8 @@ export async function POST(request:Request){
     if(Number(session.round_no)===1){
       if(passed){
         finalStatus="PASSED";decision="FIRST_TRAINING_PASSED";
-        try{next=await generateSimilarTraining({supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,count:3,kind:"HOMEWORK"});}
-        catch(error){next={error:error instanceof Error?error.message:"유사문항 숙제 생성 실패"};}
       }else{
         finalStatus="COMPLETED";decision="SECOND_TRAINING_REQUIRED";
-        try{next=await generateSimilarTraining({supabase,studentId:String(student.id),firstTrainingSessionId:sessionId,count:10,kind:"SECOND_TRAINING"});}
-        catch(error){next={error:error instanceof Error?error.message:"2차 유사훈련 생성 실패"};}
       }
     }else if(Number(session.round_no)===2){
       finalStatus=passed?"PASSED":"COMPLETED";
