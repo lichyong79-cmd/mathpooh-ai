@@ -126,6 +126,7 @@ export async function POST(request: NextRequest) {
       dryRun,
       applied: !dryRun && result.decision === "graded" && !!result.final_grade && !result.review_required,
       version: DIFFICULTY_JUDGE_VERSION,
+      previewJudgement: dryRun ? result : undefined,
     });
   } catch (error) {
     return NextResponse.json(
