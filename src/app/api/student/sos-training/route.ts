@@ -196,7 +196,7 @@ export async function POST(request:Request){
 
     try{
       const all=await supabase.from("sos_training_sessions")
-        .select("id,phase,status,round_no,cycle_kind,parent_session_id,total_count,correct_count,decision,target_snapshot,created_at")
+        .select("id,phase,status,round_no,cycle_kind,parent_session_id,total_count,correct_count,decision,target_snapshot,baseline_meter,goal_meter,created_at")
         .eq("student_id",String(student.id))
         .order("created_at",{ascending:true});
       if(all.error)throw all.error;
