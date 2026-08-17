@@ -47,6 +47,9 @@ type RegradeResult = {
   conditionTransformations?: number;
   calculationLoad?: number;
   insightLoad?: number;
+  failureType?: string;
+  failureStage?: string;
+  failureDetail?: string;
 };
 
 type TestRow = Problem & { before: string; result?: RegradeResult };
@@ -63,6 +66,22 @@ function confidenceLabel(value: unknown) {
 function bandLabel(value?: string) {
   const map: Record<string,string> = { two_point:"2점",three_point:"3점",three_hard:"어3",four_easy:"쉬4",four_medium:"적4",four_hard:"어4",semi_killer:"준킬러",semi_killer_easy:"준킬러",semi_killer_hard:"준킬러",killer:"킬러" };
   return value ? map[value] ?? value : "-";
+}
+
+function failureTypeLabel(value:unknown) {
+  const key=String(value??"unknown");
+  return ({
+    timeout:"시간초과", http_429:"API 사용량/속도 제한", http_4xx:"API 요청 오류", http_5xx:"AI 서버 오류",
+    response_json_parse:"응답 형식 오류", incomplete_max_output_tokens:"출력 토큰 한도", incomplete_content_filter:"콘텐츠 필터",
+    incomplete_other:"미완료 응답", empty_response:"빈 응답", structured_json_parse:"구조화 JSON 파싱 실패", unknown:"원인 미확정"
+  } as Record<string,string>)[key] ?? key;
+}
+
+function failureStageLabel(value:unknown) {
+  const key=String(value??"");
+  if(key.includes("solve")) return "독립 재풀이";
+  if(key.includes("judge")) return "난이도 판정";
+  return key || "미확정";
 }
 
 function TestProblemImage({ problemId, questionNo }: { problemId: string; questionNo: number }) {
@@ -145,14 +164,18 @@ export default function DifficultyManagementPage() {
   const reviewCount = useMemo(() => items.filter(x=>x.problem_dna?.difficulty?.difficulty_review_required === true || x.problem_dna?.summary?.review_required === true).length, [items]);
   const legacyCount = useMemo(() => items.filter(x=>String(x.problem_dna?.difficulty?.scale_version ?? "") !== DIFFICULTY_SCALE_VERSION).length, [items]);
   const sampleSummary = useMemo(() => {
-    const graded=testResults.filter(x=>x.result?.ok && x.result?.decision!=="unclassified" && x.result?.difficulty);
-    const changed=graded.filter(x=>x.before!==String(x.result?.difficulty)).length;
-    const unclassified=testResults.filter(x=>x.result?.ok && (x.result?.decision==="unclassified" || !x.result?.difficulty)).length;
-    const review=testResults.filter(x=>x.result?.ok && x.result?.reviewRequired).length;
-    const failed=testResults.filter(x=>!x.result?.ok).length;
+    // SOS245: 한 문항은 반드시 하나의 최종 상태로만 집계한다.
+    const unique=[...new Map(testResults.map(x=>[x.id,x])).values()];
+    const reviewRows=unique.filter(x=>x.result?.ok && !!x.result?.reviewRequired);
+    const unclassifiedRows=unique.filter(x=>x.result?.ok && !x.result?.reviewRequired && (x.result?.decision==="unclassified" || !x.result?.difficulty));
+    const graded=unique.filter(x=>x.result?.ok && !x.result?.reviewRequired && x.result?.decision!=="unclassified" && x.result?.difficulty);
+    const changedRows=graded.filter(x=>x.before!==String(x.result?.difficulty));
+    const keptRows=graded.filter(x=>x.before===String(x.result?.difficulty));
+    const failedRows=unique.filter(x=>!x.result?.ok);
     const matrix=new Map<string,number>();
     for(const x of graded){const key=`${x.before||"미분류"}→${String(x.result?.difficulty)}`;matrix.set(key,(matrix.get(key)||0)+1);}
-    return {graded:graded.length,changed,unclassified,review,failed,matrix:[...matrix.entries()].sort((a,b)=>b[1]-a[1])};
+    const accounted=keptRows.length+changedRows.length+unclassifiedRows.length+reviewRows.length+failedRows.length;
+    return {total:unique.length,kept:keptRows.length,changed:changedRows.length,unclassified:unclassifiedRows.length,review:reviewRows.length,failed:failedRows.length,accounted,matrix:[...matrix.entries()].sort((a,b)=>b[1]-a[1])};
   },[testResults]);
 
   async function changeDifficulty(id:string, value:string) {
@@ -246,7 +269,7 @@ export default function DifficultyManagementPage() {
     if (running) return;
     const targets=buildBalancedSample(4);
     if(!targets.length){setMessage("표본 재검증 대상이 없습니다.");return;}
-    if(!window.confirm(`새 SOS240 엔진이 ${targets.length}문항을 실제로 다시 풀고 난이도를 검증합니다.\n\nDB 난이도는 변경하지 않습니다.\n결과를 먼저 비교해 본 뒤 전체 적용 여부를 결정할 수 있습니다.\n\n진행할까요?`)) return;
+    if(!window.confirm(`새 SOS245 엔진이 ${targets.length}문항을 실제로 다시 풀고 난이도를 검증합니다.\n\nDB 난이도는 변경하지 않습니다.\n결과를 먼저 비교해 본 뒤 전체 적용 여부를 결정할 수 있습니다.\n\n진행할까요?`)) return;
     setRunning(true);setMessage("");setError("");setTestResults([]);setProgress({mode:"sample",done:0,total:targets.length,ok:0,fail:0});
     const referenceIds=buildReferenceIds(); const rows:TestRow[]=[]; let ok=0,fail=0;
     try{
@@ -257,7 +280,7 @@ export default function DifficultyManagementPage() {
         for(const target of batch){const result:any=map.get(String(target.id)); if(result?.ok||result?.success){ok++;rows.push({...target,before:norm(target.difficulty,target.problem_dna),result:{...result,ok:true}});}else{fail++;rows.push({...target,before:norm(target.difficulty,target.problem_dna),result:{...result,ok:false}});}}
         setTestResults([...rows]); const done=Math.min(i+8,targets.length);setProgress({mode:"sample",done,total:targets.length,ok,fail});setMessage(`표본 재검증 중 · ${done}/${targets.length} · 성공 ${ok} · 미판정/실패 ${fail}`);
       }
-      setMessage(`SOS244 표본 재검증 완료 · ${targets.length}문항. 아래에서 기존↔신규 판정과 미판정/검토필요를 확인하세요. DB 난이도는 아직 변경하지 않았습니다.`);
+      setMessage(`SOS245 표본 재검증 완료 · ${targets.length}문항. 아래에서 기존↔신규 판정과 미판정/검토필요를 확인하세요. DB 난이도는 아직 변경하지 않았습니다.`);
     }catch(e){setError(e instanceof Error?e.message:"표본 재검증에 실패했습니다.");}finally{setRunning(false);setProgress(null);}
   }
 
@@ -274,7 +297,7 @@ export default function DifficultyManagementPage() {
       });
       const data=await res.json().catch(()=>({}));
       const result=Array.isArray(data.results)?data.results[0]:null;
-      const normalizedResult = result?.ok || result?.success ? {...result,ok:true} : {...(result||{}),ok:false,message:result?.message||data?.message||`검증 실패 (${res.status})`};
+      const normalizedResult = result?.ok || result?.success ? {...result,ok:true} : {...(result||{}),ok:false,message:result?.message||data?.message||`검증 실패 (${res.status})`,failureType:result?.failureType||data?.failureType||"unknown",failureStage:result?.failureStage||data?.failureStage||"unknown",failureDetail:result?.failureDetail||data?.failureDetail||""};
       setTestResults(prev=>prev.map(row=>row.id===problemId?{...row,result:normalizedResult}:row));
       if(normalizedResult.ok) setMessage(`${target.question_no}번 재검증 완료 · ${normalizedResult.decision==="unclassified"||!normalizedResult.difficulty?"미판정":difficultyLabel(normalizedResult.difficulty)}`);
       else setMessage(`${target.question_no}번 재검증도 실패했습니다. 기존 난이도는 그대로 유지됩니다.`);
@@ -285,23 +308,29 @@ export default function DifficultyManagementPage() {
 
   async function retryAllFailures() {
     if (running || retryingId) return;
-    const failedIds=testResults.filter(x=>!x.result?.ok).map(x=>x.id);
+    const failedIds=[...new Set(testResults.filter(x=>!x.result?.ok).map(x=>x.id))];
     if(!failedIds.length){setMessage("재검증할 실패 문항이 없습니다.");return;}
     setRunning(true);setError("");setMessage(`검증실패 ${failedIds.length}문항을 다시 검증합니다...`);
-    const referenceIds=buildReferenceIds();let recovered=0,stillFailed=0;
+    const referenceIds=buildReferenceIds();
+    const replacements=new Map<string,any>();
     try {
       for(let i=0;i<failedIds.length;i+=4){
         const ids=failedIds.slice(i,i+4);
         const res=await fetch("/api/problem-bank/regrade-difficulty-batch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({problemIds:ids,dryRun:true,referenceIds})});
-        const data=await res.json().catch(()=>({}));const results=Array.isArray(data.results)?data.results:[];const map=new Map(results.map((r:any)=>[String(r.problemId),r]));
-        setTestResults(prev=>prev.map(row=>{
-          if(!ids.includes(row.id)) return row;
-          const r:any=map.get(row.id);
-          const next=r?.ok||r?.success?{...r,ok:true}:{...(r||{}),ok:false,message:r?.message||data?.message||"재검증 실패"};
-          if(next.ok) recovered++; else stillFailed++;
-          return {...row,result:next};
-        }));
+        const data=await res.json().catch(()=>({}));
+        const results=Array.isArray(data.results)?data.results:[];
+        const map=new Map(results.map((r:any)=>[String(r.problemId),r]));
+        for(const id of ids){
+          const r:any=map.get(id);
+          const next=r?.ok||r?.success
+            ? {...r,ok:true}
+            : {...(r||{}),ok:false,message:r?.message||data?.message||`재검증 실패 (${res.status})`,failureType:r?.failureType||data?.failureType||"unknown",failureStage:r?.failureStage||data?.failureStage||"unknown",failureDetail:r?.failureDetail||data?.failureDetail||""};
+          replacements.set(id,next);
+        }
       }
+      setTestResults(prev=>prev.map(row=>replacements.has(row.id)?{...row,result:replacements.get(row.id)}:row));
+      const recovered=failedIds.filter(id=>replacements.get(id)?.ok).length;
+      const stillFailed=failedIds.length-recovered;
       setMessage(`검증실패 재시도 완료 · 복구 ${recovered} · 여전히 실패 ${stillFailed}. 실패 문항은 기존 난이도를 유지합니다.`);
     } catch(e){setError(e instanceof Error?e.message:"실패 문항 재검증에 실패했습니다.");}
     finally{setRunning(false);}
@@ -311,7 +340,7 @@ export default function DifficultyManagementPage() {
     if(running)return;
     const targets=items.filter(x=>x.problem_dna?.difficulty?.admin_fixed!==true && !!x.question_image_path);
     if(!targets.length){setMessage("전체 재검증 대상이 없습니다.");return;}
-    if(!window.confirm(`SOS244 재풀이 검증 엔진으로 ${targets.length}문항을 전체 재판정합니다.\n\n- 관리자 확정 문항은 보존\n- AI가 실제로 재풀이 후 검증\n- 미판정/검토필요는 기존 난이도를 덮어쓰지 않음\n- 확신도 높은 검증 통과 문항만 새 난이도 적용\n\nAI 호출량이 많습니다. 표본 결과를 확인한 뒤 실행하는 것을 권장합니다. 계속할까요?`))return;
+    if(!window.confirm(`SOS245 재풀이 검증 엔진으로 ${targets.length}문항을 전체 재판정합니다.\n\n- 관리자 확정 문항은 보존\n- AI가 실제로 재풀이 후 검증\n- 미판정/검토필요는 기존 난이도를 덮어쓰지 않음\n- 확신도 높은 검증 통과 문항만 새 난이도 적용\n\nAI 호출량이 많습니다. 표본 결과를 확인한 뒤 실행하는 것을 권장합니다. 계속할까요?`))return;
     setRunning(true);setMessage("");setError("");setTestResults([]);setProgress({mode:"full",done:0,total:targets.length,ok:0,fail:0});
     const referenceIds=buildReferenceIds();let ok=0,fail=0,applied=0,review=0;
     try{
@@ -322,7 +351,7 @@ export default function DifficultyManagementPage() {
         for(const r of results){if(r?.ok||r?.success){ok++;if(r.applied)applied++;else review++;}else fail++;}
         const done=Math.min(i+8,targets.length);setProgress({mode:"full",done,total:targets.length,ok,fail});setMessage(`전체 재풀이 검증 중 · ${done}/${targets.length} · 적용 ${applied} · 검토/미판정 ${review} · 실패 ${fail}`);
       }
-      await load();setMessage(`SOS244 전체 재검증 완료 · 자동 적용 ${applied} · 검토/미판정 ${review} · 실패 ${fail}. 검토필요 문항은 기존 난이도를 보존했습니다.`);
+      await load();setMessage(`SOS245 전체 재검증 완료 · 자동 적용 ${applied} · 검토/미판정 ${review} · 실패 ${fail}. 검토필요 문항은 기존 난이도를 보존했습니다.`);
     }catch(e){setError(e instanceof Error?e.message:"전체 재검증에 실패했습니다.");}finally{setRunning(false);setProgress(null);}
   }
 
@@ -408,7 +437,7 @@ export default function DifficultyManagementPage() {
   <main className="difficulty-page">
     <div className="difficulty-wrap">
       <div className="difficulty-header">
-        <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>SOS244는 검증실패를 난이도로 위장하지 않습니다. AI가 문제를 먼저 재풀이하고 검증한 뒤 8단계 난이도를 판정하며, 불확실하면 미판정/검토필요로 분리합니다.</p></div>
+        <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>SOS245는 검증실패를 원인별로 추적하고 난이도로 위장하지 않습니다. AI가 문제를 먼저 재풀이하고 검증한 뒤 8단계 난이도를 판정하며, 불확실하면 미판정/검토필요로 분리합니다.</p></div>
         <div className="header-buttons"><button onClick={()=>location.href="/problem-bank/barometer"}>학생·문항 바로미터</button><button onClick={()=>location.href="/admin?menu=sos-learning"}>관리자 홈</button><button onClick={()=>location.href="/problem-bank"}>SOS 문제은행</button></div>
       </div>
 
@@ -433,8 +462,8 @@ export default function DifficultyManagementPage() {
       </div>
 
       {testResults.length>0 && <section className="test-section">
-        <div className="test-section-head"><div><b>SOS244 난이도 재검증 결과</b><span>현재값과 새 재풀이 검증 결과를 비교합니다. 미판정/검토필요는 자동 적용하지 않습니다.</span></div><strong>{testResults.length}문항</strong></div>
-        <div className="sample-summary"><div><b>{sampleSummary.graded}</b><span>판정완료</span></div><div><b>{sampleSummary.changed}</b><span>기존과 변경</span></div><div><b>{sampleSummary.unclassified}</b><span>미판정</span></div><div><b>{sampleSummary.review}</b><span>검토필요</span></div><div className="failure-summary"><b>{sampleSummary.failed}</b><span>검증실패</span></div><div className="matrix"><strong>주요 이동</strong><span>{sampleSummary.matrix.slice(0,8).map(([key,count])=>`${key.replace(/^(\d)→(\d)$/,(m,a,b)=>`${difficultyLabel(a)}→${difficultyLabel(b)}`)} ${count}`).join(" · ")||"변경 없음"}</span></div></div>
+        <div className="test-section-head"><div><b>SOS245 난이도 재검증 결과</b><span>현재값과 새 재풀이 검증 결과를 비교합니다. 미판정/검토필요는 자동 적용하지 않습니다.</span></div><strong>{testResults.length}문항</strong></div>
+        <div className="sample-summary"><div><b>{sampleSummary.kept}</b><span>기준 유지</span></div><div><b>{sampleSummary.changed}</b><span>기준과 변경</span></div><div><b>{sampleSummary.unclassified}</b><span>미판정</span></div><div><b>{sampleSummary.review}</b><span>검토필요</span></div><div className="failure-summary"><b>{sampleSummary.failed}</b><span>검증실패</span></div><div className="matrix"><strong>집계</strong><span>{sampleSummary.accounted}/{sampleSummary.total} · {sampleSummary.accounted===sampleSummary.total?"정상":"⚠ 중복/누락 확인"}</span><strong>주요 이동</strong><span>{sampleSummary.matrix.slice(0,8).map(([key,count])=>`${key.replace(/^(\d)→(\d)$/,(m,a,b)=>`${difficultyLabel(a)}→${difficultyLabel(b)}`)} ${count}`).join(" · ")||"변경 없음"}</span></div></div>
         <div className="test-grid">{testResults.map((x)=><article key={x.id} className={`test-card ${x.result?.ok ? (x.before !== String(x.result.difficulty) ? "changed" : "same") : "failed"}`}>
           <div className="test-card-head"><div><b>{x.question_no}번</b><span>{x.subject} · {x.unit}</span></div><code>{x.problem_code}</code></div>
           <div className="test-image-wrap"><TestProblemImage problemId={x.id} questionNo={x.question_no}/></div>
@@ -451,7 +480,7 @@ export default function DifficultyManagementPage() {
             </div>
             {savedDifficulty[x.id] && <div className="saved-inline">✓ DB에 {difficultyLabel(savedDifficulty[x.id])}로 저장됨</div>}
           </> : <>
-            <div className="reason-box failure"><b>검증실패 · 기존 난이도 유지</b><p>{x.result?.message || "AI 판정에 실패했습니다."}</p></div>
+            <div className="reason-box failure"><b>검증실패 · 기존 난이도 유지</b><p>{x.result?.message || "AI 판정에 실패했습니다."}</p><small>원인: {failureTypeLabel(x.result?.failureType)}{x.result?.failureStage?` · 단계 ${failureStageLabel(x.result.failureStage)}`:""}</small>{x.result?.failureDetail?<details><summary>기술 상세</summary><pre>{String(x.result.failureDetail).slice(0,1600)}</pre></details>:null}</div>
             <div className="failure-actions"><button disabled={running || !!retryingId} onClick={()=>void retryVerification(x.id)}>{retryingId===x.id?"다시 검증 중...":"↻ 이 문항 다시 검증"}</button><span>검증이 성공하기 전에는 전체 재판정에 사용되지 않습니다.</span></div>
           </>}
         </article>)}</div>

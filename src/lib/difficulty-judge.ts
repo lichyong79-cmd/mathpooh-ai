@@ -48,6 +48,32 @@ export type DifficultyJudgement = {
 
 const allowedGrades = DIFFICULTY_SCALE.map((x) => x.value) as DifficultyValue[];
 
+export type DifficultyVerificationFailureType =
+  | "timeout"
+  | "http_429"
+  | "http_4xx"
+  | "http_5xx"
+  | "response_json_parse"
+  | "incomplete_max_output_tokens"
+  | "incomplete_content_filter"
+  | "incomplete_other"
+  | "empty_response"
+  | "structured_json_parse"
+  | "unknown";
+
+export class DifficultyVerificationError extends Error {
+  failureType: DifficultyVerificationFailureType;
+  stage: string;
+  detail: string;
+  constructor(failureType: DifficultyVerificationFailureType, message: string, stage: string, detail = "") {
+    super(message);
+    this.name = "DifficultyVerificationError";
+    this.failureType = failureType;
+    this.stage = stage;
+    this.detail = detail;
+  }
+}
+
 const solveSchema = {
   type: "object",
   additionalProperties: false,
@@ -155,9 +181,9 @@ function outputText(payload: any) {
 }
 
 async function requestStructured(args: { apiKey:string; model:string; imageUrl:string; prompt:string; schema:any; schemaName:string; timeoutMs:number; effort?:"low"|"medium" }) {
-  let lastError = "AI 난이도 검증 실패";
-  // SOS244: 간헐적인 빈 응답/5xx는 같은 문항에서 1회 자동 재시도한다.
-  // 두 번 모두 실패하면 상위 UI가 `검증실패`로 분리하며 기존 난이도는 절대 바꾸지 않는다.
+  let lastError: DifficultyVerificationError = new DifficultyVerificationError("unknown", "AI 난이도 검증 실패", args.schemaName);
+  // SOS245: Responses API의 max_output_tokens에는 보이는 JSON뿐 아니라 reasoning token도 포함된다.
+  // 1800 토큰에서 빈 응답이 반복됐으므로 여유를 높이고, 실패 원인을 구조화해서 상위 UI에 전달한다.
   for (let attempt=1; attempt<=2; attempt++) {
     try {
       const response = await fetch("https://api.openai.com/v1/responses", {
@@ -168,7 +194,7 @@ async function requestStructured(args: { apiKey:string; model:string; imageUrl:s
           input:[{ role:"user", content:[{type:"input_text",text:args.prompt},{type:"input_image",image_url:args.imageUrl,detail:"high"}] }],
           reasoning:{ effort:args.effort ?? "medium" },
           text:{ format:{ type:"json_schema", name:args.schemaName, strict:true, schema:args.schema } },
-          max_output_tokens:1800,
+          max_output_tokens: attempt === 1 ? 5000 : 7000,
           store:false,
         }),
         signal:AbortSignal.timeout(args.timeoutMs),
@@ -176,25 +202,71 @@ async function requestStructured(args: { apiKey:string; model:string; imageUrl:s
       });
       const raw=await response.text();
       if(!response.ok) {
-        lastError=`AI 난이도 검증 실패 (${response.status}): ${raw.slice(0,800)}`;
+        const failureType: DifficultyVerificationFailureType = response.status===429 ? "http_429" : response.status>=500 ? "http_5xx" : "http_4xx";
+        lastError = new DifficultyVerificationError(
+          failureType,
+          `AI 난이도 검증 HTTP 오류 (${response.status})`,
+          args.schemaName,
+          raw.slice(0,1200),
+        );
         if(attempt<2 && response.status>=500) continue;
-        throw new Error(lastError);
+        throw lastError;
       }
-      const payload=JSON.parse(raw);
+
+      let payload:any;
+      try { payload = raw ? JSON.parse(raw) : {}; }
+      catch {
+        lastError = new DifficultyVerificationError("response_json_parse", "OpenAI 응답 JSON을 읽지 못했습니다.", args.schemaName, raw.slice(0,1200));
+        if(attempt<2) continue;
+        throw lastError;
+      }
+
+      if(payload?.status === "incomplete") {
+        const reason=String(payload?.incomplete_details?.reason ?? "unknown");
+        const failureType: DifficultyVerificationFailureType = reason==="max_output_tokens"
+          ? "incomplete_max_output_tokens"
+          : reason==="content_filter"
+            ? "incomplete_content_filter"
+            : "incomplete_other";
+        lastError = new DifficultyVerificationError(
+          failureType,
+          `AI 응답이 완료되지 않았습니다. (${reason})`,
+          args.schemaName,
+          `status=${String(payload?.status)} / output_types=${JSON.stringify((payload?.output??[]).map((x:any)=>x?.type))}`,
+        );
+        if(attempt<2 && reason!=="content_filter") continue;
+        throw lastError;
+      }
+
       const text=outputText(payload);
       if(!text) {
-        lastError=`AI 난이도 검증 응답이 비었습니다. (자동 재시도 ${attempt}/2)`;
+        lastError = new DifficultyVerificationError(
+          "empty_response",
+          "AI 난이도 검증 응답 본문이 비었습니다.",
+          args.schemaName,
+          `status=${String(payload?.status ?? "unknown")} / incomplete=${JSON.stringify(payload?.incomplete_details ?? null)} / output_types=${JSON.stringify((payload?.output??[]).map((x:any)=>x?.type))}`,
+        );
         if(attempt<2) continue;
-        throw new Error(lastError);
+        throw lastError;
       }
-      return JSON.parse(text);
+
+      try { return JSON.parse(text); }
+      catch {
+        lastError = new DifficultyVerificationError("structured_json_parse", "AI 구조화 난이도 JSON 파싱에 실패했습니다.", args.schemaName, text.slice(0,1200));
+        if(attempt<2) continue;
+        throw lastError;
+      }
     } catch (error) {
-      lastError=error instanceof Error?error.message:String(error);
-      if(attempt>=2) break;
-      if(/\(429\)/.test(lastError)) break;
+      if(error instanceof DifficultyVerificationError) lastError=error;
+      else if(error instanceof Error && (error.name==="TimeoutError" || error.name==="AbortError" || /timeout/i.test(error.message))) {
+        lastError=new DifficultyVerificationError("timeout", "AI 난이도 검증 시간이 초과되었습니다.", args.schemaName, error.message);
+      } else {
+        lastError=new DifficultyVerificationError("unknown", error instanceof Error?error.message:String(error), args.schemaName);
+      }
+      if(attempt>=2 || lastError.failureType==="http_429" || lastError.failureType==="incomplete_content_filter") break;
     }
   }
-  throw new Error(lastError);
+  throw lastError;
 }
 
 /** 1차 독립 재풀이 → 2차 난이도 검증. */

@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/supabase/auth";
 import { normalizeDifficulty } from "@/lib/difficulty-scale";
 import {
   DIFFICULTY_JUDGE_VERSION,
+  DifficultyVerificationError,
   applyJudgedDifficulty,
   formatDifficultyReferences,
   judgeDifficulty,
@@ -78,7 +79,16 @@ export async function POST(request: NextRequest) {
       });
     } catch (judgeError) {
       const message = judgeError instanceof Error ? judgeError.message : "AI 난이도 판정 실패";
-      return NextResponse.json({ success: false, message }, { status: /\(429\)/.test(message) ? 429 : 500 });
+      if (judgeError instanceof DifficultyVerificationError) {
+        return NextResponse.json({
+          success: false,
+          message,
+          failureType: judgeError.failureType,
+          failureStage: judgeError.stage,
+          failureDetail: judgeError.detail,
+        }, { status: judgeError.failureType === "http_429" ? 429 : 500 });
+      }
+      return NextResponse.json({ success: false, message, failureType: "unknown", failureStage: "unknown", failureDetail: "" }, { status: 500 });
     }
 
     const current = normalizeDifficulty(problem.difficulty);
