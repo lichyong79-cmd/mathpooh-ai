@@ -466,7 +466,7 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
 - 생성한 문제를 직접 처음부터 풀어 조건 충분성, 모순 여부, 유일해, solution과 answer 일치를 자체 검산합니다.
 - question에는 LaTeX 명령을 쓰지 말고 학생 화면에서 바로 읽히는 일반 텍스트/유니코드 수식을 씁니다.
 - reason에는 원문의 무엇을 유지하고 어떤 수치/조건만 바꿨는지 짧게 적습니다.
-- ${kind==="HOMEWORK"?"1차 훈련 통과자의 3제 굳히기이므로 원문 난이도를 거의 유지합니다.":"1차 미달자의 2차 정식훈련이므로 원문 풀이 구조는 유지하고 수치 복잡도만 같거나 조금 낮게 시작해 점진적으로 회복시킵니다."}
+- 1차 미달자의 2차 정식훈련이므로 원문 풀이 구조는 유지하고 수치 복잡도만 같거나 조금 낮게 시작해 점진적으로 회복시킵니다.
 ${invalidReason?`이전 생성은 검증에서 탈락했습니다: ${invalidReason}. 같은 오류를 반복하지 마세요.`:""}`;
     const content:any[]=[{type:"input_text",text:prompt}];
     sourceSlots.forEach((slot,index)=>{
@@ -556,17 +556,17 @@ ${invalidReason?`이전 생성은 검증에서 탈락했습니다: ${invalidReas
       coreType:String(p.topic??weakness?.focusConcepts?.[0]??weakness?.weaknessTitle??"핵심 취약유형"),
       generationKind:kind,
       generationPolicy:"SOURCE_LIMITED_TRANSFORM_V1",
-      barometerExcluded:kind==="HOMEWORK",
+      barometerExcluded:false,
     };
   });
-  const duplicateCheck=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",kind==="HOMEWORK"?3:2).order("created_at",{ascending:true}).limit(1);
+  const duplicateCheck=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",2).order("created_at",{ascending:true}).limit(1);
   if(duplicateCheck.error)throw duplicateCheck.error;
   if((duplicateCheck.data??[]).length)return {session:duplicateCheck.data?.[0],problems:[],existing:true};
   const session=await supabase.from("sos_training_sessions").insert({
-    student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:{...target,generatedSimilar:true,homework:kind==="HOMEWORK",barometerExcluded:kind==="HOMEWORK",generationPolicy:"SOURCE_LIMITED_TRANSFORM_V1"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:kind==="HOMEWORK"?3:2,total_count:count,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:kind
+    student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:{...target,generatedSimilar:true,homework:false,barometerExcluded:false,generationPolicy:"SOURCE_LIMITED_TRANSFORM_V1"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:2,total_count:count,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:kind
   }).select().single();
   if(session.error||!session.data)throw new Error(session.error?.message||"유사문항 세션 생성 실패");
-  const ins=await supabase.from("sos_training_items").insert(normalized.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:kind==="HOMEWORK"?"AI 유사문항 3제 굳히기 · 바로미터 미반영":"2차 AI 유사훈련",subunit_key:p.subunitKey})));
+  const ins=await supabase.from("sos_training_items").insert(normalized.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:"2차 AI 유사훈련",subunit_key:p.subunitKey})));
   if(ins.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw ins.error;}
   return {session:session.data,problems:normalized};
 }
