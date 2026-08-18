@@ -116,7 +116,6 @@ export default function SosGeneratedQuestionPng({
       if(!node)return;
       try{
         if(document.fonts?.ready)await document.fonts.ready;
-        // Give native MathML one paint before capture.
         await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
 
         const width=1040;
@@ -130,39 +129,19 @@ export default function SosGeneratedQuestionPng({
         clone.style.visibility="visible";
         clone.setAttribute("xmlns","http://www.w3.org/1999/xhtml");
 
+        // SOS261
+        // foreignObject SVG를 다시 Canvas에 그린 뒤 toDataURL() 하면
+        // Chrome에서 canvas가 tainted 처리될 수 있다.
+        // Canvas 재수출을 완전히 제거하고, 완성된 문제지를 단일 SVG image로 표시한다.
         const serialized=new XMLSerializer().serializeToString(clone);
-        const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
+        const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+          <rect x="0" y="0" width="${width}" height="${height}" fill="white"/>
           <foreignObject x="0" y="0" width="${width}" height="${height}">${serialized}</foreignObject>
         </svg>`;
-        const url=URL.createObjectURL(new Blob([svg],{type:"image/svg+xml;charset=utf-8"}));
-        const image=new Image();
-        image.onload=()=>{
-          try{
-            const scale=Math.min(2,Math.max(1.4,window.devicePixelRatio||1.5));
-            const canvas=document.createElement("canvas");
-            canvas.width=Math.round(width*scale);
-            canvas.height=Math.round(height*scale);
-            const ctx=canvas.getContext("2d");
-            if(!ctx)throw new Error("Canvas 생성 실패");
-            ctx.scale(scale,scale);
-            ctx.fillStyle="#fff";
-            ctx.fillRect(0,0,width,height);
-            ctx.drawImage(image,0,0,width,height);
-            const data=canvas.toDataURL("image/png");
-            URL.revokeObjectURL(url);
-            if(!dead)setPng(data);
-          }catch(e){
-            URL.revokeObjectURL(url);
-            if(!dead)setError(e instanceof Error?e.message:"PNG 변환 실패");
-          }
-        };
-        image.onerror=()=>{
-          URL.revokeObjectURL(url);
-          if(!dead)setError("수식 문제지 PNG 생성 실패");
-        };
-        image.src=url;
+        const data=`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+        if(!dead)setPng(data);
       }catch(e){
-        if(!dead)setError(e instanceof Error?e.message:"PNG 생성 실패");
+        if(!dead)setError(e instanceof Error?e.message:"문항 이미지 생성 실패");
       }
     },80);
     return()=>{dead=true;window.clearTimeout(run);};
@@ -171,7 +150,7 @@ export default function SosGeneratedQuestionPng({
   return <div className="sos-generated-png-wrap">
     {!png&&!error?<div className="sos-generated-png-loading">
       <b>AI 유사문항 이미지 생성 중...</b>
-      <span>수식을 조판한 뒤 PNG로 변환하고 있습니다.</span>
+      <span>수식을 조판한 뒤 문제 이미지로 변환하고 있습니다.</span>
     </div>:null}
     {error?<div className="sos-generated-image-missing">
       <b>AI 문항 이미지 생성 실패</b><span>{error}</span>
