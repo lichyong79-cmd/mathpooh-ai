@@ -487,24 +487,12 @@
 @media(max-width:700px){.flow-node.now{min-width:104px;transform:none}.sos-flow-line{padding-top:7px}}
 
 
-/* SOS252.2 · 문제은행 원본 번호만 가리고 본문은 보존 */
-.sos-problem-image-wrap{position:relative;display:inline-block;max-width:100%;line-height:0}
+/* SOS256 · 원본 문항번호 자동 절단. 본문 위 overlay 금지 */
+.sos-problem-image-wrap{position:relative;display:block;max-width:100%;line-height:0;overflow:hidden;background:#fff}
 .sos-problem-image-wrap>img{display:block;max-width:100%;height:auto}
-.sos-origin-mask-layer{position:absolute;z-index:5;inset:0;pointer-events:none}
-.sos-origin-number-cover{
-  position:absolute;left:4.2%;top:7.5%;width:8.8%;height:7.2%;
-  background:#fff;border-radius:2px;
-}
-.sos-origin-logo{
-  position:absolute;left:4.1%;top:3.0%;width:8.6%;height:5.2%;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;
-}
-.sos-origin-logo img{display:block!important;width:100%!important;height:78%!important;object-fit:contain!important;max-width:none!important}
-.sos-origin-logo span{display:block;margin-top:-2px;color:#176b43;font-size:clamp(5px,.65vw,8px);font-weight:1000;line-height:1;letter-spacing:.1em;white-space:nowrap}
-@media(max-width:700px){
-  .sos-origin-number-cover{left:4%;top:7.2%;width:9.2%;height:7.5%}
-  .sos-origin-logo{left:4%;top:2.8%;width:9%;height:5.4%}
-}
+.sos-problem-image-wrap.number-crop{width:100%;overflow:hidden}
+.sos-problem-image-wrap.number-crop>img.number-crop-pending{visibility:hidden}
+.sos-problem-image-wrap.number-crop>img.number-crop-ready{visibility:visible}
 
 /* SOS231 · AI 유사문항 출처/핵심유형 안내 */
 .sos-generated-origin{margin:0 0 12px;padding:11px 13px;border-radius:12px;border:1px solid #ead8bf;background:#fff8ef;color:#6c4a20;display:flex;align-items:center;gap:8px;flex-wrap:wrap}

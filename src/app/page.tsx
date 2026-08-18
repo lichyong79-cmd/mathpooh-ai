@@ -705,7 +705,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
 
             {active.status==="RETRAIN"&&active.phase==="DIAGNOSIS"?<SosTrainingReview session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
               const w=json?.ai?.weakness;
-              setNotice(json?.ai?.created?`진단 교정 완료 · AI가 '${w?.weaknessTitle||"취약점"}'을 확인했습니다. 1차 맞춤훈련 10문항이 준비되었습니다.`:json?.ai?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED"?"1차 진단에서 뚜렷한 취약점이 없어 바로미터가 가장 낮은 다른 영역의 2차 진단 3문항이 자동 준비되었습니다.":json?.ai?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS"?"2차 진단까지 완료 · 현재 뚜렷한 취약점이 확인되지 않았습니다.":json?.ai?.error?`진단 교정 완료 · AI 분석 확인 필요 (${json.ai.error})`:"진단 교정과 AI 분석이 완료되었습니다.");
+              setNotice(json?.ai?.created?`진단 교정 완료 · AI가 '${w?.weaknessTitle||"취약점"}'을 확인했습니다. 1차 맞춤훈련 10문항이 준비되었습니다.`:json?.ai?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED"?"1차 진단에서 뚜렷한 취약점이 없어 바로미터가 가장 낮은 다른 영역의 2차 진단 3문항이 자동 준비되었습니다.":json?.ai?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS"?"1·2차 진단 전체에서 오답과 시간취약이 확인되지 않았습니다. 이번 SOS 진단을 완료했습니다.":json?.ai?.error?`진단 교정 완료 · AI 분석 확인 필요 (${json.ai.error})`:"진단 교정과 AI 분석이 완료되었습니다.");
               await load();await onRefresh();
             }}/>:null}
 

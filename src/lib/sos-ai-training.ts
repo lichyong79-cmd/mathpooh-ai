@@ -1,6 +1,7 @@
 import { clampMeter, meterLabel } from "@/lib/difficulty-meter";
 import { problemSubunit } from "@/lib/subunit-key";
 import { sosTrainingGoalMeter } from "@/lib/sos-training-policy";
+import { cycleFromSnapshot } from "@/lib/sos-cycle";
 
 function outputText(payload:any){
   if(typeof payload?.output_text==="string") return payload.output_text.trim();
@@ -260,6 +261,11 @@ export async function createAutomaticSecondDiagnosis(args:{supabase:any;studentI
   return {created:false,nextStep:"NO_SECOND_DIAGNOSIS_TARGET"};
 }
 
+function expectedDiagnosisSeconds(difficulty:any){const d=Math.max(1,Math.min(8,Number(difficulty)||3));return [0,45,60,85,110,140,175,220,280][d]??85;}
+function diagnosisTimeSignal(item:any){const p=item?.problem_bank_questions??{},seconds=Math.max(0,Number(item?.response_seconds)||0),expected=expectedDiagnosisSeconds(p?.difficulty),limit=Math.round(expected*1.35),severeLimit=Math.round(expected*1.8);return {seconds,expected,limit,severeLimit,slow:seconds>limit,severe:seconds>severeLimit};}
+async function diagnosisHistoryForCycle(supabase:any,studentId:string,current:any){const currentCycle=cycleFromSnapshot(current?.target_snapshot??{});const r=await supabase.from("sos_training_sessions").select("id,phase,status,round_no,target_snapshot,created_at,sos_training_items(id,problem_id,item_order,is_correct,response_seconds,problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path,answer))").eq("student_id",studentId).eq("phase","DIAGNOSIS").order("created_at",{ascending:true});if(r.error)throw r.error;return (r.data??[]).filter((x:any)=>{if(!["COMPLETED","PASSED"].includes(String(x.status)))return false;const c=cycleFromSnapshot(x?.target_snapshot??{});return currentCycle?.id?String(c?.id??"")===String(currentCycle.id):String(x.id)===String(current.id)||Number(x.round_no??0)<=Number(current.round_no??0);});}
+function collectDiagnosisWeakSignals(history:any[]){const rows:any[]=[];for(const session of history)for(const item of session?.sos_training_items??[]){const t=diagnosisTimeSignal(item),wrong=item?.is_correct===false;if(!wrong&&!t.slow)continue;const problem=item?.problem_bank_questions??{};rows.push({round:Number(session.round_no??1),order:Number(item.item_order??0),wrong,slow:t.slow,severe:t.severe,seconds:t.seconds,expectedSeconds:t.expected,limitSeconds:t.limit,problem,priority:(wrong?300:0)+(t.severe?180:t.slow?100:0)+Math.min(60,t.seconds/10)});}return rows.sort((a,b)=>b.priority-a.priority);}
+
 export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;studentId:string;diagnosisSessionId:string}){
   const {supabase,studentId,diagnosisSessionId}=args;
   const diagResult=await supabase
@@ -269,6 +275,9 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   if(diagResult.error||!diagResult.data) throw new Error(diagResult.error?.message||"진단 결과를 찾을 수 없습니다.");
   const diagnosis:any=diagResult.data;
   if(diagnosis.phase!=="DIAGNOSIS"||!['COMPLETED','PASSED'].includes(String(diagnosis.status))) throw new Error("완료된 진단만 AI 분석할 수 있습니다.");
+  const diagnosisHistory=await diagnosisHistoryForCycle(supabase,studentId,diagnosis);
+  const weakSignals=collectDiagnosisWeakSignals(diagnosisHistory);
+  const strongestSignal=weakSignals[0]??null;
 
   const existing=await supabase.from("sos_training_sessions").select("id,status,created_at,sos_training_items(id,student_answer,answered_at,revealed_at)").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",diagnosisSessionId).eq("round_no",1).eq("cycle_kind","BANK_TRAINING").order("created_at",{ascending:true});
   if(existing.error)throw existing.error;
@@ -297,7 +306,7 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   }
 
   const target=diagnosis.target_snapshot??{};
-  const content:any[]=[{type:"input_text",text:`당신은 MATHPOOH SOS 수학 취약점 진단 엔진입니다.\n아래 3개 진단문항의 문항 DNA, 정오답, 풀이시간, 학생 풀이사진을 함께 보고 이 학생에게 실제로 훈련할 만한 취약점이 있는지 판단하세요.\n\n규칙:\n- 단순히 틀렸다는 이유만으로 취약점이라고 하지 말고, 3문항에서 반복되거나 풀이사진/시간으로 확인되는 사고과정의 약점을 찾습니다.\n- 계산실수와 개념/조건해석/접근전략 약점을 구분합니다.\n- 취약점이 있으면 한 번의 10문항 훈련으로 집중할 수 있게 가장 핵심적인 1개 축으로 표현합니다.\n- weaknessDetected=false라면 이유를 명확히 씁니다.\n- 학생에게 보여줄 weaknessTitle은 짧고 이해하기 쉽게, weaknessDetail은 2문장 이내로 씁니다.\n\n타겟 정보: ${JSON.stringify(target)}\n진단 데이터: ${JSON.stringify((diagnosis.sos_training_items??[]).map((item:any)=>({order:item.item_order,answer:item.student_answer,correct:item.is_correct,seconds:item.response_seconds,problem:compactDna(item.problem_bank_questions??{})})))}`}];
+  const content:any[]=[{type:"input_text",text:`당신은 MATHPOOH SOS 수학 취약점 진단 엔진입니다.\n아래 3개 진단문항의 문항 DNA, 정오답, 풀이시간, 학생 풀이사진을 함께 보고 이 학생에게 실제로 훈련할 만한 취약점이 있는지 판단하세요.\n\n규칙:\n- 정오답뿐 아니라 난이도별 풀이시간을 반드시 함께 봅니다.\n- weakSignals에는 1·2차 진단 전체에서 오답 또는 기준시간 1.35배 초과 문항이 들어 있습니다.\n- 계산실수와 개념/조건해석/접근전략/시간숙련 부족을 구분합니다.\n- 취약점이 있으면 한 번의 10문항 훈련으로 집중할 수 있게 가장 핵심적인 1개 축으로 표현합니다.\n- weaknessDetected=false라면 이유를 명확히 씁니다.\n- 학생에게 보여줄 weaknessTitle은 짧고 이해하기 쉽게, weaknessDetail은 2문장 이내로 씁니다.\n\n타겟 정보: ${JSON.stringify(target)}\n누적 weakSignals: ${JSON.stringify(weakSignals.map((x:any)=>({round:x.round,order:x.order,wrong:x.wrong,slow:x.slow,severe:x.severe,seconds:x.seconds,expectedSeconds:x.expectedSeconds,limitSeconds:x.limitSeconds,problem:compactDna(x.problem)})))}\n현재 진단 데이터: ${JSON.stringify((diagnosis.sos_training_items??[]).map((item:any)=>({order:item.item_order,answer:item.student_answer,correct:item.is_correct,seconds:item.response_seconds,problem:compactDna(item.problem_bank_questions??{})})))}`}];
   for(const item of diagnosis.sos_training_items??[]){
     const photo=await signed(supabase,"sos-solution-photos",item.solution_photo_path);
     if(photo)content.push({type:"input_image",image_url:photo});
@@ -308,19 +317,26 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   const weakness=await openAiJson("",weaknessSchema,content);
 
   await supabase.from("sos_training_sessions").update({weakness_snapshot:weakness,decision:weakness.weaknessDetected?"AI_TRAINING_CREATING":"NO_CLEAR_WEAKNESS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);
+  let fallbackSignal:any=null;
   if(!weakness.weaknessDetected){
-    if(Number(diagnosis.round_no??1)<2){
-      const second=await createAutomaticSecondDiagnosis({supabase,studentId,parentDiagnosis:diagnosis});
-      return {...second,created:false,weakness};
-    }
-    await supabase.from("sos_training_sessions").update({decision:"NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);
-    return {created:false,weakness,nextStep:"DIAGNOSIS_COMPLETE_NO_WEAKNESS"};
+    if(Number(diagnosis.round_no??1)<2){const second=await createAutomaticSecondDiagnosis({supabase,studentId,parentDiagnosis:diagnosis});return {...second,created:false,weakness,weakSignalCount:weakSignals.length};}
+    if(strongestSignal){
+      fallbackSignal=strongestSignal;const p=fallbackSignal.problem??{},info=problemSubunit(p);weakness.weaknessDetected=true;
+      weakness.weaknessTitle=fallbackSignal.wrong?`${info?.subunit||p.topic||p.unit||"진단 오답"} 보완`:`${info?.subunit||p.topic||p.unit||"풀이속도"} 시간 보완`;
+      weakness.weaknessDetail=fallbackSignal.wrong?`진단 오답이 확인되어 해당 문항 DNA를 중심으로 보완합니다.${fallbackSignal.slow?" 풀이시간도 기준을 초과했습니다.":""}`:`정답이지만 시간취약 기준 ${fallbackSignal.limitSeconds}초를 초과해 ${fallbackSignal.seconds}초가 걸렸습니다. 같은 유형을 더 빠르고 안정적으로 풀도록 훈련합니다.`;
+      weakness.focusConcepts=[...(Array.isArray(p?.problem_dna?.concept?.core_concepts)?p.problem_dna.concept.core_concepts:[]),info?.subunit,p.topic,p.unit].filter(Boolean).slice(0,6);
+      weakness.evidence=[fallbackSignal.wrong?`진단 ${fallbackSignal.round}차 ${fallbackSignal.order}번 오답`:`진단 ${fallbackSignal.round}차 ${fallbackSignal.order}번 시간초과`,`풀이시간 ${fallbackSignal.seconds}초 / 시간취약 기준 ${fallbackSignal.limitSeconds}초`];
+      weakness.confidence=Math.max(Number(weakness.confidence)||0,fallbackSignal.wrong?90:82);
+      await supabase.from("sos_training_sessions").update({weakness_snapshot:weakness,decision:"AI_TRAINING_CREATING",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);
+    }else{await supabase.from("sos_training_sessions").update({decision:"NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);return {created:false,weakness,nextStep:"DIAGNOSIS_COMPLETE_NO_WEAKNESS",weakSignalCount:0};}
   }
+  const signalTarget=fallbackSignal?.problem?problemSubunit(fallbackSignal.problem):null;
+  const effectiveTarget=fallbackSignal?{...target,subject:signalTarget?.subject||fallbackSignal.problem?.subject||target.subject,sourceSubject:signalTarget?.subject||fallbackSignal.problem?.subject||target.sourceSubject,subunit:signalTarget?.subunit||fallbackSignal.problem?.topic||fallbackSignal.problem?.unit||target.subunit,sourceUnit:signalTarget?.subunit||fallbackSignal.problem?.unit||target.sourceUnit,subunitKey:signalTarget?.key||target.subunitKey,sourceDifficulty:Number(fallbackSignal.problem?.difficulty)||target.sourceDifficulty,diagnosisFallbackSignal:{wrong:fallbackSignal.wrong,slow:fallbackSignal.slow,severe:fallbackSignal.severe,seconds:fallbackSignal.seconds,limitSeconds:fallbackSignal.limitSeconds,sourceProblemId:String(fallbackSignal.problem?.id??"")}}:target;
 
-  const key=String(target.subunitKey??"");
+  const key=String(effectiveTarget.subunitKey??"");
   const meterResult=key?await supabase.from("sos_student_subunit_meters").select("difficulty_meter").eq("student_id",studentId).eq("subunit_key",key).maybeSingle():{data:null,error:null};
   if(meterResult.error)throw meterResult.error;
-  const baseline=clampMeter(meterResult.data?.difficulty_meter,Number(target.studentDifficultyMeter)||3);
+  const baseline=clampMeter(meterResult.data?.difficulty_meter,Number(effectiveTarget.studentDifficultyMeter)||3);
   const goal=sosTrainingGoalMeter(baseline);
 
   const usedResult=await supabase.from("sos_training_sessions").select("sos_training_items(problem_id)").eq("student_id",studentId);
@@ -332,8 +348,8 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
     .select("id,title,problem_code,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path")
     .eq("status","ACTIVE").eq("content_role","TRAINING");
   if(bank.error)throw bank.error;
-  const subject=String(target.subject??target.sourceSubject??"").trim();
-  const terms=[String(weakness.weaknessTitle??""),...(weakness.focusConcepts??[]),String(target.subunit??target.sourceUnit??"")].filter(Boolean);
+  const subject=String(effectiveTarget.subject??effectiveTarget.sourceSubject??"").trim();
+  const terms=[String(weakness.weaknessTitle??""),...(weakness.focusConcepts??[]),String(effectiveTarget.subunit??effectiveTarget.sourceUnit??"")].filter(Boolean);
   const pool=(bank.data??[])
     .filter((p:any)=>!used.has(String(p.id)))
     .filter((p:any)=>!subject||subjectKey(p.subject)===subjectKey(subject))
@@ -351,7 +367,7 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   const selectedProblems=selected.map((r:any)=>({...allowed.get(String(r.id)),aiRole:String(r.role),aiReason:String(r.reason)}));
   selectedProblems.sort((a:any,b:any)=>a.meter-b.meter||String(a.id).localeCompare(String(b.id)));
 
-  const snapshot={...target,weaknessTitle:weakness.weaknessTitle,weaknessDetail:weakness.weaknessDetail,focusConcepts:weakness.focusConcepts,baselineMeter:baseline,goalMeter:goal,studentDifficultyMeter:baseline,studentDifficultyLabel:meterLabel(baseline),aiTraining:true};
+  const snapshot={...effectiveTarget,weaknessTitle:weakness.weaknessTitle,weaknessDetail:weakness.weaknessDetail,focusConcepts:weakness.focusConcepts,baselineMeter:baseline,goalMeter:goal,studentDifficultyMeter:baseline,studentDifficultyLabel:meterLabel(baseline),aiTraining:true};
   const duplicateCheck=await supabase.from("sos_training_sessions").select("id").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",diagnosisSessionId).eq("round_no",1).eq("cycle_kind","BANK_TRAINING").order("created_at",{ascending:true}).limit(1);
   if(duplicateCheck.error)throw duplicateCheck.error;
   if((duplicateCheck.data??[]).length){
