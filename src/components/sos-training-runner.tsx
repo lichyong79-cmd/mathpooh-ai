@@ -3,7 +3,7 @@
 import type React from "react";
 import {useEffect,useMemo,useState} from "react";
 import SosProblemImage from "./sos-problem-image";
-import SosGeneratedQuestionPng from "./sos-generated-question-png";
+import SosGeneratedQuestionMathJax from "./sos-generated-question-mathjax";
 
 function fmt(seconds:number){
   const s=Math.max(0,Math.floor(seconds));
@@ -167,7 +167,8 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
       </div>:null}
       <div className="sos-diagnosis-image">
         {generated
-          ?<SosGeneratedQuestionPng
+          ?<SosGeneratedQuestionMathJax
+            displayLatex={String(item.problem?.displayLatex??"")}
             question={String(item.problem?.generatedText??"")}
             renderBlocks={item.problem?.renderBlocks}
             alt={`${index+1}번 AI 유사문항`}

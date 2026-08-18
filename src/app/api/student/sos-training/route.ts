@@ -123,6 +123,7 @@ export async function GET(){
             difficultyMeter:bank?.difficulty_meter??generated?.meter??null,
             imageUrl:bank?await signedQuestionImage(supabase,bank.question_image_path):"",
             renderBlocks:Array.isArray(generated?.renderBlocks)?generated.renderBlocks:[],
+            displayLatex:String(generated?.displayLatex??""),
             generatedText:generated?.question??"",
             generatedReason:generated?.reason??"",
             sourceTrainingOrder:generated?.sourceTrainingOrder??null,

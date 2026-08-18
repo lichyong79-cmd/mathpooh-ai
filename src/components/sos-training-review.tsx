@@ -3,7 +3,7 @@
 import type React from "react";
 import {useEffect,useMemo,useState} from "react";
 import SosProblemImage from "./sos-problem-image";
-import SosGeneratedQuestionPng from "./sos-generated-question-png";
+import SosGeneratedQuestionMathJax from "./sos-generated-question-mathjax";
 
 function fmt(seconds:number){const s=Math.max(0,Math.floor(seconds));return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;}
 type ReviewedState={answer:string;seconds:number;isCorrect:boolean;completed:boolean;explained?:boolean};
@@ -78,8 +78,9 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
         <span>{Number(item.problem?.sourceTrainingOrder)>0?`1차 훈련 ${item.problem.sourceTrainingOrder}번에서 파생 · `:""}핵심유형: {item.problem?.coreType||item.problem?.topic||"취약유형 보완"}</span>
       </div>:null}
       <div className="sos-diagnosis-image">{item.generated
-        ?<SosGeneratedQuestionPng
-          question={String(item.problem?.generatedText??"")}
+        ?<SosGeneratedQuestionMathJax
+          displayLatex={String(item.problem?.displayLatex??"")}
+            question={String(item.problem?.generatedText??"")}
           renderBlocks={item.problem?.renderBlocks}
           alt={`${item.order}번 AI 유사문항 오답`}
           kind={String(session?.cycle_kind??"")}

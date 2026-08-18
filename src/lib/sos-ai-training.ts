@@ -388,6 +388,12 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
 
 
 function validateGeneratedMathLayout(problem:any){
+  const latex=String(problem?.displayLatex??"").trim();
+  if(!latex)return "displayLatex 없음";
+  if(!/(\\\(|\\\[)/.test(latex))return "displayLatex에 MathJax 수식 구분자가 없음";
+  if(/\bx\^\([^)]*\)/.test(latex))return "displayLatex 수식 바깥 원시 지수표기";
+  if(/=\s*\{/.test(latex)&&!/\\begin\{cases\}/.test(latex))return "조각함수에 cases 환경이 없음";
+  if(/\blim[_\s]/.test(latex)&&!/\\lim/.test(latex))return "극한이 표준 LaTeX가 아님";
   const blocks=Array.isArray(problem?.renderBlocks)?problem.renderBlocks:[];
   if(!blocks.length)return "renderBlocks 없음";
   const math=blocks.filter((b:any)=>String(b?.type)==="mathml").map((b:any)=>String(b?.value??"")).join(" ");
@@ -439,8 +445,8 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
   const sourceSummary=sourceSlots.map((slot,index)=>({slot:slot.slot,trainingOrder:slot.trainingOrder,problemId:slot.problemId,sourceAnswer:slot.sourceAnswer,dna:slot.dna,hasOriginalImage:Boolean(sourceImages[index])}));
 
   if(kind==="HOMEWORK"){
-    const schema3={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:3,maxItems:3,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","renderBlocks","answer","solution","difficulty","meter","topic","reason","computedAnswer","verified"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:3},question:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:14,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"},computedAnswer:{type:"string"},verified:{type:"boolean"}}}}}};
-    const prompt3=`MATHPOOH SOS 3제 굳히기입니다. 원문 슬롯: ${JSON.stringify(sourceSummary)}. 정확히 3문항을 sourceSlot 1,2,3 순서로 만드세요. 원문의 핵심개념·풀이순서·질문유형을 유지하고 수치만 제한 변형하세요. 자유창작/새 개념 금지. 각 문항을 출제 후 처음부터 다시 풀어 computedAnswer를 적고 answer와 같고 유일한 정수(-999~999)일 때만 verified=true. question은 검수용 일반 텍스트입니다. 학생 표시용 renderBlocks를 반드시 함께 만드세요. renderBlocks는 문제를 위에서 아래 순서대로 나눈 배열입니다. 한국어 설명 문장은 type="text", 수학식은 type="mathml"로 분리하세요. mathml value는 반드시 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 문자열이어야 합니다. 지수는 <msup>, 아래첨자는 <msub>, 분수는 <mfrac>, 근호는 <msqrt>, 극한은 <munder> 또는 적절한 MathML, 조각함수/연립조건은 <mfenced><mtable> 또는 <mrow><mo>{</mo><mtable> 구조를 사용하세요. 학생 화면에 x^(...), x^{...}, \frac 같은 원시 수식 문자열이 보이지 않도록 모든 수학식을 실제 MathML 구조로 작성하세요. 특히 다음 규칙은 강제입니다. (1) 수학적 나눗셈은 절대로 <mo>/</mo> 또는 "/" 문자로 쓰지 말고 <mfrac><mrow>분자</mrow><mrow>분모</mrow></mfrac>를 사용합니다. (2) 조각함수는 일반 문자 "{"를 식 중간에 두지 말고, f(x)= 뒤에 <mo fence="true" stretchy="true">{</mo><mtable>...</mtable> 구조로 각 행의 식과 조건을 분리합니다. (3) 조건 (x≠0), (x=0)은 각각 mtable의 두 번째 열에 둡니다. (4) f(x)= 같은 함수 정의와 본문 문장을 한 줄에 억지로 붙이지 않습니다.`;
+    const schema3={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:3,maxItems:3,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","displayLatex","renderBlocks","answer","solution","difficulty","meter","topic","reason","computedAnswer","verified"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:3},question:{type:"string"},displayLatex:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:14,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"},computedAnswer:{type:"string"},verified:{type:"boolean"}}}}}};
+    const prompt3=`MATHPOOH SOS 3제 굳히기입니다. 원문 슬롯: ${JSON.stringify(sourceSummary)}. 정확히 3문항을 sourceSlot 1,2,3 순서로 만드세요. 원문의 핵심개념·풀이순서·질문유형을 유지하고 수치만 제한 변형하세요. 자유창작/새 개념 금지. 각 문항을 출제 후 처음부터 다시 풀어 computedAnswer를 적고 answer와 같고 유일한 정수(-999~999)일 때만 verified=true. question은 검수용 일반 텍스트입니다. displayLatex는 학생에게 실제로 보여줄 최종 문제 원본입니다. displayLatex에는 한국어 문제 문장과 수식을 모두 포함하되, 수식은 반드시 MathJax LaTeX 구분자 \\( ... \\) 또는 \\[ ... \\] 안에 작성하세요. 조각함수는 \\begin{cases} ... \\end{cases}, 분수는 \\frac{...}{...}, 극한은 \\lim_{...}, 적분은 \\int, 근호는 \\sqrt{...}, 행렬은 \\begin{pmatrix} ... \\end{pmatrix}처럼 표준 LaTeX를 사용하세요. displayLatex는 '교재에 그대로 인쇄 가능한 완성 문제'여야 하며 x^(...), x^{...} 같은 원시 텍스트 표기를 수식 바깥에 남기지 마세요. 학생 표시의 최우선 원본은 displayLatex입니다. renderBlocks는 하위 호환용으로만 함께 만드세요. renderBlocks는 문제를 위에서 아래 순서대로 나눈 배열입니다. 한국어 설명 문장은 type="text", 수학식은 type="mathml"로 분리하세요. mathml value는 반드시 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 문자열이어야 합니다. 지수는 <msup>, 아래첨자는 <msub>, 분수는 <mfrac>, 근호는 <msqrt>, 극한은 <munder> 또는 적절한 MathML, 조각함수/연립조건은 <mfenced><mtable> 또는 <mrow><mo>{</mo><mtable> 구조를 사용하세요. 학생 화면에 x^(...), x^{...}, \frac 같은 원시 수식 문자열이 보이지 않도록 모든 수학식을 실제 MathML 구조로 작성하세요. 특히 다음 규칙은 강제입니다. (1) 수학적 나눗셈은 절대로 <mo>/</mo> 또는 "/" 문자로 쓰지 말고 <mfrac><mrow>분자</mrow><mrow>분모</mrow></mfrac>를 사용합니다. (2) 조각함수는 일반 문자 "{"를 식 중간에 두지 말고, f(x)= 뒤에 <mo fence="true" stretchy="true">{</mo><mtable>...</mtable> 구조로 각 행의 식과 조건을 분리합니다. (3) 조건 (x≠0), (x=0)은 각각 mtable의 두 번째 열에 둡니다. (4) f(x)= 같은 함수 정의와 본문 문장을 한 줄에 억지로 붙이지 않습니다.`;
     const c3:any[]=[{type:"input_text",text:prompt3}];
     sourceSlots.forEach((slot,index)=>{c3.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])c3.push({type:"input_image",image_url:sourceImages[index]});else c3.push({type:"input_text",text:JSON.stringify(slot.dna)});});
     const g=await openAiJson(prompt3,schema3,c3,{timeoutMs:38000,effort:"low"});
@@ -454,7 +460,7 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
     const ins=await supabase.from("sos_training_items").insert(normalized.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:"AI 유사문항 3제 굳히기 · 바로미터 미반영",subunit_key:p.subunitKey})));if(ins.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw ins.error;}return {session:session.data,problems:normalized,fastHomework:true};
   }
 
-  const schema={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","renderBlocks","answer","solution","difficulty","meter","topic","reason"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},question:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:14,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"}}}}}};
+  const schema={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","displayLatex","renderBlocks","answer","solution","difficulty","meter","topic","reason"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},question:{type:"string"},displayLatex:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:14,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"}}}}}};
   let list:any[]=[];
   let invalidReason="";
   for(let generationAttempt=1;generationAttempt<=3;generationAttempt++){
@@ -481,7 +487,11 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
 - 모든 최종 정답은 -999~999 범위의 정수 하나여야 하며 answer에는 정수 문자열만 씁니다.
 - 생성한 문제를 직접 처음부터 풀어 조건 충분성, 모순 여부, 유일해, solution과 answer 일치를 자체 검산합니다.
 - question은 검수용 일반 텍스트입니다.
-- 학생 표시용 renderBlocks를 반드시 함께 생성합니다.
+- displayLatex는 학생에게 실제로 보여줄 최종 문제 원본입니다. 한국어 문장과 표준 LaTeX 수식을 함께 작성하고 수식은 반드시 \\( ... \\) 또는 \\[ ... \\] 구분자 안에 둡니다.
+- 조각함수는 \\begin{cases}, 분수는 \\frac, 극한은 \\lim, 적분은 \\int, 근호는 \\sqrt, 행렬은 표준 matrix 계열 환경을 사용합니다.
+- displayLatex는 교재에 바로 인쇄 가능한 완성 문제여야 하며 수식 바깥에 x^(...), x^{...}, / 같은 원시 수식 표기를 남기지 않습니다.
+- 학생 표시의 최우선 원본은 displayLatex입니다.
+- 학생 표시용 renderBlocks도 하위 호환용으로 함께 생성합니다.
 - 한국어 문장은 type="text", 모든 수학식은 type="mathml"입니다.
 - mathml value는 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 문자열이어야 합니다.
 - 분수는 mfrac, 지수는 msup, 아래첨자는 msub, 근호는 msqrt, 극한/조각함수/연립조건도 실제 MathML 구조로 작성합니다.

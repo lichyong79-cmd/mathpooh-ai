@@ -593,3 +593,101 @@
 .sos-generated-png-paper .math-block math[display="block"]{display:block;margin:4px 0 8px}
 .sos-generated-png-paper .math-block mtable{font-size:1em}
 .sos-generated-png-paper .math-block mtd{padding:.08em .25em}
+
+
+/* SOS263 · AI 생성문항 최종 MathJax 교재형 렌더러 */
+.sos-ai-paper{
+  width:100%;
+  box-sizing:border-box;
+  padding:24px 28px 26px;
+  background:#fff;
+  color:#111;
+  border-top:4px solid #247a4a;
+  font-family:"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",Arial,sans-serif;
+}
+.sos-ai-paper-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:24px;
+  padding-bottom:13px;
+  margin-bottom:18px;
+  border-bottom:1px solid #dce8e0;
+}
+.sos-ai-paper-head b{
+  font-size:15px;
+  letter-spacing:.03em;
+  color:#206d43;
+}
+.sos-ai-paper-head span{
+  font-size:14px;
+  font-weight:700;
+  color:#66756c;
+}
+.sos-ai-paper-topic{
+  margin-bottom:22px;
+  font-size:13px;
+  color:#77857c;
+  text-align:right;
+}
+.sos-ai-latex-body,
+.sos-ai-legacy-math,
+.sos-ai-legacy-text{
+  min-height:230px;
+  font-size:22px;
+  line-height:1.85;
+  font-weight:500;
+  word-break:keep-all;
+}
+.sos-ai-latex-body mjx-container[display="true"]{
+  margin:1.15em 0!important;
+  font-size:1.18em!important;
+  overflow-x:auto;
+  overflow-y:hidden;
+  padding:4px 0;
+}
+.sos-ai-latex-body mjx-container:not([display="true"]){
+  font-size:1.05em!important;
+}
+.sos-ai-legacy-math p,
+.sos-ai-legacy-text p{
+  margin:.45em 0;
+}
+.sos-ai-legacy-formula{
+  margin:1.05em 0 1.25em;
+  font-size:29px;
+  overflow-x:auto;
+}
+.sos-ai-legacy-formula math{
+  font-size:1.08em;
+}
+.sos-ai-typeset-wait{
+  display:grid;
+  place-content:center;
+  min-height:220px;
+  color:#247a4a;
+  font-weight:800;
+}
+.sos-ai-latex.loading .sos-ai-latex-body{
+  position:absolute;
+  left:-99999px;
+}
+.sos-ai-typeset-warning{
+  margin-top:16px;
+  padding:10px 12px;
+  border:1px solid #efcaca;
+  background:#fff7f7;
+  color:#9a3a3a;
+  font-size:12px;
+}
+.sos-ai-paper footer{
+  margin-top:24px;
+  text-align:right;
+  font-size:10px;
+  color:#a5aea8;
+}
+@media(max-width:720px){
+  .sos-ai-paper{padding:19px 16px 22px}
+  .sos-ai-latex-body,.sos-ai-legacy-math,.sos-ai-legacy-text{font-size:18px;line-height:1.72}
+  .sos-ai-legacy-formula{font-size:24px}
+}
