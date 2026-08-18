@@ -662,40 +662,27 @@ export async function POST(request:Request){
     if(phase==="DIAGNOSIS"){
       const wrong=total-correct;
 
-      // SOS252: 1차 진단 3/3 정답은 오답교정 화면에서 멈추지 않는다.
-      // 서버가 즉시 다음 추천 핵심공략 + 관련 진단 3문항을 자동 생성한다.
-      if(wrong===0 && Number(session.round_no??1)===1){
+      // SOS257: 오답이 없으면 진단 오답/결과확정 화면을 만들지 않고 즉시 다음 상태를 결정한다.
+      if(wrong===0){
         const complete=await supabase.from("sos_training_sessions").update({
-          status:"COMPLETED",correct_count:correct,decision:"PERFECT_DIAGNOSIS_AUTO_NEXT",updated_at:new Date().toISOString()
+          status:"COMPLETED",correct_count:correct,decision:"AI_WEAKNESS_ANALYSIS",updated_at:new Date().toISOString()
         }).eq("id",sessionId);
         if(complete.error)return NextResponse.json({message:complete.error.message},{status:400});
 
-        let next:any=null;
-        try{
-          next=await createAutomaticSecondDiagnosis({
-            supabase,studentId:String(student.id),
-            parentDiagnosis:{...session,id:sessionId,target_snapshot:session.target_snapshot}
-          });
-        }catch(error){
-          next={created:false,error:error instanceof Error?error.message:"2차 진단 자동 생성 실패",nextStep:"AUTO_SECOND_DIAGNOSIS_FAILED"};
-        }
-        await supabase.from("sos_training_activity_logs").insert({
-          session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",
-          detail:{phase,total,correct,rate,perfect:true,autoNext:true,nextStep:next?.nextStep,autoTargetSource:next?.autoTargetSource}
-        });
-        return NextResponse.json({
-          success:true,phase,status:"COMPLETED",correct,total,rate,results,wrongCount:0,
-          autoNext:true,nextStep:next?.nextStep??"AUTO_SECOND_DIAGNOSIS_FAILED",next,
-          message:next?.created?"1차 진단 만점 · 다음 추천 핵심공략의 2차 진단 3문항을 자동 준비했습니다.":"1차 진단 만점 · 다음 진단 자동 생성 확인이 필요합니다."
-        });
+        let ai:any=null;
+        try{ai=await analyzeDiagnosisAndCreateFirstTraining({supabase,studentId:String(student.id),diagnosisSessionId:sessionId});}
+        catch(error){ai={error:error instanceof Error?error.message:"진단 AI 분석 실패",nextStep:"AI_REVIEW_REQUIRED"};}
+        const nextStep=ai?.created||ai?.existing?"FIRST_TRAINING_ASSIGNED":ai?.nextStep??"AI_REVIEW_REQUIRED";
+        await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,reviewRequired:false,autoAnalysis:true,nextStep,roundNo:Number(session.round_no??1)}});
+        return NextResponse.json({success:true,phase,status:"COMPLETED",correct,total,rate,results,wrongCount:0,autoNext:true,ai,nextStep,
+          message:nextStep==="SECOND_DIAGNOSIS_ASSIGNED"?"진단 완료 · 2차 진단을 자동 준비했습니다.":nextStep==="FIRST_TRAINING_ASSIGNED"?"진단 완료 · 정오답과 풀이시간을 분석해 1차 맞춤훈련을 준비했습니다.":nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS"?"1·2차 진단에서 오답과 시간취약이 없어 이번 SOS를 완료했습니다.":"진단 완료 · 다음 학습 준비 상태를 확인합니다."});
       }
 
-      const update=await supabase.from("sos_training_sessions").update({
-        status:"RETRAIN",correct_count:correct,decision:wrong>0?"DIAGNOSIS_REVIEW_REQUIRED":"DIAGNOSIS_RESULT_REVIEW_READY",updated_at:new Date().toISOString()
-      }).eq("id",sessionId);
+      // 오답이 있을 때만 진단 오답 교정 단계로 보낸다.
+      const update=await supabase.from("sos_training_sessions").update({status:"RETRAIN",correct_count:correct,decision:"DIAGNOSIS_REVIEW_REQUIRED",updated_at:new Date().toISOString()}).eq("id",sessionId);
       if(update.error)return NextResponse.json({message:update.error.message},{status:400});
-      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,reviewRequired:wrong>0,reportReady:true}});
-      return NextResponse.json({success:true,phase,status:"RETRAIN",correct,total,rate,decision:wrong>0?"DIAGNOSIS_REVIEW_REQUIRED":"DIAGNOSIS_RESULT_REVIEW_READY",results,wrongCount:wrong,nextStep:"REPORT"});
+      await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"SESSION_SUBMITTED",detail:{phase,total,correct,rate,reviewRequired:true,reportReady:true}});
+      return NextResponse.json({success:true,phase,status:"RETRAIN",correct,total,rate,decision:"DIAGNOSIS_REVIEW_REQUIRED",results,wrongCount:wrong,nextStep:"REPORT"});
     }
 
     const meter=await currentTargetMeter(supabase,String(student.id),session);

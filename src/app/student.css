@@ -487,12 +487,6 @@
 @media(max-width:700px){.flow-node.now{min-width:104px;transform:none}.sos-flow-line{padding-top:7px}}
 
 
-/* SOS256 · 원본 문항번호 자동 절단. 본문 위 overlay 금지 */
-.sos-problem-image-wrap{position:relative;display:block;max-width:100%;line-height:0;overflow:hidden;background:#fff}
-.sos-problem-image-wrap>img{display:block;max-width:100%;height:auto}
-.sos-problem-image-wrap.number-crop{width:100%;overflow:hidden}
-.sos-problem-image-wrap.number-crop>img.number-crop-pending{visibility:hidden}
-.sos-problem-image-wrap.number-crop>img.number-crop-ready{visibility:visible}
 
 /* SOS231 · AI 유사문항 출처/핵심유형 안내 */
 .sos-generated-origin{margin:0 0 12px;padding:11px 13px;border-radius:12px;border:1px solid #ead8bf;background:#fff8ef;color:#6c4a20;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -557,3 +551,11 @@
 }
 .sos-next-stage-cta:hover{filter:brightness(.97)}
 .sos-next-stage-cta:disabled{opacity:.55;cursor:wait}
+
+/* SOS257 · 원본 이미지 이동 금지 / 번호 토큰만 마스킹 */
+.sos-problem-image-wrap{position:relative;display:block;max-width:100%;line-height:0;overflow:hidden;background:#fff}
+.sos-problem-image-wrap>img{display:block;width:100%;max-width:100%;height:auto;transform:none!important}
+.sos-problem-image-wrap.number-mask>img.number-mask-pending{visibility:hidden}
+.sos-problem-image-wrap.number-mask>img.number-mask-ready{visibility:visible}
+.sos-number-token-mask{position:absolute;z-index:6;background:#fff;display:flex;align-items:center;justify-content:flex-start;padding:1px 2px;pointer-events:none;overflow:hidden;box-sizing:border-box}
+.sos-number-token-mask>img{display:block!important;width:auto!important;height:72%!important;max-width:92%!important;object-fit:contain!important;margin:0!important}

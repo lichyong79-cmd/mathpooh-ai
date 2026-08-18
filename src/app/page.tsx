@@ -419,19 +419,20 @@ function SosFinalCompletion({terminal,sessions,meters,onSelect}:{terminal:any;se
   const firstCorrect=chain.filter((x:any)=>x.phase==="TRAINING").reduce((n:number,x:any)=>n+Number(x.correct_count??0),0);
   const totalSolved=chain.filter((x:any)=>x.phase==="TRAINING").reduce((n:number,x:any)=>n+Number(x.total_count??0),0);
   const homework=String(terminal?.cycle_kind)==="HOMEWORK";
+  const diagnosisOnly=terminal?.phase==="DIAGNOSIS";
   const stageLabel=(x:any)=>x.phase==="DIAGNOSIS"?`진단 ${x.round_no}차`:String(x.cycle_kind)==="HOMEWORK"?"AI 유사문항 3제 굳히기":Number(x.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련";
   return <div className="sos-final-completion">
     <div className="sos-confetti" aria-hidden="true">{Array.from({length:34},(_,i)=><i key={i} style={{left:`${(i*37)%100}%`,animationDelay:`-${(i%9)*.17}s`,animationDuration:`${2.2+(i%5)*.22}s`}}/>)}</div>
     <section className="sos-final-hero">
       <div className="sos-final-badge">✓ SOS COMPLETE</div>
-      <h2>SOS 공략 완료!</h2>
+      <h2>{diagnosisOnly?"SOS 진단 완료!":"SOS 공략 완료!"}</h2>
       <h3>금주의 학습이 모두 종료되었습니다.</h3>
-      <p>{homework?"1차 훈련 통과 후 AI 유사문항 3제 굳히기와 필요한 오답 교정까지 모두 완료했습니다.":"2차 훈련과 남은 오답 교정까지 모두 완료했습니다."}</p>
+      <p>{diagnosisOnly?"1·2차 진단 전체에서 오답과 시간취약이 확인되지 않아 추가 집중훈련 없이 이번 SOS를 완료했습니다.":homework?"1차 훈련 통과 후 AI 유사문항 3제 굳히기와 필요한 오답 교정까지 모두 완료했습니다.":"2차 훈련과 남은 오답 교정까지 모두 완료했습니다."}</p>
     </section>
     <section className="sos-final-summary">
       <article><small>공략 영역</small><b>{terminal?.target_snapshot?.subunit??"SOS 취약영역"}</b><span>{terminal?.weakness_snapshot?.weaknessTitle??training1?.weakness_snapshot?.weaknessTitle??"맞춤 취약점 보완"}</span></article>
       <article><small>바로미터</small><b>{baseline>0?baseline.toFixed(2):"-"} → {finalMeter>0?finalMeter.toFixed(2):"-"}</b><span>{delta>=0?"+":""}{delta.toFixed(2)} 변화 {goal>0?`· 목표 ${goal.toFixed(2)}`:""}</span></article>
-      <article><small>훈련 기록</small><b>{firstCorrect}/{totalSolved}</b><span>최초 정답 합계 · {homework?"3제 굳히기는 바로미터 미반영":"2차 훈련까지 반영"}</span></article>
+      <article><small>{diagnosisOnly?"진단 결과":"훈련 기록"}</small><b>{diagnosisOnly?`${terminal?.correct_count??0}/${terminal?.total_count??0}`:`${firstCorrect}/${totalSolved}`}</b><span>{diagnosisOnly?"추가 집중훈련 불필요 판정":"최초 정답 합계 · "+(homework?"3제 굳히기는 바로미터 미반영":"2차 훈련까지 반영")}</span></article>
     </section>
     <div className="sos-final-route">{chain.map((x:any,index:number)=><span key={x.id}><i>✓</i>{stageLabel(x)}{index<chain.length-1?<em>→</em>:null}</span>)}</div>
     <button type="button" className="sos-final-result-button" onClick={()=>setShowResults(v=>!v)}>{showResults?"결과 닫기":"전체 결과보기"}</button>
@@ -580,7 +581,8 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
       setBusy("");
     }
   }
-  const finalCompleted=Boolean(active&&active.phase==="TRAINING"&&["COMPLETED","PASSED"].includes(String(active.status))&&(String(active.cycle_kind)==="HOMEWORK"||Number(active.round_no)===2));
+  const diagnosisClearCompleted=Boolean(active&&active.phase==="DIAGNOSIS"&&Number(active.round_no)===2&&String(active.status)==="COMPLETED"&&String(active.decision)==="NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS");
+  const finalCompleted=Boolean(active&&((active.phase==="TRAINING"&&["COMPLETED","PASSED"].includes(String(active.status))&&(String(active.cycle_kind)==="HOMEWORK"||Number(active.round_no)===2))||diagnosisClearCompleted));
 
   async function start(session:any){
     setBusy("start");setNotice("");
@@ -686,13 +688,11 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             </div>:null}
 
             {active.status==="IN_PROGRESS"&&active.phase==="DIAGNOSIS"?<SosDiagnosisRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              if(json?.autoNext&&json?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED"){
-                setNotice(`1차 진단 ${json.correct}/${json.total} 만점 · 다음 추천 핵심공략과 진단 3문항을 자동 선정했습니다. 2차 진단으로 이어집니다.`);
-              }else{
-                setNotice(json.correct===json.total
-                  ? `진단 응시 완료 · ${json.correct}/${json.total} 정답 · 다음 진단을 자동 준비하고 있습니다.`
-                  : `진단 응시 완료 · ${json.correct}/${json.total} 정답 · 성적표에서 오답을 교정한 뒤 AI 취약점 분석으로 넘어갑니다.`);
-              }
+              if(json?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED")setNotice(`진단 ${json.correct}/${json.total} 정답 · 정오답과 풀이시간 분석 완료 · 2차 진단 3문항으로 자동 이어집니다.`);
+              else if(json?.nextStep==="FIRST_TRAINING_ASSIGNED")setNotice(`진단 ${json.correct}/${json.total} 정답 · 보완 신호를 확인해 1차 맞춤훈련 10문항을 자동 준비했습니다.`);
+              else if(json?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS")setNotice("1·2차 진단 전체에서 오답과 시간취약이 확인되지 않아 이번 SOS를 완료했습니다.");
+              else if(Number(json?.wrongCount??0)>0)setNotice(`진단 ${json.correct}/${json.total} 정답 · 오답 ${json.wrongCount}문항을 먼저 교정해 주세요.`);
+              else setNotice(json?.message||"진단 분석이 완료되었습니다. 다음 학습을 확인합니다.");
               await load();await onRefresh();
             }}/>:null}
 
