@@ -67,6 +67,129 @@ function inlineSimple(expr:string):string{
   return out.join("");
 }
 
+
+function stripOuterGroup(v:string){
+  let s=v.trim();
+  if((s.startsWith("{")&&s.endsWith("}"))||(s.startsWith("(")&&s.endsWith(")"))){
+    let depth=0,ok=true;
+    for(let i=0;i<s.length;i++){
+      if(s[i]==="{"||s[i]==="(")depth++;
+      if(s[i]==="}"||s[i]===")")depth--;
+      if(depth===0&&i<s.length-1){ok=false;break;}
+    }
+    if(ok)s=s.slice(1,-1).trim();
+  }
+  return s;
+}
+
+function topLevelSlash(expr:string){
+  let par=0,brace=0,bracket=0;
+  for(let i=0;i<expr.length;i++){
+    const c=expr[i];
+    if(c==="(")par++; else if(c===")")par=Math.max(0,par-1);
+    else if(c==="{")brace++; else if(c==="}")brace=Math.max(0,brace-1);
+    else if(c==="[")bracket++; else if(c==="]")bracket=Math.max(0,bracket-1);
+    else if(c==="/"&&par===0&&brace===0&&bracket===0)return i;
+  }
+  return -1;
+}
+
+function structuredExprMathMl(expr:string):string{
+  let s=stripOuterGroup(String(expr??"").trim());
+  if(!s)return "";
+
+  // 최상위 분수는 slash 문자가 아니라 반드시 mfrac로 변환.
+  const slash=topLevelSlash(s);
+  if(slash>0&&slash<s.length-1){
+    const numerator=s.slice(0,slash).trim();
+    const denominator=s.slice(slash+1).trim();
+    return `<mfrac><mrow>${structuredExprMathMl(numerator)}</mrow><mrow>${structuredExprMathMl(denominator)}</mrow></mfrac>`;
+  }
+
+  // sqrt(...)
+  const sqrt=s.match(/^√\s*\(([\s\S]+)\)$/);
+  if(sqrt)return `<msqrt><mrow>${structuredExprMathMl(sqrt[1])}</mrow></msqrt>`;
+
+  // function-like f(x)
+  const fn=s.match(/^([A-Za-z]+)\(([\s\S]*)\)$/);
+  if(fn)return `<mrow><mi>${esc(fn[1])}</mi><mo>(</mo>${structuredExprMathMl(fn[2])}<mo>)</mo></mrow>`;
+
+  // Delegate ordinary tokens/superscripts/subscripts.
+  return inlineSimple(s);
+}
+
+function conditionMathMl(condition:string){
+  const s=condition.trim()
+    .replace(/!=/g,"≠").replace(/<=/g,"≤").replace(/>=/g,"≥");
+  return structuredExprMathMl(s);
+}
+
+function piecewiseBlockFromQuestion(question:string):RenderBlock|null{
+  const q=String(question??"")
+    .replace(/\r/g," ")
+    .replace(/[ \t]+/g," ")
+    .replace(/\n+/g," ")
+    .trim();
+
+  // f(x) = { first (x≠0) { second (x=0) 같은 기존 생성문항 복구.
+  const head=q.match(/([A-Za-z]+)\(([^)]*)\)\s*=\s*\{/);
+  if(!head)return null;
+  const fnName=head[1],fnArg=head[2];
+  const rest=q.slice((head.index??0)+head[0].length);
+
+  const c1=rest.match(/\(\s*([^()]*(?:≠|!=)[^()]*)\s*\)/);
+  const c2=rest.match(/\(\s*([^()]*(?:=)[^()]*)\s*\)(?![\s\S]*\(\s*[^()]*(?:=|≠|!=)[^()]*\s*\))/);
+  if(!c1||!c2)return null;
+
+  const firstEnd=c1.index??-1;
+  if(firstEnd<=0)return null;
+  let firstExpr=rest.slice(0,firstEnd).replace(/^[{;,:\s]+|[{;,:\s]+$/g,"").trim();
+
+  const after1=(c1.index??0)+c1[0].length;
+  const between=rest.slice(after1,c2.index??rest.length);
+  let secondExpr=between.replace(/^[{;,:\s]+|[{;,:\s]+$/g,"").trim();
+  if(!secondExpr){
+    // 흔한 "{ 0 (x=0)" 형태.
+    const m=rest.slice(after1).match(/^[\s{;,]*(.*?)(?=\(\s*[^()]*=\s*[^()]*\))/);
+    secondExpr=String(m?.[1]??"").replace(/^[{;,:\s]+|[{;,:\s]+$/g,"").trim();
+  }
+  if(!firstExpr||!secondExpr)return null;
+
+  const math=`<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+    <mrow>
+      <mi>${esc(fnName)}</mi><mo>(</mo>${structuredExprMathMl(fnArg)}<mo>)</mo><mo>=</mo>
+      <mo fence="true" stretchy="true">{</mo>
+      <mtable columnalign="left left" columnspacing="1.2em" rowspacing="0.45em">
+        <mtr><mtd><mrow>${structuredExprMathMl(firstExpr)}</mrow></mtd><mtd><mrow><mo>(</mo>${conditionMathMl(c1[1])}<mo>)</mo></mrow></mtd></mtr>
+        <mtr><mtd><mrow>${structuredExprMathMl(secondExpr)}</mrow></mtd><mtd><mrow><mo>(</mo>${conditionMathMl(c2[1])}<mo>)</mo></mrow></mtd></mtr>
+      </mtable>
+    </mrow>
+  </math>`;
+
+  // piecewise 정의식 앞/뒤의 한국어 문장도 살린다.
+  const before=q.slice(0,head.index??0).trim();
+  const tailStart=(c2.index??0)+c2[0].length;
+  const tail=rest.slice(tailStart).replace(/^[,.;:\s]+/,"").trim();
+  const blocks:RenderBlock[]=[];
+  if(before)blocks.push({type:"text",value:before});
+  blocks.push({type:"mathml",value:math});
+  if(tail)blocks.push({type:"text",value:tail});
+  return blocks.length?blocks:null;
+}
+
+function hasBadMathStructure(raw:any,question:string){
+  if(!Array.isArray(raw))return true;
+  const maths=raw.filter((b:any)=>String(b?.type)==="mathml").map((b:any)=>String(b?.value??""));
+  if(!maths.length)return true;
+  const joined=maths.join(" ");
+  // slash가 수학 연산자로 남으면 실제 분수 조판이 아니므로 재구성.
+  if(/<mo[^>]*>\s*\/\s*<\/mo>/i.test(joined)||/<mtext[^>]*>\s*\/\s*<\/mtext>/i.test(joined))return true;
+  // 조각함수처럼 보이는데 mtable이 없으면 잘못된 구조.
+  const piecewise=/=\s*\{/.test(question)&&/\([^)]*(?:≠|!=)[^)]*\)/.test(question)&&/\([^)]*=[^)]*\)/.test(question);
+  if(piecewise&&!/<mtable[\s>]/i.test(joined))return true;
+  return false;
+}
+
 function legacyBlocks(question:string):RenderBlock[]{
   const lines=String(question??"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
   if(!lines.length)return [{type:"text",value:"문항 내용을 불러오지 못했습니다."}];
@@ -84,13 +207,19 @@ function legacyBlocks(question:string):RenderBlock[]{
 }
 
 function normalize(question:string,raw:any):RenderBlock[]{
-  if(Array.isArray(raw)){
+  const piecewise=piecewiseBlockFromQuestion(question);
+
+  if(Array.isArray(raw)&&!hasBadMathStructure(raw,question)){
     const arr=raw.map((b:any)=>({
       type:String(b?.type)==="mathml"?"mathml":"text",
       value:String(b?.value??"").trim()
     })).filter((b:any)=>b.value) as RenderBlock[];
     if(arr.some(b=>b.type==="mathml"&&safeMathMl(b.value)))return arr;
   }
+
+  // SOS262: 이미 DB에 저장된 잘못된 조각함수/분수 MathML도 즉시 복구.
+  if(piecewise)return piecewise;
+
   return legacyBlocks(question);
 }
 

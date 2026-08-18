@@ -386,6 +386,22 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   return {created:true,weakness,session,baselineMeter:baseline,goalMeter:goal};
 }
 
+
+function validateGeneratedMathLayout(problem:any){
+  const blocks=Array.isArray(problem?.renderBlocks)?problem.renderBlocks:[];
+  if(!blocks.length)return "renderBlocks 없음";
+  const math=blocks.filter((b:any)=>String(b?.type)==="mathml").map((b:any)=>String(b?.value??"")).join(" ");
+  if(!math.trim())return "MathML 수식 블록 없음";
+  if(/<mo[^>]*>\s*\/\s*<\/mo>/i.test(math)||/<mtext[^>]*>\s*\/\s*<\/mtext>/i.test(math))return "분수를 / 문자로 표기함(mfrac 필요)";
+  if(/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end|left|right)\b/.test(math))return "MathML 안에 LaTeX 명령이 남음";
+  const q=String(problem?.question??"");
+  const looksPiecewise=/=\s*\{/.test(q)&&/\([^)]*(?:≠|!=)[^)]*\)/.test(q)&&/\([^)]*=[^)]*\)/.test(q);
+  if(looksPiecewise&&!/<mtable[\s>]/i.test(math))return "조각함수인데 mtable 구조가 없음";
+  if(looksPiecewise&&!/<mo[^>]*(?:stretchy=["']true["'])?[^>]*>\s*\{\s*<\/mo>/i.test(math))return "조각함수 큰 왼쪽 중괄호가 없음";
+  if(q.includes("/")&&!/<mfrac[\s>]/i.test(math))return "문제에 분수 구조가 있는데 mfrac이 없음";
+  return "";
+}
+
 export async function generateSimilarTraining(args:{supabase:any;studentId:string;firstTrainingSessionId:string;count:3|10;kind:"HOMEWORK"|"SECOND_TRAINING"}){
   const {supabase,studentId,firstTrainingSessionId,count,kind}=args;
   const source=await supabase.from("sos_training_sessions")
@@ -424,12 +440,12 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
 
   if(kind==="HOMEWORK"){
     const schema3={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:3,maxItems:3,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","renderBlocks","answer","solution","difficulty","meter","topic","reason","computedAnswer","verified"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:3},question:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:14,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"},computedAnswer:{type:"string"},verified:{type:"boolean"}}}}}};
-    const prompt3=`MATHPOOH SOS 3제 굳히기입니다. 원문 슬롯: ${JSON.stringify(sourceSummary)}. 정확히 3문항을 sourceSlot 1,2,3 순서로 만드세요. 원문의 핵심개념·풀이순서·질문유형을 유지하고 수치만 제한 변형하세요. 자유창작/새 개념 금지. 각 문항을 출제 후 처음부터 다시 풀어 computedAnswer를 적고 answer와 같고 유일한 정수(-999~999)일 때만 verified=true. question은 검수용 일반 텍스트입니다. 학생 표시용 renderBlocks를 반드시 함께 만드세요. renderBlocks는 문제를 위에서 아래 순서대로 나눈 배열입니다. 한국어 설명 문장은 type="text", 수학식은 type="mathml"로 분리하세요. mathml value는 반드시 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 문자열이어야 합니다. 지수는 <msup>, 아래첨자는 <msub>, 분수는 <mfrac>, 근호는 <msqrt>, 극한은 <munder> 또는 적절한 MathML, 조각함수/연립조건은 <mfenced><mtable> 또는 <mrow><mo>{</mo><mtable> 구조를 사용하세요. 학생 화면에 x^(...), x^{...}, \frac 같은 원시 수식 문자열이 보이지 않도록 모든 수학식을 실제 MathML 구조로 작성하세요.`;
+    const prompt3=`MATHPOOH SOS 3제 굳히기입니다. 원문 슬롯: ${JSON.stringify(sourceSummary)}. 정확히 3문항을 sourceSlot 1,2,3 순서로 만드세요. 원문의 핵심개념·풀이순서·질문유형을 유지하고 수치만 제한 변형하세요. 자유창작/새 개념 금지. 각 문항을 출제 후 처음부터 다시 풀어 computedAnswer를 적고 answer와 같고 유일한 정수(-999~999)일 때만 verified=true. question은 검수용 일반 텍스트입니다. 학생 표시용 renderBlocks를 반드시 함께 만드세요. renderBlocks는 문제를 위에서 아래 순서대로 나눈 배열입니다. 한국어 설명 문장은 type="text", 수학식은 type="mathml"로 분리하세요. mathml value는 반드시 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 문자열이어야 합니다. 지수는 <msup>, 아래첨자는 <msub>, 분수는 <mfrac>, 근호는 <msqrt>, 극한은 <munder> 또는 적절한 MathML, 조각함수/연립조건은 <mfenced><mtable> 또는 <mrow><mo>{</mo><mtable> 구조를 사용하세요. 학생 화면에 x^(...), x^{...}, \frac 같은 원시 수식 문자열이 보이지 않도록 모든 수학식을 실제 MathML 구조로 작성하세요. 특히 다음 규칙은 강제입니다. (1) 수학적 나눗셈은 절대로 <mo>/</mo> 또는 "/" 문자로 쓰지 말고 <mfrac><mrow>분자</mrow><mrow>분모</mrow></mfrac>를 사용합니다. (2) 조각함수는 일반 문자 "{"를 식 중간에 두지 말고, f(x)= 뒤에 <mo fence="true" stretchy="true">{</mo><mtable>...</mtable> 구조로 각 행의 식과 조건을 분리합니다. (3) 조건 (x≠0), (x=0)은 각각 mtable의 두 번째 열에 둡니다. (4) f(x)= 같은 함수 정의와 본문 문장을 한 줄에 억지로 붙이지 않습니다.`;
     const c3:any[]=[{type:"input_text",text:prompt3}];
     sourceSlots.forEach((slot,index)=>{c3.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])c3.push({type:"input_image",image_url:sourceImages[index]});else c3.push({type:"input_text",text:JSON.stringify(slot.dna)});});
     const g=await openAiJson(prompt3,schema3,c3,{timeoutMs:38000,effort:"low"});
     const list3=Array.isArray(g?.problems)?g.problems:[];
-    const errs=list3.map((p:any,i:number)=>{const a=String(p?.answer??"").trim(),c=String(p?.computedAnswer??"").trim();if(Number(p?.sourceSlot)!==i+1)return `${i+1}번 슬롯 오류`;if(p?.verified!==true)return `${i+1}번 검증 실패`;if(!/^-?\d+$/.test(a)||a!==c)return `${i+1}번 정답 불일치`;const n=Number(a);if(!Number.isSafeInteger(n)||n<-999||n>999)return `${i+1}번 정답 범위`;if(!String(p?.question??"").trim()||!String(p?.solution??"").trim())return `${i+1}번 본문/풀이 없음`;return "";}).filter(Boolean);
+    const errs=list3.map((p:any,i:number)=>{const a=String(p?.answer??"").trim(),c=String(p?.computedAnswer??"").trim();if(Number(p?.sourceSlot)!==i+1)return `${i+1}번 슬롯 오류`;if(p?.verified!==true)return `${i+1}번 검증 실패`;if(!/^-?\d+$/.test(a)||a!==c)return `${i+1}번 정답 불일치`;const n=Number(a);if(!Number.isSafeInteger(n)||n<-999||n>999)return `${i+1}번 정답 범위`;if(!String(p?.question??"").trim()||!String(p?.solution??"").trim())return `${i+1}번 본문/풀이 없음`;const layoutError=validateGeneratedMathLayout(p);if(layoutError)return `${i+1}번 수식조판 오류: ${layoutError}`;return "";}).filter(Boolean);
     if(list3.length!==3||errs.length)throw new Error(`3제 굳히기 생성 검증 실패: ${list3.length!==3?`문항수 ${list3.length}/3`:errs.join(", ")}`);
     const target=s.target_snapshot??{};
     const normalized=list3.map((p:any,index:number)=>{const ss=sourceSlots[index],si=ranked[index%ranked.length]??null,sp=si?.problem_bank_questions??{};return {...p,subject:target.subject??target.sourceSubject??"",majorUnit:target.majorUnit??target.sourceMajorUnit??"",subunit:target.subunit??target.sourceUnit??"",subunitKey:target.subunitKey??"",meter:clampMeter(p.meter,p.difficulty),generated:true,generatedIndex:index+1,sourceTrainingOrder:Number(ss?.trainingOrder??si?.item_order??0)||null,sourceProblemId:ss?.problemId??sp?.id??null,sourceTopic:String(sp?.topic??""),coreType:String(p.topic??weakness?.focusConcepts?.[0]??weakness?.weaknessTitle??"핵심 취약유형"),generationKind:"HOMEWORK",generationPolicy:"SOURCE_LIMITED_TRANSFORM_FAST_VERIFY_V2",barometerExcluded:true,verification:{method:"ONE_CALL_RESOLVE_CHECK",valid:true,computedAnswer:String(p.computedAnswer)}};});
@@ -470,6 +486,9 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
 - mathml value는 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 문자열이어야 합니다.
 - 분수는 mfrac, 지수는 msup, 아래첨자는 msub, 근호는 msqrt, 극한/조각함수/연립조건도 실제 MathML 구조로 작성합니다.
 - 학생 화면에 x^(...), x^{...}, \frac, \lim 같은 원시 문자열이 나타나지 않게 합니다.
+- "/" 기호로 분수를 표현하지 않습니다. 모든 수학적 분수는 반드시 <mfrac>을 사용합니다.
+- 조각함수는 <mo fence="true" stretchy="true">{</mo> + <mtable>로 구성하고 각 행의 식/조건을 서로 다른 열에 둡니다.
+- 조각함수 조건을 일반 텍스트 한 줄에 붙여 쓰지 않습니다.
 - reason에는 원문의 무엇을 유지하고 어떤 수치/조건만 바꿨는지 짧게 적습니다.
 - 1차 미달자의 2차 정식훈련이므로 원문 풀이 구조는 유지하고 수치 복잡도만 같거나 조금 낮게 시작해 점진적으로 회복시킵니다.
 ${invalidReason?`이전 생성은 검증에서 탈락했습니다: ${invalidReason}. 같은 오류를 반복하지 마세요.`:""}`;
@@ -492,6 +511,7 @@ ${invalidReason?`이전 생성은 검증에서 탈락했습니다: ${invalidReas
       const question=String(problem?.question??"").trim();
       const solution=String(problem?.solution??"").trim();
       if(!question||!solution)return `${index+1}번 문제/풀이가 비어 있음`;
+      const layoutError=validateGeneratedMathLayout(problem);if(layoutError)return `${index+1}번 수식조판 오류: ${layoutError}`;
       if(/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end|left|right)\b/.test(question))return `${index+1}번 본문에 LaTeX 명령이 남아 있음`;
       if(question.length<18)return `${index+1}번 문제 본문이 너무 짧음`;
       return "";

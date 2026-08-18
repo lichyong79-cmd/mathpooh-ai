@@ -584,3 +584,12 @@
 .sos-generated-png-paper .math-block{font-size:32px;line-height:1.35;padding:4px 0;overflow:visible}
 .sos-generated-png-paper math{font-size:1.02em}
 .sos-generated-png-paper footer{text-align:right;margin-top:30px;font-size:11px;color:#a4aea8}
+
+
+/* SOS262 · 생성문항 조판 간격/조각함수 */
+.sos-generated-png-paper header{gap:32px}
+.sos-generated-png-paper header b{flex:0 0 auto;white-space:nowrap}
+.sos-generated-png-paper header span{flex:1 1 auto;text-align:right;line-height:1.35;overflow-wrap:anywhere}
+.sos-generated-png-paper .math-block math[display="block"]{display:block;margin:4px 0 8px}
+.sos-generated-png-paper .math-block mtable{font-size:1em}
+.sos-generated-png-paper .math-block mtd{padding:.08em .25em}
