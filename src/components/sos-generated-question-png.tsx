@@ -124,7 +124,7 @@ function conditionMathMl(condition:string){
   return structuredExprMathMl(s);
 }
 
-function piecewiseBlockFromQuestion(question:string):RenderBlock|null{
+function piecewiseBlockFromQuestion(question:string):RenderBlock[]|null{
   const q=String(question??"")
     .replace(/\r/g," ")
     .replace(/[ \t]+/g," ")
