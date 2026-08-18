@@ -561,3 +561,26 @@
 .sos-next-stage-cta:hover{filter:brightness(.97)}
 .sos-next-stage-cta:disabled{opacity:.55;cursor:wait}
 
+
+
+/* SOS260 · AI 유사문항 실제 PNG */
+.sos-generated-png-wrap{width:100%;background:#fff}
+.sos-generated-png{display:block;width:100%;height:auto;background:#fff}
+.sos-generated-png-loading{min-height:320px;display:grid;place-content:center;text-align:center;gap:8px;background:#fbfdfb;color:#2b7048}
+.sos-generated-png-loading b{font-size:18px}.sos-generated-png-loading span{font-size:13px;color:#7b8880}
+.sos-generated-png-stage{
+  position:fixed!important;left:-14000px!important;top:0!important;
+  width:1040px!important;visibility:visible!important;z-index:-9999!important;
+  pointer-events:none!important;background:#fff!important;
+}
+.sos-generated-png-paper{
+  box-sizing:border-box;width:1040px;min-height:420px;padding:38px 58px 46px;
+  background:#fff;color:#111;font-family:Arial,"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+}
+.sos-generated-png-paper header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #dbe8df;padding-bottom:14px;margin-bottom:30px}
+.sos-generated-png-paper header b{font-size:19px;color:#216b43}.sos-generated-png-paper header span{font-size:14px;color:#7c8881}
+.sos-generated-png-paper main{display:grid;gap:14px;font-size:29px;font-weight:600;line-height:1.55;letter-spacing:-.025em}
+.sos-generated-png-paper .text-block{white-space:pre-wrap;word-break:keep-all}
+.sos-generated-png-paper .math-block{font-size:32px;line-height:1.35;padding:4px 0;overflow:visible}
+.sos-generated-png-paper math{font-size:1.02em}
+.sos-generated-png-paper footer{text-align:right;margin-top:30px;font-size:11px;color:#a4aea8}

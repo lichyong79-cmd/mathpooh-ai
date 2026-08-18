@@ -423,8 +423,8 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
   const sourceSummary=sourceSlots.map((slot,index)=>({slot:slot.slot,trainingOrder:slot.trainingOrder,problemId:slot.problemId,sourceAnswer:slot.sourceAnswer,dna:slot.dna,hasOriginalImage:Boolean(sourceImages[index])}));
 
   if(kind==="HOMEWORK"){
-    const schema3={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:3,maxItems:3,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","answer","solution","difficulty","meter","topic","reason","computedAnswer","verified"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:3},question:{type:"string"},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"},computedAnswer:{type:"string"},verified:{type:"boolean"}}}}}};
-    const prompt3=`MATHPOOH SOS 3제 굳히기입니다. 원문 슬롯: ${JSON.stringify(sourceSummary)}. 정확히 3문항을 sourceSlot 1,2,3 순서로 만드세요. 원문의 핵심개념·풀이순서·질문유형을 유지하고 수치만 제한 변형하세요. 자유창작/새 개념 금지. 각 문항을 출제 후 처음부터 다시 풀어 computedAnswer를 적고 answer와 같고 유일한 정수(-999~999)일 때만 verified=true. question에는 학생이 바로 읽을 수 있는 일반 수학 표기를 사용하세요. LaTeX 명령(\frac, \lim 등)은 금지하고, 가능하면 x^2, x^(n+1), √(x)처럼 간단한 표기를 사용하세요.`;
+    const schema3={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:3,maxItems:3,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","renderBlocks","answer","solution","difficulty","meter","topic","reason","computedAnswer","verified"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:3},question:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:14,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"},computedAnswer:{type:"string"},verified:{type:"boolean"}}}}}};
+    const prompt3=`MATHPOOH SOS 3제 굳히기입니다. 원문 슬롯: ${JSON.stringify(sourceSummary)}. 정확히 3문항을 sourceSlot 1,2,3 순서로 만드세요. 원문의 핵심개념·풀이순서·질문유형을 유지하고 수치만 제한 변형하세요. 자유창작/새 개념 금지. 각 문항을 출제 후 처음부터 다시 풀어 computedAnswer를 적고 answer와 같고 유일한 정수(-999~999)일 때만 verified=true. question은 검수용 일반 텍스트입니다. 학생 표시용 renderBlocks를 반드시 함께 만드세요. renderBlocks는 문제를 위에서 아래 순서대로 나눈 배열입니다. 한국어 설명 문장은 type="text", 수학식은 type="mathml"로 분리하세요. mathml value는 반드시 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 문자열이어야 합니다. 지수는 <msup>, 아래첨자는 <msub>, 분수는 <mfrac>, 근호는 <msqrt>, 극한은 <munder> 또는 적절한 MathML, 조각함수/연립조건은 <mfenced><mtable> 또는 <mrow><mo>{</mo><mtable> 구조를 사용하세요. 학생 화면에 x^(...), x^{...}, \frac 같은 원시 수식 문자열이 보이지 않도록 모든 수학식을 실제 MathML 구조로 작성하세요.`;
     const c3:any[]=[{type:"input_text",text:prompt3}];
     sourceSlots.forEach((slot,index)=>{c3.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])c3.push({type:"input_image",image_url:sourceImages[index]});else c3.push({type:"input_text",text:JSON.stringify(slot.dna)});});
     const g=await openAiJson(prompt3,schema3,c3,{timeoutMs:38000,effort:"low"});
@@ -438,7 +438,7 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
     const ins=await supabase.from("sos_training_items").insert(normalized.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:"AI 유사문항 3제 굳히기 · 바로미터 미반영",subunit_key:p.subunitKey})));if(ins.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw ins.error;}return {session:session.data,problems:normalized,fastHomework:true};
   }
 
-  const schema={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","answer","solution","difficulty","meter","topic","reason"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},question:{type:"string"},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"}}}}}};
+  const schema={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","renderBlocks","answer","solution","difficulty","meter","topic","reason"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},question:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:14,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"}}}}}};
   let list:any[]=[];
   let invalidReason="";
   for(let generationAttempt=1;generationAttempt<=3;generationAttempt++){
@@ -464,7 +464,12 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
 [정답 안정성]
 - 모든 최종 정답은 -999~999 범위의 정수 하나여야 하며 answer에는 정수 문자열만 씁니다.
 - 생성한 문제를 직접 처음부터 풀어 조건 충분성, 모순 여부, 유일해, solution과 answer 일치를 자체 검산합니다.
-- question에는 LaTeX 명령을 쓰지 말고 학생 화면에서 바로 읽히는 일반 텍스트/유니코드 수식을 씁니다.
+- question은 검수용 일반 텍스트입니다.
+- 학생 표시용 renderBlocks를 반드시 함께 생성합니다.
+- 한국어 문장은 type="text", 모든 수학식은 type="mathml"입니다.
+- mathml value는 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 문자열이어야 합니다.
+- 분수는 mfrac, 지수는 msup, 아래첨자는 msub, 근호는 msqrt, 극한/조각함수/연립조건도 실제 MathML 구조로 작성합니다.
+- 학생 화면에 x^(...), x^{...}, \frac, \lim 같은 원시 문자열이 나타나지 않게 합니다.
 - reason에는 원문의 무엇을 유지하고 어떤 수치/조건만 바꿨는지 짧게 적습니다.
 - 1차 미달자의 2차 정식훈련이므로 원문 풀이 구조는 유지하고 수치 복잡도만 같거나 조금 낮게 시작해 점진적으로 회복시킵니다.
 ${invalidReason?`이전 생성은 검증에서 탈락했습니다: ${invalidReason}. 같은 오류를 반복하지 마세요.`:""}`;

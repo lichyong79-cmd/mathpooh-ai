@@ -6,7 +6,6 @@ import { analyzeDiagnosisAndCreateFirstTraining, createAutomaticSecondDiagnosis,
 import { clampMeter } from "@/lib/difficulty-meter";
 import { reviewBonus } from "@/lib/sos-training-policy";
 import { cycleFromSnapshot } from "@/lib/sos-cycle";
-import { generatedQuestionImageDataUrl } from "@/lib/sos-generated-question-image";
 
 async function context(){
   const user=await getSessionUser();
@@ -122,7 +121,8 @@ export async function GET(){
             topic:bank?.topic??generated?.topic??"",
             difficulty:bank?.difficulty??generated?.difficulty??null,
             difficultyMeter:bank?.difficulty_meter??generated?.meter??null,
-            imageUrl:bank?await signedQuestionImage(supabase,bank.question_image_path):generated?generatedQuestionImageDataUrl(generated?.question,{topic:generated?.topic,kind:generated?.generationKind??session.cycle_kind}):"",
+            imageUrl:bank?await signedQuestionImage(supabase,bank.question_image_path):"",
+            renderBlocks:Array.isArray(generated?.renderBlocks)?generated.renderBlocks:[],
             generatedText:generated?.question??"",
             generatedReason:generated?.reason??"",
             sourceTrainingOrder:generated?.sourceTrainingOrder??null,
