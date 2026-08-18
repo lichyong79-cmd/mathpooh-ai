@@ -569,9 +569,28 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
       });
       const json=await response.json();
       if(!response.ok)throw new Error(json.message||"다음 학습 준비 실패");
+      // SOS259: 3제 굳히기는 "준비하기 → 시작"을 두 번 누르게 하지 않는다.
+      // 생성된 HOMEWORK 세션을 즉시 IN_PROGRESS로 바꾸고 바로 1번 문항으로 이동한다.
+      if(json?.nextStep==="HOMEWORK_ASSIGNED"){
+        const homeworkId=String(json?.next?.session?.id??json?.next?.id??"");
+        if(homeworkId){
+          const startResponse=await fetch("/api/student/sos-training",{
+            method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({action:"start",sessionId:homeworkId}),
+          });
+          const startJson=await startResponse.json();
+          // 이미 IN_PROGRESS인 기존 세션이면 시작 API가 실패하더라도 해당 세션으로 이동한다.
+          if(!startResponse.ok&&!String(startJson?.message??"").includes("이미"))throw new Error(startJson?.message||"3제 굳히기 시작 실패");
+          await load();
+          setActiveId(homeworkId);
+          await onRefresh();
+          setNotice("1차훈련 통과 · AI 유사문항 3제 굳히기 3문항 생성 완료 · 바로 1번 문항부터 시작합니다.");
+          return;
+        }
+      }
       await load();
       await onRefresh();
-      if(json?.nextStep==="HOMEWORK_ASSIGNED")setNotice("1차훈련 통과 · AI 유사문항 3제 굳히기 3문항이 준비되었습니다.");
+      if(json?.nextStep==="HOMEWORK_ASSIGNED")setNotice("AI 유사문항 3제 굳히기가 준비되었습니다. 3제 굳히기 시작을 눌러 주세요.");
       else if(json?.nextStep==="SECOND_TRAINING_ASSIGNED")setNotice("2차 AI 유사훈련 10문항이 준비되었습니다.");
       else if(json?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED")setNotice("2차 진단 3문항이 준비되었습니다.");
       else if(json?.nextStep==="FIRST_TRAINING_ASSIGNED")setNotice("1차 맞춤훈련 10문항이 준비되었습니다.");
