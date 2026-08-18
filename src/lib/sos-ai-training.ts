@@ -11,12 +11,13 @@ function outputText(payload:any){
   return parts.join("\n").trim();
 }
 
-async function openAiJson(prompt:string,schema:any,content?:any[]){
+async function openAiJson(prompt:string,schema:any,content?:any[],options?:{timeoutMs?:number;effort?:"minimal"|"low"|"medium"|"high"}){
   const apiKey=process.env.OPENAI_API_KEY;
   if(!apiKey) throw new Error("OPENAI_API_KEY가 없습니다.");
   const model=process.env.OPENAI_ANALYSIS_MODEL||process.env.OPENAI_MODEL||"gpt-5-mini";
   const controller=new AbortController();
-  const timeout=setTimeout(()=>controller.abort(),45000);
+  const timeoutMs=Math.max(10000,Number(options?.timeoutMs??45000));
+  const timeout=setTimeout(()=>controller.abort(),timeoutMs);
   let response:Response;
   try{
     response=await fetch("https://api.openai.com/v1/responses",{
@@ -26,12 +27,12 @@ async function openAiJson(prompt:string,schema:any,content?:any[]){
       body:JSON.stringify({
         model,
         input:[{role:"user",content:content??[{type:"input_text",text:prompt}]}],
-        reasoning:{effort:"medium"},
+        reasoning:{effort:options?.effort??"medium"},
         text:{format:{type:"json_schema",name:"sos_training_engine",strict:true,schema}},
       }),
     });
   }catch(error){
-    if(error instanceof Error&&error.name==="AbortError")throw new Error("AI 문항 생성 시간이 45초를 초과했습니다.");
+    if(error instanceof Error&&error.name==="AbortError")throw new Error(`AI 처리 시간이 ${Math.round(timeoutMs/1000)}초를 초과했습니다.`);
     throw error;
   }finally{clearTimeout(timeout);}
   const payload=await response.json();
@@ -420,6 +421,22 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
   });
   const sourceImages=await Promise.all(sourceSlots.map(async slot=>slot.imagePath?await signed(supabase,"question-images",slot.imagePath):""));
   const sourceSummary=sourceSlots.map((slot,index)=>({slot:slot.slot,trainingOrder:slot.trainingOrder,problemId:slot.problemId,sourceAnswer:slot.sourceAnswer,dna:slot.dna,hasOriginalImage:Boolean(sourceImages[index])}));
+
+  if(kind==="HOMEWORK"){
+    const schema3={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:3,maxItems:3,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","answer","solution","difficulty","meter","topic","reason","computedAnswer","verified"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:3},question:{type:"string"},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"},computedAnswer:{type:"string"},verified:{type:"boolean"}}}}}};
+    const prompt3=`MATHPOOH SOS 3제 굳히기입니다. 원문 슬롯: ${JSON.stringify(sourceSummary)}. 정확히 3문항을 sourceSlot 1,2,3 순서로 만드세요. 원문의 핵심개념·풀이순서·질문유형을 유지하고 수치만 제한 변형하세요. 자유창작/새 개념 금지. 각 문항을 출제 후 처음부터 다시 풀어 computedAnswer를 적고 answer와 같고 유일한 정수(-999~999)일 때만 verified=true. question에 LaTeX 명령 금지.`;
+    const c3:any[]=[{type:"input_text",text:prompt3}];
+    sourceSlots.forEach((slot,index)=>{c3.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])c3.push({type:"input_image",image_url:sourceImages[index]});else c3.push({type:"input_text",text:JSON.stringify(slot.dna)});});
+    const g=await openAiJson(prompt3,schema3,c3,{timeoutMs:38000,effort:"low"});
+    const list3=Array.isArray(g?.problems)?g.problems:[];
+    const errs=list3.map((p:any,i:number)=>{const a=String(p?.answer??"").trim(),c=String(p?.computedAnswer??"").trim();if(Number(p?.sourceSlot)!==i+1)return `${i+1}번 슬롯 오류`;if(p?.verified!==true)return `${i+1}번 검증 실패`;if(!/^-?\d+$/.test(a)||a!==c)return `${i+1}번 정답 불일치`;const n=Number(a);if(!Number.isSafeInteger(n)||n<-999||n>999)return `${i+1}번 정답 범위`;if(!String(p?.question??"").trim()||!String(p?.solution??"").trim())return `${i+1}번 본문/풀이 없음`;return "";}).filter(Boolean);
+    if(list3.length!==3||errs.length)throw new Error(`3제 굳히기 생성 검증 실패: ${list3.length!==3?`문항수 ${list3.length}/3`:errs.join(", ")}`);
+    const target=s.target_snapshot??{};
+    const normalized=list3.map((p:any,index:number)=>{const ss=sourceSlots[index],si=ranked[index%ranked.length]??null,sp=si?.problem_bank_questions??{};return {...p,subject:target.subject??target.sourceSubject??"",majorUnit:target.majorUnit??target.sourceMajorUnit??"",subunit:target.subunit??target.sourceUnit??"",subunitKey:target.subunitKey??"",meter:clampMeter(p.meter,p.difficulty),generated:true,generatedIndex:index+1,sourceTrainingOrder:Number(ss?.trainingOrder??si?.item_order??0)||null,sourceProblemId:ss?.problemId??sp?.id??null,sourceTopic:String(sp?.topic??""),coreType:String(p.topic??weakness?.focusConcepts?.[0]??weakness?.weaknessTitle??"핵심 취약유형"),generationKind:"HOMEWORK",generationPolicy:"SOURCE_LIMITED_TRANSFORM_FAST_VERIFY_V2",barometerExcluded:true,verification:{method:"ONE_CALL_RESOLVE_CHECK",valid:true,computedAnswer:String(p.computedAnswer)}};});
+    const dup=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind","HOMEWORK").eq("round_no",3).order("created_at",{ascending:true}).limit(1);if(dup.error)throw dup.error;if((dup.data??[]).length)return {session:dup.data?.[0],problems:[],existing:true};
+    const session=await supabase.from("sos_training_sessions").insert({student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:{...target,generatedSimilar:true,homework:true,barometerExcluded:true,generationPolicy:"SOURCE_LIMITED_TRANSFORM_FAST_VERIFY_V2"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:3,total_count:3,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:"HOMEWORK"}).select().single();if(session.error||!session.data)throw new Error(session.error?.message||"3제 굳히기 세션 생성 실패");
+    const ins=await supabase.from("sos_training_items").insert(normalized.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:"AI 유사문항 3제 굳히기 · 바로미터 미반영",subunit_key:p.subunitKey})));if(ins.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw ins.error;}return {session:session.data,problems:normalized,fastHomework:true};
+  }
 
   const schema={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","answer","solution","difficulty","meter","topic","reason"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},question:{type:"string"},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"}}}}}};
   let list:any[]=[];

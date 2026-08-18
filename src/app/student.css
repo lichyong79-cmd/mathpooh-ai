@@ -488,6 +488,15 @@
 
 
 
+
+/* SOS165 · 원본 문항번호를 로고 하나로 정확히 덮기 (좌표는 JS 실측값) */
+.sos-problem-image-wrap{position:relative;display:inline-block;max-width:100%;line-height:0}
+.sos-problem-image-wrap>img{display:block;max-width:100%;height:auto}
+.sos-problem-image-wrap.is-measuring>img{visibility:hidden}
+.sos-origin-mask-layer{position:absolute;z-index:5;inset:0;pointer-events:none;display:block}
+.sos-origin-logo{position:absolute;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:3px;overflow:hidden;line-height:0}
+.sos-origin-logo img{display:block!important;width:100%!important;height:100%!important;object-fit:contain!important;max-width:none!important;min-width:0!important}
+
 /* SOS231 · AI 유사문항 출처/핵심유형 안내 */
 .sos-generated-origin{margin:0 0 12px;padding:11px 13px;border-radius:12px;border:1px solid #ead8bf;background:#fff8ef;color:#6c4a20;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .sos-generated-origin b{font-size:13px;font-weight:1000;padding:4px 8px;border-radius:999px;background:#f39b34;color:#fff;white-space:nowrap}
@@ -552,10 +561,3 @@
 .sos-next-stage-cta:hover{filter:brightness(.97)}
 .sos-next-stage-cta:disabled{opacity:.55;cursor:wait}
 
-/* SOS257 · 원본 이미지 이동 금지 / 번호 토큰만 마스킹 */
-.sos-problem-image-wrap{position:relative;display:block;max-width:100%;line-height:0;overflow:hidden;background:#fff}
-.sos-problem-image-wrap>img{display:block;width:100%;max-width:100%;height:auto;transform:none!important}
-.sos-problem-image-wrap.number-mask>img.number-mask-pending{visibility:hidden}
-.sos-problem-image-wrap.number-mask>img.number-mask-ready{visibility:visible}
-.sos-number-token-mask{position:absolute;z-index:6;background:#fff;display:flex;align-items:center;justify-content:flex-start;padding:1px 2px;pointer-events:none;overflow:hidden;box-sizing:border-box}
-.sos-number-token-mask>img{display:block!important;width:auto!important;height:72%!important;max-width:92%!important;object-fit:contain!important;margin:0!important}

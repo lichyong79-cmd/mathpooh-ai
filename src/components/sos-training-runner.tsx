@@ -165,7 +165,7 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
         {item.problem?.generatedReason?<small>{item.problem.generatedReason}</small>:null}
       </div>:null}
       <div className="sos-diagnosis-image">
-        {item.problem?.imageUrl?<SosProblemImage src={item.problem.imageUrl} alt={`${index+1}번 문제`} maskOriginalNumber={!generated&&Number(session?.round_no??1)===1}/>:generated?<div className="sos-generated-image-missing"><b>AI 문항 이미지 생성 실패</b><span>새로고침 후 다시 시도해 주세요.</span></div>:<p>문항 이미지가 없습니다.</p>}
+        {item.problem?.imageUrl?<SosProblemImage src={item.problem.imageUrl} alt={`${index+1}번 문제`} problemCode={String(item.problem?.code??"")} maskOriginalNumber={!generated&&Number(session?.round_no??1)===1}/>:generated?<div className="sos-generated-image-missing"><b>AI 문항 이미지 생성 실패</b><span>새로고침 후 다시 시도해 주세요.</span></div>:<p>문항 이미지가 없습니다.</p>}
       </div>
       <div className="sos-answer-lock-box">
         <label><span>정답</span><input autoFocus disabled={busy} value={answer} onChange={(e:React.ChangeEvent<HTMLInputElement>)=>setAnswer(e.target.value)} placeholder="정답을 입력하세요" onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void next();}}/></label>

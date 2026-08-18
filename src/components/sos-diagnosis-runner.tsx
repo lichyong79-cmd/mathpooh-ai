@@ -131,7 +131,7 @@ export default function SosDiagnosisRunner({session,onCompleted,onNotice}:{sessi
         <div><b>{index+1}번</b><span>{state.problem?.subject??""} · {state.problem?.unit??""}</span></div>
         <div className={photoStage?"photo":"solve"}><small>{photoStage?"사진 제출시간":"풀이시간"}</small><strong>{fmt(photoStage?photoSeconds:solveSeconds)}</strong></div>
       </header>
-      <div className="sos-diagnosis-image">{state.problem?.imageUrl?<SosProblemImage src={state.problem.imageUrl} alt={`${index+1}번 문제`} maskOriginalNumber/>:<p>문항 이미지가 없습니다.</p>}</div>
+      <div className="sos-diagnosis-image">{state.problem?.imageUrl?<SosProblemImage src={state.problem.imageUrl} alt={`${index+1}번 문제`} problemCode={String(state.problem?.code??"")} maskOriginalNumber/>:<p>문항 이미지가 없습니다.</p>}</div>
 
       {solving?<div className="sos-answer-lock-box">
         <label><span>정답</span><input autoFocus value={answer} onChange={(e)=>setAnswer(e.target.value)} placeholder="정답을 입력하세요" onKeyDown={(e)=>{if(e.key==="Enter")void lockAnswer();}}/></label>

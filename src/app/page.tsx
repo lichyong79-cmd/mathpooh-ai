@@ -561,7 +561,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
     if(automatic&&nextRepairTriedRef.current.has(key))return;
     if(automatic)nextRepairTriedRef.current.add(key);
     setBusy(`next:${key}`);
-    if(!automatic)setNotice(`${expectedNextLabel(expectedNextKind(session))} · 다음 학습을 준비하고 있습니다.`);
+    if(!automatic){const k=expectedNextKind(session);setNotice(k==="HOMEWORK"?"3제 굳히기 3문항을 생성·검증하고 있습니다. 잠시만 기다려 주세요.":`${expectedNextLabel(k)} · 다음 학습을 준비하고 있습니다.`);}
     try{
       const response=await fetch("/api/student/sos-training",{
         method:"POST",headers:{"Content-Type":"application/json"},
