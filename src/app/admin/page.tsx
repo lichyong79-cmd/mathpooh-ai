@@ -65,6 +65,7 @@ type AdminMenu =
   | "exam-progress"
   | "problem-sources"
   | "problem-analysis"
+  | "ai-generated-bank"
   | "sos-bank"
   | "sos-difficulty"
   | "sos-learning"
@@ -168,6 +169,7 @@ const menus: MenuItem[] = [
   { id: "exam-progress", label: "실전모의고사 진행", icon: "▶" },
   { id: "problem-sources", label: "문제등록", icon: "▦" },
   { id: "problem-analysis", label: "AI 분석", icon: "✦" },
+  { id: "ai-generated-bank", label: "AI 생성 문제은행", icon: "✦" },
   { id: "sos-bank", label: "SOS 문제은행", icon: "▣" },
   { id: "sos-difficulty", label: "난이도 관리", icon: "◆" },
   { id: "sos-learning", label: "SOS 학습운영", icon: "◎" },
@@ -182,7 +184,7 @@ const menuGroups: MenuGroup[] = [
   { label: "실전모의고사 관리", icon: "▤", items: menus.filter((item) => ["cycles", "exam-list", "exam-input", "exam-analysis", "exam-assignment"].includes(item.id)) },
   { label: "시험 운영", items: menus.filter((item) => item.id === "exam-progress") },
   { label: "문제은행 관리", icon: "▦", items: menus.filter((item) => ["problem-sources", "problem-analysis"].includes(item.id)) },
-  { label: "SOS 운영", items: menus.filter((item) => ["sos-bank", "sos-difficulty", "sos-learning"].includes(item.id)) },
+  { label: "SOS 운영", items: menus.filter((item) => ["ai-generated-bank", "sos-bank", "sos-difficulty", "sos-learning"].includes(item.id)) },
   { label: "분석", items: menus.filter((item) => ["exam-results", "student-results", "learning-analysis"].includes(item.id)) },
 ];
 
@@ -441,6 +443,7 @@ const [collapsed, setCollapsed] = useState(false);
                 key={menu.id}
                 className={active === menu.id ? "active" : ""}
                 onClick={() => {
+                  if (menu.id === "ai-generated-bank") { window.location.href = "/admin/ai-generated-bank"; return; }
                   if (menu.id === "sos-bank") {
                     window.location.href = "/problem-bank";
                     return;

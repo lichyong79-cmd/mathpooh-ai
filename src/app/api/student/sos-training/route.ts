@@ -6,6 +6,7 @@ import { analyzeDiagnosisAndCreateFirstTraining, createAutomaticSecondDiagnosis,
 import { clampMeter } from "@/lib/difficulty-meter";
 import { reviewBonus } from "@/lib/sos-training-policy";
 import { cycleFromSnapshot } from "@/lib/sos-cycle";
+import { enqueueAiGeneration } from "@/lib/sos-ai-generation-queue";
 
 async function context(){
   const user=await getSessionUser();
@@ -147,10 +148,12 @@ export async function GET(){
     .eq("student_id",student.id)
     .order("updated_at",{ascending:false});
 
+  const jobsResult=await supabase.from("sos_ai_generation_jobs").select("id,source_training_session_id,generation_kind,requested_count,status,attempt_count,last_error,result_session_id,requested_at,started_at,completed_at,updated_at").eq("student_id",student.id).order("requested_at",{ascending:false});
   return NextResponse.json({
     success:true,
     student,
     sessions,
+    aiGenerationJobs:jobsResult.data??[],
     subunitMeters:meters.data??[],
   },{headers:{"Cache-Control":"no-store,max-age=0"}});
 }
@@ -253,20 +256,8 @@ export async function POST(request:Request){
               ?Number(firstTraining.correct_count??0)/Number(firstTraining.total_count)
               :0;
             const passed=String(firstTraining.decision)==="FIRST_TRAINING_PASSED" || scoreRate>=0.9 || meter>=goal;
-
-            const next=await generateSimilarTraining({
-              supabase,
-              studentId:String(student.id),
-              firstTrainingSessionId:String(firstTraining.id),
-              count:passed?3:10,
-              kind:passed?"HOMEWORK":"SECOND_TRAINING"
-            });
-            return NextResponse.json({
-              success:true,next,
-              nextStep:passed?"HOMEWORK_ASSIGNED":"SECOND_TRAINING_ASSIGNED",
-              repairedFromExistingFirstTraining:true,
-              passed,meter,goal,scoreRate
-            });
+            const queued=await enqueueAiGeneration({supabase,studentId:String(student.id),sourceTrainingSessionId:String(firstTraining.id),count:passed?3:10,kind:passed?"HOMEWORK":"SECOND_TRAINING"});
+            return NextResponse.json({success:true,queued:true,job:queued.job,nextStep:"AI_GENERATION_QUEUED",generationKind:passed?"HOMEWORK":"SECOND_TRAINING",repairedFromExistingFirstTraining:true,passed,meter,goal,scoreRate});
           }
           return NextResponse.json({
             success:true,next:firstTraining,nextStep:"FIRST_TRAINING_ASSIGNED",existing:true
@@ -305,19 +296,8 @@ export async function POST(request:Request){
           ?Number(session.correct_count??0)/Number(session.total_count)
           :0;
         const passed=String(session.decision)==="FIRST_TRAINING_PASSED" || scoreRate>=0.9 || meter>=goal;
-
-        const next=await generateSimilarTraining({
-          supabase,
-          studentId:String(student.id),
-          firstTrainingSessionId:sessionId,
-          count:passed?3:10,
-          kind:passed?"HOMEWORK":"SECOND_TRAINING"
-        });
-        return NextResponse.json({
-          success:true,next,
-          nextStep:passed?"HOMEWORK_ASSIGNED":"SECOND_TRAINING_ASSIGNED",
-          passed,meter,goal,scoreRate
-        });
+        const queued=await enqueueAiGeneration({supabase,studentId:String(student.id),sourceTrainingSessionId:sessionId,count:passed?3:10,kind:passed?"HOMEWORK":"SECOND_TRAINING"});
+        return NextResponse.json({success:true,queued:true,job:queued.job,nextStep:"AI_GENERATION_QUEUED",generationKind:passed?"HOMEWORK":"SECOND_TRAINING",passed,meter,goal,scoreRate});
       }
 
       return NextResponse.json({success:true,next:null,nextStep:"FINAL_COMPLETE"});
@@ -509,7 +489,8 @@ export async function POST(request:Request){
         else{decision="SECOND_TRAINING_REQUIRED";}
       }else if(Number(session.round_no)===2){finalStatus=passed?"PASSED":"COMPLETED";decision=passed?"SECOND_TRAINING_PASSED":"SECOND_TRAINING_FINISHED_TARGET_MISSED";}
       await supabase.from("sos_training_sessions").update({status:finalStatus,decision,review_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
-      return NextResponse.json({success:true,recovered:0,total:0,reviewBonus:0,meter,goal,passed,passReason,status:finalStatus,decision,next});
+      let aiJob:any=null;if(Number(session.round_no)===1){try{aiJob=(await enqueueAiGeneration({supabase,studentId:String(student.id),sourceTrainingSessionId:sessionId,count:passed?3:10,kind:passed?"HOMEWORK":"SECOND_TRAINING"})).job;}catch(error){console.error("[SOS264_QUEUE_AFTER_REVIEW]",error);}}
+      return NextResponse.json({success:true,recovered:0,total:0,reviewBonus:0,meter,goal,passed,passReason,status:finalStatus,decision,next,aiJob,nextStep:aiJob?"AI_GENERATION_QUEUED":undefined});
     }
 
     let recovered=0;
@@ -557,7 +538,8 @@ export async function POST(request:Request){
     const sessionUpdate=await supabase.from("sos_training_sessions").update({status:finalStatus,decision,review_meter:meter,updated_at:new Date().toISOString()}).eq("id",sessionId);
     if(sessionUpdate.error)return NextResponse.json({message:sessionUpdate.error.message},{status:400});
     await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:null,student_id:student.id,event_type:"REVIEW_COMPLETED",detail:{recovered,total:wrongItems.length,meter,goal,passed,passReason,decision}});
-    return NextResponse.json({success:true,recovered,total:wrongItems.length,reviewBonus:cappedBonus,meter,goal,passed,passReason,status:finalStatus,decision,next});
+    let aiJob:any=null;if(Number(session.round_no)===1){try{aiJob=(await enqueueAiGeneration({supabase,studentId:String(student.id),sourceTrainingSessionId:sessionId,count:passed?3:10,kind:passed?"HOMEWORK":"SECOND_TRAINING"})).job;}catch(error){console.error("[SOS264_QUEUE_AFTER_REVIEW]",error);}}
+    return NextResponse.json({success:true,recovered,total:wrongItems.length,reviewBonus:cappedBonus,meter,goal,passed,passReason,status:finalStatus,decision,next,aiJob,nextStep:aiJob?"AI_GENERATION_QUEUED":undefined});
   }
 
   if(action==="submit"){

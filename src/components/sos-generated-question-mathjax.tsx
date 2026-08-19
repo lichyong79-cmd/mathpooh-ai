@@ -24,12 +24,10 @@ function sanitizeMathMl(value:string){
 
 function legacyBlocks(raw:any):RenderBlock[]{
   if(!Array.isArray(raw))return [];
-  return raw
-    .map((b:any):RenderBlock=>({
-      type:String(b?.type)==="mathml" ? "mathml" : "text",
-      value:String(b?.value??"").trim()
-    }))
-    .filter((b:RenderBlock)=>Boolean(b.value));
+  return raw.map((b:any)=>({
+    type:String(b?.type)==="mathml"?"mathml":"text",
+    value:String(b?.value??"").trim()
+  })).filter((b:any)=>b.value);
 }
 
 function loadMathJax(){

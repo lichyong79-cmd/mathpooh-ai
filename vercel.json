@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/sos-ai-generation",
+      "schedule": "*/10 * * * *"
+    }
+  ]
+}

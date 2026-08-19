@@ -7,7 +7,7 @@ type CurrentMenu =
   | "dashboard" | "posters" | "students" | "applications"
   | "exam-list" | "exam-input" | "exam-analysis" | "exam-assignment"
   | "exam-progress" | "problem-sources" | "problem-analysis"
-  | "sos-bank" | "sos-difficulty" | "sos-learning" | "sos-status" | "exam-results"
+  | "ai-generated-bank" | "sos-bank" | "sos-difficulty" | "sos-learning" | "sos-status" | "exam-results"
   | "student-results" | "learning-analysis";
 
 type Item = { id: CurrentMenu; label: string; icon: string; href?: string };
@@ -33,6 +33,7 @@ const groups: { label: string; items: Item[] }[] = [
     { id: "problem-analysis", label: "AI 분석", icon: "✦", href: "/problem-bank/ai-upload" },
   ] },
   { label: "SOS 운영", items: [
+    { id: "ai-generated-bank", label: "AI 생성 문제은행", icon: "✦", href: "/admin/ai-generated-bank" },
     { id: "sos-bank", label: "SOS 문제은행", icon: "▣", href: "/problem-bank" },
     { id: "sos-difficulty", label: "난이도 관리", icon: "◆", href: "/problem-bank/difficulty" },
     { id: "sos-learning", label: "SOS 학습운영", icon: "◎" },

@@ -527,8 +527,8 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   const nextStageLabel=(x:any)=>{
     if(!x)return "다음 학습";
     if(String(x.phase)==="DIAGNOSIS")return `${Number(x.round_no)===2?"2차 진단":"진단"} 하러가기`;
-    if(String(x.cycle_kind)==="HOMEWORK")return "3제 굳히기 하러가기";
-    if(Number(x.round_no)===2)return "2차 훈련 하러가기";
+    if(String(x.cycle_kind)==="HOMEWORK")return "READY · 3제 굳히기 시작";
+    if(Number(x.round_no)===2)return "READY · 2차 훈련 시작";
     return "1차 훈련 하러가기";
   };
 
@@ -561,7 +561,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
     if(automatic&&nextRepairTriedRef.current.has(key))return;
     if(automatic)nextRepairTriedRef.current.add(key);
     setBusy(`next:${key}`);
-    if(!automatic){const k=expectedNextKind(session);setNotice(k==="HOMEWORK"?"3제 굳히기 3문항을 생성·검증하고 있습니다. 잠시만 기다려 주세요.":`${expectedNextLabel(k)} · 다음 학습을 준비하고 있습니다.`);}
+    if(!automatic){setNotice("AI 맞춤문항 생성 작업을 예약하고 있습니다.");}
     try{
       const response=await fetch("/api/student/sos-training",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -569,7 +569,11 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
       });
       const json=await response.json();
       if(!response.ok)throw new Error(json.message||"다음 학습 준비 실패");
-      // SOS259: 3제 굳히기는 "준비하기 → 시작"을 두 번 누르게 하지 않는다.
+      if(json?.nextStep==="AI_GENERATION_QUEUED"){
+        setNotice("AI 맞춤문항을 준비하고 있습니다. 짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 준비가 완료되면 READY로 변경됩니다. 나중에 다시 접속하여 남은 학습을 마무리해 주세요.");
+        await load();await onRefresh();return;
+      }
+      // READY 세션이 이미 생성된 경우 기존 시작 흐름을 유지한다.
       // 생성된 HOMEWORK 세션을 즉시 IN_PROGRESS로 바꾸고 바로 1번 문항으로 이동한다.
       if(json?.nextStep==="HOMEWORK_ASSIGNED"){
         const homeworkId=String(json?.next?.session?.id??json?.next?.id??"");
@@ -619,6 +623,8 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   }
 
   const latestMeters=Array.isArray(data.subunitMeters)?data.subunitMeters:[];
+  const aiGenerationJobs=Array.isArray(data.aiGenerationJobs)?data.aiGenerationJobs:[];
+  const generationJobFor=(source:any)=>aiGenerationJobs.find((j:any)=>String(j.source_training_session_id)===String(source?.id))??null;
 
   const selectedCycle=cycleRows.find((c:any)=>String(c.id)===selectedCycleId)??null;
   const completedFirstTrainingForCycle=visibleSessions.find((x:any)=>
@@ -643,6 +649,8 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
     recoverableParent=visibleSessions.find((x:any)=>expectedNextKind(x))??null;
   }
 
+  const pendingAiJob=recoverableParent?generationJobFor(recoverableParent):null;
+  const aiPreparing=Boolean(pendingAiJob&&["QUEUED","GENERATING","FAILED"].includes(String(pendingAiJob.status)));
   const selectedCompleted=visibleSessions.length>0&&!selectedOpen&&!recoverableParent;
   const today=new Date().toISOString().slice(0,10);
   const selectedIsPast=Boolean(selectedCycle?.endDate&&selectedCycle.endDate<today);
@@ -651,14 +659,14 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
 
   // SOS253: 원래 자동 생성돼야 할 다음 단계가 누락되어 있으면 페이지 진입 시 딱 한 번 자동 복구 시도.
   useEffect(()=>{
-    if(loading||selectedOpen||!recoverableParent)return;
+    if(loading||selectedOpen||!recoverableParent||aiPreparing)return;
     void ensureNext(recoverableParent,true);
   },[loading,selectedCycleId,recoverableParent?.id,selectedOpen?.id]);
 
   return <div className="sos-live-wrap">
     <section className="sos-learning-status">
       <div className="sos-week-picker"><div><small>SOS 학습현황</small><h3>{selectedCycle?`${selectedCycle.name} · ${selectedCycle.dateLabel}`:"SOS 회차"}</h3><p>{sourceTitles.length?`기준시험 · ${sourceTitles.join(" / ")}`:"회차를 선택해 지난 SOS 결과를 확인하세요."}</p></div><select value={selectedCycleId} onChange={(e)=>{setSelectedCycleId(e.target.value);setActiveId("");}}>{cycleRows.map((c:any)=><option key={c.id} value={c.id}>{c.name} · {c.dateLabel}{c.sessions.some((x:any)=>isSosOpen(x))?" · 진행중":" · 완료"}</option>)}</select></div>
-      <div className="sos-now-task"><span>{selectedOpen?selectedIsPast?"밀린 SOS":"지금 해야 할 SOS":recoverableParent?"다음 SOS 준비":"이 회차 SOS 완료"}</span><b>{selectedOpen?sosStageLabel(selectedOpen):recoverableParent?expectedNextLabel(expectedNextKind(recoverableParent)).replace(" 준비하기",""):selectedCompleted?"모든 학습 완료":"배정된 학습이 없습니다."}</b><p>{selectedOpen?`${selectedOpen.target_snapshot?.subunit??"소단원"} · ${Number(selectedOpen.correct_count??0)}/${Number(selectedOpen.total_count??0)} 정답/진행 기록`:recoverableParent?"이전 단계는 완료됐지만 다음 학습이 아직 생성되지 않았습니다. 자동 준비 중이며, 필요하면 아래 버튼으로 다시 시도할 수 있습니다.":selectedCompleted?"지난 진단·훈련 결과를 아래에서 다시 확인할 수 있습니다.":"관리자가 SOS를 배정하면 이곳에 표시됩니다."}</p>{selectedOpen?<button type="button" onClick={()=>setActiveId(String(selectedOpen.id))}>이어하기 →</button>:recoverableParent?<button type="button" disabled={!!busy} onClick={()=>void ensureNext(recoverableParent,false)}>{busy===`next:${recoverableParent.id}`?"준비 중...":expectedNextLabel(expectedNextKind(recoverableParent))} →</button>:null}</div>
+      <div className="sos-now-task"><span>{selectedOpen?selectedIsPast?"밀린 SOS":"지금 해야 할 SOS":recoverableParent?"다음 SOS 준비":"이 회차 SOS 완료"}</span><b>{selectedOpen?sosStageLabel(selectedOpen):recoverableParent?expectedNextLabel(expectedNextKind(recoverableParent)).replace(" 준비하기",""):selectedCompleted?"모든 학습 완료":"배정된 학습이 없습니다."}</b><p>{selectedOpen?`${selectedOpen.target_snapshot?.subunit??"소단원"} · ${Number(selectedOpen.correct_count??0)}/${Number(selectedOpen.total_count??0)} 정답/진행 기록`:aiPreparing?"AI 맞춤문항을 준비하고 있습니다. 문항 생성 및 검증에는 짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 준비가 완료되면 READY로 변경됩니다. 나중에 다시 접속하여 남은 학습을 마무리해 주세요.":recoverableParent?"이전 단계가 완료되었습니다. 다음 AI 맞춤문항 생성 작업을 예약합니다.":selectedCompleted?"지난 진단·훈련 결과를 아래에서 다시 확인할 수 있습니다.":"관리자가 SOS를 배정하면 이곳에 표시됩니다."}</p>{selectedOpen?<button type="button" className={(String(selectedOpen.cycle_kind)==="HOMEWORK"||Number(selectedOpen.round_no)===2)&&String(selectedOpen.phase)==="TRAINING"&&String(selectedOpen.status)==="ASSIGNED"?"ai-ready":""} onClick={()=>setActiveId(String(selectedOpen.id))}>{(String(selectedOpen.cycle_kind)==="HOMEWORK"||Number(selectedOpen.round_no)===2)&&String(selectedOpen.phase)==="TRAINING"&&String(selectedOpen.status)==="ASSIGNED"?nextStageLabel(selectedOpen):"이어하기"} →</button>:aiPreparing?<button type="button" className="sos-ai-preparing" disabled>{String(pendingAiJob?.status)==="GENERATING"?"AI 생성·검증 중":"AI 문항 준비 중"}</button>:recoverableParent?<button type="button" disabled={!!busy} onClick={()=>void ensureNext(recoverableParent,false)}>{busy===`next:${recoverableParent.id}`?"예약 중...":"AI 맞춤문항 준비 예약"} →</button>:null}</div>
       {backlogCycles.length?<div className="sos-backlog"><b>밀린 SOS</b><div>{backlogCycles.map((c:any)=><button type="button" key={c.id} onClick={()=>{setSelectedCycleId(String(c.id));setActiveId("");}}><span>{c.name}</span><small>{c.dateLabel}</small><em>{sosStageLabel(c.sessions.find((x:any)=>isSosOpen(x)))}</em></button>)}</div></div>:null}
     </section>
     <section className="sos-live-summary">
@@ -679,7 +687,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
             onClick={()=>setActiveId(String(session.id))}
           >
             <div><b>{session.phase==="DIAGNOSIS"?`진단 ${session.round_no}차`:session.cycle_kind==="HOMEWORK"?"AI 유사문항 3제 굳히기":Number(session.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</b><span>{session.target_snapshot?.subunit??"소단원"}</span></div>
-            <em>{session.status==="ASSIGNED"?"시작 전":session.status==="IN_PROGRESS"?"진행 중":session.status==="PASSED"?"통과":session.status==="RETRAIN"?"오답 필수":"완료"}</em>
+            <em>{session.status==="ASSIGNED"&&(String(session.cycle_kind)==="HOMEWORK"||Number(session.round_no)===2)&&String(session.phase)==="TRAINING"?"READY":session.status==="ASSIGNED"?"시작 전":session.status==="IN_PROGRESS"?"진행 중":session.status==="PASSED"?"통과":session.status==="RETRAIN"?"오답 필수":"완료"}</em>
             <small>{session.correct_count===null||session.correct_count===undefined?`${session.total_count}문항`:`${session.correct_count}/${session.total_count} 정답`}</small>
           </button>)}
           {!visibleSessions.length?<p>선택한 회차에 배정된 진단·훈련이 없습니다.</p>:null}
@@ -751,8 +759,9 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
                 <div className="result-time"><span>풀이시간 <strong>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</strong></span><span>사진제출 <strong>{Math.floor(Number(item.photoSubmitSeconds??0)/60)}:{String(Number(item.photoSubmitSeconds??0)%60).padStart(2,"0")}</strong></span></div>
                 {item.isCorrect===false?<div className="student-review-history"><b>{item.reviewCompleted?(item.reviewIsCorrect===true?"✓ 스스로 오답 교정":"✓ 정답·풀이 확인 완료"):"오답 교정 미완료"}</b><span>재도전 {item.reviewAttemptCount??0}회 · 힌트 {item.reviewHintLevel??0}단계</span></div>:null}
               </article>)}</div>:<div className="sos-report-grid">{activeItems.map((item:any)=><div key={item.id} className={`sos-report-item ${item.isCorrect===true?"correct":"wrong"} ${item.reviewAnswer?"reviewed":""}`}><span className="num">{item.order}번</span><b>{item.isCorrect===true?"O":"X"}</b><small>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</small><em>{item.isCorrect===true?"정답":item.reviewAnswer?"오답완료 ✓":"오답"}</em></div>)}</div>}
-              {nextChildFor(active)?<button className="sos-next-stage-cta" type="button" onClick={()=>setActiveId(String(nextChildFor(active).id))}>{nextStageLabel(nextChildFor(active))} →</button>
-                :expectedNextKind(active)?<button className="sos-next-stage-cta" type="button" disabled={!!busy} onClick={()=>void ensureNext(active,false)}>{busy===`next:${active.id}`?"다음 학습 준비 중...":expectedNextLabel(expectedNextKind(active))} →</button>
+              {nextChildFor(active)?<button className="sos-next-stage-cta ai-ready" type="button" onClick={()=>setActiveId(String(nextChildFor(active).id))}>{nextStageLabel(nextChildFor(active))} →</button>
+                :generationJobFor(active)&&["QUEUED","GENERATING","FAILED"].includes(String(generationJobFor(active)?.status))?<div className="sos-ai-generation-wait"><b>AI 맞춤문항 준비 중</b><p>짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 준비가 완료되면 버튼이 READY로 변경됩니다. 나중에 다시 접속하여 학습을 마무리해 주세요.</p><button disabled>{String(generationJobFor(active)?.status)==="GENERATING"?"생성·검증 중":"생성 대기 중"}</button></div>
+                :expectedNextKind(active)?<button className="sos-next-stage-cta" type="button" disabled={!!busy} onClick={()=>void ensureNext(active,false)}>{busy===`next:${active.id}`?"예약 중...":"AI 맞춤문항 준비 예약"} →</button>
                 :null}
             </div>:null}
           </>}

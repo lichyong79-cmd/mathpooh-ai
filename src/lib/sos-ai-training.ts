@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { clampMeter, meterLabel } from "@/lib/difficulty-meter";
 import { problemSubunit } from "@/lib/subunit-key";
 import { sosTrainingGoalMeter } from "@/lib/sos-training-policy";
@@ -408,6 +409,28 @@ function validateGeneratedMathLayout(problem:any){
   return "";
 }
 
+
+async function archiveGeneratedProblems(args:{supabase:any;studentId:string;sourceSessionId:string;kind:"HOMEWORK"|"SECOND_TRAINING";problems:any[]}){
+  const {supabase,studentId,sourceSessionId,kind,problems}=args;
+  const rows=problems.map((p:any)=>({
+    content_hash:createHash("sha256").update(`${p.sourceProblemId??""}|${kind}|${p.question??""}`).digest("hex"),
+    source_problem_id:p.sourceProblemId??null,
+    source_training_session_id:sourceSessionId,
+    source_training_order:p.sourceTrainingOrder??null,
+    generation_kind:kind,
+    subject:String(p.subject??""),major_unit:String(p.majorUnit??""),subunit:String(p.subunit??""),subunit_key:String(p.subunitKey??""),
+    topic:String(p.topic??""),core_type:String(p.coreType??p.topic??""),difficulty:Number(p.difficulty)||null,difficulty_meter:Number(p.meter)||null,
+    question_text:String(p.question??""),display_latex:String(p.displayLatex??""),render_blocks:Array.isArray(p.renderBlocks)?p.renderBlocks:[],
+    answer:String(p.answer??""),solution:String(p.solution??""),generation_reason:String(p.reason??""),verification:p.verification??{},status:"READY",
+    first_used_student_id:studentId,use_count:1,updated_at:new Date().toISOString(),
+  }));
+  if(!rows.length)return problems;
+  const saved=await supabase.from("sos_ai_generated_questions").upsert(rows,{onConflict:"content_hash",ignoreDuplicates:false}).select("id,content_hash");
+  if(saved.error)throw new Error(`AI 생성 문제은행 저장 실패: ${saved.error.message}`);
+  const idByHash=new Map((saved.data??[]).map((r:any)=>[String(r.content_hash),String(r.id)]));
+  return problems.map((p:any)=>{const h=createHash("sha256").update(`${p.sourceProblemId??""}|${kind}|${p.question??""}`).digest("hex");return {...p,aiBankId:idByHash.get(h)??null};});
+}
+
 export async function generateSimilarTraining(args:{supabase:any;studentId:string;firstTrainingSessionId:string;count:3|10;kind:"HOMEWORK"|"SECOND_TRAINING"}){
   const {supabase,studentId,firstTrainingSessionId,count,kind}=args;
   const source=await supabase.from("sos_training_sessions")
@@ -454,7 +477,8 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
     const errs=list3.map((p:any,i:number)=>{const a=String(p?.answer??"").trim(),c=String(p?.computedAnswer??"").trim();if(Number(p?.sourceSlot)!==i+1)return `${i+1}번 슬롯 오류`;if(p?.verified!==true)return `${i+1}번 검증 실패`;if(!/^-?\d+$/.test(a)||a!==c)return `${i+1}번 정답 불일치`;const n=Number(a);if(!Number.isSafeInteger(n)||n<-999||n>999)return `${i+1}번 정답 범위`;if(!String(p?.question??"").trim()||!String(p?.solution??"").trim())return `${i+1}번 본문/풀이 없음`;const layoutError=validateGeneratedMathLayout(p);if(layoutError)return `${i+1}번 수식조판 오류: ${layoutError}`;return "";}).filter(Boolean);
     if(list3.length!==3||errs.length)throw new Error(`3제 굳히기 생성 검증 실패: ${list3.length!==3?`문항수 ${list3.length}/3`:errs.join(", ")}`);
     const target=s.target_snapshot??{};
-    const normalized=list3.map((p:any,index:number)=>{const ss=sourceSlots[index],si=ranked[index%ranked.length]??null,sp=si?.problem_bank_questions??{};return {...p,subject:target.subject??target.sourceSubject??"",majorUnit:target.majorUnit??target.sourceMajorUnit??"",subunit:target.subunit??target.sourceUnit??"",subunitKey:target.subunitKey??"",meter:clampMeter(p.meter,p.difficulty),generated:true,generatedIndex:index+1,sourceTrainingOrder:Number(ss?.trainingOrder??si?.item_order??0)||null,sourceProblemId:ss?.problemId??sp?.id??null,sourceTopic:String(sp?.topic??""),coreType:String(p.topic??weakness?.focusConcepts?.[0]??weakness?.weaknessTitle??"핵심 취약유형"),generationKind:"HOMEWORK",generationPolicy:"SOURCE_LIMITED_TRANSFORM_FAST_VERIFY_V2",barometerExcluded:true,verification:{method:"ONE_CALL_RESOLVE_CHECK",valid:true,computedAnswer:String(p.computedAnswer)}};});
+    let normalized=list3.map((p:any,index:number)=>{const ss=sourceSlots[index],si=ranked[index%ranked.length]??null,sp=si?.problem_bank_questions??{};return {...p,subject:target.subject??target.sourceSubject??"",majorUnit:target.majorUnit??target.sourceMajorUnit??"",subunit:target.subunit??target.sourceUnit??"",subunitKey:target.subunitKey??"",meter:clampMeter(p.meter,p.difficulty),generated:true,generatedIndex:index+1,sourceTrainingOrder:Number(ss?.trainingOrder??si?.item_order??0)||null,sourceProblemId:ss?.problemId??sp?.id??null,sourceTopic:String(sp?.topic??""),coreType:String(p.topic??weakness?.focusConcepts?.[0]??weakness?.weaknessTitle??"핵심 취약유형"),generationKind:"HOMEWORK",generationPolicy:"SOURCE_LIMITED_TRANSFORM_FAST_VERIFY_V2",barometerExcluded:true,verification:{method:"ONE_CALL_RESOLVE_CHECK",valid:true,computedAnswer:String(p.computedAnswer)}};});
+    normalized=await archiveGeneratedProblems({supabase,studentId,sourceSessionId:firstTrainingSessionId,kind:"HOMEWORK",problems:normalized});
     const dup=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind","HOMEWORK").eq("round_no",3).order("created_at",{ascending:true}).limit(1);if(dup.error)throw dup.error;if((dup.data??[]).length)return {session:dup.data?.[0],problems:[],existing:true};
     const session=await supabase.from("sos_training_sessions").insert({student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:{...target,generatedSimilar:true,homework:true,barometerExcluded:true,generationPolicy:"SOURCE_LIMITED_TRANSFORM_FAST_VERIFY_V2"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:3,total_count:3,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:"HOMEWORK"}).select().single();if(session.error||!session.data)throw new Error(session.error?.message||"3제 굳히기 세션 생성 실패");
     const ins=await supabase.from("sos_training_items").insert(normalized.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:"AI 유사문항 3제 굳히기 · 바로미터 미반영",subunit_key:p.subunitKey})));if(ins.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw ins.error;}return {session:session.data,problems:normalized,fastHomework:true};
@@ -572,7 +596,7 @@ ${invalidReason?`이전 생성은 검증에서 탈락했습니다: ${invalidReas
   if(list.length!==count)throw new Error(`AI 유사문항 검증 실패: ${invalidReason||"원문 제한변형/독립 재풀이 조건 미충족"}`);
 
   const target=s.target_snapshot??{};
-  const normalized=list.map((p:any,index:number)=>{
+  let normalized=list.map((p:any,index:number)=>{
     const sourceSlot=sourceSlots[index];
     const sourceItem=ranked[index%ranked.length]??null;
     const sourceProblem=sourceItem?.problem_bank_questions??{};
@@ -594,6 +618,7 @@ ${invalidReason?`이전 생성은 검증에서 탈락했습니다: ${invalidReas
       barometerExcluded:false,
     };
   });
+  normalized=await archiveGeneratedProblems({supabase,studentId,sourceSessionId:firstTrainingSessionId,kind:"SECOND_TRAINING",problems:normalized});
   const duplicateCheck=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",2).order("created_at",{ascending:true}).limit(1);
   if(duplicateCheck.error)throw duplicateCheck.error;
   if((duplicateCheck.data??[]).length)return {session:duplicateCheck.data?.[0],problems:[],existing:true};
