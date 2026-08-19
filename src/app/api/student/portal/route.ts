@@ -100,7 +100,7 @@ export async function GET() {
   const { data: exams, error } = await supabase
     .from("exams")
     .select(
-      "id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,objective_count,short_answer_count,test_file_path,solution_file_path,status,student_open,open_at,close_at,paused_at,paused_remaining_seconds,answer_keys,solution_open",
+      "id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,question_points,objective_count,short_answer_count,test_file_path,solution_file_path,status,student_open,open_at,close_at,paused_at,paused_remaining_seconds,answer_keys,solution_open",
     )
     .eq("student_open", true)
     .order("exam_date", { ascending: false });
