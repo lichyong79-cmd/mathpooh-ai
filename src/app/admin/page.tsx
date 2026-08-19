@@ -4823,12 +4823,24 @@ function ExamsPage({
                       />
                     )}
                     <input
-                      type="number"
-                      min="0"
-                      step="1"
+                      className="question-point-input"
+                      type="text"
+                      inputMode="decimal"
                       title={`${no}번 배점`}
-                      value={form.questionPoints[index] || ""}
-                      onChange={(e) => setForm((prev) => ({ ...prev, questionPoints: prev.questionPoints.map((v, i) => i === index ? Number(e.target.value) : v) }))}
+                      value={form.questionPoints[index] ?? ""}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        if (raw !== "" && !/^\d*(?:\.\d*)?$/.test(raw)) return;
+                        setForm((prev) => {
+                          const next = Array.from(
+                            { length: prev.questionCount },
+                            (_, i) => prev.questionPoints[i] ?? 0,
+                          );
+                          next[index] = raw === "" ? 0 : Number(raw);
+                          return { ...prev, questionPoints: next };
+                        });
+                      }}
                       placeholder="배점"
                     />
                   </label>
