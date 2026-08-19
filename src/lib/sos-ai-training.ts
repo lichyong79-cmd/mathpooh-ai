@@ -431,202 +431,179 @@ async function archiveGeneratedProblems(args:{supabase:any;studentId:string;sour
   return problems.map((p:any)=>{const h=createHash("sha256").update(`${p.sourceProblemId??""}|${kind}|${p.question??""}`).digest("hex");return {...p,aiBankId:idByHash.get(h)??null};});
 }
 
-export async function generateSimilarTraining(args:{supabase:any;studentId:string;firstTrainingSessionId:string;count:3|10;kind:"HOMEWORK"|"SECOND_TRAINING"}){
-  const {supabase,studentId,firstTrainingSessionId,count,kind}=args;
+async function updateGenerationStage(supabase:any,jobId:string|undefined,stage:string,index:number,total:number,message:string,extra:Record<string,any>={}){
+  if(!jobId)return;
+  const result=await supabase.from("sos_ai_generation_jobs").update({
+    pipeline_version:"V2",stage,stage_index:index,stage_total:total,stage_message:message,stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString(),...extra,
+  }).eq("id",jobId);
+  if(result.error)throw new Error(`AI 생성 단계 저장 실패: ${result.error.message}`);
+}
+
+const stagedDraftSchema=(count:number)=>({type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","answer","solution","difficulty","meter","topic","reason"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},question:{type:"string"},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"}}}}}});
+const stagedRenderSchema=(count:number)=>({type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","displayLatex","renderBlocks"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},displayLatex:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:18,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}}}}}}});
+const stagedVerifySchema=(count:number)=>({type:"object",additionalProperties:false,required:["checks"],properties:{checks:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["index","valid","sourceFaithful","computedAnswer","reason"],properties:{index:{type:"integer",minimum:1,maximum:count},valid:{type:"boolean"},sourceFaithful:{type:"boolean"},computedAnswer:{type:"string"},reason:{type:"string"}}}}}});
+
+function validateStagedDrafts(list:any[],count:number){
+  if(list.length!==count)return `문항 수 ${list.length}/${count}`;
+  for(let i=0;i<list.length;i++){
+    const p=list[i];
+    if(Number(p?.sourceSlot)!==i+1)return `${i+1}번 sourceSlot 순서 오류`;
+    const a=String(p?.answer??"").trim();
+    if(!/^-?\d+$/.test(a))return `${i+1}번 정답이 정수가 아님`;
+    const n=Number(a);if(!Number.isSafeInteger(n)||n<-999||n>999)return `${i+1}번 정답 범위 오류`;
+    if(String(p?.question??"").trim().length<18)return `${i+1}번 문제 본문이 너무 짧음`;
+    if(!String(p?.solution??"").trim())return `${i+1}번 풀이 없음`;
+  }
+  return "";
+}
+
+async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kind:"HOMEWORK"|"SECOND_TRAINING";count:3|10;sourceSlots:any[];sourceImages:string[];sourceSummary:any[];weakness:any;target:any}){
+  const {supabase,jobId,kind,count,sourceSlots,sourceImages,sourceSummary,weakness,target}=args;
+  const total=8;
+  const transformLevel=kind==="HOMEWORK"?"안전변형":"표준변형";
+  const design=sourceSummary.map((x:any)=>({sourceSlot:x.slot,policy:transformLevel,keep:"핵심개념·풀이순서·질문유형",change:"수치·계수·동등한 조건만 제한 변경"}));
+
+  let drafts:any[]=[];
+  let rendered:any[]=[];
+  let checks:any[]=[];
+  let lastError="";
+
+  // SOS268: 실패 후 재실행 시 마지막으로 정상 저장된 단계부터 이어간다.
+  if(jobId){
+    const resume=await supabase.from("sos_ai_generation_jobs").select("draft_payload,rendered_payload,verification_payload").eq("id",jobId).maybeSingle();
+    if(resume.error)throw resume.error;
+    const savedDrafts=Array.isArray(resume.data?.draft_payload?.problems)?resume.data.draft_payload.problems:[];
+    const savedRendered=Array.isArray(resume.data?.rendered_payload?.problems)?resume.data.rendered_payload.problems:[];
+    const savedChecks=Array.isArray(resume.data?.verification_payload?.checks)?resume.data.verification_payload.checks:[];
+    if(savedDrafts.length===count&&!validateStagedDrafts(savedDrafts,count))drafts=savedDrafts;
+    const savedLayoutErrors=savedRendered.length===count?savedRendered.map((p:any)=>validateGeneratedMathLayout(p)).filter(Boolean):["count"];
+    if(savedRendered.length===count&&!savedLayoutErrors.length)rendered=savedRendered;
+    if(rendered.length===count&&savedChecks.length===count&&savedChecks.every((c:any,i:number)=>c?.valid===true&&c?.sourceFaithful===true&&String(c?.computedAnswer??"")===String(rendered[i]?.answer??""))){
+      await updateGenerationStage(supabase,jobId,"FINAL_VERIFIED",8,total,"저장된 최종 재풀이 검증 결과부터 복구했습니다.");
+      return rendered.map((p:any,index:number)=>({...p,verification:{method:"PIPELINE_V2_RESUMED_VERIFICATION",valid:true,sourceFaithful:true,computedAnswer:String(savedChecks[index]?.computedAnswer??""),reason:String(savedChecks[index]?.reason??"")}}));
+    }
+  }
+
+  await updateGenerationStage(supabase,jobId,"SOURCE_ANALYSIS",1,total,"원문 구조와 Problem DNA를 정리했습니다.");
+  await updateGenerationStage(supabase,jobId,"TRANSFORM_DESIGN",2,total,`${transformLevel} 기준으로 변형 설계를 확정했습니다.`);
+
+  for(let attempt=1;attempt<=2;attempt++){
+    if(!drafts.length){
+      await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,total,`문제 텍스트를 생성하고 있습니다. (${attempt}/2)`);
+      const prompt=`당신은 MATHPOOH SOS 수학 제한변형 출제 엔진입니다.
+생성 종류: ${kind==="HOMEWORK"?"3제 굳히기":"2차 AI 유사훈련"}
+변형 강도: ${transformLevel}
+취약점: ${String(weakness?.weaknessTitle??target?.weaknessTitle??"")}
+원문 슬롯: ${JSON.stringify(sourceSummary)}
+
+정확히 ${count}문항을 sourceSlot 1~${count} 순서로 생성하세요.
+이 단계에서는 '문제 내용'만 완성합니다. 조판용 LaTeX/MathML은 만들지 마세요.
+- 원문의 핵심 개념, 풀이순서, 질문유형을 유지합니다.
+- 새 개념, 자유창작, 전혀 다른 풀이법을 추가하지 않습니다.
+- ${kind==="HOMEWORK"?"수치·계수·좌표·구간 등만 안전하게 변경합니다.":"수치·계수·동등한 조건을 변경하되 원문 구조를 유지합니다."}
+- answer는 -999~999의 유일한 정수 하나여야 합니다.
+- solution은 실제 계산이 확인되는 충분한 풀이를 적습니다.
+- reason은 원문에서 무엇을 유지하고 무엇만 바꿨는지 적습니다.
+${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세요.`:""}`;
+      const content:any[]=[{type:"input_text",text:prompt}];
+      sourceSlots.forEach((slot,index)=>{content.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])content.push({type:"input_image",image_url:sourceImages[index]});else content.push({type:"input_text",text:JSON.stringify(slot.dna)});});
+      const d=await openAiJson(prompt,stagedDraftSchema(count),content,{timeoutMs:70000,effort:"low"});
+      drafts=Array.isArray(d?.problems)?d.problems:[];
+      lastError=validateStagedDrafts(drafts,count);
+      if(lastError){drafts=[];continue;}
+      await updateGenerationStage(supabase,jobId,"TEXT_CREATED",4,total,"텍스트 문항 생성이 완료되었습니다.",{draft_payload:{sourceSummary,design,problems:drafts}});
+    }else{
+      await updateGenerationStage(supabase,jobId,"TEXT_CREATED",4,total,"저장된 텍스트 문항부터 작업을 이어갑니다.");
+    }
+
+    if(!rendered.length){
+      await updateGenerationStage(supabase,jobId,"RENDERING",5,total,"문제집 형태로 수식과 문장을 조판하고 있습니다.");
+      const renderPrompt=`아래 ${count}개의 수학 문제 텍스트를 내용·수치·정답을 절대 바꾸지 말고 학생용 문제집 조판으로 변환하세요.
+문제: ${JSON.stringify(drafts.map((p:any)=>({sourceSlot:p.sourceSlot,question:p.question})))}
+
+각 문항마다 displayLatex와 renderBlocks만 반환합니다.
+- displayLatex는 한국어 문장과 MathJax 수식을 포함한 완성 문제입니다. 수식은 \\( ... \\) 또는 \\[ ... \\] 안에 둡니다.
+- 분수 \\frac, 극한 \\lim, 적분 \\int, 근호 \\sqrt, 조각함수 \\begin{cases}를 표준 LaTeX로 사용합니다.
+- renderBlocks의 일반 문장은 text, 수식은 mathml입니다. mathml은 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 구조여야 합니다.
+- 분수는 반드시 <mfrac>, 지수는 <msup>, 근호는 <msqrt>를 사용합니다.
+- MathML 안에 LaTeX 명령을 남기지 않습니다.
+- 문제 내용 자체를 수정하거나 조건을 추가/삭제하지 않습니다.`;
+      const r=await openAiJson(renderPrompt,stagedRenderSchema(count),undefined,{timeoutMs:80000,effort:"minimal"});
+      const layouts=Array.isArray(r?.problems)?r.problems:[];
+      if(layouts.length!==count){lastError=`조판 결과 수 ${layouts.length}/${count}`;rendered=[];continue;}
+      rendered=drafts.map((p:any,index:number)=>({...p,displayLatex:String(layouts[index]?.displayLatex??""),renderBlocks:Array.isArray(layouts[index]?.renderBlocks)?layouts[index].renderBlocks:[]}));
+      const layoutErrors=rendered.map((p:any,i:number)=>{if(Number(layouts[i]?.sourceSlot)!==i+1)return `${i+1}번 슬롯 오류`;const e=validateGeneratedMathLayout(p);return e?`${i+1}번 ${e}`:"";}).filter(Boolean);
+      if(layoutErrors.length){lastError=`조판 검수 실패: ${layoutErrors.join(", ")}`;rendered=[];continue;}
+      await updateGenerationStage(supabase,jobId,"RENDER_VERIFIED",6,total,"문제집 조판과 수식 구조 검수를 통과했습니다.",{rendered_payload:{problems:rendered}});
+    }else{
+      await updateGenerationStage(supabase,jobId,"RENDER_VERIFIED",6,total,"저장된 문제집 조판 결과부터 작업을 이어갑니다.");
+    }
+
+    await updateGenerationStage(supabase,jobId,"FINAL_RESOLVE",7,total,"최종 문제를 처음부터 다시 풀어 정답을 검증하고 있습니다.");
+    const verifyPrompt=`당신은 MATHPOOH SOS 독립 수학 검수자입니다. 출제자가 적은 solution과 answer를 믿지 말고 아래 최종 문제를 각각 처음부터 새로 풀어 검증하세요.
+최종문항: ${JSON.stringify(rendered.map((p:any,i:number)=>({index:i+1,sourceSlot:p.sourceSlot,question:p.question,displayLatex:p.displayLatex,claimedAnswer:p.answer,topic:p.topic,changeReason:p.reason})))}
+
+검수 기준:
+1) 조건에 모순/누락이 없고 풀이 가능해야 합니다.
+2) 정답은 유일한 -999~999 정수 하나입니다.
+3) computedAnswer가 claimedAnswer와 정확히 같아야 합니다.
+4) 같은 sourceSlot 원문의 핵심 개념·풀이 흐름·질문 유형을 유지한 제한변형이어야 sourceFaithful=true입니다.
+5) 하나라도 어기면 valid=false입니다.`;
+    const verifyContent:any[]=[{type:"input_text",text:verifyPrompt}];
+    sourceSlots.forEach((slot,index)=>{verifyContent.push({type:"input_text",text:`[검수 sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])verifyContent.push({type:"input_image",image_url:sourceImages[index]});else verifyContent.push({type:"input_text",text:JSON.stringify(slot.dna)});});
+    const v=await openAiJson(verifyPrompt,stagedVerifySchema(count),verifyContent,{timeoutMs:80000,effort:"medium"});
+    checks=Array.isArray(v?.checks)?v.checks:[];
+    const verifyErrors=checks.map((c:any,i:number)=>{const claimed=String(rendered[i]?.answer??"").trim(),computed=String(c?.computedAnswer??"").trim();if(Number(c?.index)!==i+1)return `${i+1}번 검수 순서 오류`;if(c?.valid!==true)return `${i+1}번 재풀이 실패(${String(c?.reason??"")})`;if(c?.sourceFaithful!==true)return `${i+1}번 원문 구조 이탈`;if(computed!==claimed)return `${i+1}번 정답 불일치(${claimed}≠${computed})`;return "";}).filter(Boolean);
+    if(checks.length===count&&!verifyErrors.length){
+      await updateGenerationStage(supabase,jobId,"FINAL_VERIFIED",8,total,"최종 재풀이 검증을 통과했습니다.",{verification_payload:{checks}});
+      return rendered.map((p:any,index:number)=>({...p,verification:{method:"PIPELINE_V2_INDEPENDENT_RESOLVE",valid:true,sourceFaithful:true,computedAnswer:String(checks[index]?.computedAnswer??""),reason:String(checks[index]?.reason??"")}}));
+    }
+
+    lastError=checks.length!==count?`최종 검수 수 ${checks.length}/${count}`:verifyErrors.join(", ");
+    // 재풀이가 틀렸다면 수학 내용 자체를 다시 생성한다. 조판만 실패한 경우에는 위에서 조판만 재시도한다.
+    drafts=[];rendered=[];checks=[];
+    if(jobId){
+      const reset=await supabase.from("sos_ai_generation_jobs").update({draft_payload:{},rendered_payload:{},verification_payload:{},stage_message:`재풀이 검증 실패 · 텍스트부터 재생성: ${lastError.slice(0,180)}`,updated_at:new Date().toISOString()}).eq("id",jobId);
+      if(reset.error)throw reset.error;
+    }
+  }
+  throw new Error(`AI 변형문항 파이프라인 검증 실패: ${lastError||"원인 미상"}`);
+}
+
+export async function generateSimilarTraining(args:{supabase:any;studentId:string;firstTrainingSessionId:string;count:3|10;kind:"HOMEWORK"|"SECOND_TRAINING";jobId?:string}){
+  const {supabase,studentId,firstTrainingSessionId,count,kind,jobId}=args;
   const source=await supabase.from("sos_training_sessions")
     .select("id,student_id,status,decision,updated_at,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,sos_training_items(id,item_order,is_correct,response_seconds,review_is_correct,review_response_seconds,problem_meter_before,problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path,answer))")
     .eq("id",firstTrainingSessionId).eq("student_id",studentId).single();
   if(source.error||!source.data)throw new Error(source.error?.message||"1차 훈련 결과를 찾을 수 없습니다.");
   const s:any=source.data;
-
-  // SOS237: 이미 생성된 2차/3제는 그대로 재사용한다. 최종 insert 직전에도 한 번 더 확인한다.
   const existing=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",kind==="HOMEWORK"?3:2).order("created_at",{ascending:true}).limit(1);
   if(existing.error)throw existing.error;
-  if((existing.data??[]).length)return {session:existing.data?.[0],problems:[],existing:true};
+  if((existing.data??[]).length){await updateGenerationStage(supabase,jobId,"READY",8,8,"이미 생성된 학습 세션을 확인했습니다.");return {session:existing.data?.[0],problems:[],existing:true};}
 
   const weakness=s.weakness_snapshot??{};
   const ranked=(s.sos_training_items??[]).slice().sort((a:any,b:any)=>{
     const ap=(a.is_correct===false?100:0)+(a.review_is_correct===false?60:0)+Math.min(60,Number(a.response_seconds??0)/5);
-    const bp=(b.is_correct===false?100:0)+(b.review_is_correct===false?60:0)+Math.min(60,Number(b.response_seconds??0)/5);
-    return bp-ap;
+    const bp=(b.is_correct===false?100:0)+(b.review_is_correct===false?60:0)+Math.min(60,Number(b.response_seconds??0)/5);return bp-ap;
   }).slice(0,5);
   if(!ranked.length)throw new Error("AI 유사문항의 원문이 되는 1차 훈련 문항을 찾을 수 없습니다.");
-
-  const sourceSlots=Array.from({length:count},(_,index)=>{
-    const item=ranked[index%ranked.length];
-    const problem:any=item?.problem_bank_questions??{};
-    return {
-      slot:index+1,
-      trainingOrder:Number(item?.item_order??0)||null,
-      problemId:problem?.id??null,
-      sourceAnswer:String(problem?.answer??""),
-      dna:compactDna(problem),
-      imagePath:String(problem?.question_image_path??""),
-    };
-  });
+  const sourceSlots=Array.from({length:count},(_,index)=>{const item=ranked[index%ranked.length],problem:any=item?.problem_bank_questions??{};return {slot:index+1,trainingOrder:Number(item?.item_order??0)||null,problemId:problem?.id??null,sourceAnswer:String(problem?.answer??""),dna:compactDna(problem),imagePath:String(problem?.question_image_path??"")};});
   const sourceImages=await Promise.all(sourceSlots.map(async slot=>slot.imagePath?await signed(supabase,"question-images",slot.imagePath):""));
   const sourceSummary=sourceSlots.map((slot,index)=>({slot:slot.slot,trainingOrder:slot.trainingOrder,problemId:slot.problemId,sourceAnswer:slot.sourceAnswer,dna:slot.dna,hasOriginalImage:Boolean(sourceImages[index])}));
-
-  if(kind==="HOMEWORK"){
-    const schema3={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:3,maxItems:3,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","displayLatex","renderBlocks","answer","solution","difficulty","meter","topic","reason","computedAnswer","verified"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:3},question:{type:"string"},displayLatex:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:14,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"},computedAnswer:{type:"string"},verified:{type:"boolean"}}}}}};
-    const prompt3=`MATHPOOH SOS 3제 굳히기입니다. 원문 슬롯: ${JSON.stringify(sourceSummary)}. 정확히 3문항을 sourceSlot 1,2,3 순서로 만드세요. 원문의 핵심개념·풀이순서·질문유형을 유지하고 수치만 제한 변형하세요. 자유창작/새 개념 금지. 각 문항을 출제 후 처음부터 다시 풀어 computedAnswer를 적고 answer와 같고 유일한 정수(-999~999)일 때만 verified=true. question은 검수용 일반 텍스트입니다. displayLatex는 학생에게 실제로 보여줄 최종 문제 원본입니다. displayLatex에는 한국어 문제 문장과 수식을 모두 포함하되, 수식은 반드시 MathJax LaTeX 구분자 \\( ... \\) 또는 \\[ ... \\] 안에 작성하세요. 조각함수는 \\begin{cases} ... \\end{cases}, 분수는 \\frac{...}{...}, 극한은 \\lim_{...}, 적분은 \\int, 근호는 \\sqrt{...}, 행렬은 \\begin{pmatrix} ... \\end{pmatrix}처럼 표준 LaTeX를 사용하세요. displayLatex는 '교재에 그대로 인쇄 가능한 완성 문제'여야 하며 x^(...), x^{...} 같은 원시 텍스트 표기를 수식 바깥에 남기지 마세요. 학생 표시의 최우선 원본은 displayLatex입니다. renderBlocks는 하위 호환용으로만 함께 만드세요. renderBlocks는 문제를 위에서 아래 순서대로 나눈 배열입니다. 한국어 설명 문장은 type="text", 수학식은 type="mathml"로 분리하세요. mathml value는 반드시 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 문자열이어야 합니다. 지수는 <msup>, 아래첨자는 <msub>, 분수는 <mfrac>, 근호는 <msqrt>, 극한은 <munder> 또는 적절한 MathML, 조각함수/연립조건은 <mfenced><mtable> 또는 <mrow><mo>{</mo><mtable> 구조를 사용하세요. 학생 화면에 x^(...), x^{...}, \frac 같은 원시 수식 문자열이 보이지 않도록 모든 수학식을 실제 MathML 구조로 작성하세요. 특히 다음 규칙은 강제입니다. (1) 수학적 나눗셈은 절대로 <mo>/</mo> 또는 "/" 문자로 쓰지 말고 <mfrac><mrow>분자</mrow><mrow>분모</mrow></mfrac>를 사용합니다. (2) 조각함수는 일반 문자 "{"를 식 중간에 두지 말고, f(x)= 뒤에 <mo fence="true" stretchy="true">{</mo><mtable>...</mtable> 구조로 각 행의 식과 조건을 분리합니다. (3) 조건 (x≠0), (x=0)은 각각 mtable의 두 번째 열에 둡니다. (4) f(x)= 같은 함수 정의와 본문 문장을 한 줄에 억지로 붙이지 않습니다.`;
-    const c3:any[]=[{type:"input_text",text:prompt3}];
-    sourceSlots.forEach((slot,index)=>{c3.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])c3.push({type:"input_image",image_url:sourceImages[index]});else c3.push({type:"input_text",text:JSON.stringify(slot.dna)});});
-    const g=await openAiJson(prompt3,schema3,c3,{timeoutMs:38000,effort:"low"});
-    const list3=Array.isArray(g?.problems)?g.problems:[];
-    const errs=list3.map((p:any,i:number)=>{const a=String(p?.answer??"").trim(),c=String(p?.computedAnswer??"").trim();if(Number(p?.sourceSlot)!==i+1)return `${i+1}번 슬롯 오류`;if(p?.verified!==true)return `${i+1}번 검증 실패`;if(!/^-?\d+$/.test(a)||a!==c)return `${i+1}번 정답 불일치`;const n=Number(a);if(!Number.isSafeInteger(n)||n<-999||n>999)return `${i+1}번 정답 범위`;if(!String(p?.question??"").trim()||!String(p?.solution??"").trim())return `${i+1}번 본문/풀이 없음`;const layoutError=validateGeneratedMathLayout(p);if(layoutError)return `${i+1}번 수식조판 오류: ${layoutError}`;return "";}).filter(Boolean);
-    if(list3.length!==3||errs.length)throw new Error(`3제 굳히기 생성 검증 실패: ${list3.length!==3?`문항수 ${list3.length}/3`:errs.join(", ")}`);
-    const target=s.target_snapshot??{};
-    let normalized=list3.map((p:any,index:number)=>{const ss=sourceSlots[index],si=ranked[index%ranked.length]??null,sp=si?.problem_bank_questions??{};return {...p,subject:target.subject??target.sourceSubject??"",majorUnit:target.majorUnit??target.sourceMajorUnit??"",subunit:target.subunit??target.sourceUnit??"",subunitKey:target.subunitKey??"",meter:clampMeter(p.meter,p.difficulty),generated:true,generatedIndex:index+1,sourceTrainingOrder:Number(ss?.trainingOrder??si?.item_order??0)||null,sourceProblemId:ss?.problemId??sp?.id??null,sourceTopic:String(sp?.topic??""),coreType:String(p.topic??weakness?.focusConcepts?.[0]??weakness?.weaknessTitle??"핵심 취약유형"),generationKind:"HOMEWORK",generationPolicy:"SOURCE_LIMITED_TRANSFORM_FAST_VERIFY_V2",barometerExcluded:true,verification:{method:"ONE_CALL_RESOLVE_CHECK",valid:true,computedAnswer:String(p.computedAnswer)}};});
-    normalized=await archiveGeneratedProblems({supabase,studentId,sourceSessionId:firstTrainingSessionId,kind:"HOMEWORK",problems:normalized});
-    const dup=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind","HOMEWORK").eq("round_no",3).order("created_at",{ascending:true}).limit(1);if(dup.error)throw dup.error;if((dup.data??[]).length)return {session:dup.data?.[0],problems:[],existing:true};
-    const session=await supabase.from("sos_training_sessions").insert({student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:{...target,generatedSimilar:true,homework:true,barometerExcluded:true,generationPolicy:"SOURCE_LIMITED_TRANSFORM_FAST_VERIFY_V2"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:3,total_count:3,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:"HOMEWORK"}).select().single();if(session.error||!session.data)throw new Error(session.error?.message||"3제 굳히기 세션 생성 실패");
-    const ins=await supabase.from("sos_training_items").insert(normalized.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:"AI 유사문항 3제 굳히기 · 바로미터 미반영",subunit_key:p.subunitKey})));if(ins.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw ins.error;}return {session:session.data,problems:normalized,fastHomework:true};
-  }
-
-  const schema={type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","displayLatex","renderBlocks","answer","solution","difficulty","meter","topic","reason"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},question:{type:"string"},displayLatex:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:14,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"}}}}}};
-  let list:any[]=[];
-  let invalidReason="";
-  for(let generationAttempt=1;generationAttempt<=3;generationAttempt++){
-    const prompt=`당신은 MATHPOOH SOS 수학 제한변형 출제 엔진입니다.
-취약점: ${weakness.weaknessTitle??s.target_snapshot?.weaknessTitle??""}
-상세: ${weakness.weaknessDetail??s.target_snapshot?.weaknessDetail??""}
-원문 슬롯 정보: ${JSON.stringify(sourceSummary)}
-
-정확히 ${count}개의 문항을 sourceSlot 1~${count} 순서대로 하나씩 생성하세요.
-각 문항은 반드시 같은 sourceSlot의 '원문 문제 이미지'를 직접 기반으로 한 제한변형이어야 합니다.
-
-[허용되는 변형]
-- 원문의 핵심 개념, 풀이 순서, 사고 구조, 질문 유형은 그대로 유지합니다.
-- 숫자/계수/점의 위치/조건의 수치처럼 계산 결과에 영향을 주는 일부 값만 바꿉니다.
-- 필요할 때만 같은 의미의 짧은 표현 변경 또는 조건 순서 변경을 허용합니다.
-
-[금지되는 변형]
-- 원문에 없던 새 개념, 새 정리, 새 풀이기법, 새 상황을 추가하지 않습니다.
-- 서술형↔객관식처럼 문제 형식을 크게 바꾸지 않습니다. 단, 화면 입력을 위해 최종 답은 정수 하나가 되도록 원문의 수치만 안전하게 조정할 수 있습니다.
-- 핵심 조건을 삭제하거나 난이도를 의도적으로 크게 올리지 않습니다.
-- 원문을 베껴 숫자 하나만 기계적으로 바꾸는 수준도 피하되, 자유창작은 절대 하지 않습니다.
-
-[정답 안정성]
-- 모든 최종 정답은 -999~999 범위의 정수 하나여야 하며 answer에는 정수 문자열만 씁니다.
-- 생성한 문제를 직접 처음부터 풀어 조건 충분성, 모순 여부, 유일해, solution과 answer 일치를 자체 검산합니다.
-- question은 검수용 일반 텍스트입니다.
-- displayLatex는 학생에게 실제로 보여줄 최종 문제 원본입니다. 한국어 문장과 표준 LaTeX 수식을 함께 작성하고 수식은 반드시 \\( ... \\) 또는 \\[ ... \\] 구분자 안에 둡니다.
-- 조각함수는 \\begin{cases}, 분수는 \\frac, 극한은 \\lim, 적분은 \\int, 근호는 \\sqrt, 행렬은 표준 matrix 계열 환경을 사용합니다.
-- displayLatex는 교재에 바로 인쇄 가능한 완성 문제여야 하며 수식 바깥에 x^(...), x^{...}, / 같은 원시 수식 표기를 남기지 않습니다.
-- 학생 표시의 최우선 원본은 displayLatex입니다.
-- 학생 표시용 renderBlocks도 하위 호환용으로 함께 생성합니다.
-- 한국어 문장은 type="text", 모든 수학식은 type="mathml"입니다.
-- mathml value는 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 문자열이어야 합니다.
-- 분수는 mfrac, 지수는 msup, 아래첨자는 msub, 근호는 msqrt, 극한/조각함수/연립조건도 실제 MathML 구조로 작성합니다.
-- 학생 화면에 x^(...), x^{...}, \frac, \lim 같은 원시 문자열이 나타나지 않게 합니다.
-- "/" 기호로 분수를 표현하지 않습니다. 모든 수학적 분수는 반드시 <mfrac>을 사용합니다.
-- 조각함수는 <mo fence="true" stretchy="true">{</mo> + <mtable>로 구성하고 각 행의 식/조건을 서로 다른 열에 둡니다.
-- 조각함수 조건을 일반 텍스트 한 줄에 붙여 쓰지 않습니다.
-- reason에는 원문의 무엇을 유지하고 어떤 수치/조건만 바꿨는지 짧게 적습니다.
-- 1차 미달자의 2차 정식훈련이므로 원문 풀이 구조는 유지하고 수치 복잡도만 같거나 조금 낮게 시작해 점진적으로 회복시킵니다.
-${invalidReason?`이전 생성은 검증에서 탈락했습니다: ${invalidReason}. 같은 오류를 반복하지 마세요.`:""}`;
-    const content:any[]=[{type:"input_text",text:prompt}];
-    sourceSlots.forEach((slot,index)=>{
-      content.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 1차 훈련 ${slot.trainingOrder??"?"}번 원문. 이 이미지의 핵심 구조를 유지해 제한변형하세요.`});
-      if(sourceImages[index])content.push({type:"input_image",image_url:sourceImages[index]});
-      else content.push({type:"input_text",text:`원문 이미지가 없어 DNA를 보조 원문으로 사용합니다: ${JSON.stringify(slot.dna)}`});
-    });
-    const generated=await openAiJson(prompt,schema,content);
-    const candidate=Array.isArray(generated?.problems)?generated.problems:[];
-    const slotSet=new Set(candidate.map((p:any)=>Number(p?.sourceSlot)));
-    const invalid=candidate.map((problem:any,index:number)=>{
-      const expected=index+1;
-      if(Number(problem?.sourceSlot)!==expected)return `${expected}번 sourceSlot 순서 오류`;
-      const answer=String(problem?.answer??"").trim();
-      if(!/^-?\d+$/.test(answer))return `${index+1}번 정답이 정수가 아님(${answer||"빈값"})`;
-      const value=Number(answer);
-      if(!Number.isSafeInteger(value)||value < -999||value > 999)return `${index+1}번 정답 범위 오류(${answer})`;
-      const question=String(problem?.question??"").trim();
-      const solution=String(problem?.solution??"").trim();
-      if(!question||!solution)return `${index+1}번 문제/풀이가 비어 있음`;
-      const layoutError=validateGeneratedMathLayout(problem);if(layoutError)return `${index+1}번 수식조판 오류: ${layoutError}`;
-      if(/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end|left|right)\b/.test(question))return `${index+1}번 본문에 LaTeX 명령이 남아 있음`;
-      if(question.length<18)return `${index+1}번 문제 본문이 너무 짧음`;
-      return "";
-    }).filter(Boolean);
-    if(candidate.length===count&&slotSet.size===count&&!invalid.length){
-      try{
-        const verifySchema={type:"object",additionalProperties:false,required:["checks"],properties:{checks:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["index","valid","sourceFaithful","computedAnswer","reason"],properties:{index:{type:"integer",minimum:1,maximum:count},valid:{type:"boolean"},sourceFaithful:{type:"boolean"},computedAnswer:{type:"string"},reason:{type:"string"}}}}}};
-        const verifyPrompt=`당신은 MATHPOOH SOS 생성문항 독립 검수자입니다. 출제자의 solution/answer를 믿지 말고 아래 ${count}개 생성문항을 각각 처음부터 새로 풀어 검증하세요. 동시에 같은 sourceSlot의 원문 이미지와 비교하여 '제한변형'인지 판정하세요.
-
-검수 기준:
-1) 생성문항은 주어진 조건만으로 풀이 가능하고 조건에 모순이 없어야 합니다.
-2) 정답은 유일해야 합니다.
-3) 검수자가 독립적으로 재풀이한 실제 결과가 -999~999 정수 하나여야 합니다.
-4) computedAnswer와 제공 answer가 정확히 같아야 합니다.
-5) 원문의 핵심 개념·풀이 흐름·질문 유형을 유지하고 수치/계수/동등한 조건 정도만 바꾼 제한변형이어야 sourceFaithful=true입니다.
-6) 원문에 없던 개념/정리/풀이법을 추가했거나 자유창작에 가까우면 sourceFaithful=false입니다.
-하나라도 어기면 valid=false로 하세요.
-
-생성문항: ${JSON.stringify(candidate.map((p:any,i:number)=>({index:i+1,sourceSlot:p.sourceSlot,question:p.question,claimedAnswer:p.answer,claimedSolution:p.solution,topic:p.topic,changeReason:p.reason})))}`;
-        const verifyContent:any[]=[{type:"input_text",text:verifyPrompt}];
-        sourceSlots.forEach((slot,index)=>{
-          verifyContent.push({type:"input_text",text:`[검수용 sourceSlot ${slot.slot}] 원문`});
-          if(sourceImages[index])verifyContent.push({type:"input_image",image_url:sourceImages[index]});
-          else verifyContent.push({type:"input_text",text:`원문 이미지 없음 · DNA: ${JSON.stringify(slot.dna)}`});
-        });
-        const verified=await openAiJson(verifyPrompt,verifySchema,verifyContent);
-        const checks=Array.isArray(verified?.checks)?verified.checks:[];
-        const verifyErrors=checks.map((c:any)=>{
-          const idx=Number(c?.index)||0;
-          const original=idx>=1&&idx<=candidate.length?candidate[idx-1]:null;
-          const claimed=String(original?.answer??"").trim();
-          const computed=String(c?.computedAnswer??"").trim();
-          if(c?.valid!==true)return `${idx||"?"}번 재풀이 검수 실패(${String(c?.reason??"원인 미상")})`;
-          if(c?.sourceFaithful!==true)return `${idx||"?"}번 원문 제한변형 위반(${String(c?.reason??"원문과 구조 불일치")})`;
-          if(!/^-?\d+$/.test(computed)||computed!==claimed)return `${idx||"?"}번 재계산값 불일치(${claimed}≠${computed||"빈값"})`;
-          return "";
-        }).filter(Boolean);
-        if(checks.length===count&&!verifyErrors.length){
-          list=candidate.map((p:any,index:number)=>({...p,verification:{method:"INDEPENDENT_AI_RESOLVE_AND_SOURCE_COMPARE",valid:true,sourceFaithful:true,reason:String(checks[index]?.reason??"")}}));
-          break;
-        }
-        invalidReason=checks.length!==count?`검수 응답 수 ${checks.length}/${count}`:verifyErrors.join(", ");
-      }catch(error){
-        invalidReason=`AI 독립 재풀이 검수 실패: ${error instanceof Error?error.message:"검수 오류"}`;
-      }
-    }else invalidReason=candidate.length!==count?`문항 수 ${candidate.length}/${count}`:invalid.join(", ");
-  }
-  if(list.length!==count)throw new Error(`AI 유사문항 검증 실패: ${invalidReason||"원문 제한변형/독립 재풀이 조건 미충족"}`);
-
   const target=s.target_snapshot??{};
-  let normalized=list.map((p:any,index:number)=>{
-    const sourceSlot=sourceSlots[index];
-    const sourceItem=ranked[index%ranked.length]??null;
-    const sourceProblem=sourceItem?.problem_bank_questions??{};
-    return {
-      ...p,
-      subject:target.subject??target.sourceSubject??"",
-      majorUnit:target.majorUnit??target.sourceMajorUnit??"",
-      subunit:target.subunit??target.sourceUnit??"",
-      subunitKey:target.subunitKey??"",
-      meter:clampMeter(p.meter,p.difficulty),
-      generated:true,
-      generatedIndex:index+1,
-      sourceTrainingOrder:Number(sourceSlot?.trainingOrder??sourceItem?.item_order??0)||null,
-      sourceProblemId:sourceSlot?.problemId??sourceProblem?.id??null,
-      sourceTopic:String(sourceProblem?.topic??""),
-      coreType:String(p.topic??weakness?.focusConcepts?.[0]??weakness?.weaknessTitle??"핵심 취약유형"),
-      generationKind:kind,
-      generationPolicy:"SOURCE_LIMITED_TRANSFORM_V1",
-      barometerExcluded:false,
-    };
-  });
-  normalized=await archiveGeneratedProblems({supabase,studentId,sourceSessionId:firstTrainingSessionId,kind:"SECOND_TRAINING",problems:normalized});
-  const duplicateCheck=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",2).order("created_at",{ascending:true}).limit(1);
-  if(duplicateCheck.error)throw duplicateCheck.error;
-  if((duplicateCheck.data??[]).length)return {session:duplicateCheck.data?.[0],problems:[],existing:true};
-  const session=await supabase.from("sos_training_sessions").insert({
-    student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:{...target,generatedSimilar:true,homework:false,barometerExcluded:false,generationPolicy:"SOURCE_LIMITED_TRANSFORM_V1"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:2,total_count:count,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:kind
-  }).select().single();
-  if(session.error||!session.data)throw new Error(session.error?.message||"유사문항 세션 생성 실패");
-  const ins=await supabase.from("sos_training_items").insert(normalized.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:"2차 AI 유사훈련",subunit_key:p.subunitKey})));
+  let generated=await buildStagedGeneratedProblems({supabase,jobId,kind,count,sourceSlots,sourceImages,sourceSummary,weakness,target});
+  generated=generated.map((p:any,index:number)=>{const ss=sourceSlots[index],si=ranked[index%ranked.length]??null,sp=si?.problem_bank_questions??{};return {...p,subject:target.subject??target.sourceSubject??"",majorUnit:target.majorUnit??target.sourceMajorUnit??"",subunit:target.subunit??target.sourceUnit??"",subunitKey:target.subunitKey??"",meter:clampMeter(p.meter,p.difficulty),generated:true,generatedIndex:index+1,sourceTrainingOrder:Number(ss?.trainingOrder??si?.item_order??0)||null,sourceProblemId:ss?.problemId??sp?.id??null,sourceTopic:String(sp?.topic??""),coreType:String(p.topic??weakness?.focusConcepts?.[0]??weakness?.weaknessTitle??"핵심 취약유형"),generationKind:kind,generationPolicy:"STAGED_PIPELINE_V2",barometerExcluded:kind==="HOMEWORK"};});
+  generated=await archiveGeneratedProblems({supabase,studentId,sourceSessionId:firstTrainingSessionId,kind,problems:generated});
+  await updateGenerationStage(supabase,jobId,"BANK_SAVED",8,8,"검증 문항을 AI 생성 문제은행에 저장했습니다.");
+
+  const duplicateCheck=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",kind==="HOMEWORK"?3:2).order("created_at",{ascending:true}).limit(1);
+  if(duplicateCheck.error)throw duplicateCheck.error;if((duplicateCheck.data??[]).length)return {session:duplicateCheck.data?.[0],problems:[],existing:true};
+  const session=await supabase.from("sos_training_sessions").insert({student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:{...target,generatedSimilar:true,homework:kind==="HOMEWORK",barometerExcluded:kind==="HOMEWORK",generationPolicy:"STAGED_PIPELINE_V2"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:kind==="HOMEWORK"?3:2,total_count:count,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:kind}).select().single();
+  if(session.error||!session.data)throw new Error(session.error?.message||"AI 유사문항 세션 생성 실패");
+  const role=kind==="HOMEWORK"?"AI 유사문항 3제 굳히기 · 바로미터 미반영":"2차 AI 유사훈련";
+  const ins=await supabase.from("sos_training_items").insert(generated.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:role,subunit_key:p.subunitKey})));
   if(ins.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw ins.error;}
-  return {session:session.data,problems:normalized};
+  await updateGenerationStage(supabase,jobId,"READY",8,8,"학생 학습 배정까지 완료되었습니다.");
+  return {session:session.data,problems:generated,pipelineVersion:"V2"};
 }
+

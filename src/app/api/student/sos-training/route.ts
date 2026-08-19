@@ -148,7 +148,7 @@ export async function GET(){
     .eq("student_id",student.id)
     .order("updated_at",{ascending:false});
 
-  const jobsResult=await supabase.from("sos_ai_generation_jobs").select("id,source_training_session_id,generation_kind,requested_count,status,attempt_count,last_error,result_session_id,requested_at,started_at,completed_at,updated_at").eq("student_id",student.id).order("requested_at",{ascending:false});
+  const jobsResult=await supabase.from("sos_ai_generation_jobs").select("id,source_training_session_id,generation_kind,requested_count,status,attempt_count,last_error,result_session_id,requested_at,started_at,completed_at,updated_at,pipeline_version,stage,stage_index,stage_total,stage_message,stage_updated_at").eq("student_id",student.id).order("requested_at",{ascending:false});
   return NextResponse.json({
     success:true,
     student,
