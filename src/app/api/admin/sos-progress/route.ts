@@ -53,12 +53,8 @@ export async function GET(request:Request){
     const keep=progressed.length?progressed[0]:group[0];
     for(const x of group){if(String(x.id)!==String(keep.id)&&!hasProgress(x))duplicateDeleteIds.push(String(x.id));}
   }
-  if(duplicateDeleteIds.length){
-    const logDelete=await ctx.supabase.from("sos_training_activity_logs").delete().in("session_id",duplicateDeleteIds);if(logDelete.error)throw logDelete.error;
-    const itemDelete=await ctx.supabase.from("sos_training_items").delete().in("session_id",duplicateDeleteIds);if(itemDelete.error)throw itemDelete.error;
-    const sessionDelete=await ctx.supabase.from("sos_training_sessions").delete().in("id",duplicateDeleteIds);if(sessionDelete.error)throw sessionDelete.error;
-    console.info("[SOS237_DUPLICATE_SESSION_CLEANUP]",duplicateDeleteIds);
-  }
+  // SOS265: 조회(GET)가 DB를 삭제/변경하면 학습현황·진행·결과가 서로 달라질 수 있다.
+  // 중복 미응시 세션은 화면에서만 제외하고 실제 삭제는 명시적 관리 작업에서만 수행한다.
   const visibleSessions=(sessions as any[]).filter((x:any)=>!duplicateDeleteIds.includes(String(x.id)));
   const sessionMap=new Map(visibleSessions.map((x:any)=>[String(x.id),x]));
   const rootOf=(session:any)=>{let cur=session;const seen=new Set<string>();while(cur?.parent_session_id&&!seen.has(String(cur.id))){seen.add(String(cur.id));const p=sessionMap.get(String(cur.parent_session_id));if(!p)break;cur=p;}return cur??session;};
