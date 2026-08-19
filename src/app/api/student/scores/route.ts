@@ -32,7 +32,7 @@ export async function GET() {
 
   const examIds = [...new Set((attempts ?? []).map((item) => item.exam_id))];
   const { data: exams } = examIds.length
-    ? await supabase.from("exams").select("id,answer_keys,question_count,total_score").in("id", examIds)
+    ? await supabase.from("exams").select("id,answer_keys,question_count,total_score,question_points").in("id", examIds)
     : { data: [] as any[] };
   const examMap = new Map((exams ?? []).map((exam: any) => [String(exam.id), exam]));
 
@@ -44,6 +44,7 @@ export async function GET() {
       exam.answer_keys,
       Number(exam.question_count),
       Number(exam.total_score ?? 100),
+      exam.question_points,
     );
     return {
       ...attempt,

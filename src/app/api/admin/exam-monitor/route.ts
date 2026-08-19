@@ -51,7 +51,7 @@ export async function GET(request: Request) {
   const { data: exam, error: examError } = await ctx.supabase
     .from("exams")
     .select(
-      "id,title,exam_date,time_limit,student_open,open_at,close_at,paused_at,paused_remaining_seconds,answer_keys,question_count,total_score,solution_open",
+      "id,title,exam_date,time_limit,student_open,open_at,close_at,paused_at,paused_remaining_seconds,answer_keys,question_count,total_score,question_points,solution_open",
     )
     .eq("id", examId)
     .maybeSingle();
@@ -116,6 +116,7 @@ export async function GET(request: Request) {
             exam.answer_keys,
             Number(exam.question_count),
             Number(exam.total_score ?? 100),
+            exam.question_points,
           );
           const { score, correct, wrong, unanswered } = graded;
           await ctx.supabase
@@ -150,6 +151,7 @@ export async function GET(request: Request) {
           exam.answer_keys,
           Number(exam.question_count),
           Number(exam.total_score ?? 100),
+          exam.question_points,
         );
         const changed =
           Number(attempt.score ?? -1) !== graded.score ||
@@ -209,7 +211,7 @@ export async function PATCH(request: Request) {
     );
   const { data: currentExam, error: currentError } = await ctx.supabase
     .from("exams")
-    .select("time_limit,answer_keys,question_count,total_score,open_at,close_at,paused_at,paused_remaining_seconds,solution_open")
+    .select("time_limit,answer_keys,question_count,total_score,question_points,open_at,close_at,paused_at,paused_remaining_seconds,solution_open")
     .eq("id", examId)
     .maybeSingle();
   if (currentError || !currentExam)
@@ -225,6 +227,7 @@ export async function PATCH(request: Request) {
       currentExam.answer_keys,
       Number(currentExam.question_count),
       Number(currentExam.total_score ?? 100),
+      currentExam.question_points,
     );
 
   if (action === "pause") {

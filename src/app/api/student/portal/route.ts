@@ -148,6 +148,7 @@ export async function GET() {
           exam.answer_keys,
           Number(exam.question_count),
           Number(exam.total_score ?? 100),
+          exam.question_points,
         );
         const changed =
           Number(attempt.score ?? -1) !== graded.score ||
@@ -532,6 +533,7 @@ export async function POST(request: Request) {
       exam.answer_keys,
       Number(exam.question_count),
       Number(exam.total_score ?? 100),
+      exam.question_points,
     );
     const { score, correct, wrong, unanswered } = graded;
     const submittedAt = new Date().toISOString();

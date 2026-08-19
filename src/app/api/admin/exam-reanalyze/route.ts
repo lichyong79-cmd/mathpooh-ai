@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
+import { calculateExamScore } from "@/lib/exam-score";
 
 function normalized(value: unknown) {
   const text = String(value ?? "").trim();
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
   const supabase = createServerSupabase();
   const { data: exam, error: examError } = await supabase
     .from("exams")
-    .select("id,answer_keys,question_count,total_score")
+    .select("id,answer_keys,question_count,total_score,question_points")
     .eq("id", String(examId))
     .maybeSingle();
   if (examError || !exam) return NextResponse.json({ message: examError?.message || "시험을 찾지 못했습니다." }, { status: 404 });
@@ -32,31 +33,15 @@ export async function POST(request: Request) {
     .eq("status", "submitted");
   if (attemptError) return NextResponse.json({ message: attemptError.message }, { status: 400 });
 
-  const keys = Array.isArray(exam.answer_keys) ? exam.answer_keys.map(normalized) : [];
-  const questionCount = Number(exam.question_count ?? keys.length ?? 0);
+  const questionCount = Number(exam.question_count ?? 0);
   const totalScore = Number(exam.total_score ?? 100);
   const gradedAt = new Date().toISOString();
   let updated = 0;
   for (const attempt of attempts ?? []) {
-    const answers = (attempt.answers ?? {}) as Record<string, unknown>;
-    const wrong: number[] = [];
-    const unanswered: number[] = [];
-    let correct = 0;
-    for (let no = 1; no <= questionCount; no += 1) {
-      const answer = normalized(answers[no] ?? answers[String(no)]);
-      const key = normalized(keys[no - 1]);
-      if (!answer) unanswered.push(no);
-      else if (key && answer === key) correct += 1;
-      else wrong.push(no);
-    }
-    const autoScore = Math.round((correct / Math.max(1, questionCount)) * totalScore);
+    const graded = calculateExamScore((attempt.answers ?? {}) as Record<string, unknown>, exam.answer_keys, questionCount, totalScore, exam.question_points);
     const payload: Record<string, unknown> = {
-      correct_count: correct,
-      wrong_numbers: wrong,
-      unanswered_numbers: unanswered,
-      graded_at: gradedAt,
-      score: autoScore,
-      score_source: "auto",
+      correct_count: graded.correct, wrong_numbers: graded.wrong, unanswered_numbers: graded.unanswered,
+      graded_at: gradedAt, score: graded.score, score_source: "auto",
     };
     const { error } = await supabase.from("exam_attempts").update(payload).eq("id", attempt.id);
     if (error) return NextResponse.json({ message: error.message }, { status: 400 });

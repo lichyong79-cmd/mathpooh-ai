@@ -1,4 +1,5 @@
 import { difficultyLabel } from "@/lib/difficulty-scale";
+import { calculateExamScore } from "@/lib/exam-score";
 export type PerformanceGroup = {
   label: string;
   total: number;
@@ -118,7 +119,7 @@ export function buildStudentPerformance(
       title: exam.title ?? "시험",
       examDate: exam.exam_date ?? "",
       submittedAt: attempt.submitted_at ?? "",
-      score: Math.round((recomputedCorrect / Math.max(1, questionCount)) * Number(exam.total_score ?? 100)),
+      score: calculateExamScore(attempt.answers, exam.answer_keys, questionCount, Number(exam.total_score ?? 100), exam.question_points).score,
       correct: recomputedCorrect,
       questionCount,
       wrongNumbers,

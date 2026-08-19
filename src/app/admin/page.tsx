@@ -108,6 +108,7 @@ type PracticeExam = {
   solutionFilePath?: string;
   originalFilePath?: string;
   answers: string[];
+  questionPoints: number[];
   answerVerified: boolean;
   coverVerified: boolean;
   regionVerified: boolean;
@@ -2262,6 +2263,9 @@ function examFromRow(row: any): PracticeExam {
     answers: Array.isArray(row.answer_keys)
       ? row.answer_keys.map(String)
       : Array(Number(row.question_count ?? 30)).fill(""),
+    questionPoints: Array.isArray(row.question_points)
+      ? row.question_points.map(Number)
+      : Array(Number(row.question_count ?? 30)).fill(0),
     testFilePath: row.test_file_path ?? "",
     solutionFilePath: row.solution_file_path ?? "",
     originalFilePath: row.original_file_path ?? "",
@@ -2300,6 +2304,7 @@ function examToRow(
     solution_file_name: exam.solutionFile,
     original_file_name: exam.originalFile,
     answer_keys: exam.answers,
+    question_points: exam.questionPoints,
     answer_verified: exam.answerVerified,
     cover_verified: exam.coverVerified,
     region_verified: exam.regionVerified,
@@ -3561,6 +3566,7 @@ function ExamsPage({
     solutionFilePath: "",
     originalFilePath: "",
     answers: Array(30).fill(""),
+    questionPoints: Array(30).fill(0),
     answerVerified: false,
     coverVerified: false,
     regionVerified: false,
@@ -4545,6 +4551,10 @@ function ExamsPage({
                         { length: count },
                         (_, i) => prev.answers[i] ?? "",
                       ),
+                      questionPoints: Array.from(
+                        { length: count },
+                        (_, i) => prev.questionPoints[i] ?? 0,
+                      ),
                     }));
                   }}
                 />
@@ -4749,8 +4759,7 @@ function ExamsPage({
             <div className="answer-toolbar">
               <div>
                 <strong>
-                  {form.answers.filter(Boolean).length}/{form.questionCount}개
-                  입력
+                  {form.answers.filter(Boolean).length}/{form.questionCount}개 입력 · 배점합 {form.questionPoints.reduce((sum, v) => sum + Number(v || 0), 0)}/{form.totalScore}점
                 </strong>
                 <span>
                   1~{form.objectiveCount}번 객관식 · {form.objectiveCount + 1}~
@@ -4813,6 +4822,15 @@ function ExamsPage({
                         placeholder="답"
                       />
                     )}
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      title={`${no}번 배점`}
+                      value={form.questionPoints[index] || ""}
+                      onChange={(e) => setForm((prev) => ({ ...prev, questionPoints: prev.questionPoints.map((v, i) => i === index ? Number(e.target.value) : v) }))}
+                      placeholder="배점"
+                    />
                   </label>
                 );
               })}
