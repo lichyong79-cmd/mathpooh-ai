@@ -147,6 +147,17 @@ export default function PdfMapperPage(){
     if(target.page)setPage(target.page);
   }
 
+  function returnToRegistration(){
+    // PDF Mapper는 실전모의고사 등록/수정 화면에서 열리므로
+    // 브라우저 history를 이용하면 입력 중이던 시험 폼 상태까지 그대로 복원된다.
+    // 직접 진입한 경우에는 실전모의고사 입력 메뉴로 안전하게 이동한다.
+    if(window.history.length > 1){
+      window.history.back();
+      return;
+    }
+    window.location.href = "/admin?menu=exam-input";
+  }
+
   async function save(){
     const config=getSupabaseConfig(); if(!config||!examId)return alert("Supabase 연결을 확인해 주세요.");
     setSaving(true);
@@ -161,7 +172,7 @@ export default function PdfMapperPage(){
   }
 
   return <main className="mapper-shell">
-    <header className="mapper-header"><div><span>SOS PDF MAPPER</span><h1>문항 영역 검수</h1><p>자동 초안을 확인하고 틀린 문항만 다시 드래그하세요.</p></div><div className="header-actions"><button onClick={goNextNeedsCheck}>다음 확인 필요</button><button onClick={()=>history.back()}>돌아가기</button><button className="primary" onClick={save} disabled={saving}>{saving?"저장 중...":"DB에 저장"}</button></div></header>
+    <header className="mapper-header"><div><span>SOS PDF MAPPER</span><h1>문항 영역 검수</h1><p>자동 초안을 확인하고 틀린 문항만 다시 드래그하세요.</p></div><div className="header-actions"><button onClick={goNextNeedsCheck}>다음 확인 필요</button><button className="primary" onClick={save} disabled={saving}>{saving?"저장 중...":"DB에 저장"}</button><button onClick={returnToRegistration} disabled={saving}>등록화면으로 돌아가기</button></div></header>
     <section className="meta-card"><b>{examCode}</b><span>{examPdfName||"시험지 불러오는 중"}</span><span>영역 {completed}/{regions.length}</span><span>검수 {verified}/{regions.length}</span></section>
     <div className="mapper-grid">
       <aside className="side-card"><div className="side-title"><h2>문항 번호</h2><b>{completed}/{regions.length}</b></div><div className="number-grid">{regions.map(r=><button key={r.number} className={`${active===r.number?"active":""} ${r.w>0?"done":""} ${r.verified?"verified":""}`} onClick={()=>setActive(r.number)}>{r.number}</button>)}</div>{current&&<div className="answer-editor"><h3>{active}번</h3><p>{current.source==="auto"?"자동 초안":"수동 보정"} · {current.verified?"검수 완료":"확인 필요"}</p><button className="verify" onClick={()=>patch({verified:!current.verified})}>{current.verified?"검수 취소":"이 영역 맞음"}</button><button className="clear" onClick={()=>patch({x:0,y:0,w:0,h:0,verified:false,source:"manual"})}>영역 다시 지정</button></div>}</aside>
