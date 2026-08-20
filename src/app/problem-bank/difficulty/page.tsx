@@ -155,7 +155,9 @@ export default function DifficultyManagementPage() {
   }, [items]);
   const filtered = useMemo(() => items.filter(x => {
     if (difficulty === "미분류" && norm(x.difficulty,x.problem_dna)) return false;
-    if (difficulty !== "전체" && difficulty !== "미분류" && norm(x.difficulty,x.problem_dna) !== difficulty) return false;
+    // SOS275: AI 검증이 필요한 문항만 골라 작업할 수 있게 한다.
+    if (difficulty === "AI미검증" && difficultyAiJudged(x.problem_dna)) return false;
+    if (difficulty !== "전체" && difficulty !== "미분류" && difficulty !== "AI미검증" && norm(x.difficulty,x.problem_dna) !== difficulty) return false;
     if (subject !== "전체" && canonicalSubject(x.subject) !== subject) return false;
     const q = keyword.trim().toLowerCase();
     if (q && ![x.problem_code,x.title,x.unit,x.topic,x.source_name].join(" ").toLowerCase().includes(q)) return false;
@@ -249,15 +251,21 @@ export default function DifficultyManagementPage() {
 
   async function runFullEightScaleReview() {
     if (running) return;
-    const targets = items.filter((x) => x.problem_dna?.difficulty?.admin_fixed !== true);
-    const fixed = items.length - targets.length;
+    // SOS275(A안): AI가 확정한 난이도는 이 보조 계산의 대상이 아니다.
+    const targets = items.filter((x) => x.problem_dna?.difficulty?.admin_fixed !== true && !difficultyAiJudged(x.problem_dna));
+    const fixed = items.filter((x) => x.problem_dna?.difficulty?.admin_fixed === true).length;
+    const verified = items.length - targets.length - fixed;
     if (!window.confirm(
-      `저장된 DNA만 사용해 전체 난이도를 8단계로 다시 계산합니다.
+      `저장된 DNA 점수만으로 난이도를 추정합니다. AI가 문제를 풀어보는 검증이 아닙니다.
 
 `
-      + `대상 ${targets.length}문항 · 관리자 확정 ${fixed}문항 보존
+      + `대상 ${targets.length}문항 (AI 미검증분)
+`
+      + `보존: 관리자 확정 ${fixed}문항 · AI 확정 ${verified}문항
 `
       + `AI/OpenAI 호출 0회 · 추가 AI 비용 0원
+
+결과는 '추정치'로 저장되며 AI 검증 대상으로 남습니다.
 
 진행할까요?`
     )) return;
@@ -296,7 +304,10 @@ export default function DifficultyManagementPage() {
   }
 
   function buildBalancedSample(perGrade=4) {
-    const candidates = items.filter(x=>x.problem_dna?.difficulty?.admin_fixed !== true && !!x.question_image_path);
+    // SOS275(A안): 검증이 필요한 문항을 우선 표본으로 뽑는다.
+    const all = items.filter(x=>x.problem_dna?.difficulty?.admin_fixed !== true && !!x.question_image_path);
+    const unverified = all.filter(x=>!difficultyAiJudged(x.problem_dna));
+    const candidates = unverified.length >= 24 ? unverified : all;
     const chosen: Problem[]=[];
     for (const scale of DIFFICULTY_SCALE) {
       const pool=candidates.filter(x=>norm(x.difficulty,x.problem_dna)===scale.value);
@@ -576,7 +587,7 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
   <main className="difficulty-page">
     <div className="difficulty-wrap">
       <div className="difficulty-header">
-        <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>AI가 문제를 먼저 재풀이한 뒤 8단계 난이도를 판정합니다. 관리자가 확정한 난이도는 자동으로 덮어쓰지 않습니다. <b>AI 미검증</b>은 실제 AI 재판정을 한 번도 거치지 않은 문항 수입니다(옛 1~5단계에서 기계 환산된 값 포함). 등급은 나왔으나 정답 대조나 신뢰도에 확인이 필요한 문항은 미판정이 아니라 <b>검토필요</b>로 분리되어 여기서 직접 확정할 수 있습니다.</p></div>
+        <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>AI가 문제를 먼저 재풀이한 뒤 8단계 난이도를 판정합니다. 관리자가 확정한 난이도는 자동으로 덮어쓰지 않습니다. <b>AI 미검증</b>은 저장된 난이도가 AI 재풀이로 확정된 값이 아닌 문항 수입니다. DNA 점수로 계산한 추정치, 옛 1~5단계 환산값, AI 판정 뒤에 보조 계산이 덮어쓴 문항이 모두 포함됩니다. 등급은 나왔으나 정답 대조나 신뢰도에 확인이 필요한 문항은 미판정이 아니라 <b>검토필요</b>로 분리되어 여기서 직접 확정할 수 있습니다.</p></div>
         <div className="header-buttons"><button onClick={()=>location.href="/problem-bank/barometer"}>학생·문항 바로미터</button><button onClick={()=>location.href="/admin?menu=sos-learning"}>관리자 홈</button><button onClick={()=>location.href="/problem-bank"}>SOS 문제은행</button></div>
       </div>
 
@@ -592,7 +603,7 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
       <div className="filter-bar">
         <input value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="문항명·단원·유형·출처 검색"/>
         <select value={subject} onChange={e=>setSubject(e.target.value)}>{subjects.map(x=><option key={x}>{x}</option>)}</select>
-        <select value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option>전체</option>{DIFFICULTY_SCALE.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}<option value="미분류">미분류</option></select>
+        <select value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option>전체</option>{DIFFICULTY_SCALE.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}<option value="미분류">미분류</option><option value="AI미검증">AI 미검증</option></select>
         <button disabled={running} onClick={runSampleRecheck} className="primary">① 표본 재풀이 검증</button>
         {sampleSummary.failed>0 && <button disabled={running} onClick={retryAllFailures} className="retry-all">↻ 검증실패 {sampleSummary.failed}문항 다시 검증</button>}
         <button disabled={running || testResults.length===0} title={!testResults.length?"먼저 표본 재풀이 검증을 실행하세요":sampleSummary.failed>0?`표본에 검증실패 ${sampleSummary.failed}문항이 있습니다. 그 문항은 미리보기 대상에서 제외됩니다.`:"DB를 바꾸지 않고 전체 예상 난이도를 계산합니다"} onClick={runVerifiedFullPreview}>② 전체 재판정 미리보기</button>

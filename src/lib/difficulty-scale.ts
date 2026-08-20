@@ -76,7 +76,13 @@ export function problemDifficultyNeedsReview(value: unknown, dna?: any): boolean
  * 새 체계로 보인다. 실제 판정 흔적은 ai_regrade_version에만 남는다.
  */
 export function difficultyAiJudged(dna?: any): boolean {
-  const diff = dna?.difficulty ?? {};
-  if (diff?.admin_fixed === true) return true;              // 관리자가 직접 확정한 값은 검증된 것으로 본다
-  return Boolean(String(diff?.ai_regrade_version ?? "").trim());
+  const d = dna?.difficulty ?? {};
+  if (d?.admin_fixed === true) return true;                 // 관리자가 직접 확정한 값은 검증된 것으로 본다
+  if (!String(d?.ai_regrade_version ?? "").trim()) return false;
+  if (String(d?.difficulty_decision ?? "") !== "graded") return false;
+  // SOS275: DNA 공식 재계산이 AI 판정보다 나중에 돌았다면 저장값은 공식 추정치다.
+  const aiAt = Date.parse(String(d?.ai_regraded_at ?? ""));
+  const dnaAt = Date.parse(String(d?.dna_recalculated_at ?? ""));
+  if (Number.isFinite(aiAt) && Number.isFinite(dnaAt) && dnaAt > aiAt) return false;
+  return true;
 }

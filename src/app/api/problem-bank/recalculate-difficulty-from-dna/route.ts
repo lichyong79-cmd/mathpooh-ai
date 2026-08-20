@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
-import { applyOperationalDifficultyPolicy } from "@/lib/problem-dna";
+import { applyOperationalDifficultyPolicy, difficultyAiVerified } from "@/lib/problem-dna";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     if (result.error) throw result.error;
 
     const rows = result.data ?? [];
-    let updated=0, skippedFixed=0, skippedNoDna=0, failed=0;
+    let updated=0, skippedFixed=0, skippedNoDna=0, skippedAiVerified=0, failed=0;
     const distribution:Record<string,number>={};
 
     // AI/OpenAI 호출 없음. 저장돼 있는 DNA 수치만 사용한다.
@@ -34,6 +34,8 @@ export async function POST(request: NextRequest) {
         const dna:any = row.problem_dna;
         if (!dna?.difficulty) { skippedNoDna++; continue; }
         if (dna.difficulty.admin_fixed === true) { skippedFixed++; continue; }
+        // SOS275(A안): AI가 재풀이해서 확정한 난이도는 공식 추정치로 덮지 않는다.
+        if (difficultyAiVerified(dna)) { skippedAiVerified++; continue; }
 
         const nextDna = applyOperationalDifficultyPolicy(
           structuredClone(dna),
@@ -50,7 +52,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
-      success:true, offset, fetched:rows.length, updated, skippedFixed, skippedNoDna, failed,
+      success:true, offset, fetched:rows.length, updated, skippedFixed, skippedNoDna, skippedAiVerified, failed,
       nextOffset: offset + rows.length, done: rows.length < limit, distribution,
       aiCalls:0,
     });

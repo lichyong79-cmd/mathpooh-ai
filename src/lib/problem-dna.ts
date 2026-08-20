@@ -225,9 +225,32 @@ export function applyCalculatedDifficulty(dna: ProblemDNA) {
  * 신규 AI 분석 / 문제은행 등록 직전 / DNA 재계산 보조가 모두 이 함수를 사용한다.
  * 관리자가 확정한 문항은 절대 덮어쓰지 않는다.
  */
+/**
+ * SOS275: 이 문항의 난이도가 "AI가 실제로 문제를 풀어보고 확정한 값"인가.
+ *
+ * ai_regrade_version만 보면 안 된다. 아래 DNA 공식 재계산이 나중에 돌면
+ * 난이도 값과 검토 플래그를 통째로 덮어쓰기 때문에, AI 판정 흔적은 남아 있어도
+ * 실제 저장값은 공식 추정치인 경우가 있다. 시간 순서로 구분한다.
+ */
+export function difficultyAiVerified(dna: any): boolean {
+  const d = dna?.difficulty ?? {};
+  if (d.admin_fixed === true) return true;
+  if (!String(d.ai_regrade_version ?? "").trim()) return false;
+  if (String(d.difficulty_decision ?? "") !== "graded") return false;
+  const aiAt = Date.parse(String(d.ai_regraded_at ?? ""));
+  const dnaAt = Date.parse(String(d.dna_recalculated_at ?? ""));
+  // 공식 재계산이 AI 판정보다 나중이면 저장값은 공식이 덮어쓴 것이다.
+  if (Number.isFinite(aiAt) && Number.isFinite(dnaAt) && dnaAt > aiAt) return false;
+  return true;
+}
+
 export function applyOperationalDifficultyPolicy(dna: ProblemDNA, sourceLabel = "") {
   if (!dna?.difficulty) return dna;
   if ((dna.difficulty as Record<string, unknown>).admin_fixed === true) return dna;
+  // SOS275(A안): AI가 재풀이해서 확정한 난이도는 공식 추정치로 덮어쓰지 않는다.
+  // 이 가드가 없어서 "DNA만 재계산(보조)"을 돌릴 때마다 AI 판정 결과와
+  // 검토필요 플래그가 통째로 지워지고 있었다.
+  if (difficultyAiVerified(dna)) return dna;
 
   applyCalculatedDifficulty(dna);
   const difficulty = dna.difficulty as Record<string, unknown>;
@@ -248,9 +271,13 @@ export function applyOperationalDifficultyPolicy(dna: ProblemDNA, sourceLabel = 
   }
 
   difficulty.scale_version = "sos8-v1";
-  difficulty.classification_policy = "sos249-dna-operational-v1";
+  difficulty.classification_policy = "sos275-dna-operational-v2";
   difficulty.difficulty_source = "dna-local-operational";
-  difficulty.difficulty_decision = "graded";
+  // SOS275(A안): 이 값은 AI가 문제를 풀어보고 내린 판정이 아니라 DNA 점수 가중합 추정치다.
+  // 예전에는 여기서 graded / review_required=false 도장을 찍어서, 검증된 값처럼 보이게 만들고
+  // AI 판정 결과까지 덮어썼다. 이제 추정치임을 명시하고 검증 대상으로 남긴다.
+  difficulty.difficulty_decision = "estimated";
+  difficulty.difficulty_estimated = true;
   difficulty.difficulty_review_required = false;
   difficulty.difficulty_review_reason = "";
   difficulty.dna_recalculate_version = "dna-local-v2";
@@ -264,7 +291,11 @@ export function shouldVerifyOperationalDifficulty(dna: ProblemDNA) {
   if (!difficulty || difficulty.admin_fixed === true) return false;
   const final = Number(dna.difficulty.final_grade);
   const confidence = Number(dna.summary?.ai_confidence ?? 0);
-  return difficulty.band_conflict === true || final >= 7 || (Number.isFinite(confidence) && confidence > 0 && confidence < 0.72);
+  // SOS275(A안): 예전 기준은 준킬러(7) 이상만 검증했다. 실제로 변별이 필요한 구간은
+  // 쉬4(4) 이상이므로 그 위를 모두 검증한다. 2점·3점은 공식 추정치로 둔다.
+  // 비용이 부담되면 이 상수만 올리면 된다.
+  const VERIFY_FROM_GRADE = 4;
+  return difficulty.band_conflict === true || final >= VERIFY_FROM_GRADE || (Number.isFinite(confidence) && confidence > 0 && confidence < 0.72);
 }
 
 export function validateProblemDNA(value: unknown): { valid: boolean; errors: string[]; dna?: ProblemDNA } {
