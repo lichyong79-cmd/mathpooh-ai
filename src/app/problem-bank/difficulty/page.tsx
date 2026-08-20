@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
 import { authHeaders } from "@/lib/supabase/rest";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
-import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, difficultyFromBand, difficultyLabel, normalizeProblemDifficulty, problemDifficultyNeedsReview } from "@/lib/difficulty-scale";
+import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, difficultyAiJudged, difficultyFromBand, difficultyLabel, normalizeProblemDifficulty, problemDifficultyNeedsReview } from "@/lib/difficulty-scale";
 import { SUBJECTS, canonicalSubject } from "@/lib/subject";
 import { evidenceDifficultyLevel } from "@/lib/problem-dna";
 
@@ -165,7 +165,10 @@ export default function DifficultyManagementPage() {
   const counts = useMemo(() => D.map(d => items.filter(x=>norm(x.difficulty,x.problem_dna)===d).length), [items]);
   const unclassifiedCount = useMemo(() => items.filter(x=>!norm(x.difficulty,x.problem_dna)).length, [items]);
   const reviewCount = useMemo(() => items.filter(x=>problemDifficultyNeedsReview(x.difficulty,x.problem_dna)).length, [items]);
-  const legacyCount = useMemo(() => items.filter(x=>String(x.problem_dna?.difficulty?.scale_version ?? "") !== DIFFICULTY_SCALE_VERSION).length, [items]);
+  // SOS274: scale_version은 8단계 전환 SQL이 옛 1~5 환산값에도 도장을 찍어놨기 때문에
+  // "검증됨"의 근거가 되지 못한다. 실제 AI 재판정 흔적(ai_regrade_version)으로 센다.
+  const notJudgedCount = useMemo(() => items.filter(x=>!difficultyAiJudged(x.problem_dna)).length, [items]);
+  const legacyStampCount = useMemo(() => items.filter(x=>String(x.problem_dna?.difficulty?.scale_version ?? "") !== DIFFICULTY_SCALE_VERSION).length, [items]);
   const sampleSummary = useMemo(() => {
     // SOS245: 한 문항은 반드시 하나의 최종 상태로만 집계한다.
     const unique=[...new Map(testResults.map(x=>[x.id,x])).values()];
@@ -573,7 +576,7 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
   <main className="difficulty-page">
     <div className="difficulty-wrap">
       <div className="difficulty-header">
-        <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>SOS249는 기존 DNA 재계산과 신규문항 등록이 같은 8단계 난이도 기준을 사용합니다. 신규문항은 등록 직전 다시 검증하며, 관리자가 확정한 난이도는 자동으로 덮어쓰지 않습니다. AI가 문제를 먼저 재풀이하고 검증한 뒤 8단계 난이도를 판정하며, 불확실하면 미판정/검토필요로 분리합니다.</p></div>
+        <div><div className="eyebrow">MATHPOOH SOS</div><h1>난이도 관리</h1><p>AI가 문제를 먼저 재풀이한 뒤 8단계 난이도를 판정합니다. 관리자가 확정한 난이도는 자동으로 덮어쓰지 않습니다. <b>AI 미검증</b>은 실제 AI 재판정을 한 번도 거치지 않은 문항 수입니다(옛 1~5단계에서 기계 환산된 값 포함). 등급은 나왔으나 정답 대조나 신뢰도에 확인이 필요한 문항은 미판정이 아니라 <b>검토필요</b>로 분리되어 여기서 직접 확정할 수 있습니다.</p></div>
         <div className="header-buttons"><button onClick={()=>location.href="/problem-bank/barometer"}>학생·문항 바로미터</button><button onClick={()=>location.href="/admin?menu=sos-learning"}>관리자 홈</button><button onClick={()=>location.href="/problem-bank"}>SOS 문제은행</button></div>
       </div>
 
@@ -584,7 +587,7 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
       {message && <div className="notice success">{message}</div>}
       {error && <div className="notice error">{error}</div>}
 
-      <div className="difficulty-kpis">{D.map((d,i)=><div key={d}><b>{difficultyLabel(d)}</b><strong>{counts[i]}</strong></div>)}<div className="kpi-warn"><b>미분류</b><strong>{unclassifiedCount}</strong></div><div className="kpi-review"><b>검토필요</b><strong>{reviewCount}</strong></div><div><b>구버전/미검증</b><strong>{legacyCount}</strong></div></div>
+      <div className="difficulty-kpis">{D.map((d,i)=><div key={d}><b>{difficultyLabel(d)}</b><strong>{counts[i]}</strong></div>)}<div className="kpi-warn"><b>미분류</b><strong>{unclassifiedCount}</strong></div><div className="kpi-review"><b>검토필요</b><strong>{reviewCount}</strong></div><div className="kpi-warn"><b>AI 미검증</b><strong>{notJudgedCount}</strong></div></div>
 
       <div className="filter-bar">
         <input value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="문항명·단원·유형·출처 검색"/>
@@ -592,7 +595,7 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
         <select value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option>전체</option>{DIFFICULTY_SCALE.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}<option value="미분류">미분류</option></select>
         <button disabled={running} onClick={runSampleRecheck} className="primary">① 표본 재풀이 검증</button>
         {sampleSummary.failed>0 && <button disabled={running} onClick={retryAllFailures} className="retry-all">↻ 검증실패 {sampleSummary.failed}문항 다시 검증</button>}
-        <button disabled={running || testResults.length===0 || sampleSummary.failed>0} title={!testResults.length?"먼저 표본 재풀이 검증을 실행하세요":sampleSummary.failed>0?`검증실패 ${sampleSummary.failed}문항을 먼저 다시 검증하세요`:"DB를 바꾸지 않고 전체 예상 난이도를 계산합니다"} onClick={runVerifiedFullPreview}>② 전체 재판정 미리보기</button>
+        <button disabled={running || testResults.length===0} title={!testResults.length?"먼저 표본 재풀이 검증을 실행하세요":sampleSummary.failed>0?`표본에 검증실패 ${sampleSummary.failed}문항이 있습니다. 그 문항은 미리보기 대상에서 제외됩니다.`:"DB를 바꾸지 않고 전체 예상 난이도를 계산합니다"} onClick={runVerifiedFullPreview}>② 전체 재판정 미리보기</button>
         <button disabled={running} onClick={runAnomalyReview}>AI 이상 난이도 검토</button>
         <button disabled={running} onClick={runFullEightScaleReview} className="legacy-action">DNA만 재계산(보조)</button>
       </div>

@@ -160,7 +160,14 @@ function buildJudgePrompt(dna: any, solve: DifficultySolve, references = "", off
 - 이미지가 불완전하거나 독립 풀이가 불확실하거나 공식답과 명백히 충돌하면 decision=unclassified, final_grade=null로 두세요.
 - confidence<0.68이면 반드시 review_required=true입니다.
 - 독립 풀이와 공식답이 일치하는지 판단 가능한 경우 answer_consistency를 match/mismatch로 표시하세요. 공식답 형식 때문에 비교가 불가능하면 unknown입니다.
-- answer_consistency=mismatch면 자동 확정하지 말고 decision=unclassified로 두세요.
+- solution_verified는 "위 [독립 재풀이]가 이 문항의 타당한 풀이인가"를 당신이 검토한 결과입니다.
+  재풀이 논리에 결정적 오류가 없고 문항 조건과 모순되지 않으면 true로 두세요.
+  공식답과 값이 다른지 여부는 여기에 반영하지 말고 answer_consistency로만 표시하세요.
+  풀이 자체가 틀렸거나 문항 조건을 잘못 읽었을 때만 false입니다.
+- confidence는 "최종 8단계 등급 선택"에 대한 확신도입니다. 인접 등급 사이에서 망설인 정도만 반영하세요.
+  문항 판독이나 풀이에 대한 불안은 confidence를 낮추는 대신 review_reason에 적으세요.
+- 저장된 공식 정답은 오기입일 수 있습니다. 값이 다르면 answer_consistency=mismatch로 표시하되,
+  그것만을 이유로 등급 판정을 포기하지는 마세요. 난이도 자체를 판단할 수 있으면 등급을 부여하세요.
 - 단순 계산량만으로 난이도를 올리지 말고 핵심 발상, 조건 변환, 추론 단계, 전략 선택 부담을 우선하세요.
 - 전체 분포를 맞추려 하지 말고 이 문항 하나만 독립적으로 판정하세요.
 
@@ -292,7 +299,8 @@ export async function judgeDifficulty(args: {
     prompt:buildSolvePrompt(args.dna),schema:solveSchema,schemaName:"mathpooh_difficulty_solve_v240",timeoutMs:timeout,effort:"medium",
   }) as DifficultySolve;
 
-  if (!solve.solvable || Number(solve.confidence) < .50) {
+  // SOS274: 1차 재풀이 탈락 기준. 여기서 걸리면 이미지 판독 자체가 안 된 것이므로 미판정이 맞다.
+  if (!solve.solvable || Number(solve.confidence) < .45) {
     return {
       decision:"unclassified", final_grade:null, csat_point_equivalent:null, csat_difficulty_band:null,
       reason:"독립 재풀이 단계에서 문항을 안정적으로 해석/풀이하지 못했습니다.", confidence:Number(solve.confidence)||0,
@@ -309,17 +317,37 @@ export async function judgeDifficulty(args: {
 
   const confidence=Math.max(0,Math.min(1,Number(judged.confidence)||0));
   const invalidGrade=judged.final_grade!==null && !allowedGrades.includes(judged.final_grade as DifficultyValue);
-  const forceUnclassified = invalidGrade || judged.answer_consistency === "mismatch" || confidence < .55 || judged.solution_verified === false;
-  const finalGrade = forceUnclassified ? null : judged.final_grade;
+
+  // SOS274: 이전에는 정답 불일치·재풀이 미검증·신뢰도 0.55 미만을 모두 '미판정'으로 묶었다.
+  // 미판정은 화면에서 사라지고 수동 확인 대상도 되지 않아, 사람이 손댈 방법이 없는 상태로 쌓였다.
+  // 이제 두 단계로 나눈다.
+  //   hardFail   = 등급 자체를 신뢰할 수 없음 -> 미판정
+  //   needsReview = 등급은 나왔으나 사람이 확인해야 함 -> 검토필요(값은 보존, 화면에 노출)
+  const hardFail = invalidGrade || !judged.final_grade || confidence < .45;
+  const needsReview =
+    judged.review_required ||
+    confidence < .60 ||
+    judged.answer_consistency === "mismatch" ||   // 저장 정답이 오기입일 수 있으므로 미판정이 아닌 검토필요
+    judged.solution_verified === false;
+
+  const finalGrade = hardFail ? null : judged.final_grade;
+  const reviewReason =
+    judged.review_reason ||
+    (hardFail ? "등급 판정 신뢰도가 너무 낮음"
+      : judged.answer_consistency === "mismatch" ? "AI 재풀이 답과 저장 정답이 다름 · 정답 확인 필요"
+      : judged.solution_verified === false ? "독립 재풀이의 타당성이 확인되지 않음"
+      : confidence < .60 ? "난이도 판정 신뢰도 낮음"
+      : "");
+
   return {
     ...judged,
-    decision: forceUnclassified || !finalGrade ? "unclassified" : "graded",
+    decision: hardFail ? "unclassified" : "graded",
     final_grade: finalGrade as DifficultyValue | null,
     csat_point_equivalent: finalGrade ? judged.csat_point_equivalent : null,
     csat_difficulty_band: finalGrade ? judged.csat_difficulty_band : null,
     confidence,
-    review_required: judged.review_required || confidence < .68 || forceUnclassified,
-    review_reason: judged.review_reason || (forceUnclassified ? "재풀이 검증을 통과하지 못함" : confidence < .68 ? "난이도 판정 신뢰도 낮음" : ""),
+    review_required: hardFail || needsReview,
+    review_reason: reviewReason,
     solve,
   };
 }

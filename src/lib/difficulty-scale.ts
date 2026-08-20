@@ -61,5 +61,22 @@ export function problemDifficultyNeedsReview(value: unknown, dna?: any): boolean
   const diff=dna?.difficulty ?? {};
   if (diff?.admin_fixed === true) return false;
   if (diff?.difficulty_review_required === true || dna?.summary?.review_required === true) return true;
-  return String(diff?.difficulty_decision ?? "") === "unclassified" && !!normalizeProblemDifficulty(value, dna, "");
+  // SOS274: 예전에는 "저장 난이도가 있는 미판정"만 검토필요로 셌다.
+  // 그 결과 난이도가 아예 없는 문항(가장 손봐야 할 대상)이 검토필요에서 빠져
+  // 검토필요 0으로 표시되는 착시가 생겼다. 미판정이면 저장값 유무와 무관하게 센다.
+  return String(diff?.difficulty_decision ?? "") === "unclassified";
+}
+
+/**
+ * SOS274: 이 문항이 실제로 AI 8단계 재판정을 거쳤는가.
+ *
+ * scale_version만으로는 판단할 수 없다.
+ * supabase-v3.0-sos-difficulty-8scale.sql이 옛 1~5 난이도를 기계 환산하면서
+ * scale_version에 'sos8-v1' 도장을 함께 찍었기 때문에, 검증받은 적 없는 문항도
+ * 새 체계로 보인다. 실제 판정 흔적은 ai_regrade_version에만 남는다.
+ */
+export function difficultyAiJudged(dna?: any): boolean {
+  const diff = dna?.difficulty ?? {};
+  if (diff?.admin_fixed === true) return true;              // 관리자가 직접 확정한 값은 검증된 것으로 본다
+  return Boolean(String(diff?.ai_regrade_version ?? "").trim());
 }
