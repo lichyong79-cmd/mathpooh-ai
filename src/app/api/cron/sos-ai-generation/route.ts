@@ -5,11 +5,12 @@ import { generateSimilarTraining } from "@/lib/sos-ai-training";
 export const maxDuration=300;
 
 async function run(request:Request){
+  // SOS270: 이 경로는 프록시 로그인 가드에서 제외됩니다(Vercel Cron에는 쿠키가 없음).
+  // 따라서 CRON_SECRET은 선택이 아니라 필수입니다. 없으면 열어두지 말고 막습니다.
   const expected=String(process.env.CRON_SECRET??"").trim();
-  if(expected){
-    const auth=request.headers.get("authorization")??"";
-    if(auth!==`Bearer ${expected}`)return NextResponse.json({success:false,message:"cron unauthorized"},{status:401});
-  }
+  if(!expected)return NextResponse.json({success:false,message:"CRON_SECRET 환경변수가 설정되지 않았습니다."},{status:503});
+  const auth=request.headers.get("authorization")??"";
+  if(auth!==`Bearer ${expected}`)return NextResponse.json({success:false,message:"cron unauthorized"},{status:401});
   const supabase=createClient();
   // 실패 작업은 3회까지 다시 큐로 본다. 오래 걸리는 AI는 한 cron에서 1건만 처리한다.
   const pick=await supabase.from("sos_ai_generation_jobs")

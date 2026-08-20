@@ -1,6 +1,6 @@
 "use client";
 
-import {useEffect,useMemo,useRef,useState} from "react";
+import {useEffect,useMemo,useState} from "react";
 
 declare global {
   interface Window {
@@ -22,6 +22,37 @@ function sanitizeMathMl(value:string){
   return /^<math[\s>]/i.test(s)?s:"";
 }
 
+/**
+ * SOS270 · 조판 문자열 정규화
+ *
+ * AI가 보내오는 displayLatex에는 실제로 아래가 섞여 들어온다.
+ *  1) $ ... $ / $$ ... $$  → MathJax 설정에 없어서 raw 텍스트로 노출되던 원인
+ *  2) \\( ... \\)          → JSON 이중 이스케이프가 남은 경우
+ *  3) 선택지 1~5가 줄바꿈 없이 한 줄에 붙어 오는 경우
+ * 서버에서도 같은 규칙으로 저장하지만, 이미 저장된 과거 문항을 위해 화면에서도 한 번 더 정리한다.
+ */
+export function normalizeDisplayLatex(raw:any){
+  let s=String(raw??"");
+  if(!s.trim())return "";
+  s=s.replace(/\r\n?/g,"\n");
+
+  // 이중 이스케이프( \\( , \\[ )를 표준 구분자로 되돌린다.
+  s=s.replace(/\\\\([()[\]])/g,"\\$1");
+
+  // $$ ... $$ -> \[ ... \]
+  s=s.replace(/\$\$([\s\S]+?)\$\$/g,(_m,inner)=>"\\["+inner+"\\]");
+  // $ ... $ -> \( ... \)   (이스케이프된 \$ 는 건드리지 않는다)
+  s=s.replace(/(^|[^\\$])\$([^$\n]+?)\$/g,(_m,head,inner)=>head+"\\("+inner+"\\)");
+
+  // 선택지는 언제나 새 줄에서 시작하게 만든다.
+  s=s.replace(/([^\n])[ \t]*(?=[\u2460\u2461\u2462\u2463\u2464])/g,"$1\n");
+
+  // 빈 줄 3개 이상은 2개로 줄인다.
+  s=s.replace(/\n{3,}/g,"\n\n");
+
+  return s.trim();
+}
+
 function legacyBlocks(raw:any):RenderBlock[]{
   if(!Array.isArray(raw))return [];
   return raw
@@ -39,8 +70,9 @@ function loadMathJax(){
 
   window.MathJax={
     tex:{
+      // 정규화를 거치지만, 남아 있는 $$ 표기도 마지막 안전망으로 받아준다.
       inlineMath:[["\\(","\\)"]],
-      displayMath:[["\\[","\\]"]],
+      displayMath:[["\\[","\\]"],["$$","$$"]],
       processEscapes:true,
       packages:{"[+]":["ams"]}
     },
@@ -76,38 +108,48 @@ export default function SosGeneratedQuestionMathJax({
   kind?:string;
   topic?:string;
 }){
-  const latex=String(displayLatex??"").trim();
+  const latex=useMemo(()=>normalizeDisplayLatex(displayLatex),[displayLatex]);
   const blocks=useMemo(()=>legacyBlocks(renderBlocks),[renderBlocks]);
-  const holder=useRef<HTMLDivElement|null>(null);
+
+  // ref 대신 state로 DOM을 받는다. ref가 아직 비어 있어서 조판이 통째로
+  // 건너뛰어지고 "조판 중..."에서 멈추던 경로를 없앤다.
+  const [node,setNode]=useState<HTMLDivElement|null>(null);
   const [ready,setReady]=useState(!latex);
   const [error,setError]=useState("");
 
   useEffect(()=>{
     if(!latex){setReady(true);setError("");return;}
-    let dead=false;
-    setReady(false);setError("");
-    const node=holder.current;
     if(!node)return;
 
+    let dead=false;
+    setReady(false);setError("");
     node.textContent=latex;
+
+    // CDN이 느리거나 막혀도 12초 뒤에는 원문이라도 보여준다. 영원히 대기하지 않는다.
+    const guard=window.setTimeout(()=>{
+      if(dead)return;
+      setError("수식 조판이 지연되어 원문을 그대로 표시합니다.");
+      setReady(true);
+    },12000);
 
     loadMathJax()
       .then(async(MathJax)=>{
-        if(dead||!node)return;
+        if(dead)return;
         try{
           if(typeof MathJax.typesetClear==="function")MathJax.typesetClear([node]);
           await MathJax.typesetPromise([node]);
-          if(!dead)setReady(true);
+          if(!dead){setError("");setReady(true);}
         }catch(e){
           if(!dead){setError(e instanceof Error?e.message:"수식 조판 실패");setReady(true);}
         }
       })
       .catch(e=>{
         if(!dead){setError(e instanceof Error?e.message:"MathJax 로드 실패");setReady(true);}
-      });
+      })
+      .finally(()=>{window.clearTimeout(guard);});
 
-    return()=>{dead=true;};
-  },[latex]);
+    return()=>{dead=true;window.clearTimeout(guard);};
+  },[latex,node]);
 
   const hasLegacyMath=blocks.some(b=>b.type==="mathml"&&sanitizeMathMl(b.value));
 
@@ -122,8 +164,8 @@ export default function SosGeneratedQuestionMathJax({
     {latex?
       <div className={`sos-ai-latex ${ready?"ready":"loading"}`}>
         {!ready?<div className="sos-ai-typeset-wait">수학 문제 조판 중...</div>:null}
-        <div ref={holder} className="sos-ai-latex-body"/>
-        {error?<div className="sos-ai-typeset-warning">수식 조판 연결을 확인해 주세요. {error}</div>:null}
+        <div ref={setNode} className="sos-ai-latex-body"/>
+        {error?<div className="sos-ai-typeset-warning">{error}</div>:null}
       </div>
     :hasLegacyMath?
       <div className="sos-ai-legacy-math">

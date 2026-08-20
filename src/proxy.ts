@@ -53,6 +53,10 @@ export async function proxy(request: NextRequest) {
     pathname === "/parent-login" ||
     pathname === "/admin/login" ||
     pathname.startsWith("/auth/") ||
+    // Vercel Cron 호출에는 로그인 쿠키가 없습니다.
+    // 이 경로를 열어두지 않으면 프록시가 401을 돌려줘서 AI 생성 작업이 영원히 실행되지 않습니다.
+    // 실제 인증은 라우트 안에서 CRON_SECRET(Authorization: Bearer ...)로 합니다.
+    pathname.startsWith("/api/cron/") ||
     pathname === "/api/health";
 
   if (!user && !isPublicPath) {

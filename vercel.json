@@ -1,1 +1,13 @@
-{}
+{
+  "crons": [
+    {
+      "path": "/api/cron/sos-ai-generation",
+      "schedule": "*/10 * * * *"
+    }
+  ],
+  "functions": {
+    "src/app/api/cron/sos-ai-generation/route.ts": {
+      "maxDuration": 300
+    }
+  }
+}

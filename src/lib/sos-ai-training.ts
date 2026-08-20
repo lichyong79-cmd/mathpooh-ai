@@ -388,24 +388,58 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
 }
 
 
+/**
+ * SOS270 · 서버 저장용 조판 정규화.
+ * 화면 컴포넌트와 동일 규칙으로 맞춰 DB에 이미 정리된 상태로 넣는다.
+ */
+export function normalizeDisplayLatex(raw:any){
+  let s=String(raw??"");
+  if(!s.trim())return "";
+  s=s.replace(/\r\n?/g,"\n");
+  s=s.replace(/\\\\([()[\]])/g,"\\$1");
+  s=s.replace(/\$\$([\s\S]+?)\$\$/g,(_m:string,inner:string)=>"\\["+inner+"\\]");
+  s=s.replace(/(^|[^\\$])\$([^$\n]+?)\$/g,(_m:string,head:string,inner:string)=>head+"\\("+inner+"\\)");
+  s=s.replace(/([^\n])[ \t]*(?=[\u2460\u2461\u2462\u2463\u2464])/g,"$1\n");
+  return s.replace(/\n{3,}/g,"\n\n").trim();
+}
+
+/**
+ * SOS270 · 조판 검수 기준 재정의.
+ *
+ * 이전 버전은 학생 화면에 전혀 표시되지 않는 renderBlocks(MathML)까지 필수로 요구해서,
+ * 문제 자체는 멀쩡한데 MathML 구조 하나 때문에 작업 전체가 FAILED로 떨어졌다.
+ * 실제 렌더러는 displayLatex만 쓰므로 판정 기준을 displayLatex로 옮긴다.
+ * MathML은 '있으면 검사, 없으면 통과'로 낮춘다.
+ */
 function validateGeneratedMathLayout(problem:any){
-  const latex=String(problem?.displayLatex??"").trim();
+  const latex=normalizeDisplayLatex(problem?.displayLatex);
   if(!latex)return "displayLatex 없음";
+  if(latex.length<15)return "displayLatex 본문이 너무 짧음";
   if(!/(\\\(|\\\[)/.test(latex))return "displayLatex에 MathJax 수식 구분자가 없음";
+
+  // 수식 구분자 짝이 맞는지 확인한다. 안 맞으면 화면에서 raw LaTeX이 그대로 노출된다.
+  const inlineOpen=(latex.match(/\\\(/g)??[]).length;
+  const inlineClose=(latex.match(/\\\)/g)??[]).length;
+  const blockOpen=(latex.match(/\\\[/g)??[]).length;
+  const blockClose=(latex.match(/\\\]/g)??[]).length;
+  if(inlineOpen!==inlineClose)return "인라인 수식 구분자 짝이 맞지 않음";
+  if(blockOpen!==blockClose)return "블록 수식 구분자 짝이 맞지 않음";
+  if(/\\begin\{([a-z]+)\}/i.test(latex)){
+    for(const m of latex.matchAll(/\\begin\{([a-z]+\*?)\}/gi)){
+      const env=m[1];
+      const opens=(latex.match(new RegExp("\\\\begin\\{"+env+"\\}","g"))??[]).length;
+      const closes=(latex.match(new RegExp("\\\\end\\{"+env+"\\}","g"))??[]).length;
+      if(opens!==closes)return `${env} 환경의 begin/end 짝이 맞지 않음`;
+    }
+  }
   if(/\bx\^\([^)]*\)/.test(latex))return "displayLatex 수식 바깥 원시 지수표기";
-  if(/=\s*\{/.test(latex)&&!/\\begin\{cases\}/.test(latex))return "조각함수에 cases 환경이 없음";
   if(/\blim[_\s]/.test(latex)&&!/\\lim/.test(latex))return "극한이 표준 LaTeX가 아님";
+
+  // renderBlocks는 현재 화면에서 쓰이지 않는 예비 데이터다.
+  // 존재할 때만 최소한의 오염 여부만 본다. 없다고 실패시키지 않는다.
   const blocks=Array.isArray(problem?.renderBlocks)?problem.renderBlocks:[];
-  if(!blocks.length)return "renderBlocks 없음";
   const math=blocks.filter((b:any)=>String(b?.type)==="mathml").map((b:any)=>String(b?.value??"")).join(" ");
-  if(!math.trim())return "MathML 수식 블록 없음";
-  if(/<mo[^>]*>\s*\/\s*<\/mo>/i.test(math)||/<mtext[^>]*>\s*\/\s*<\/mtext>/i.test(math))return "분수를 / 문자로 표기함(mfrac 필요)";
-  if(/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end|left|right)\b/.test(math))return "MathML 안에 LaTeX 명령이 남음";
-  const q=String(problem?.question??"");
-  const looksPiecewise=/=\s*\{/.test(q)&&/\([^)]*(?:≠|!=)[^)]*\)/.test(q)&&/\([^)]*=[^)]*\)/.test(q);
-  if(looksPiecewise&&!/<mtable[\s>]/i.test(math))return "조각함수인데 mtable 구조가 없음";
-  if(looksPiecewise&&!/<mo[^>]*(?:stretchy=["']true["'])?[^>]*>\s*\{\s*<\/mo>/i.test(math))return "조각함수 큰 왼쪽 중괄호가 없음";
-  if(q.includes("/")&&!/<mfrac[\s>]/i.test(math))return "문제에 분수 구조가 있는데 mfrac이 없음";
+  if(math.trim()&&/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end|left|right)\b/.test(math))return "MathML 안에 LaTeX 명령이 남음";
   return "";
 }
 
@@ -522,16 +556,17 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 문제: ${JSON.stringify(drafts.map((p:any)=>({sourceSlot:p.sourceSlot,question:p.question})))}
 
 각 문항마다 displayLatex와 renderBlocks만 반환합니다.
-- displayLatex는 한국어 문장과 MathJax 수식을 포함한 완성 문제입니다. 수식은 \\( ... \\) 또는 \\[ ... \\] 안에 둡니다.
+- displayLatex는 한국어 문장과 MathJax 수식을 포함한 완성 문제입니다. 수식은 \\( ... \\) 또는 \\[ ... \\] 안에 둡니다.\n- $ ... $ 또는 $$ ... $$ 표기는 절대 쓰지 않습니다. 여는 구분자와 닫는 구분자 개수를 반드시 일치시킵니다.\n- 문제 본문과 각 선택지 사이에는 실제 줄바꿈(\\n)을 넣습니다. 선택지가 있으면 1~5 각각을 별도 줄로 씁니다.
 - 분수 \\frac, 극한 \\lim, 적분 \\int, 근호 \\sqrt, 조각함수 \\begin{cases}를 표준 LaTeX로 사용합니다.
 - renderBlocks의 일반 문장은 text, 수식은 mathml입니다. mathml은 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 구조여야 합니다.
 - 분수는 반드시 <mfrac>, 지수는 <msup>, 근호는 <msqrt>를 사용합니다.
 - MathML 안에 LaTeX 명령을 남기지 않습니다.
 - 문제 내용 자체를 수정하거나 조건을 추가/삭제하지 않습니다.`;
-      const r=await openAiJson(renderPrompt,stagedRenderSchema(count),undefined,{timeoutMs:80000,effort:"minimal"});
+      // SOS270: 조판이 가장 자주 실패하던 단계인데 추론 강도가 minimal이었다. low로 올린다.
+      const r=await openAiJson(renderPrompt,stagedRenderSchema(count),undefined,{timeoutMs:80000,effort:"low"});
       const layouts=Array.isArray(r?.problems)?r.problems:[];
       if(layouts.length!==count){lastError=`조판 결과 수 ${layouts.length}/${count}`;rendered=[];continue;}
-      rendered=drafts.map((p:any,index:number)=>({...p,displayLatex:String(layouts[index]?.displayLatex??""),renderBlocks:Array.isArray(layouts[index]?.renderBlocks)?layouts[index].renderBlocks:[]}));
+      rendered=drafts.map((p:any,index:number)=>({...p,displayLatex:normalizeDisplayLatex(layouts[index]?.displayLatex),renderBlocks:Array.isArray(layouts[index]?.renderBlocks)?layouts[index].renderBlocks:[]}));
       const layoutErrors=rendered.map((p:any,i:number)=>{if(Number(layouts[i]?.sourceSlot)!==i+1)return `${i+1}번 슬롯 오류`;const e=validateGeneratedMathLayout(p);return e?`${i+1}번 ${e}`:"";}).filter(Boolean);
       if(layoutErrors.length){lastError=`조판 검수 실패: ${layoutErrors.join(", ")}`;rendered=[];continue;}
       await updateGenerationStage(supabase,jobId,"RENDER_VERIFIED",6,total,"문제집 조판과 수식 구조 검수를 통과했습니다.",{rendered_payload:{problems:rendered}});

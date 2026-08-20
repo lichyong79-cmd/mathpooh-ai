@@ -672,6 +672,17 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
     void ensureNext(recoverableParent,true);
   },[loading,selectedCycleId,recoverableParent?.id,selectedOpen?.id]);
 
+  // SOS270: 생성 대기 중에는 학생이 새로고침을 눌러야만 READY를 알 수 있었다.
+  // 대기 중인 작업이 있으면 45초마다 스스로 확인한다. 탭이 뒤에 있으면 확인하지 않는다.
+  const hasWaitingAiJob=aiGenerationJobs.some((j:any)=>["QUEUED","GENERATING"].includes(String(j.status)));
+  useEffect(()=>{
+    if(!hasWaitingAiJob)return;
+    const timer=window.setInterval(()=>{
+      if(document.visibilityState==="visible")void load();
+    },45000);
+    return()=>window.clearInterval(timer);
+  },[hasWaitingAiJob,load]);
+
   return <div className="sos-live-wrap">
     <section className="sos-learning-status">
       <div className="sos-week-picker"><div><small>SOS 학습현황</small><h3>{selectedCycle?`${selectedCycle.name} · ${selectedCycle.dateLabel}`:"SOS 회차"}</h3><p>{sourceTitles.length?`기준시험 · ${sourceTitles.join(" / ")}`:"회차를 선택해 지난 SOS 결과를 확인하세요."}</p></div><select value={selectedCycleId} onChange={(e)=>{setSelectedCycleId(e.target.value);setActiveId("");}}>{cycleRows.map((c:any)=><option key={c.id} value={c.id}>{c.name} · {c.dateLabel}{c.sessions.some((x:any)=>isSosOpen(x))?" · 진행중":" · 완료"}</option>)}</select></div>
@@ -769,7 +780,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
                 {item.isCorrect===false?<div className="student-review-history"><b>{item.reviewCompleted?(item.reviewIsCorrect===true?"✓ 스스로 오답 교정":"✓ 정답·풀이 확인 완료"):"오답 교정 미완료"}</b><span>재도전 {item.reviewAttemptCount??0}회 · 힌트 {item.reviewHintLevel??0}단계</span></div>:null}
               </article>)}</div>:<div className="sos-report-grid">{activeItems.map((item:any)=><div key={item.id} className={`sos-report-item ${item.isCorrect===true?"correct":"wrong"} ${item.reviewAnswer?"reviewed":""}`}><span className="num">{item.order}번</span><b>{item.isCorrect===true?"O":"X"}</b><small>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</small><em>{item.isCorrect===true?"정답":item.reviewAnswer?"오답완료 ✓":"오답"}</em></div>)}</div>}
               {nextChildFor(active)?<button className="sos-next-stage-cta ai-ready" type="button" onClick={()=>setActiveId(String(nextChildFor(active).id))}>{nextStageLabel(nextChildFor(active))} →</button>
-                :generationJobFor(active)&&["QUEUED","GENERATING"].includes(String(generationJobFor(active)?.status))?<div className="sos-ai-generation-wait"><b>AI 맞춤문항 준비 중</b><p>짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 준비가 완료되면 버튼이 READY로 변경됩니다. 나중에 다시 접속하여 학습을 마무리해 주세요.</p><button disabled>{String(generationJobFor(active)?.status)==="GENERATING"?`${Number(generationJobFor(active)?.stage_index??0)}/${Number(generationJobFor(active)?.stage_total??8)} · ${String(generationJobFor(active)?.stage_message??"생성·검증 중")}`:"생성 대기 중"}</button></div>
+                :generationJobFor(active)&&["QUEUED","GENERATING"].includes(String(generationJobFor(active)?.status))?<div className="sos-ai-generation-wait"><b>AI 맞춤문항 준비 중</b><p>짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 이 화면은 45초마다 자동으로 상태를 확인하므로 그대로 두어도 되고, 나중에 다시 접속해 마무리해도 됩니다.</p><button disabled>{String(generationJobFor(active)?.status)==="GENERATING"?`${Number(generationJobFor(active)?.stage_index??0)}/${Number(generationJobFor(active)?.stage_total??8)} · ${String(generationJobFor(active)?.stage_message??"생성·검증 중")}`:"생성 대기 중"}</button><button type="button" className="sos-ai-check-now" disabled={loading} onClick={()=>void load()}>{loading?"확인 중...":"지금 확인"}</button></div>
                 :generationJobFor(active)&&String(generationJobFor(active)?.status)==="FAILED"?<div className="sos-ai-generation-wait"><b>AI 문항 생성 재시도 필요</b><p>이전 생성 작업이 중단되었습니다. 아래 버튼을 누르면 같은 단계부터 다시 생성합니다.</p><button className="sos-next-stage-cta ai-ready" type="button" disabled={!!busy} onClick={()=>void ensureNext(active,false)}>{busy===`next:${active.id}`?"재예약 중...":"AI 생성 다시 시도"}</button></div>
                 :expectedNextKind(active)?<button className="sos-next-stage-cta" type="button" disabled={!!busy} onClick={()=>void ensureNext(active,false)}>{busy===`next:${active.id}`?"예약 중...":"AI 맞춤문항 준비 예약"} →</button>
                 :null}
