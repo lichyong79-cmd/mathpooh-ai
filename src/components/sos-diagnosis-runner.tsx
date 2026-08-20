@@ -15,7 +15,9 @@ export default function SosDiagnosisRunner({session,onCompleted,onNotice}:{sessi
   const initialIndex:number=initialRaw<0?Math.max(0,items.length-1):initialRaw;
   const [index,setIndex]=useState<number>(initialIndex);
   const [answer,setAnswer]=useState("");
-  const [countdown,setCountdown]=useState(10);
+  const [countdown,setCountdown]=useState(7);
+  const [revealError,setRevealError]=useState("");
+  const revealAttempts=useRef(0);
   const [now,setNow]=useState(Date.now());
   const [busy,setBusy]=useState("");
   const [local,setLocal]=useState<Record<string,any>>({});
@@ -36,7 +38,9 @@ export default function SosDiagnosisRunner({session,onCompleted,onNotice}:{sessi
   useEffect(()=>{const id=window.setInterval(()=>setNow(Date.now()),1000);return()=>window.clearInterval(id);},[]);
   useEffect(()=>{
     setAnswer(String(state?.studentAnswer??""));
-    setCountdown(revealedAt?0:10);
+    setCountdown(revealedAt?0:7);
+    setRevealError("");
+    revealAttempts.current=0;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[itemId]);
 
@@ -52,10 +56,24 @@ export default function SosDiagnosisRunner({session,onCompleted,onNotice}:{sessi
     if(countdown<=0){
       let cancelled=false;
       setBusy("reveal");
+      setRevealError("");
+      revealAttempts.current+=1;
       void post({action:"reveal",itemId}).then((json)=>{
         if(cancelled)return;
+        revealAttempts.current=0;
+        setRevealError("");
         setLocal((c)=>({...c,[itemId]:{...(c[itemId]??{}),revealedAt:json.revealedAt}}));
-      }).catch((e)=>onNotice(e instanceof Error?e.message:"문항 공개 실패")).finally(()=>{if(!cancelled)setBusy("");});
+      }).catch((e)=>{
+        if(cancelled)return;
+        const message=e instanceof Error?e.message:"문항 공개 실패";
+        if(revealAttempts.current<3){
+          setRevealError(`문항 공개에 실패했습니다. 자동 재시도 중 (${revealAttempts.current}/3)`);
+          window.setTimeout(()=>{if(!cancelled)setCountdown(0);},1200);
+        }else{
+          setRevealError(message);
+          onNotice("문항 공개에 실패했습니다. 아래 버튼을 눌러 다시 시도해 주세요.");
+        }
+      }).finally(()=>{if(!cancelled)setBusy("");});
       return()=>{cancelled=true;};
     }
     const id=window.setTimeout(()=>setCountdown((c)=>Math.max(0,c-1)),1000);
@@ -106,7 +124,7 @@ export default function SosDiagnosisRunner({session,onCompleted,onNotice}:{sessi
         await onCompleted(done);
       }else{
         setIndex((v:number)=>v+1);
-        setCountdown(10);
+        setCountdown(7);
       }
     }catch(e){onNotice(e instanceof Error?e.message:"풀이사진 제출 실패");}finally{setBusy("");}
   }
@@ -124,6 +142,10 @@ export default function SosDiagnosisRunner({session,onCompleted,onNotice}:{sessi
       <strong>{countdown}</strong>
       <h3>{busy==="reveal"?"문제를 공개하고 있습니다":"잠시 후 문제가 공개됩니다"}</h3>
       <p>문제를 풀 준비를 해주세요. 문제가 공개되는 순간 풀이시간 측정이 시작됩니다.</p>
+      {revealError?<div className="sos-reveal-recovery">
+        <p>{revealError}</p>
+        {revealAttempts.current>=3?<button type="button" disabled={busy==="reveal"} onClick={()=>{revealAttempts.current=0;setRevealError("");onNotice("");setCountdown(0);}}>문제 다시 불러오기</button>:null}
+      </div>:null}
     </section>:null}
 
     {revealedAt?<article className="sos-diagnosis-question">
