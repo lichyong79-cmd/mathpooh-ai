@@ -48,13 +48,18 @@ export function difficultyFromBand(band: unknown): DifficultyValue | "" { return
 export function difficultyNumber(value: unknown, fallback=4) { const v=normalizeDifficulty(value); return v ? Number(v) : fallback; }
 
 export function normalizeProblemDifficulty(value: unknown, dna?: any, fallback: DifficultyValue | "" = "") : DifficultyValue | "" {
-  // SOS240: AI가 재풀이 검증에 실패해 미판정으로 표시한 문항은 저장된 과거 숫자를
-  // 정상 확정 난이도처럼 보여주지 않는다. 관리자 확정은 항상 우선한다.
-  if (dna?.difficulty?.admin_fixed !== true && String(dna?.difficulty?.difficulty_decision ?? "") === "unclassified") return fallback;
+  // SOS273: AI 재판정 실패(unclassified)는 저장 난이도 삭제가 아니다.
+  // difficulty 컬럼에 유효한 값이 있으면 화면/집계에서는 반드시 그 값을 유지한다.
   const raw=String(value ?? "").trim();
   const version=String(dna?.difficulty?.scale_version ?? dna?.difficulty?.difficulty_scale_version ?? "");
   if (version === DIFFICULTY_SCALE_VERSION) return normalizeDifficulty(raw, fallback);
-  // 기존 1~5 체계를 새 8단계로 보수적으로 환산. 전체 재판정 시 정확한 8단계로 교체된다.
   const legacyMap: Record<string,DifficultyValue> = {"1":"1","2":"2","3":"5","4":"6","5":"7",A:"1",B:"2",C:"5",D:"6",E:"7",하:"1",중:"2",상:"6",최상:"7"};
   return legacyMap[raw] ?? normalizeDifficulty(raw, fallback);
+}
+
+export function problemDifficultyNeedsReview(value: unknown, dna?: any): boolean {
+  const diff=dna?.difficulty ?? {};
+  if (diff?.admin_fixed === true) return false;
+  if (diff?.difficulty_review_required === true || dna?.summary?.review_required === true) return true;
+  return String(diff?.difficulty_decision ?? "") === "unclassified" && !!normalizeProblemDifficulty(value, dna, "");
 }

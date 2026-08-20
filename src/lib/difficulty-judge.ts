@@ -324,27 +324,29 @@ export async function judgeDifficulty(args: {
   };
 }
 
-/** 판정 결과를 DNA에 반영. 미판정이면 기존 난이도는 건드리지 않고 검토 상태만 기록한다. */
+/** 판정 결과를 DNA에 반영. 미판정이면 기존 난이도/기존 scale_version을 절대 확정값처럼 바꾸지 않는다. */
 export function applyJudgedDifficulty(dna:any,result:DifficultyJudgement,previousGrade:string|null=null) {
   const next=dna&&typeof dna==="object"?{...dna}:{};
   const oldDifficulty={...(next.difficulty??{})};
+  const graded = result.decision === "graded" && !!result.final_grade && !result.review_required;
   next.difficulty = {
     ...oldDifficulty,
-    ...(result.final_grade ? {
+    ...(graded ? {
       final_grade:Number(result.final_grade),
       csat_point_equivalent:result.csat_point_equivalent,
       csat_difficulty_band:result.csat_difficulty_band,
       csat_basis:result.reason,
+      scale_version:DIFFICULTY_SCALE_VERSION,
     } : {}),
     reasons:[{tag:"재풀이 검증 난이도",evidence:result.reason,confidence:result.confidence}],
-    scale_version:DIFFICULTY_SCALE_VERSION,
+    ai_regrade_target_scale_version:DIFFICULTY_SCALE_VERSION,
     ai_regraded_at:new Date().toISOString(),
     ai_regrade_confidence:result.confidence,
     ai_regrade_version:DIFFICULTY_JUDGE_VERSION,
     previous_final_grade:previousGrade,
     difficulty_decision:result.decision,
-    difficulty_review_required:result.review_required,
-    difficulty_review_reason:result.review_reason,
+    difficulty_review_required:result.review_required || !graded,
+    difficulty_review_reason:result.review_reason || (!graded ? "AI 재판정 미확정 · 기존 난이도 유지" : ""),
     solution_verified:result.solution_verified,
     answer_consistency:result.answer_consistency,
     independent_solve:result.solve,

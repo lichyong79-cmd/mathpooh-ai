@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
 import { authHeaders } from "@/lib/supabase/rest";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
-import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, difficultyFromBand, difficultyLabel, normalizeProblemDifficulty } from "@/lib/difficulty-scale";
+import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, difficultyFromBand, difficultyLabel, normalizeProblemDifficulty, problemDifficultyNeedsReview } from "@/lib/difficulty-scale";
 import { SUBJECTS, canonicalSubject } from "@/lib/subject";
 import { evidenceDifficultyLevel } from "@/lib/problem-dna";
 
@@ -164,7 +164,7 @@ export default function DifficultyManagementPage() {
 
   const counts = useMemo(() => D.map(d => items.filter(x=>norm(x.difficulty,x.problem_dna)===d).length), [items]);
   const unclassifiedCount = useMemo(() => items.filter(x=>!norm(x.difficulty,x.problem_dna)).length, [items]);
-  const reviewCount = useMemo(() => items.filter(x=>x.problem_dna?.difficulty?.difficulty_review_required === true || x.problem_dna?.summary?.review_required === true).length, [items]);
+  const reviewCount = useMemo(() => items.filter(x=>problemDifficultyNeedsReview(x.difficulty,x.problem_dna)).length, [items]);
   const legacyCount = useMemo(() => items.filter(x=>String(x.problem_dna?.difficulty?.scale_version ?? "") !== DIFFICULTY_SCALE_VERSION).length, [items]);
   const sampleSummary = useMemo(() => {
     // SOS245: 한 문항은 반드시 하나의 최종 상태로만 집계한다.
