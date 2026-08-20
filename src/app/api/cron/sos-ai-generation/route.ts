@@ -1,43 +1,127 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { generateSimilarTraining } from "@/lib/sos-ai-training";
 
 export const maxDuration=300;
 
+/**
+ * SOS271 · 즉시 응답 + 백그라운드 처리
+ *
+ * 이전에는 AI 생성(최대 230초)이 끝날 때까지 응답을 붙들고 있었다.
+ * 외부 스케줄러(cron-job.org)는 30초에 연결을 끊으므로 실제로는 성공했는데도
+ * 매번 Failed(timeout)로 기록됐고, 진짜 장애와 구분이 되지 않았다.
+ *
+ * 이제는 작업을 선점하자마자 202로 응답하고, 생성은 after()로 이어서 돌린다.
+ * after()의 작업도 maxDuration(300초) 안에서 계속 실행된다.
+ */
+
+// GENERATING 상태로 이 시간 이상 멈춰 있으면 죽은 작업으로 보고 회수한다.
+// 백그라운드 처리로 바꾸면서, 함수가 중간에 죽으면 GENERATING인 채로 영영
+// 다시 선택되지 않는 문제가 생긴다. 그 구멍을 막는 안전판이다.
+const STALE_MINUTES=15;
+
+async function processJob(jobId:string,job:any){
+  const supabase=createClient();
+  try{
+    const result:any=await generateSimilarTraining({
+      supabase,
+      studentId:String(job.student_id),
+      firstTrainingSessionId:String(job.source_training_session_id),
+      count:Number(job.requested_count)===3?3:10,
+      kind:String(job.generation_kind)==="HOMEWORK"?"HOMEWORK":"SECOND_TRAINING",
+      jobId
+    });
+    const resultSessionId=String(result?.session?.id??"")||null;
+    const done=await supabase.from("sos_ai_generation_jobs").update({
+      status:"READY",stage:"READY",stage_index:8,stage_total:8,
+      stage_message:"학생 학습 배정까지 완료되었습니다.",
+      result_session_id:resultSessionId,
+      completed_at:new Date().toISOString(),
+      stage_updated_at:new Date().toISOString(),
+      updated_at:new Date().toISOString(),
+      last_error:null
+    }).eq("id",jobId);
+    if(done.error)throw done.error;
+    return {status:"READY",resultSessionId,message:""};
+  }catch(error){
+    const message=error instanceof Error?error.message:"AI 생성 실패";
+    await supabase.from("sos_ai_generation_jobs").update({
+      status:"FAILED",stage:"FAILED",
+      stage_message:message.slice(0,300),
+      last_error:message.slice(0,1000),
+      stage_updated_at:new Date().toISOString(),
+      updated_at:new Date().toISOString()
+    }).eq("id",jobId);
+    return {status:"FAILED",resultSessionId:null,message};
+  }
+}
+
 async function run(request:Request){
-  // SOS270: 이 경로는 프록시 로그인 가드에서 제외됩니다(Vercel Cron에는 쿠키가 없음).
+  // 이 경로는 프록시 로그인 가드에서 제외됩니다(외부 스케줄러에는 쿠키가 없음).
   // 따라서 CRON_SECRET은 선택이 아니라 필수입니다. 없으면 열어두지 말고 막습니다.
   const expected=String(process.env.CRON_SECRET??"").trim();
   if(!expected)return NextResponse.json({success:false,message:"CRON_SECRET 환경변수가 설정되지 않았습니다."},{status:503});
   const auth=request.headers.get("authorization")??"";
   if(auth!==`Bearer ${expected}`)return NextResponse.json({success:false,message:"cron unauthorized"},{status:401});
+
+  // ?sync=1 이면 끝날 때까지 기다렸다가 실제 결과를 돌려준다. 수동 점검용.
+  const sync=new URL(request.url).searchParams.get("sync")==="1";
+
   const supabase=createClient();
-  // 실패 작업은 3회까지 다시 큐로 본다. 오래 걸리는 AI는 한 cron에서 1건만 처리한다.
-  const pick=await supabase.from("sos_ai_generation_jobs")
-    .select("id,student_id,source_training_session_id,generation_kind,requested_count,status,attempt_count,stage,stage_index,stage_total,stage_message")
-    .in("status",["QUEUED","FAILED"]).lt("attempt_count",3).order("requested_at",{ascending:true}).limit(1).maybeSingle();
-  if(pick.error)throw pick.error;
-  const job:any=pick.data;
-  if(!job)return NextResponse.json({success:true,processed:0});
+  const cols="id,student_id,source_training_session_id,generation_kind,requested_count,status,attempt_count,started_at";
+  const staleCutoff=new Date(Date.now()-STALE_MINUTES*60000).toISOString();
 
-  const claimed=await supabase.from("sos_ai_generation_jobs").update({status:"GENERATING",started_at:new Date().toISOString(),updated_at:new Date().toISOString(),attempt_count:Number(job.attempt_count??0)+1,last_error:null}).eq("id",job.id).in("status",["QUEUED","FAILED"]).select("id").maybeSingle();
-  if(claimed.error)throw claimed.error;
-  if(!claimed.data)return NextResponse.json({success:true,processed:0,raced:true});
+  // 1순위: 대기 중이거나 실패한 작업
+  const queued=await supabase.from("sos_ai_generation_jobs").select(cols)
+    .in("status",["QUEUED","FAILED"]).lt("attempt_count",3)
+    .order("requested_at",{ascending:true}).limit(1).maybeSingle();
+  if(queued.error)throw queued.error;
 
-  try{
-    const result:any=await generateSimilarTraining({
-      supabase,studentId:String(job.student_id),firstTrainingSessionId:String(job.source_training_session_id),
-      count:Number(job.requested_count)===3?3:10,kind:String(job.generation_kind)==="HOMEWORK"?"HOMEWORK":"SECOND_TRAINING",jobId:String(job.id)
-    });
-    const resultSessionId=String(result?.session?.id??"")||null;
-    const done=await supabase.from("sos_ai_generation_jobs").update({status:"READY",stage:"READY",stage_index:8,stage_total:8,stage_message:"학생 학습 배정까지 완료되었습니다.",result_session_id:resultSessionId,completed_at:new Date().toISOString(),stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString(),last_error:null}).eq("id",job.id);
-    if(done.error)throw done.error;
-    return NextResponse.json({success:true,processed:1,jobId:job.id,status:"READY",resultSessionId});
-  }catch(error){
-    const message=error instanceof Error?error.message:"AI 생성 실패";
-    await supabase.from("sos_ai_generation_jobs").update({status:"FAILED",stage:"FAILED",stage_message:message.slice(0,300),last_error:message.slice(0,1000),stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq("id",job.id);
-    return NextResponse.json({success:false,processed:1,jobId:job.id,status:"FAILED",message},{status:500});
+  let job:any=queued.data;
+  let stale=false;
+
+  // 2순위: 죽은 채 GENERATING으로 남은 작업 회수
+  if(!job){
+    const stuck=await supabase.from("sos_ai_generation_jobs").select(cols)
+      .eq("status","GENERATING").lt("attempt_count",3).lt("started_at",staleCutoff)
+      .order("requested_at",{ascending:true}).limit(1).maybeSingle();
+    if(stuck.error)throw stuck.error;
+    job=stuck.data;
+    stale=Boolean(job);
   }
+
+  if(!job)return NextResponse.json({success:true,processed:0,message:"대기 중인 작업이 없습니다."});
+
+  // 선점. 다른 인스턴스가 먼저 가져갔으면 조용히 물러난다.
+  const claim=supabase.from("sos_ai_generation_jobs").update({
+    status:"GENERATING",
+    started_at:new Date().toISOString(),
+    updated_at:new Date().toISOString(),
+    attempt_count:Number(job.attempt_count??0)+1,
+    last_error:null
+  }).eq("id",job.id);
+  const claimed=stale
+    ? await claim.eq("status","GENERATING").lt("started_at",staleCutoff).select("id").maybeSingle()
+    : await claim.in("status",["QUEUED","FAILED"]).select("id").maybeSingle();
+  if(claimed.error)throw claimed.error;
+  if(!claimed.data)return NextResponse.json({success:true,processed:0,raced:true,message:"다른 실행이 먼저 처리 중입니다."});
+
+  if(sync){
+    const r=await processJob(String(job.id),job);
+    return NextResponse.json({success:r.status==="READY",processed:1,jobId:job.id,...r},{status:r.status==="READY"?200:500});
+  }
+
+  // 응답을 먼저 돌려주고, 생성은 이어서 진행한다.
+  after(()=>processJob(String(job.id),job));
+  return NextResponse.json({
+    success:true,accepted:1,processed:1,jobId:job.id,status:"GENERATING",
+    reclaimed:stale,
+    message:"작업을 시작했습니다. 진행 상황은 AI 생성 문제은행에서 확인하세요."
+  },{status:202});
 }
-export async function GET(request:Request){try{return await run(request);}catch(error){return NextResponse.json({success:false,message:error instanceof Error?error.message:"worker error"},{status:500});}}
+
+export async function GET(request:Request){
+  try{return await run(request);}
+  catch(error){return NextResponse.json({success:false,message:error instanceof Error?error.message:"worker error"},{status:500});}
+}
 export async function POST(request:Request){return GET(request);}
