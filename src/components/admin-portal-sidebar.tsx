@@ -1,6 +1,7 @@
 "use client";
 
 import { ReactNode, useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import styles from "./admin-portal-sidebar.module.css";
 
 type CurrentMenu =
@@ -59,6 +60,26 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
     return !value;
   });
 
+  const [email, setEmail] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await createClient().auth.getUser();
+        if (alive) setEmail(data.user?.email?.split("@")[0] ?? "");
+      } catch { /* 프록시가 이미 막으므로 무시합니다. */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const signOut = async () => {
+    setSigningOut(true);
+    try { await createClient().auth.signOut(); }
+    finally { window.location.href = "/auth/signout"; }  // 서버 쿠키까지 확실히 지운다
+  };
+
   const hrefOf = (item: Item) => item.href ?? `/admin?menu=${encodeURIComponent(item.id)}`;
 
   return <div className={`${styles.shell} ${collapsed ? styles.collapsed : ""}`}>
@@ -77,7 +98,15 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
           </a>)}
         </section>)}
       </nav>
-      <div className={styles.footer}><strong>MATHPOOH SOS 관리자</strong><span>통합 관리 메뉴</span></div>
+      {/* SOS282: 로그아웃이 /admin 사이드바에만 있어서, 문제은행·난이도 화면에서는
+          주소를 직접 쳐야 했다. 권한 문제로 잠겼을 때 나갈 길이 필요하다. */}
+      <div className={styles.footer}>
+        <strong>{email || "MATHPOOH SOS 관리자"}</strong>
+        <span>통합 관리 메뉴</span>
+        <button type="button" className={styles.signout} onClick={signOut} disabled={signingOut} title="로그아웃">
+          {signingOut ? "로그아웃 중..." : "⏻ 로그아웃"}
+        </button>
+      </div>
     </aside>
     <div className={styles.content}>{children}</div>
   </div>;

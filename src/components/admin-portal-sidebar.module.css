@@ -26,3 +26,22 @@
 .content{margin-left:274px}
 .collapsed .sidebar{width:78px}.collapsed .content{margin-left:78px}
 @media(max-width:900px){.sidebar{width:78px}.content{margin-left:78px}}
+
+/* SOS282 · 사이드바 공통 로그아웃 */
+.signout{
+  margin-top:10px;
+  width:100%;
+  border:1px solid rgba(255,255,255,.22);
+  background:rgba(255,255,255,.06);
+  color:inherit;
+  border-radius:9px;
+  padding:9px 10px;
+  font-size:12px;
+  font-weight:800;
+  cursor:pointer;
+  transition:background .15s;
+}
+.signout:hover{background:rgba(255,255,255,.14)}
+.signout:disabled{opacity:.55;cursor:wait}
+.collapsed .signout{font-size:0;padding:9px 0}
+.collapsed .signout::after{content:"⏻";font-size:14px}
