@@ -23,10 +23,21 @@ const parseDate=(value?:string|Date|null)=>{
 export function startOfSosWeek(value?:string|Date|null){
   const d=parseDate(value);const day=d.getDay();const diff=day===0?-6:1-day;d.setDate(d.getDate()+diff);return d;
 }
+/**
+ * SOS284 · 그 달의 "첫 월요일"을 1주차로 센다.
+ *
+ * 이전에는 1일이 속한 주의 월요일을 기준점으로 잡았는데,
+ * 그 월요일이 지난달일 수 있다는 걸 놓쳤다.
+ * 예를 들어 2026년 8월 1일은 토요일이라 기준점이 7월 27일이 되고,
+ * 그 결과 8월 3일(월)이 벌써 2주차가 되어 8월 1주차가 사라지고
+ * 8월 31일이 6주차로 밀렸다.
+ */
 function monthWeekOfMonday(start:Date){
   const first=new Date(start.getFullYear(),start.getMonth(),1);
-  const firstMonday=startOfSosWeek(first);
-  return Math.floor((start.getTime()-firstMonday.getTime())/(7*DAY))+1;
+  const offset=(8-first.getDay())%7;                                  // 1일 이후 첫 월요일까지의 일수
+  const firstMonday=new Date(start.getFullYear(),start.getMonth(),1+offset);
+  const diff=Math.round((start.getTime()-firstMonday.getTime())/(7*DAY));
+  return Math.max(1,diff+1);
 }
 export function getSosCalendarWeek(value?:string|Date|null):SosCalendarWeek{
   const start=startOfSosWeek(value);const end=new Date(start);end.setDate(end.getDate()+6);
@@ -39,9 +50,18 @@ export function listSosCalendarWeeks(center?:string|Date|null,before=12,after=6)
   return out;
 }
 export function weekFromSnapshot(snapshot:any,createdAt?:string|null):SosCalendarWeek{
+  // SOS284: 어느 주인지(주 시작일)는 스냅샷을 그대로 믿되,
+  // 표시 라벨은 항상 그 날짜로 다시 계산한다.
+  // 예전에 잘못 계산되어 저장된 라벨이 그대로 따라다니던 문제를 마이그레이션 없이 없앤다.
   const raw=snapshot?.sosWeek;
-  if(raw?.start){const calc=getSosCalendarWeek(String(raw.start));return {...calc,...raw,key:String(raw.key||raw.start),start:String(raw.start),end:String(raw.end||calc.end)};}
-  if(snapshot?.sosWeekStart){const calc=getSosCalendarWeek(String(snapshot.sosWeekStart));return {...calc,key:String(snapshot.sosWeekKey||calc.key),label:String(snapshot.sosWeekLabel||calc.label),dateLabel:String(snapshot.sosWeekDateLabel||calc.dateLabel)};}
+  if(raw?.start){
+    const calc=getSosCalendarWeek(String(raw.start));
+    return {...calc,key:String(raw.key||calc.key),start:String(raw.start),end:String(raw.end||calc.end)};
+  }
+  if(snapshot?.sosWeekStart){
+    const calc=getSosCalendarWeek(String(snapshot.sosWeekStart));
+    return {...calc,key:String(snapshot.sosWeekKey||calc.key)};
+  }
   return getSosCalendarWeek(createdAt||new Date());
 }
 export function snapshotWithWeek(snapshot:any,week:SosCalendarWeek){
