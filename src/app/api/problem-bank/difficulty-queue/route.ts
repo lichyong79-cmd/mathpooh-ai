@@ -90,10 +90,16 @@ export async function POST(request: NextRequest) {
       if (batch.length < 1000) break;
     }
 
+    // SOS279: 이미 AI 판정을 거친 문항은 다시 태우지 않는다.
+    // 검토필요로 남은 문항은 AI를 다시 돌린다고 풀리지 않는다 —
+    // 관리자가 화면에서 확정해야 하는 것들이라, 재실행은 비용만 든다.
+    // 강제로 다시 돌리고 싶을 때만 { force: true }로 요청한다.
+    const force = body?.force === true;
     const targets = rows.filter(x =>
       Boolean(x.question_image_path) &&
       x.problem_dna?.difficulty?.admin_fixed !== true &&
-      !difficultyAiVerified(x.problem_dna)
+      !difficultyAiVerified(x.problem_dna) &&
+      (force || !String(x.problem_dna?.difficulty?.ai_regrade_version ?? "").trim())
     );
 
     let inserted = 0;

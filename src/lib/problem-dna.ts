@@ -291,10 +291,13 @@ export function shouldVerifyOperationalDifficulty(dna: ProblemDNA) {
   if (!difficulty || difficulty.admin_fixed === true) return false;
   const final = Number(dna.difficulty.final_grade);
   const confidence = Number(dna.summary?.ai_confidence ?? 0);
-  // SOS275(A안): 예전 기준은 준킬러(7) 이상만 검증했다. 실제로 변별이 필요한 구간은
-  // 쉬4(4) 이상이므로 그 위를 모두 검증한다. 2점·3점은 공식 추정치로 둔다.
-  // 비용이 부담되면 이 상수만 올리면 된다.
-  const VERIFY_FROM_GRADE = 4;
+  // SOS279: SOS275에서 4로 내렸던 값을 7로 되돌린다.
+  //
+  // 등록 시점의 이 검증은 결과를 실제 난이도에 반영하지 않고 verification_* 메타만 남긴다.
+  // 그래서 SOS278 재판정 큐가 같은 문항을 한 번 더 판정하게 되어 AI 호출이 두 배로 든다.
+  // 이제 검증은 큐가 맡는다(등록 즉시 자동 등록 → 몇 시간 안에 판정·반영).
+  // 여기서는 준킬러 이상만 등록 화면에서 곧바로 눈에 띄도록 남겨 둔다.
+  const VERIFY_FROM_GRADE = 7;
   return difficulty.band_conflict === true || final >= VERIFY_FROM_GRADE || (Number.isFinite(confidence) && confidence > 0 && confidence < 0.72);
 }
 
