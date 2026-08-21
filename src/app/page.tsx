@@ -1180,6 +1180,21 @@ export default function StudentHome() {
         <MATHPOOHLoader title="학생 페이지를 준비하고 있습니다..." kind="loading" compact />
       </main>
     );
+  // SOS280: 초기 비밀번호(전화번호 뒤 4자리 조합)를 아직 바꾸지 않았으면
+  // 다른 화면으로 넘어가지 못하게 막는다. 아이디가 전화번호라 예측이 쉬워,
+  // 친구 번호만 알면 남의 진단 결과와 바로미터를 볼 수 있는 상태였다.
+  if (portal.student && portal.student.passwordChanged === false)
+    return (
+      <main className="student-loading">
+        <strong>비밀번호를 먼저 변경해 주세요</strong>
+        <p style={{ margin: "10px 0 18px", color: "#5c6a62", fontSize: 14, lineHeight: 1.6, textAlign: "center" }}>
+          처음 받은 비밀번호는 전화번호로 쉽게 추측할 수 있습니다.<br />
+          내 학습 기록을 지키려면 나만 아는 비밀번호로 바꿔야 합니다.
+        </p>
+        <button onClick={() => { window.location.href = "/password"; }}>비밀번호 변경하기</button>
+        <button onClick={() => void signOut()} style={{ background: "transparent", color: "#7b857f", marginTop: 8 }}>로그아웃</button>
+      </main>
+    );
   if (waitingExam)
     return (
       <main className="exam-waiting-room">

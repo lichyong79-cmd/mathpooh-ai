@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
-import { getSessionUser } from "@/lib/supabase/auth";
+import { getSessionUser, requireAdmin } from "@/lib/supabase/auth";
 
 const digits = (value: unknown) => String(value ?? "").replace(/\D/g, "");
 
 export async function POST(request: Request) {
+  const denied = await requireAdmin();  // SOS280: 관리자 전용
+  if (denied) return denied;
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ message: "로그인이 필요합니다." }, { status: 401 });
   if (user.user_metadata?.role === "student") return NextResponse.json({ message: "관리자만 사용할 수 있습니다." }, { status: 403 });

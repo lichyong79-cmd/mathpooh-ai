@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireUser } from "@/lib/supabase/auth";
+import { requireUser, requireAdmin } from "@/lib/supabase/auth";
 import { normalizeDifficulty } from "@/lib/difficulty-scale";
 import {
   DIFFICULTY_JUDGE_VERSION,
@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 // 신규 문항 등록(AI 분석)과 난이도 탭 재판정이 같은 기준을 쓰도록 하기 위한 것이다.
 export async function POST(request: NextRequest) {
   try {
-    const denied = await requireUser();
+    const denied = await requireAdmin();  // SOS280: 관리자 전용
     if (denied) return denied;
 
     const body = await request.json().catch(() => ({} as Record<string, unknown>));

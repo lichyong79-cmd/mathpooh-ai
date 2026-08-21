@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireUser } from "@/lib/supabase/auth";
+import { requireUser, requireAdmin } from "@/lib/supabase/auth";
 import { applyOperationalDifficultyPolicy, difficultyAiVerified } from "@/lib/problem-dna";
 
 export const runtime = "nodejs";
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
-  const denied = await requireUser();
+  const denied = await requireAdmin();  // SOS280: 관리자 전용
   if (denied) return denied;
   try {
     const body = await request.json().catch(() => ({}));

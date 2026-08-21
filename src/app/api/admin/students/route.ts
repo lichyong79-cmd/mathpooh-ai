@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getSessionUser } from "@/lib/supabase/auth";
+import { getAdminUser } from "@/lib/supabase/auth";
 
 const digits = (value: unknown) => String(value ?? "").replace(/\D/g, "");
-async function adminOnly() { const user = await getSessionUser(); return !user || user.user_metadata?.role === "student" ? null : user; }
+// SOS280: 거부목록("student가 아니면 통과")이라 학부모·역할 미지정 계정까지 통과했다. 허용목록으로 바꾼다.
+async function adminOnly() { return await getAdminUser(); }
 const output = (row: any) => ({ id: String(row.id), name: row.name ?? "", school: row.school ?? "", grade: row.grade ?? "고1", phone: row.phone ?? row.phone_last8 ?? "", parentPhone: row.parent_phone ?? "", status: row.status ?? (row.active === false ? "퇴원" : "정상"), sosStatus: "진단대기", lastScore: null, lastExam: "-", joinedAt: row.joined_at ?? String(row.created_at ?? "").slice(0,10), memo: row.memo ?? "" });
 
 export async function GET() { if (!await adminOnly()) return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 }); const supabase = createClient(); const { data, error } = await supabase.from("students").select("*").order("created_at", { ascending: false }); return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ students: (data ?? []).map(output) }); }

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireUser } from "@/lib/supabase/auth";
+import { requireUser, requireAdmin } from "@/lib/supabase/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // 다른 MATHPOOH 프로그램에서도 같은 문항·Problem DNA 계약을 사용할 수 있는 내부 카탈로그 API.
 export async function GET(request: NextRequest) {
-  const denied = await requireUser();
+  const denied = await requireAdmin();  // SOS280: 관리자 전용
   if (denied) return denied;
   try {
     const supabase = createClient();

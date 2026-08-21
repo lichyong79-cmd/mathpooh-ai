@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { registerQuestions } from "@/lib/problem-bank";
-import { requireUser } from "@/lib/supabase/auth";
+import { requireUser, requireAdmin } from "@/lib/supabase/auth";
 import { PROBLEM_DNA_VERSION, validateProblemDNA } from "@/lib/problem-dna";
 
 export const runtime = "nodejs";
@@ -49,7 +49,7 @@ function registrationMissing(item: any) {
 }
 
 export async function POST(request: NextRequest) {
-  const denied = await requireUser();
+  const denied = await requireAdmin();  // SOS280: 관리자 전용
   if (denied) return denied;
 
   try {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireUser } from "@/lib/supabase/auth";
+import { requireUser, requireAdmin } from "@/lib/supabase/auth";
 import { difficultyAiVerified } from "@/lib/problem-dna";
 
 export const runtime = "nodejs";
@@ -24,7 +24,7 @@ function priorityFor(difficulty: string) {
 }
 
 export async function GET() {
-  const denied = await requireUser();
+  const denied = await requireAdmin();  // SOS280: 관리자 전용
   if (denied) return denied;
   try {
     const supabase = createClient();
@@ -53,7 +53,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const denied = await requireUser();
+  const denied = await requireAdmin();  // SOS280: 관리자 전용
   if (denied) return denied;
   try {
     const body = await request.json().catch(() => ({} as any));

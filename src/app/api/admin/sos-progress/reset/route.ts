@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getSessionUser } from "@/lib/supabase/auth";
+import { getSessionUser, requireAdmin } from "@/lib/supabase/auth";
 import { clampMeter, nextProblemMeter } from "@/lib/difficulty-meter";
 
 async function admin(){
@@ -89,6 +89,8 @@ async function recalcProblems(supabase:any,problemIds:string[]){
 }
 
 export async function POST(request:Request){
+  const denied = await requireAdmin();  // SOS280: 관리자 전용
+  if (denied) return denied;
   const ctx=await admin();
   if(!ctx)return NextResponse.json({message:"관리자 권한이 필요합니다."},{status:403});
   try{

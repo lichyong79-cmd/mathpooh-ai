@@ -86,7 +86,24 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/s", request.url));
   }
 
-  if (user?.user_metadata?.role === "student" && (pathname.startsWith("/admin") || pathname.startsWith("/problem-bank") || pathname.startsWith("/pdf-mapper"))) {
+  // SOS280: 관리자 전용 API 경로.
+  // 예전에는 화면 경로(/admin, /problem-bank)만 막아서, /api/problem-bank/catalog 같은
+  // 주소를 학생이 직접 열면 문제은행 전체가 정답까지 그대로 나갔다.
+  const isAdminApi =
+    pathname.startsWith("/api/admin/") ||
+    pathname.startsWith("/api/problem-bank/") ||
+    pathname.startsWith("/api/analysis/") ||
+    pathname.startsWith("/api/pdf-mapper/");
+
+  const role = user?.user_metadata?.role;
+  if (isAdminApi && role !== "admin") {
+    return NextResponse.json(
+      { success: false, message: "관리자 권한이 필요합니다." },
+      { status: 403 }
+    );
+  }
+
+  if (role === "student" && (pathname.startsWith("/admin") || pathname.startsWith("/problem-bank") || pathname.startsWith("/pdf-mapper"))) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 

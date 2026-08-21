@@ -46,3 +46,31 @@ export async function requireUser() {
   const user = await getSessionUser();
   return user ? null : unauthorized();
 }
+
+/**
+ * SOS280 · 관리자 전용 가드 (허용목록 방식)
+ *
+ * 이전에는 "student가 아니면 통과"하는 거부목록이었다.
+ * 그래서 학부모 계정이나 역할이 붙지 않은 계정까지 관리자로 통과했다.
+ * 이제 role === "admin"만 통과시킨다.
+ *
+ *   const denied = await requireAdmin();
+ *   if (denied) return denied;
+ */
+export async function requireAdmin() {
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+  if (String(user.user_metadata?.role ?? "") !== "admin") {
+    return NextResponse.json(
+      { success: false, message: "관리자 권한이 필요합니다." },
+      { status: 403 }
+    );
+  }
+  return null;
+}
+
+export async function getAdminUser() {
+  const user = await getSessionUser();
+  if (!user) return null;
+  return String(user.user_metadata?.role ?? "") === "admin" ? user : null;
+}
