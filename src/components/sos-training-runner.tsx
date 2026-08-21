@@ -86,6 +86,28 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
     return true;
   }
 
+  // SOS283: 답을 입력해야만 다음으로 넘어갈 수 있어서, 막힌 학생은 찍는 수밖에 없었다.
+  // 찍은 오답과 "몰라서 못 푼 것"은 학습 기록으로서 의미가 전혀 다르다.
+  // 정답과는 절대 일치하지 않는 값으로 저장하므로 채점은 오답이 되고,
+  // 오답 교정 단계에서 이 문항을 다시 다루게 된다.
+  const UNKNOWN_ANSWER="모르겠어요";
+  async function markUnknown(){
+    if(!item||busy)return;
+    if(!window.confirm("이 문항을 '모르겠어요'로 표시하고 넘어갈까요?\n\n오답으로 기록되지만, 학습이 끝난 뒤 오답 교정에서 다시 풀어보게 됩니다."))return;
+    setBusy(true);
+    try{
+      const sec=Math.max(1,elapsed);
+      const saved=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_training_item",sessionId:session.id,itemId,answer:UNKNOWN_ANSWER,responseSeconds:sec,question:index+1,unknown:true})});
+      const savedJson=await saved.json();
+      if(!saved.ok){onNotice(savedJson.message||"문항 저장 실패");return;}
+      setAnswers({...answers,[itemId]:UNKNOWN_ANSWER});
+      setSeconds({...seconds,[itemId]:sec});
+      setAnswer(UNKNOWN_ANSWER);
+      onNotice("");
+      if(index<items.length-1)setIndex((v:number)=>v+1);
+    }finally{setBusy(false);}
+  }
+
   async function moveTo(target:number){
     if(busy||target<0||target>=items.length||target===index)return;
     // 미래 문항 건너뛰기 금지. 답을 저장한 문항과 바로 다음 문항까지만 접근 가능.
@@ -188,12 +210,15 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
             :<p>문항 이미지가 없습니다.</p>}
       </div>
       <div className="sos-answer-lock-box">
-        <label><span>정답</span><input autoFocus disabled={busy} value={answer} onChange={(e:React.ChangeEvent<HTMLInputElement>)=>setAnswer(e.target.value)} placeholder="정답을 입력하세요" onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void next();}}/></label>
+        {/* SOS283: 정답은 -999~999 정수인데 모바일에서 문자 키보드가 떴다. */}
+        <label><span>정답</span><input autoFocus disabled={busy} value={answer} inputMode="numeric" enterKeyHint="next" autoComplete="off" onChange={(e:React.ChangeEvent<HTMLInputElement>)=>setAnswer(e.target.value)} placeholder="정답을 입력하세요" onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void next();}}/></label>
         <p>{homework?"시간 제한 없이 충분히 풀어도 됩니다. 최초 정답과 오답 교정 과정은 기록되지만 바로미터에는 반영되지 않습니다.":"문항별 풀이시간이 기록되어 바로미터 산정에 함께 반영됩니다."}</p>
         <div className="sos-training-actions">
           <button type="button" className="secondary" disabled={busy||index===0} onClick={()=>void moveTo(index-1)}>← 이전 문항</button>
           <button type="button" disabled={busy||!answer.trim()} onClick={()=>void next()}>{busy?"채점·분석 중...":index===items.length-1?"훈련 제출 · 성적표 보기":"답 저장 · 다음 문항"}</button>
         </div>
+        <button type="button" className="sos-unknown-btn" disabled={busy} onClick={()=>void markUnknown()}>모르겠어요</button>
+        <small className="sos-unknown-help">오답으로 기록되지만, 찍지 않고 넘어갈 수 있습니다. 학습이 끝나면 오답 교정에서 다시 풀어봅니다.</small>
       </div>
     </article>
   </div>;

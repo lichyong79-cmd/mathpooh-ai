@@ -379,6 +379,43 @@ export async function POST(request:Request){
   // 그래서 풀이시간을 클라이언트가 보내는 값에 의존했고, 1초로 조작하면 그대로 저장됐다.
   // 바로미터가 풀이시간을 반영하므로 조작 가능한 지표였다.
   // 이제 문항을 열 때 서버가 시각을 남기고, 저장 시 그 시각을 기준으로 계산한다.
+  // SOS283: 학습이 끝난 뒤 문항별 해설을 다시 볼 수 있게 한다.
+  // 예전에는 오답 교정 중 3회 실패해야만 풀이가 공개되고, 성적표에서는 다시 못 봤다.
+  // 채점이 끝난 세션(COMPLETED/PASSED/RETRAIN)에서만, 본인 세션의 문항만 내려보낸다.
+  if(action==="item_solution"){
+    if(!["COMPLETED","PASSED","RETRAIN"].includes(String(session.status)))
+      return NextResponse.json({message:"학습이 끝난 뒤에 해설을 볼 수 있습니다."},{status:403});
+    const itemId=String(body.itemId??"");
+    if(!itemId)return NextResponse.json({message:"문항을 확인해 주세요."},{status:400});
+    const found=await supabase.from("sos_training_items")
+      .select("id,item_order,generated_problem,problem_bank_questions(id,answer,analysis_question_id)")
+      .eq("id",itemId).eq("session_id",sessionId).maybeSingle();
+    if(found.error||!found.data)return NextResponse.json({message:"문항을 찾지 못했습니다."},{status:404});
+
+    const generated:any=found.data.generated_problem??{};
+    const bank:any=Array.isArray(found.data.problem_bank_questions)?found.data.problem_bank_questions[0]:found.data.problem_bank_questions;
+    const correctAnswer=String(bank?.answer??generated?.answer??"").trim();
+
+    // AI 유사문항은 생성 시 만들어 둔 풀이 텍스트를 쓴다.
+    const solutionText=String(generated?.solution??"").trim();
+
+    // 문제은행 문항은 등록 때 저장한 공식 해설 이미지를 서명 URL로 내려준다.
+    let solutionImageUrl="";
+    if(!solutionText&&bank?.analysis_question_id){
+      const analysis=await supabase.from("analysis_questions").select("ai_result").eq("id",bank.analysis_question_id).maybeSingle();
+      const path=String(analysis.data?.ai_result?.official_solution_image_path??"").trim();
+      if(path){
+        const signed=await supabase.storage.from("question-images").createSignedUrl(path,60*30);
+        if(!signed.error)solutionImageUrl=signed.data?.signedUrl??"";
+      }
+    }
+    return NextResponse.json({
+      success:true,itemOrder:Number(found.data.item_order??0),correctAnswer,
+      solutionText,solutionImageUrl,
+      hasSolution:Boolean(solutionText||solutionImageUrl),
+    });
+  }
+
   if(action==="open_training_item"){
     const itemId=String(body.itemId??"");
     if(!itemId)return NextResponse.json({message:"문항을 확인해 주세요."},{status:400});

@@ -714,3 +714,25 @@
 /* SOS270 · AI 생성 대기 화면의 '지금 확인' 버튼 */
 .sos-ai-generation-wait .sos-ai-check-now{margin-top:8px;background:#fff!important;color:#5b3d91!important;border:1px solid #cbb8f5!important;cursor:pointer!important;border-radius:12px;padding:10px 16px;font-weight:800}
 .sos-ai-generation-wait .sos-ai-check-now:disabled{opacity:.6;cursor:wait!important}
+
+/* SOS283 · 완료 후 문항 해설 보기 */
+.sos-solution-btn{margin-top:8px;width:100%;border:1px solid #cfe0d5;background:#fff;color:#2b6a45;border-radius:9px;padding:8px 10px;font-size:12px;font-weight:800;cursor:pointer}
+.sos-solution-btn:hover{background:#f2f8f4}
+.sos-solution-btn:disabled{opacity:.55;cursor:wait}
+.sos-report-item .sos-solution-btn{margin-top:6px;padding:6px 8px;font-size:11px}
+.sos-solution-modal{position:fixed;inset:0;z-index:2000;background:rgba(16,24,19,.6);display:flex;align-items:center;justify-content:center;padding:16px}
+.sos-solution-modal>article{background:#fff;border-radius:16px;max-width:760px;width:100%;max-height:86vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.3)}
+.sos-solution-modal header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid #e7ece9}
+.sos-solution-modal header b{display:block;font-size:17px}
+.sos-solution-modal header span{font-size:12px;color:#69776f}
+.sos-solution-modal header button{border:0;background:#f1f4f2;border-radius:9px;width:34px;height:34px;font-size:15px;cursor:pointer;color:#5b6a62}
+.sos-solution-body{padding:18px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.sos-solution-body p{margin:0 0 10px;font-size:15px;line-height:1.75;word-break:keep-all}
+.sos-solution-body img{display:block;width:100%;max-width:100%;height:auto;border-radius:10px}
+.sos-solution-empty{color:#7b857f;font-size:14px}
+
+/* SOS283 · 모르겠어요 */
+.sos-unknown-btn{margin-top:10px;width:100%;border:1px dashed #d3d9d5;background:#fbfcfb;color:#6f7c74;border-radius:10px;padding:11px;font-size:13px;font-weight:800;cursor:pointer}
+.sos-unknown-btn:hover{background:#f3f6f4;color:#4e5b53}
+.sos-unknown-btn:disabled{opacity:.5;cursor:not-allowed}
+.sos-unknown-help{display:block;margin-top:7px;font-size:11px;color:#8a948e;line-height:1.6;text-align:center}

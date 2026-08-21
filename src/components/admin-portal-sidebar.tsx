@@ -60,6 +60,7 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
     return !value;
   });
 
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [signingOut, setSigningOut] = useState(false);
 
@@ -82,18 +83,25 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
 
   const hrefOf = (item: Item) => item.href ?? `/admin?menu=${encodeURIComponent(item.id)}`;
 
-  return <div className={`${styles.shell} ${collapsed ? styles.collapsed : ""}`}>
+  return <div className={`${styles.shell} ${collapsed ? styles.collapsed : ""} ${mobileOpen ? styles.mobileOpen : ""}`}>
+    {/* SOS283: 모바일 세로 화면에서 사이드바가 78px 아이콘 막대로만 남고 라벨이 사라져
+        아이콘만으로는 메뉴를 구분할 수 없었다(같은 기호가 여러 번 쓰인다).
+        게다가 접힌 상태에서 footer가 숨겨져 로그아웃 버튼까지 사라졌다.
+        모바일에서는 서랍(drawer) 방식으로 바꾼다. */}
+    <button type="button" className={styles.hamburger} onClick={() => setMobileOpen(true)} aria-label="메뉴 열기">☰</button>
+    <div className={styles.backdrop} onClick={() => setMobileOpen(false)} aria-hidden="true" />
     <aside className={styles.sidebar}>
       <div className={styles.brand}>
         <img src="/mathpooh-logo.png" alt="MATHPOOH" />
         <div className={styles.brandCopy}><strong>MATHPOOH SOS</strong><span>SCORE OPTIMIZATION SYSTEM</span></div>
         <button className={styles.collapse} type="button" onClick={toggle} aria-label={collapsed ? "메뉴 펼치기" : "메뉴 접기"}>{collapsed ? "›" : "‹"}</button>
+        <button className={styles.closeDrawer} type="button" onClick={() => setMobileOpen(false)} aria-label="메뉴 닫기">✕</button>
       </div>
       <div className={styles.workspace}><b>매</b><div><strong>MATHPOOH</strong><span>관리자 워크스페이스</span></div></div>
       <nav className={styles.nav}>
         {groups.map((group) => <section className={`${styles.group} ${group.items.length > 1 ? styles.nested : ""}`} key={group.label}>
           <p className={styles.groupTitle}>{group.label}</p>
-          {group.items.map((item) => <a className={`${styles.item} ${current === item.id ? styles.active : ""}`} href={hrefOf(item)} key={item.id} title={item.label}>
+          {group.items.map((item) => <a className={`${styles.item} ${current === item.id ? styles.active : ""}`} href={hrefOf(item)} key={item.id} title={item.label} onClick={() => setMobileOpen(false)}>
             <i className={styles.icon}>{item.icon}</i><span className={styles.label}>{item.label}</span>
           </a>)}
         </section>)}

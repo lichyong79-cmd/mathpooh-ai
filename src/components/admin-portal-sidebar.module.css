@@ -45,3 +45,55 @@
 .signout:disabled{opacity:.55;cursor:wait}
 .collapsed .signout{font-size:0;padding:9px 0}
 .collapsed .signout::after{content:"⏻";font-size:14px}
+
+/* SOS283 · 모바일 서랍(drawer)
+   900px 이하에서 78px 아이콘 막대로 줄이던 방식은 라벨이 사라져 메뉴 구분이 불가능했고,
+   footer가 숨겨져 로그아웃 버튼도 보이지 않았다. 서랍 방식으로 대체한다. */
+.hamburger{display:none}
+.closeDrawer{display:none}
+.backdrop{display:none}
+
+@media(max-width:900px){
+  /* 위쪽 78px 축소 규칙을 전부 되돌린다 */
+  .sidebar{
+    width:min(84vw,300px);
+    transform:translateX(-102%);
+    transition:transform .22s ease;
+    box-shadow:0 0 40px rgba(0,0,0,.4);
+  }
+  .content{margin-left:0;padding-top:56px}
+  .brandCopy,.workspace div,.groupTitle,.label,.badge,.footer{display:block}
+  .workspace div{display:grid}
+  .brandCopy{display:grid}
+  .brand{justify-content:flex-start;padding-left:10px;padding-right:10px}
+  .brand img{width:42px;height:42px}
+  .collapse{display:none}
+  .closeDrawer{
+    display:grid;place-items:center;margin-left:auto;
+    width:34px;height:34px;border:1px solid #555;border-radius:9px;
+    background:#272727;color:#eee;font-size:15px;cursor:pointer;
+  }
+  .workspace,.item,.nested .item{justify-content:flex-start;padding-left:13px}
+  .nested .item{padding-left:34px}
+  .nested .item:before{display:block}
+  .icon{width:18px;font-size:13px}
+  .item{height:48px;font-size:15px}
+
+  .hamburger{
+    display:grid;place-items:center;position:fixed;top:10px;left:10px;z-index:99;
+    width:42px;height:42px;border:1px solid #d5dcd7;border-radius:11px;
+    background:#fff;color:#26382c;font-size:19px;cursor:pointer;
+    box-shadow:0 3px 12px rgba(0,0,0,.12);
+  }
+  .mobileOpen .sidebar{transform:translateX(0)}
+  .mobileOpen .backdrop{
+    display:block;position:fixed;inset:0;z-index:99;
+    background:rgba(10,16,12,.55);
+  }
+  .mobileOpen .hamburger{display:none}
+  /* 접힘 상태가 모바일 서랍에 영향을 주지 않게 한다 */
+  .collapsed .sidebar{width:min(84vw,300px)}
+  .collapsed .content{margin-left:0}
+  .collapsed .signout{font-size:12px;padding:9px 10px}
+  .collapsed .signout::after{content:""}
+}

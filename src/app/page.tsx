@@ -449,6 +449,26 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   const [activeId,setActiveId]=useState("");
   const [busy,setBusy]=useState("");
   const [notice,setNotice]=useState("");
+  // SOS283: 학습이 끝난 뒤 문항별 해설을 다시 볼 수 있게 한다.
+  const [solutionView,setSolutionView]=useState<any>(null);
+  const [solutionBusy,setSolutionBusy]=useState("");
+
+  async function openSolution(sessionId:string,item:any,order:number){
+    const id=String(item?.id??"");
+    if(!id||solutionBusy)return;
+    setSolutionBusy(id);
+    try{
+      const res=await fetch("/api/student/sos-training",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"item_solution",sessionId,itemId:id}),
+      });
+      const json=await res.json().catch(()=>({}));
+      if(!res.ok)throw new Error(json?.message||"해설을 불러오지 못했습니다.");
+      setSolutionView({...json,order,studentAnswer:String(item?.studentAnswer??""),isCorrect:item?.isCorrect});
+    }catch(e){
+      setNotice(e instanceof Error?e.message:"해설을 불러오지 못했습니다.");
+    }finally{setSolutionBusy("");}
+  }
   const [selectedCycleId,setSelectedCycleId]=useState("");
   const nextRepairTriedRef=useRef<Set<string>>(new Set());
 
@@ -778,7 +798,8 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
                 <div className="result-answer"><span>내 답 <strong>{item.studentAnswer||"-"}</strong></span><span>정답 <strong>{item.problem?.correctAnswer||"-"}</strong></span></div>
                 <div className="result-time"><span>풀이시간 <strong>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</strong></span><span>사진제출 <strong>{Math.floor(Number(item.photoSubmitSeconds??0)/60)}:{String(Number(item.photoSubmitSeconds??0)%60).padStart(2,"0")}</strong></span></div>
                 {item.isCorrect===false?<div className="student-review-history"><b>{item.reviewCompleted?(item.reviewIsCorrect===true?"✓ 스스로 오답 교정":"✓ 정답·풀이 확인 완료"):"오답 교정 미완료"}</b><span>재도전 {item.reviewAttemptCount??0}회 · 힌트 {item.reviewHintLevel??0}단계</span></div>:null}
-              </article>)}</div>:<div className="sos-report-grid">{activeItems.map((item:any)=><div key={item.id} className={`sos-report-item ${item.isCorrect===true?"correct":"wrong"} ${item.reviewAnswer?"reviewed":""}`}><span className="num">{item.order}번</span><b>{item.isCorrect===true?"O":"X"}</b><small>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</small><em>{item.isCorrect===true?"정답":item.reviewAnswer?"오답완료 ✓":"오답"}</em></div>)}</div>}
+                <button type="button" className="sos-solution-btn" disabled={solutionBusy===String(item.id)} onClick={()=>void openSolution(String(active.id),item,index+1)}>{solutionBusy===String(item.id)?"불러오는 중...":"해설 보기"}</button>
+              </article>)}</div>:<div className="sos-report-grid">{activeItems.map((item:any)=><div key={item.id} className={`sos-report-item ${item.isCorrect===true?"correct":"wrong"} ${item.reviewAnswer?"reviewed":""}`}><span className="num">{item.order}번</span><b>{item.isCorrect===true?"O":"X"}</b><small>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</small><em>{item.isCorrect===true?"정답":item.reviewAnswer?"오답완료 ✓":"오답"}</em><button type="button" className="sos-solution-btn" disabled={solutionBusy===String(item.id)} onClick={()=>void openSolution(String(active.id),item,Number(item.order))}>{solutionBusy===String(item.id)?"...":"해설"}</button></div>)}</div>}
               {nextChildFor(active)?<button className="sos-next-stage-cta ai-ready" type="button" onClick={()=>setActiveId(String(nextChildFor(active).id))}>{nextStageLabel(nextChildFor(active))} →</button>
                 :generationJobFor(active)&&["QUEUED","GENERATING"].includes(String(generationJobFor(active)?.status))?<div className="sos-ai-generation-wait"><b>AI 맞춤문항 준비 중</b><p>짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 이 화면은 45초마다 자동으로 상태를 확인하므로 그대로 두어도 되고, 나중에 다시 접속해 마무리해도 됩니다.</p><button disabled>{String(generationJobFor(active)?.status)==="GENERATING"?`${Number(generationJobFor(active)?.stage_index??0)}/${Number(generationJobFor(active)?.stage_total??8)} · ${String(generationJobFor(active)?.stage_message??"생성·검증 중")}`:"생성 대기 중"}</button><button type="button" className="sos-ai-check-now" disabled={loading} onClick={()=>void load()}>{loading?"확인 중...":"지금 확인"}</button></div>
                 :generationJobFor(active)&&String(generationJobFor(active)?.status)==="FAILED"?<div className="sos-ai-generation-wait"><b>AI 문항 생성 재시도 필요</b><p>이전 생성 작업이 중단되었습니다. 아래 버튼을 누르면 같은 단계부터 다시 생성합니다.</p><button className="sos-next-stage-cta ai-ready" type="button" disabled={!!busy} onClick={()=>void ensureNext(active,false)}>{busy===`next:${active.id}`?"재예약 중...":"AI 생성 다시 시도"}</button></div>
@@ -789,6 +810,22 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
         </section>
       </div>
     )}
+
+    {solutionView?<div className="sos-solution-modal" role="dialog" aria-modal="true" onClick={()=>setSolutionView(null)}>
+      <article onClick={(e)=>e.stopPropagation()}>
+        <header>
+          <div><b>{solutionView.order}번 해설</b><span>내 답 {solutionView.studentAnswer||"-"} · 정답 {solutionView.correctAnswer||"-"}</span></div>
+          <button type="button" onClick={()=>setSolutionView(null)} aria-label="닫기">✕</button>
+        </header>
+        <div className="sos-solution-body">
+          {solutionView.solutionText
+            ?solutionView.solutionText.split(/\n+/).filter(Boolean).map((line:string,i:number)=><p key={i}>{line}</p>)
+            :solutionView.solutionImageUrl
+              ?<img src={solutionView.solutionImageUrl} alt={`${solutionView.order}번 해설`}/>
+              :<p className="sos-solution-empty">이 문항은 등록된 해설이 없습니다. 정답만 확인해 주세요.</p>}
+        </div>
+      </article>
+    </div>:null}
 
     {latestMeters.length?<section className="sos-my-meters"><h3>나의 소단원 바로미터</h3><div>{latestMeters.slice(0,12).map((m:any)=><article key={m.subunit_key}><span>{m.subject}</span><b>{m.subunit}</b><strong>{Number(m.difficulty_meter).toFixed(2)}</strong><i><em style={{width:`${Math.max(0,Math.min(100,(Number(m.difficulty_meter)-1)/7*100))}%`}}/></i><small>{m.sample_count}문항 반영</small></article>)}</div></section>:null}
   </div>;
