@@ -73,3 +73,27 @@ export function sosStageLabel(session:any){
   if(Number(session?.round_no??session?.roundNo)===2)return "2차 AI 유사훈련";
   return "1차 맞춤훈련";
 }
+
+/**
+ * SOS285 · 주차 라벨 대신 날짜 + 시험지 코드로 표기한다.
+ *
+ * "8월 3주차"는 세는 방식(첫 월요일 기준/1일 기준)에 따라 값이 달라져
+ * 화면마다 다르게 보이고, 학원 현장에서 쓰는 표현과도 맞지 않았다.
+ * 실제로 쓰는 기준인 날짜와 시험지 코드로 바꾼다.
+ */
+const WEEKDAY=["일","월","화","수","목","금","토"];
+
+export function sosDateLabel(value?:string|Date|null){
+  const d=parseDate(value);
+  return `${d.getMonth()+1}/${d.getDate()}(${WEEKDAY[d.getDay()]})`;
+}
+
+/** 예) "8/17(월) · SOS-2026-03" — 코드가 없으면 시험지명, 그것도 없으면 날짜만 */
+export function sosSessionLabel(session:any){
+  const date=sosDateLabel(session?.created_at??session?.createdAt);
+  const snap=session?.target_snapshot??session?.targetSnapshot??{};
+  const code=String(session?.sourceExamCode??snap?.sourceExamCode??"").trim();
+  if(code)return `${date} · ${code}`;
+  const title=String(session?.sourceExamTitle??snap?.sourceExamTitle??"").trim();
+  return title?`${date} · ${title}`:date;
+}

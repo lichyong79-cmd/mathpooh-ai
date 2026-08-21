@@ -20,7 +20,7 @@ import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
 import { DIFFICULTY_SCALE, DIFFICULTY_WEIGHTS, difficultyLabel, difficultyNumber } from "@/lib/difficulty-scale";
 import { SUBJECTS, normalizeSubject } from "@/lib/subject";
-import { getSosCalendarWeek, listSosCalendarWeeks, sosStageLabel, weekFromSnapshot } from "@/lib/sos-week";
+import { sosSessionLabel, sosStageLabel } from "@/lib/sos-week";
 import {
   SOURCE_WORKFLOW_LABEL,
   SOURCE_WORKFLOW_ORDER,
@@ -1883,6 +1883,8 @@ function RecommendPage() {
       units: unit ? [{ label: unit, rate: 0 }] : selected.weakUnits,
       types: type ? [{ label: type, rate: 0 }] : selected.weakTypes,
       sourceAttemptId, sourceExamId: exam?.examId ?? exam?.exam_id ?? null, sourceExamTitle: exam?.title ?? "실전모의고사",
+      // SOS285: 화면 표기를 주차 대신 날짜+시험지 코드로 쓰기 위해 코드도 함께 남긴다.
+      sourceExamCode: exam?.examCode ?? exam?.exam_code ?? "",
       sourceSubject: item?.subject ?? exam?.subject ?? null, sourceUnit: unit || null,
       sourceMajorUnit: item?.majorUnit ?? null, sourceMiddleUnit: item?.middleUnit ?? null, sourceMinorUnit: item?.minorUnit ?? null,
       sourceDetailedTopic: item?.detailedTopic ?? item?.type ?? item?.topic ?? null, sourceQuestionType: item?.questionType ?? null,
@@ -1927,6 +1929,7 @@ function RecommendPage() {
         sourceKey:String(candidate?.key??""),
         sourceExamId:e?.examId??e?.exam_id??null,
         sourceExamTitle:e?.title??"실전모의고사",
+        sourceExamCode:e?.examCode??e?.exam_code??"",
         sourceSubject:q?.subject??e?.subject??null,
         sourceUnit:unit||null,
         sourceMajorUnit:q?.majorUnit??null,
@@ -2214,7 +2217,7 @@ function RecommendPage() {
             <b>진단·훈련 생성 이력</b>
             {sessions.length ? sessions.map((session: any) =>
               <span key={session.id} className={session.phase === "DIAGNOSIS" ? "diagnosis" : "training"} style={{display:"inline-flex",alignItems:"center",gap:6}}>
-                {`${weekFromSnapshot(session.target_snapshot,session.created_at).label} · ${sosStageLabel(session)} · ${session.question_count ?? session.total_count ?? (session.phase==="DIAGNOSIS"?3:10)}문항`} · {session.status}
+                {`${sosSessionLabel(session)} · ${sosStageLabel(session)} · ${session.question_count ?? session.total_count ?? (session.phase==="DIAGNOSIS"?3:10)}문항`} · {session.status}
                 {["DRAFT","ASSIGNED"].includes(String(session.status)) ? <button type="button" disabled={saving} onClick={()=>void cancelTrainingSession(session)} style={{border:"1px solid #e7b3b3",background:"#fff",color:"#b42318",borderRadius:999,padding:"3px 8px",fontSize:11,fontWeight:900,cursor:"pointer"}}>생성 취소</button> : null}
               </span>
             ) : <span>아직 생성된 진단·훈련이 없습니다.</span>}
