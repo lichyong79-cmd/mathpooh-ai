@@ -49,6 +49,14 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
     setStarted(Date.now());
     setNow(Date.now());
     setFrozenElapsed(null);
+    // SOS281: 문항을 연 시각을 서버에 남긴다. 풀이시간은 이 시각을 기준으로 서버가 계산한다.
+    // 실패해도 학습을 막지 않는다(서버가 기록을 못 찾으면 기존 방식으로 저장된다).
+    if(itemId){
+      void fetch("/api/student/sos-training",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({action:"open_training_item",sessionId:session.id,itemId}),
+      }).catch(()=>{});
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[itemId]);
 

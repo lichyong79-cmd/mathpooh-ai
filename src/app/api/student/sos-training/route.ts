@@ -132,7 +132,10 @@ export async function GET(){
             sourceTopic:generated?.sourceTopic??"",
             coreType:generated?.coreType??generated?.topic??"",
             generationKind:generated?.generationKind??session.cycle_kind??"",
-            generatedSolution:(["PASSED","COMPLETED"].includes(String(session.status))||String(session.cycle_kind)==="HOMEWORK")?generated?.solution??"":undefined,
+            // SOS281: 예전에는 cycle_kind가 HOMEWORK면 상태와 무관하게 풀이를 함께 내려보냈다.
+            // 3제 굳히기는 시간제한이 없어서, 학생이 풀기 전에 개발자도구로 정답을 볼 수 있었다.
+            // 이제 끝난 세션에서만 내려보낸다.
+            generatedSolution:["PASSED","COMPLETED"].includes(String(session.status))?generated?.solution??"":undefined,
             correctAnswer:["COMPLETED","PASSED","RETRAIN"].includes(String(session.status))?String(answer):undefined,
           },
         };
@@ -372,16 +375,44 @@ export async function POST(request:Request){
     return NextResponse.json({success:true});
   }
 
+  // SOS281: 훈련에는 진단 같은 10초 공개 절차가 없어서 서버가 문항을 언제 열었는지 몰랐다.
+  // 그래서 풀이시간을 클라이언트가 보내는 값에 의존했고, 1초로 조작하면 그대로 저장됐다.
+  // 바로미터가 풀이시간을 반영하므로 조작 가능한 지표였다.
+  // 이제 문항을 열 때 서버가 시각을 남기고, 저장 시 그 시각을 기준으로 계산한다.
+  if(action==="open_training_item"){
+    const itemId=String(body.itemId??"");
+    if(!itemId)return NextResponse.json({message:"문항을 확인해 주세요."},{status:400});
+    const found=await supabase.from("sos_training_items").select("id,revealed_at").eq("id",itemId).eq("session_id",sessionId).maybeSingle();
+    if(found.error||!found.data)return NextResponse.json({message:"문항을 찾지 못했습니다."},{status:404});
+    // 이미 열었던 문항은 시각을 갱신하지 않는다(되돌아가기로 시간을 늘리지 못하게).
+    if(found.data.revealed_at)return NextResponse.json({success:true,revealedAt:found.data.revealed_at});
+    const revealedAt=new Date().toISOString();
+    await supabase.from("sos_training_items").update({revealed_at:revealedAt}).eq("id",itemId).eq("session_id",sessionId);
+    return NextResponse.json({success:true,revealedAt});
+  }
+
   if(action==="save_training_item"){
     if(String(session.phase)!=="TRAINING"||String(session.status)!=="IN_PROGRESS")
       return NextResponse.json({message:"진행 중인 훈련에서만 저장할 수 있습니다."},{status:409});
     const itemId=String(body.itemId??"");
     const answer=String(body.answer??"").trim();
-    const responseSeconds=Math.max(1,Math.round(Number(body.responseSeconds??0)||1));
+    const clientSeconds=Math.max(1,Math.round(Number(body.responseSeconds??0)||1));
     if(!itemId||!answer)return NextResponse.json({message:"문항과 답을 확인해 주세요."},{status:400});
-    const update=await supabase.from("sos_training_items").update({student_answer:answer,response_seconds:responseSeconds,answered_at:new Date().toISOString()}).eq("id",itemId).eq("session_id",sessionId);
+
+    // SOS281: 서버가 기록한 공개 시각을 기준으로 계산한다.
+    // 공개 기록이 없는 예전 문항만 클라이언트 값을 그대로 쓴다.
+    const current=await supabase.from("sos_training_items").select("id,revealed_at,response_seconds").eq("id",itemId).eq("session_id",sessionId).maybeSingle();
+    const revealedAt=current.data?.revealed_at?Date.parse(String(current.data.revealed_at)):NaN;
+    let responseSeconds=clientSeconds;
+    if(Number.isFinite(revealedAt)){
+      // 자리를 비웠다 돌아온 경우까지 풀이시간으로 잡히지 않게 2시간에서 끊는다.
+      const serverSeconds=Math.round((Date.now()-revealedAt)/1000);
+      responseSeconds=Math.min(7200,Math.max(1,serverSeconds));
+    }
+    const answeredAt=new Date().toISOString();
+    const update=await supabase.from("sos_training_items").update({student_answer:answer,response_seconds:responseSeconds,answered_at:answeredAt,answer_locked_at:answeredAt}).eq("id",itemId).eq("session_id",sessionId);
     if(update.error)return NextResponse.json({message:update.error.message},{status:400});
-    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:"TRAINING_ITEM_DONE",detail:{question:Number(body.question??0),responseSeconds}});
+    await supabase.from("sos_training_activity_logs").insert({session_id:sessionId,item_id:itemId,student_id:student.id,event_type:"TRAINING_ITEM_DONE",detail:{question:Number(body.question??0),responseSeconds,clientSeconds}});
     return NextResponse.json({success:true});
   }
 
