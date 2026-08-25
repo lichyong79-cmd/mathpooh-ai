@@ -472,11 +472,8 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   const [selectedCycleId,setSelectedCycleId]=useState("");
   const nextRepairTriedRef=useRef<Set<string>>(new Set());
 
-  // SOS286: 전체 로딩과 백그라운드 동기화를 분리한다.
-  // AI 생성 상태 확인 때문에 load()가 실행될 때 loading=true가 되면, 풀이 중인 Runner가 언마운트되어
-  // 학생 화면에 "진단·훈련을 가져오는 중입니다"가 갑자기 나타나는 문제가 있었다.
-  const load=useCallback(async(silent=false)=>{
-    if(!silent)setLoading(true);
+  const load=useCallback(async(preferredActiveId?:string)=>{
+    setLoading(true);
     try{
       const response=await fetch("/api/student/sos-training",{cache:"no-store"});
       const json=await response.json();
@@ -485,21 +482,32 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
       const allSessions=Array.isArray(json.sessions)?json.sessions:[];
       const open=allSessions.find((x:any)=>isSosOpen(x));
       setActiveId((current:string)=>{
+        // SOS288: 단계 완료 API가 새 세션 id를 이미 알고 있으면 그 세션을 즉시 선택한다.
+        // 이전에는 load()가 기존 activeId를 유지한 뒤 useEffect가 다시 판단해서,
+        // 진단/오답 완료 후 새로고침해야 다음 단계가 보이는 상태 경쟁이 있었다.
+        if(preferredActiveId && allSessions.some((x:any)=>String(x.id)===String(preferredActiveId))) return String(preferredActiveId);
         const currentSession=allSessions.find((x:any)=>String(x.id)===String(current));
         // SOS251: 완료된 진단/훈련에 화면이 붙어 있지 않도록 새로 생성된 열린 세션을 최우선 선택한다.
         // 특히 진단 3/3 정답 → AI 분석 → 2차 진단 생성 시 학생이 "학습 종료"로 오해하지 않게 즉시 다음 단계로 이동.
         if(open && (!currentSession || !isSosOpen(currentSession))) return String(open.id);
         return current||String(open?.id??"");
       });
-    }catch(error){
-      // 백그라운드 확인 실패는 현재 풀이 화면을 방해하지 않는다.
-      if(!silent)setNotice(error instanceof Error?error.message:"진단·훈련 조회 실패");
-    }finally{
-      if(!silent)setLoading(false);
-    }
+    }catch(error){setNotice(error instanceof Error?error.message:"진단·훈련 조회 실패");}
+    finally{setLoading(false);}
   },[]);
 
   useEffect(()=>{void load();},[load]);
+
+  const nextSessionIdFromResult=(json:any)=>String(
+    json?.next?.session?.id ?? json?.next?.id ??
+    json?.ai?.session?.id ?? json?.ai?.sessionId ??
+    json?.ai?.next?.session?.id ?? json?.ai?.next?.id ?? ""
+  );
+  async function refreshAfterStage(json:any){
+    const preferred=nextSessionIdFromResult(json);
+    await load(preferred||undefined);
+    await onRefresh();
+  }
 
   const sessions=Array.isArray(data.sessions)?data.sessions:[];
   const cycleRows=useMemo(()=>{const map=new Map<string,any>();for(const session of sessions){const c=session.learningCycle??null;const id=String(c?.id??"UNASSIGNED");const row=map.get(id)??{id,name:c?.name??"기존 SOS",startDate:c?.startDate??"",endDate:c?.endDate??"",dateLabel:c?.dateLabel??"회차 미지정",sessions:[]};row.sessions.push(session);map.set(id,row);}return [...map.values()].sort((a:any,b:any)=>String(b.startDate||"9999").localeCompare(String(a.startDate||"")));},[sessions]);
@@ -699,13 +707,13 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
     void ensureNext(recoverableParent,true);
   },[loading,selectedCycleId,recoverableParent?.id,selectedOpen?.id]);
 
-  // SOS270/SOS286: AI 작업이 대기 중이면 READY 여부를 45초마다 백그라운드에서 확인한다.
-  // 중요: 이 확인은 전체 로딩 화면을 띄우지 않는다. 풀이 중 Runner를 절대 내리지 않는다.
+  // SOS270: 생성 대기 중에는 학생이 새로고침을 눌러야만 READY를 알 수 있었다.
+  // 대기 중인 작업이 있으면 45초마다 스스로 확인한다. 탭이 뒤에 있으면 확인하지 않는다.
   const hasWaitingAiJob=aiGenerationJobs.some((j:any)=>["QUEUED","GENERATING"].includes(String(j.status)));
   useEffect(()=>{
     if(!hasWaitingAiJob)return;
     const timer=window.setInterval(()=>{
-      if(document.visibilityState==="visible")void load(true);
+      if(document.visibilityState==="visible")void load();
     },45000);
     return()=>window.clearInterval(timer);
   },[hasWaitingAiJob,load]);
@@ -767,20 +775,20 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
               else if(json?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS")setNotice("1·2차 진단 전체에서 오답과 시간취약이 확인되지 않아 이번 SOS를 완료했습니다.");
               else if(Number(json?.wrongCount??0)>0)setNotice(`진단 ${json.correct}/${json.total} 정답 · 오답 ${json.wrongCount}문항을 먼저 교정해 주세요.`);
               else setNotice(json?.message||"진단 분석이 완료되었습니다. 다음 학습을 확인합니다.");
-              await load();await onRefresh();
+              await refreshAfterStage(json);
             }}/>:null}
 
             {active.status==="IN_PROGRESS"&&active.phase!=="DIAGNOSIS"?<SosTrainingRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
               if(json.homework)setNotice(`3제 굳히기 풀이 완료 · 최초정답 ${json.correct}/${json.total} · ${json.wrongCount?`오답 ${json.wrongCount}문항을 교정해 주세요.`:"오답 없이 완료했습니다."} · 바로미터 미반영`);
               else if(json.status==="RETRAIN")setNotice(`${Number(active.round_no)===2?"2차":"1차"} 훈련 완료 · ${json.correct}/${json.total} 정답 · 오답 ${json.wrongCount}문항을 반드시 다시 풀어야 합니다.`);
               else setNotice(`훈련 완료 · 바로미터 ${Number(json.meter??0).toFixed(2)} / 목표 ${Number(json.goal??0).toFixed(2)}`);
-              await load();await onRefresh();
+              await refreshAfterStage(json);
             }}/>:null}
 
             {active.status==="RETRAIN"&&active.phase==="DIAGNOSIS"?<SosTrainingReview session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
               const w=json?.ai?.weakness;
               setNotice(json?.ai?.created?`진단 교정 완료 · AI가 '${w?.weaknessTitle||"취약점"}'을 확인했습니다. 1차 맞춤훈련 10문항이 준비되었습니다.`:json?.ai?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED"?"1차 진단에서 뚜렷한 취약점이 없어 바로미터가 가장 낮은 다른 영역의 2차 진단 3문항이 자동 준비되었습니다.":json?.ai?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS"?"1·2차 진단 전체에서 오답과 시간취약이 확인되지 않았습니다. 이번 SOS 진단을 완료했습니다.":json?.ai?.error?`진단 교정 완료 · AI 분석 확인 필요 (${json.ai.error})`:"진단 교정과 AI 분석이 완료되었습니다.");
-              await load();await onRefresh();
+              await refreshAfterStage(json);
             }}/>:null}
 
             {active.status==="RETRAIN"&&active.phase==="TRAINING"?<SosTrainingReview session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
@@ -791,7 +799,7 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
                   ?`오답 완료 · 1차훈련 9/10 이상 통과 · 현재 바로미터 ${Number(json.meter).toFixed(2)} / 목표 ${Number(json.goal).toFixed(2)} · AI 유사문항 3제 굳히기 3문항이 생성됩니다.`
                   :`오답 완료 · 목표 바로미터 달성 ${Number(json.meter).toFixed(2)} ≥ ${Number(json.goal).toFixed(2)} · AI 유사문항 3제 굳히기 3문항이 생성됩니다.`)
                 :`오답 완료 · 현재 ${Number(json.meter).toFixed(2)} / 목표 ${Number(json.goal).toFixed(2)} · 2차 AI 유사훈련 10문항이 생성됩니다.`);
-              await load();await onRefresh();
+              await refreshAfterStage(json);
             }}/>:null}
 
             {finalCompleted?<SosFinalCompletion terminal={active} sessions={visibleSessions} meters={latestMeters} onSelect={(id)=>setActiveId(id)}/>:null}
