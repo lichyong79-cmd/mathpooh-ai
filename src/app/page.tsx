@@ -472,8 +472,11 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
   const [selectedCycleId,setSelectedCycleId]=useState("");
   const nextRepairTriedRef=useRef<Set<string>>(new Set());
 
-  const load=useCallback(async()=>{
-    setLoading(true);
+  // SOS286: 전체 로딩과 백그라운드 동기화를 분리한다.
+  // AI 생성 상태 확인 때문에 load()가 실행될 때 loading=true가 되면, 풀이 중인 Runner가 언마운트되어
+  // 학생 화면에 "진단·훈련을 가져오는 중입니다"가 갑자기 나타나는 문제가 있었다.
+  const load=useCallback(async(silent=false)=>{
+    if(!silent)setLoading(true);
     try{
       const response=await fetch("/api/student/sos-training",{cache:"no-store"});
       const json=await response.json();
@@ -488,8 +491,12 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
         if(open && (!currentSession || !isSosOpen(currentSession))) return String(open.id);
         return current||String(open?.id??"");
       });
-    }catch(error){setNotice(error instanceof Error?error.message:"진단·훈련 조회 실패");}
-    finally{setLoading(false);}
+    }catch(error){
+      // 백그라운드 확인 실패는 현재 풀이 화면을 방해하지 않는다.
+      if(!silent)setNotice(error instanceof Error?error.message:"진단·훈련 조회 실패");
+    }finally{
+      if(!silent)setLoading(false);
+    }
   },[]);
 
   useEffect(()=>{void load();},[load]);
@@ -692,13 +699,13 @@ function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | 
     void ensureNext(recoverableParent,true);
   },[loading,selectedCycleId,recoverableParent?.id,selectedOpen?.id]);
 
-  // SOS270: 생성 대기 중에는 학생이 새로고침을 눌러야만 READY를 알 수 있었다.
-  // 대기 중인 작업이 있으면 45초마다 스스로 확인한다. 탭이 뒤에 있으면 확인하지 않는다.
+  // SOS270/SOS286: AI 작업이 대기 중이면 READY 여부를 45초마다 백그라운드에서 확인한다.
+  // 중요: 이 확인은 전체 로딩 화면을 띄우지 않는다. 풀이 중 Runner를 절대 내리지 않는다.
   const hasWaitingAiJob=aiGenerationJobs.some((j:any)=>["QUEUED","GENERATING"].includes(String(j.status)));
   useEffect(()=>{
     if(!hasWaitingAiJob)return;
     const timer=window.setInterval(()=>{
-      if(document.visibilityState==="visible")void load();
+      if(document.visibilityState==="visible")void load(true);
     },45000);
     return()=>window.clearInterval(timer);
   },[hasWaitingAiJob,load]);
