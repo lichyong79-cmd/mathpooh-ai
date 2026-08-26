@@ -9,3 +9,7 @@
 .ai-bank-notice{background:#eef6f0;border:1px solid #cfe3d7;color:#1f5c39;border-radius:10px;padding:11px 14px;margin:12px 0;font-size:13px;font-weight:700}
 .ai-job-retry{margin-top:8px;border:1px solid #e0c9c9;background:#fff;color:#a83333;border-radius:8px;padding:7px 11px;font-size:12px;font-weight:800;cursor:pointer}
 .ai-job-retry:disabled{opacity:.5;cursor:wait}
+
+/* SOS291 · 멈춘 작업 되살리기 */
+.ai-bank-actions .revive-stuck{border-color:#e0cba8;background:#fff8ec;color:#8a5a12;font-weight:800}
+.ai-bank-actions .revive-stuck:hover{background:#fdf0da}

@@ -26,6 +26,21 @@ export default function AiGeneratedBankPage(){
   finally{setRunning(false);}
  }
 
+ // SOS291: 3회 시도를 채워 멈춘 작업을 화면에서 되살린다.
+ async function reviveStuck(){
+  if(running)return;
+  if(!window.confirm("시도 횟수를 다 써서 멈춘 생성 작업을 모두 되살립니다.\n\n진행 중이던 작업도 처음부터 다시 시작됩니다.\n\n진행할까요?"))return;
+  setRunning(true);setNotice("");setError("");
+  try{
+   const r=await fetch("/api/admin/ai-generated-bank",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"revive_stuck"})});
+   const d=await r.json().catch(()=>({}));
+   if(!r.ok)throw new Error(d?.message||"되살리기에 실패했습니다.");
+   setNotice(d.revived?`${d.revived}건을 대기열로 되돌렸습니다. 다음 실행에서 처리됩니다.`:"되살릴 작업이 없습니다.");
+   await load();
+  }catch(e){setError(e instanceof Error?e.message:"되살리기에 실패했습니다.");}
+  finally{setRunning(false);}
+ }
+
  async function requeue(id:string){
   if(running)return;
   setRunning(true);setNotice("");setError("");
@@ -44,7 +59,7 @@ export default function AiGeneratedBankPage(){
  const queued=jobs.filter(j=>["QUEUED","GENERATING"].includes(j.status)).length,failed=jobs.filter(j=>j.status==="FAILED").length;
  async function toggle(q:any){const status=q.status==="READY"?"DISABLED":"READY";await fetch("/api/admin/ai-generated-bank",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:q.id,status})});await load();}
  return <AdminPortalShell current="ai-generated-bank"><main className="ai-bank-page">
-  <header><div><small>MATHPOOH SOS · AI GENERATED BANK</small><h1>AI 생성 문제은행</h1><p>2차훈련·3제 굳히기에서 생성·검증된 문항을 영구 보관합니다.</p></div><div className="ai-bank-actions"><button onClick={()=>void runNext()} disabled={running} className="run-now">{running?"생성 중...":"지금 1건 생성"}</button><button onClick={()=>void load()} disabled={running}>새로고침</button></div></header>
+  <header><div><small>MATHPOOH SOS · AI GENERATED BANK</small><h1>AI 생성 문제은행</h1><p>2차훈련·3제 굳히기에서 생성·검증된 문항을 영구 보관합니다.</p></div><div className="ai-bank-actions"><button onClick={()=>void runNext()} disabled={running} className="run-now">{running?"생성 중...":"지금 1건 생성"}</button><button onClick={()=>void reviveStuck()} disabled={running} className="revive-stuck">멈춘 작업 되살리기</button><button onClick={()=>void load()} disabled={running}>새로고침</button></div></header>
   {notice?<div className="ai-bank-notice">{notice}</div>:null}
   <section className="ai-bank-stats"><article><span>누적 문항</span><b>{questions.length}</b></article><article><span>생성·검증 중</span><b>{queued}</b></article><article><span>생성 실패</span><b>{failed}</b></article><article><span>사용 가능</span><b>{questions.filter(q=>q.status==="READY").length}</b></article></section>
   <section className="ai-bank-filter"><input value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="과목·단원·유형 검색"/><select value={kind} onChange={e=>setKind(e.target.value)}><option>전체</option><option value="SECOND_TRAINING">2차훈련</option><option value="HOMEWORK">3제 굳히기</option></select></section>

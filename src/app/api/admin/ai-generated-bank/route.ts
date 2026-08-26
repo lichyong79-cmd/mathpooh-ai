@@ -42,6 +42,19 @@ export async function POST(request:Request){
   const action=String(body?.action??"run_next");
   const supabase=createClient();
 
+  // SOS291: attempt_count가 3에 도달하면 cron도 수동 실행도 그 작업을 영영 선택하지 않는다.
+  // GENERATING으로 죽어 있는 작업은 화면에서 손댈 방법이 없어 SQL을 직접 써야 했다.
+  if(action==="revive_stuck"){
+    const r=await supabase.from("sos_ai_generation_jobs").update({
+      status:"QUEUED",attempt_count:0,batch_payload:{},
+      stage:"QUEUED",stage_index:0,stage_message:"관리자가 멈춘 작업을 되살렸습니다.",
+      last_error:null,started_at:null,
+      stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString(),
+    }).in("status",["GENERATING","QUEUED","FAILED"]).gte("attempt_count",1).select("id");
+    if(r.error)return NextResponse.json({message:r.error.message},{status:400});
+    return NextResponse.json({success:true,revived:(r.data??[]).length});
+  }
+
   if(action==="requeue"){
     const id=String(body?.id??"");
     if(!id)return NextResponse.json({message:"작업을 확인해 주세요."},{status:400});
