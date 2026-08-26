@@ -189,26 +189,35 @@ export default function ProblemBankClient() {
     setSolutionImageLoading(true);
     setAssetMode("question");
     setDetailTab("basic");
+    // SOS290: 빠르게 여러 문항을 클릭하면 이전 문항의 느린 이미지 요청이
+    // 나중에 도착해 현재 선택 문항의 이미지를 덮어쓰는 race condition이 있었다.
+    // 선택이 바뀌는 즉시 이전 요청을 abort해서 목록/상세/이미지가 항상 같은 ID를 보게 한다.
+    const controller = new AbortController();
+    const selectedRequestId = selected.id;
     void (async () => {
       try {
-        const response = await fetch(`/api/problem-bank/questions/${selected.id}/image`, { cache: "no-store" });
+        const response = await fetch(`/api/problem-bank/questions/${selectedRequestId}/image`, { cache: "no-store", signal: controller.signal });
         const result = await response.json() as { success?: boolean; imageUrl?: string; message?: string };
         if (!response.ok || !result.success) throw new Error(result.message || "문항 이미지를 불러오지 못했습니다.");
-        setImageUrl(result.imageUrl ?? null);
-      } catch {
-        setImageUrl(null);
+        if (!controller.signal.aborted) setImageUrl(result.imageUrl ?? null);
+      } catch (reason) {
+        if (!controller.signal.aborted) setImageUrl(null);
       } finally {
-        setImageLoading(false);
+        if (!controller.signal.aborted) setImageLoading(false);
       }
     })();
     void (async () => {
       try {
-        const response = await fetch(`/api/problem-bank/questions/${selected.id}/solution-image`, { cache: "no-store" });
+        const response = await fetch(`/api/problem-bank/questions/${selectedRequestId}/solution-image`, { cache: "no-store", signal: controller.signal });
         const result = await response.json() as { success?: boolean; imageUrl?: string };
-        setSolutionImageUrl(response.ok && result.success ? result.imageUrl ?? null : null);
-      } catch { setSolutionImageUrl(null); }
-      finally { setSolutionImageLoading(false); }
+        if (!controller.signal.aborted) setSolutionImageUrl(response.ok && result.success ? result.imageUrl ?? null : null);
+      } catch {
+        if (!controller.signal.aborted) setSolutionImageUrl(null);
+      } finally {
+        if (!controller.signal.aborted) setSolutionImageLoading(false);
+      }
     })();
+    return () => controller.abort();
   }, [selected]);
 
   const grades = useMemo(() => Array.from(new Set(items.map((item) => item.grade).filter(Boolean))).sort(), [items]);
@@ -240,7 +249,7 @@ export default function ProblemBankClient() {
         && (grade === "전체" || item.grade === grade)
         && (subject === "전체" || canonicalSubject(item.subject) === subject)
         && (unit === "전체" || item.unit === unit)
-        && (difficulty === "전체" || (difficulty === "미분류" ? !item.difficulty : item.difficulty === difficulty))
+        && (difficulty === "전체" || (difficulty === "적4이상" ? Number(item.difficulty) >= 5 : difficulty === "미분류" ? !item.difficulty : item.difficulty === difficulty))
         && (questionType === "전체" || item.question_type === questionType)
         && (sourceFileId === "전체" || item.source_file_id === sourceFileId);
     });
@@ -464,7 +473,7 @@ export default function ProblemBankClient() {
         <label><span>학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}><option>전체</option>{grades.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label><span>과목</span><select value={subject} onChange={(event) => setSubject(event.target.value)}><option>전체</option>{subjects.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label><span>단원</span><select value={unit} onChange={(event) => setUnit(event.target.value)}><option>전체</option>{units.map((value) => <option key={value}>{value}</option>)}</select></label>
-        <label><span>난이도</span><select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option value="전체">전체</option>{difficulties.map((value) => <option key={value} value={value}>{difficultyLabel(value)}</option>)}<option value="미분류">미분류</option></select></label>
+        <label><span>난이도</span><select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}><option value="전체">전체</option><option value="적4이상">적4 이상 · 검토용</option>{difficulties.map((value) => <option key={value} value={value}>{difficultyLabel(value)}</option>)}<option value="미분류">미분류</option></select></label>
         <label><span>문항 유형</span><select value={questionType} onChange={(event) => setQuestionType(event.target.value)}><option value="전체">전체</option>{questionTypes.map((value) => <option key={value} value={value}>{questionTypeLabel(value)}</option>)}</select></label>
         <button type="button" className="filter-reset" onClick={resetFilters}>필터 초기화</button>
       </section>
