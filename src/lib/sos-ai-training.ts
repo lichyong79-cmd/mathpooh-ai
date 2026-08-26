@@ -578,10 +578,10 @@ function validateStagedDrafts(list:any[],count:number){
 // 3제 굳히기(3문항)가 안정적으로 통과하므로 같은 크기로 맞춘다.
 const GENERATION_BATCH_SIZE = 3;
 
-async function saveBatchProgress(supabase:any,jobId:string|undefined,problems:any[]){
+async function saveBatchProgress(supabase:any,jobId:string|undefined,problems:any[],isolated=false){
   if(!jobId)return;
   const saved=await supabase.from("sos_ai_generation_jobs")
-    .update({batch_payload:{problems},stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()})
+    .update({batch_payload:{problems,isolated},stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()})
     .eq("id",jobId);
   if(saved.error)throw saved.error;
 }
@@ -598,9 +598,11 @@ async function buildGeneratedProblemsInBatches(args:{supabase:any;jobId?:string;
 
   // 이미 끝난 배치가 있으면 이어받는다.
   let done:any[]=[];
+  let isolated=false;
   if(jobId){
     const saved=await supabase.from("sos_ai_generation_jobs").select("batch_payload").eq("id",jobId).maybeSingle();
     const list=Array.isArray(saved.data?.batch_payload?.problems)?saved.data.batch_payload.problems:[];
+    isolated=saved.data?.batch_payload?.isolated===true;
     if(list.length&&list.length<count)done=list;
     if(list.length>=count)return list.slice(0,count);
   }
@@ -621,7 +623,10 @@ async function buildGeneratedProblemsInBatches(args:{supabase:any;jobId?:string;
       throw new Error(`PARTIAL_BATCH_DONE:${done.length}/${count}`);
     }
     const start=done.length;
-    const size=Math.min(GENERATION_BATCH_SIZE,count-start);
+    // SOS297: 묶음 실패 후에는 다음 함수 실행부터 한 문항만 처리한다.
+    // 같은 실행에서 바로 개별 재생성을 시작하면, 앞선 묶음 처리 시간이 누적되어
+    // Vercel 300초 제한에 걸리고 GENERATING 문구만 남는다.
+    const size=isolated?1:Math.min(GENERATION_BATCH_SIZE,count-start);
     const batchNo=Math.floor(start/GENERATION_BATCH_SIZE)+1;
     await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,8,`${count}문항을 ${batches}묶음으로 나눠 생성합니다. (${batchNo}/${batches})`);
 
@@ -639,33 +644,24 @@ async function buildGeneratedProblemsInBatches(args:{supabase:any;jobId?:string;
     try{
       const part=await buildStagedGeneratedProblems(batchArgs);
       done=[...done,...part.map((x:any,i:number)=>({...x,sourceSlot:start+i+1}))];
-      await saveBatchProgress(supabase,jobId,done);
+      await saveBatchProgress(supabase,jobId,done,isolated);
+      if(isolated&&done.length<count){
+        await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,8,
+          `${done.length}/${count}문항 보존 · 다음 실행에서 ${done.length+1}번 문항을 생성합니다.`);
+        throw new Error(`PARTIAL_BATCH_DONE:${done.length}/${count}`);
+      }
     }catch(batchError){
+      if(batchError instanceof Error&&batchError.message.startsWith("PARTIAL_BATCH_DONE:"))throw batchError;
       // SOS296: 3문항 묶음 중 한 문항만 수학 검증/조판에 실패해도 정상 문항까지
       // 전부 버리던 구조를 없앤다. 묶음 실패 시 한 문항씩 격리 생성하고, 통과한
       // 문항은 즉시 batch_payload에 저장한다. 이후 실패해도 다음 실행은 저장된
       // 다음 문항부터 이어가므로 이미 만든 문항이 사라지지 않는다.
-      for(let offset=0;offset<size;offset++){
-        const absolute=start+offset;
-        await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,8,
-          `${absolute}/${count}문항 보존 · 실패 묶음의 ${absolute+1}번 문항만 다시 검증합니다.`);
-        try{
-          const one=await buildStagedGeneratedProblems({
-            ...args,
-            jobId:undefined,
-            count:1 as 3,
-            sourceSlots:[{...args.sourceSlots[absolute],slot:1}],
-            sourceImages:[args.sourceImages[absolute]],
-            sourceSummary:[{...args.sourceSummary[absolute],slot:1}],
-          });
-          done=[...done,{...one[0],sourceSlot:absolute+1}];
-          await saveBatchProgress(supabase,jobId,done);
-        }catch(singleError){
-          const detail=singleError instanceof Error?singleError.message:String(singleError);
-          throw new Error(`AI 변형문항 ${absolute+1}번 개별 검증 실패: ${detail}`);
-        }
-      }
-      if(!done.length)throw batchError;
+      // 이번 실행의 남은 시간으로 개별 생성을 강행하지 않는다. 격리 모드만 저장하고
+      // QUEUED로 돌려보내 다음 cron이 충분한 300초를 온전히 사용하게 한다.
+      await saveBatchProgress(supabase,jobId,done,true);
+      await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,8,
+        `${done.length}/${count}문항 보존 · 다음 실행에서 실패 묶음의 ${start+1}번부터 개별 생성합니다.`);
+      throw new Error(`PARTIAL_BATCH_DONE:${done.length}/${count}`);
     }
   }
   await updateGenerationStage(supabase,jobId,"FINAL_VERIFIED",8,8,`${count}문항 생성·검증을 마쳤습니다.`);
@@ -682,6 +678,10 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
   let rendered:any[]=[];
   let checks:any[]=[];
   let lastError="";
+  // SOS297: 격리된 한 문항은 한 실행에서 한 번만 시도한다. 실패하면 다음 cron이
+  // 새 300초 예산으로 재시도한다. 한 실행 안에서 여러 번 돌다 강제 종료되지 않게 한다.
+  const maxPipelineAttempts=count===1?1:3;
+  const singleStepTimeout=count===1?70000:null;
 
   // SOS268: 실패 후 재실행 시 마지막으로 정상 저장된 단계부터 이어간다.
   if(jobId){
@@ -702,9 +702,9 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
   await updateGenerationStage(supabase,jobId,"SOURCE_ANALYSIS",1,total,"원문 구조와 Problem DNA를 정리했습니다.");
   await updateGenerationStage(supabase,jobId,"TRANSFORM_DESIGN",2,total,`${transformLevel} 기준으로 변형 설계를 확정했습니다.`);
 
-  for(let attempt=1;attempt<=3;attempt++){
+  for(let attempt=1;attempt<=maxPipelineAttempts;attempt++){
     if(!drafts.length){
-      await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,total,`문제 텍스트를 생성하고 있습니다. (${attempt}/3)`);
+      await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,total,`문제 텍스트를 생성하고 있습니다. (${attempt}/${maxPipelineAttempts})`);
       const prompt=`당신은 MATHPOOH SOS 수학 제한변형 출제 엔진입니다.
 생성 종류: ${kind==="HOMEWORK"?"3제 굳히기":"2차 AI 유사훈련"}
 변형 강도: ${transformLevel}
@@ -722,7 +722,7 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
 ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세요.`:""}`;
       const content:any[]=[{type:"input_text",text:prompt}];
       sourceSlots.forEach((slot,index)=>{content.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])content.push({type:"input_image",image_url:sourceImages[index]});else content.push({type:"input_text",text:JSON.stringify(slot.dna)});});
-      const d=await openAiJson(prompt,stagedDraftSchema(count),content,{timeoutMs:110000,effort:"medium"});
+      const d=await openAiJson(prompt,stagedDraftSchema(count),content,{timeoutMs:singleStepTimeout??110000,effort:"medium"});
       drafts=Array.isArray(d?.problems)?d.problems:[];
       lastError=validateStagedDrafts(drafts,count);
       if(lastError){drafts=[];continue;}
@@ -744,7 +744,7 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 - MathML 안에 LaTeX 명령을 남기지 않습니다.
 - 문제 내용 자체를 수정하거나 조건을 추가/삭제하지 않습니다.`;
       // SOS270: 조판이 가장 자주 실패하던 단계인데 추론 강도가 minimal이었다. low로 올린다.
-      const r=await openAiJson(renderPrompt,stagedRenderSchema(count),undefined,{timeoutMs:150000,effort:"low"});
+      const r=await openAiJson(renderPrompt,stagedRenderSchema(count),undefined,{timeoutMs:singleStepTimeout??150000,effort:"low"});
       const layouts=Array.isArray(r?.problems)?r.problems:[];
       if(layouts.length!==count){lastError=`조판 결과 수 ${layouts.length}/${count}`;rendered=[];continue;}
       rendered=drafts.map((p:any,index:number)=>({...p,displayLatex:normalizeDisplayLatex(wrapLooseLatex(String(layouts[index]?.displayLatex??""))),renderBlocks:cleanRenderBlocks(layouts[index]?.renderBlocks)}));
@@ -767,7 +767,7 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 5) 하나라도 어기면 valid=false입니다.`;
     const verifyContent:any[]=[{type:"input_text",text:verifyPrompt}];
     sourceSlots.forEach((slot,index)=>{verifyContent.push({type:"input_text",text:`[검수 sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])verifyContent.push({type:"input_image",image_url:sourceImages[index]});else verifyContent.push({type:"input_text",text:JSON.stringify(slot.dna)});});
-    const v=await openAiJson(verifyPrompt,stagedVerifySchema(count),verifyContent,{timeoutMs:150000,effort:"medium"});
+    const v=await openAiJson(verifyPrompt,stagedVerifySchema(count),verifyContent,{timeoutMs:singleStepTimeout??150000,effort:"medium"});
     checks=Array.isArray(v?.checks)?v.checks:[];
     const verifyErrors=checks.map((c:any,i:number)=>{const claimed=String(rendered[i]?.answer??"").trim(),computed=String(c?.computedAnswer??"").trim();if(Number(c?.index)!==i+1)return `${i+1}번 검수 순서 오류`;if(c?.valid!==true)return `${i+1}번 재풀이 실패(${String(c?.reason??"")})`;if(c?.sourceFaithful!==true)return `${i+1}번 원문 구조 이탈`;if(computed!==claimed)return `${i+1}번 정답 불일치(${claimed}≠${computed})`;return "";}).filter(Boolean);
     if(checks.length===count&&!verifyErrors.length){

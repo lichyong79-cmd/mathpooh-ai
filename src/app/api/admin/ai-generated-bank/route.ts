@@ -103,6 +103,17 @@ export async function POST(request:Request){
     return NextResponse.json({success:true,processed:1,jobId:job.id,status:"READY"});
   }catch(error){
     const message=error instanceof Error?error.message:"AI 생성 실패";
+    // SOS297: 묶음 하나를 마친 뒤 또는 격리 모드로 전환한 정상 중간 종료.
+    // 수동 실행에서도 FAILED로 만들지 말고 다음 실행이 이어받도록 QUEUED로 돌린다.
+    if(message.startsWith("PARTIAL_BATCH_DONE:")){
+      const progress=message.split(":")[1]??"";
+      await supabase.from("sos_ai_generation_jobs").update({
+        status:"QUEUED",attempt_count:0,started_at:null,last_error:null,
+        stage_message:`${progress}문항 보존 · 다음 실행에서 이어갑니다.`,
+        stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString(),
+      }).eq("id",job.id);
+      return NextResponse.json({success:true,processed:1,jobId:job.id,status:"PARTIAL",message:progress});
+    }
     await supabase.from("sos_ai_generation_jobs").update({
       status:"FAILED",stage:"FAILED",stage_message:message.slice(0,300),
       last_error:message.slice(0,1000),stage_updated_at:new Date().toISOString(),
