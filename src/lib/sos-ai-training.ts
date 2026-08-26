@@ -97,6 +97,33 @@ async function signed(supabase:any,bucket:string,path:string|null|undefined){
   return result.data?.signedUrl??"";
 }
 
+/**
+ * SOS295 · 문항 이미지를 base64로 만들어 OpenAI에 직접 실어 보낸다.
+ *
+ * 예전에는 Supabase 서명 URL을 그대로 건네고 OpenAI가 직접 내려받게 했다.
+ * 그러다 보니 OpenAI 쪽에서 다음 오류가 났다.
+ *   "Unable to download content from the provided URL before the timeout."
+ * 서명 URL 만료(20분), Supabase 응답 지연, 지역 간 네트워크 등
+ * 우리가 통제할 수 없는 요인에 매번 기대는 구조였다.
+ *
+ * 난이도 재판정(SOS278)은 처음부터 직접 내려받아 base64로 보내고 있어 이 문제가 없었다.
+ * 같은 방식으로 맞춘다. 실패하면 빈 문자열을 돌려주고, 호출부는 이미지 대신 DNA 텍스트를 쓴다.
+ */
+async function inlineImage(supabase:any,bucket:string,path:string|null|undefined){
+  if(!path)return "";
+  try{
+    const downloaded=await supabase.storage.from(bucket).download(path);
+    if(downloaded.error||!downloaded.data)return "";
+    const bytes=Buffer.from(await downloaded.data.arrayBuffer());
+    // 지나치게 큰 파일은 전송에 부담이 되므로 건너뛰고 DNA 텍스트로 대체한다.
+    if(bytes.byteLength>6*1024*1024)return "";
+    const mime=downloaded.data.type||"image/webp";
+    return `data:${mime};base64,${bytes.toString("base64")}`;
+  }catch{
+    return "";
+  }
+}
+
 function subjectKey(value:any){return String(value??"").normalize("NFKC").replace(/[Ⅰ]/g,"1").replace(/[Ⅱ]/g,"2").replace(/\s+/g,"").toLowerCase();}
 
 function relatedText(problem:any,terms:string[]){
@@ -310,7 +337,8 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   const target=diagnosis.target_snapshot??{};
   const content:any[]=[{type:"input_text",text:`당신은 MATHPOOH SOS 수학 취약점 진단 엔진입니다.\n아래 3개 진단문항의 문항 DNA, 정오답, 풀이시간, 학생 풀이사진을 함께 보고 이 학생에게 실제로 훈련할 만한 취약점이 있는지 판단하세요.\n\n규칙:\n- 정오답뿐 아니라 난이도별 풀이시간을 반드시 함께 봅니다.\n- weakSignals에는 1·2차 진단 전체에서 오답 또는 기준시간 1.35배 초과 문항이 들어 있습니다.\n- 계산실수와 개념/조건해석/접근전략/시간숙련 부족을 구분합니다.\n- 취약점이 있으면 한 번의 10문항 훈련으로 집중할 수 있게 가장 핵심적인 1개 축으로 표현합니다.\n- weaknessDetected=false라면 이유를 명확히 씁니다.\n- 학생에게 보여줄 weaknessTitle은 짧고 이해하기 쉽게, weaknessDetail은 2문장 이내로 씁니다.\n\n타겟 정보: ${JSON.stringify(target)}\n누적 weakSignals: ${JSON.stringify(weakSignals.map((x:any)=>({round:x.round,order:x.order,wrong:x.wrong,slow:x.slow,severe:x.severe,seconds:x.seconds,expectedSeconds:x.expectedSeconds,limitSeconds:x.limitSeconds,problem:compactDna(x.problem)})))}\n현재 진단 데이터: ${JSON.stringify((diagnosis.sos_training_items??[]).map((item:any)=>({order:item.item_order,answer:item.student_answer,correct:item.is_correct,seconds:item.response_seconds,problem:compactDna(item.problem_bank_questions??{})})))}`}];
   for(const item of diagnosis.sos_training_items??[]){
-    const photo=await signed(supabase,"sos-solution-photos",item.solution_photo_path);
+    // SOS295: 학생 풀이사진도 서명 URL 대신 직접 실어 보낸다.
+    const photo=await inlineImage(supabase,"sos-solution-photos",item.solution_photo_path);
     if(photo)content.push({type:"input_image",image_url:photo});
   }
   const weaknessSchema={type:"object",additionalProperties:false,required:["weaknessDetected","weaknessTitle","weaknessDetail","focusConcepts","evidence","confidence"],properties:{
@@ -744,7 +772,7 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
   }).slice(0,5);
   if(!ranked.length)throw new Error("AI 유사문항의 원문이 되는 1차 훈련 문항을 찾을 수 없습니다.");
   const sourceSlots=Array.from({length:count},(_,index)=>{const item=ranked[index%ranked.length],problem:any=item?.problem_bank_questions??{};return {slot:index+1,trainingOrder:Number(item?.item_order??0)||null,problemId:problem?.id??null,sourceAnswer:String(problem?.answer??""),dna:compactDna(problem),imagePath:String(problem?.question_image_path??"")};});
-  const sourceImages=await Promise.all(sourceSlots.map(async slot=>slot.imagePath?await signed(supabase,"question-images",slot.imagePath):""));
+  const sourceImages=await Promise.all(sourceSlots.map(async slot=>slot.imagePath?await inlineImage(supabase,"question-images",slot.imagePath):""));
   const sourceSummary=sourceSlots.map((slot,index)=>({slot:slot.slot,trainingOrder:slot.trainingOrder,problemId:slot.problemId,sourceAnswer:slot.sourceAnswer,dna:slot.dna,hasOriginalImage:Boolean(sourceImages[index])}));
   const target=s.target_snapshot??{};
   // SOS290: 10문항은 배치로 나눠 생성한다. 3문항은 예전처럼 한 번에 처리된다.

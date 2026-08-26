@@ -71,7 +71,7 @@ export async function POST(request:Request){
   // run_next: 워커와 같은 규칙으로 한 건을 선점해 끝까지 처리한다.
   const cols="id,student_id,source_training_session_id,generation_kind,requested_count,status,attempt_count";
   const picked=await supabase.from("sos_ai_generation_jobs").select(cols)
-    .in("status",["QUEUED","FAILED"]).lt("attempt_count",3)
+    .in("status",["QUEUED","FAILED"]).lt("attempt_count",8)   // SOS295: 재시도 한도를 워커와 맞춘다
     .order("requested_at",{ascending:true}).limit(1).maybeSingle();
   if(picked.error)return NextResponse.json({message:picked.error.message},{status:400});
   const job:any=picked.data;

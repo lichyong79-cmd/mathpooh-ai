@@ -20,6 +20,11 @@ export const maxDuration=300;
 // 다시 선택되지 않는 문제가 생긴다. 그 구멍을 막는 안전판이다.
 const STALE_MINUTES=15;
 
+// SOS295: 3회 만에 포기하면 관리자가 화면을 들여다보고 직접 되살려야 한다.
+// 실패 원인이 대부분 일시적(AI 응답 지연, 이미지 다운로드 실패)이므로 넉넉히 재시도한다.
+// 10분 주기이므로 8회면 약 80분간 스스로 시도한다.
+const MAX_ATTEMPTS=8;
+
 async function processJob(jobId:string,job:any){
   const supabase=createClient();
   try{
@@ -87,7 +92,7 @@ async function run(request:Request){
 
   // 1순위: 대기 중이거나 실패한 작업
   const queued=await supabase.from("sos_ai_generation_jobs").select(cols)
-    .in("status",["QUEUED","FAILED"]).lt("attempt_count",3)
+    .in("status",["QUEUED","FAILED"]).lt("attempt_count",MAX_ATTEMPTS)
     .order("requested_at",{ascending:true}).limit(1).maybeSingle();
   if(queued.error)throw queued.error;
 
@@ -97,7 +102,7 @@ async function run(request:Request){
   // 2순위: 죽은 채 GENERATING으로 남은 작업 회수
   if(!job){
     const stuck=await supabase.from("sos_ai_generation_jobs").select(cols)
-      .eq("status","GENERATING").lt("attempt_count",3).lt("started_at",staleCutoff)
+      .eq("status","GENERATING").lt("attempt_count",MAX_ATTEMPTS).lt("started_at",staleCutoff)
       .order("requested_at",{ascending:true}).limit(1).maybeSingle();
     if(stuck.error)throw stuck.error;
     job=stuck.data;
