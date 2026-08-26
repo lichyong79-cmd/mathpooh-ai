@@ -417,6 +417,27 @@ export function normalizeDisplayLatex(raw:any){
  * MathML 안에 LaTeX 명령이 섞여 들어오는 일이 잦은데, 이 데이터는 화면에서 쓰이지 않는다.
  * 그것 때문에 문항 묶음 전체를 버리는 대신, 오염된 블록만 빼고 나머지를 남긴다.
  */
+/**
+ * SOS294 · 구분자 없이 노출된 LaTeX을 자동으로 감싼다.
+ *
+ * 조판 모델이 \( ... \)를 빼먹는 일이 잦은데, 그것 때문에 묶음 전체를
+ * 다시 만드는 건 비용만 든다. 문장 안의 LaTeX 조각을 찾아 인라인 수식으로 감싼다.
+ * 이미 구분자가 있는 문서는 건드리지 않는다.
+ */
+function wrapLooseLatex(raw:string){
+  const text=String(raw??"");
+  if(!text.trim())return text;
+  if(/(\\\(|\\\[)/.test(text))return text;   // 이미 구분자가 있으면 손대지 않는다
+
+  // 줄 단위로 보되, LaTeX 조각이 있는 줄만 처리한다.
+  const token=/(\\(?:frac|dfrac|tfrac|sqrt|lim|int|sum|prod|left|right|cdot|times|leq|geq|neq|infty|alpha|beta|gamma|theta|pi)\b[^\s]*(?:\{[^{}]*\})*|[A-Za-z0-9)\]}]+[\^_]\{[^{}]*\}|[A-Za-z0-9)\]}]+[\^_][A-Za-z0-9]+)/g;
+  return text.split("\n").map(line=>{
+    if(!token.test(line)){token.lastIndex=0;return line;}
+    token.lastIndex=0;
+    return line.replace(token,(m)=>`\\(${m}\\)`);
+  }).join("\n");
+}
+
 function cleanRenderBlocks(raw:any){
   if(!Array.isArray(raw))return [];
   const dirty=/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end|left|right)\b/;
@@ -432,7 +453,14 @@ function validateGeneratedMathLayout(problem:any){
   const latex=normalizeDisplayLatex(problem?.displayLatex);
   if(!latex)return "displayLatex 없음";
   if(latex.length<15)return "displayLatex 본문이 너무 짧음";
-  if(!/(\\\(|\\\[)/.test(latex))return "displayLatex에 MathJax 수식 구분자가 없음";
+  // SOS294: 예전에는 수식 구분자가 하나도 없으면 무조건 실패시켰다.
+  // 그런데 수식 없이 문장과 숫자만으로 성립하는 문제도 있어서,
+  // 멀쩡한 문항이 "구분자가 없다"는 이유로 탈락하고 묶음 전체가 다시 만들어졌다.
+  // 이제 LaTeX 명령이 구분자 밖에 노출된 경우에만 실패시킨다.
+  // (그 경우는 화면에 \frac 같은 문자가 그대로 보이므로 실제 문제다.)
+  const hasDelimiter=/(\\\(|\\\[)/.test(latex);
+  const hasRawLatex=/\\(?:frac|dfrac|tfrac|sqrt|lim|int|sum|prod|begin|end|left|right|cdot|times|leq|geq|neq|infty|alpha|beta|gamma|theta|pi)\b/.test(latex)||/[\^_]\{/.test(latex);
+  if(!hasDelimiter&&hasRawLatex)return "수식이 구분자 밖으로 노출됨";
 
   // 수식 구분자 짝이 맞는지 확인한다. 안 맞으면 화면에서 raw LaTeX이 그대로 노출된다.
   const inlineOpen=(latex.match(/\\\(/g)??[]).length;
@@ -650,7 +678,7 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 
 각 문항마다 displayLatex와 renderBlocks만 반환합니다.
 - displayLatex는 한국어 문장과 MathJax 수식을 포함한 완성 문제입니다. 수식은 \\( ... \\) 또는 \\[ ... \\] 안에 둡니다.\n- $ ... $ 또는 $$ ... $$ 표기는 절대 쓰지 않습니다. 여는 구분자와 닫는 구분자 개수를 반드시 일치시킵니다.\n- 문제 본문과 각 선택지 사이에는 실제 줄바꿈(\\n)을 넣습니다. 선택지가 있으면 1~5 각각을 별도 줄로 씁니다.
-- 분수 \\frac, 극한 \\lim, 적분 \\int, 근호 \\sqrt, 조각함수 \\begin{cases}를 표준 LaTeX로 사용합니다.\n- renderBlocks의 mathml 값에는 LaTeX 명령(\\frac, \\lim, \\sqrt 등)을 절대 넣지 않습니다. 순수 MathML 태그만 씁니다. 확신이 없으면 mathml 블록을 비우고 text 블록만 반환하세요.
+- 분수 \\frac, 극한 \\lim, 적분 \\int, 근호 \\sqrt, 조각함수 \\begin{cases}를 표준 LaTeX로 사용합니다.\n- 중요: 모든 수식과 변수, 지수, 첨자는 예외 없이 \\( ... \\) 안에 넣습니다. f(x), x^2, a_n 처럼 짧은 것도 반드시 감쌉니다. 구분자 밖에 LaTeX 명령을 두면 화면에 글자 그대로 노출됩니다.\n- renderBlocks의 mathml 값에는 LaTeX 명령(\\frac, \\lim, \\sqrt 등)을 절대 넣지 않습니다. 순수 MathML 태그만 씁니다. 확신이 없으면 mathml 블록을 비우고 text 블록만 반환하세요.
 - renderBlocks의 일반 문장은 text, 수식은 mathml입니다. mathml은 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 구조여야 합니다.
 - 분수는 반드시 <mfrac>, 지수는 <msup>, 근호는 <msqrt>를 사용합니다.
 - MathML 안에 LaTeX 명령을 남기지 않습니다.
@@ -659,7 +687,7 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
       const r=await openAiJson(renderPrompt,stagedRenderSchema(count),undefined,{timeoutMs:150000,effort:"low"});
       const layouts=Array.isArray(r?.problems)?r.problems:[];
       if(layouts.length!==count){lastError=`조판 결과 수 ${layouts.length}/${count}`;rendered=[];continue;}
-      rendered=drafts.map((p:any,index:number)=>({...p,displayLatex:normalizeDisplayLatex(layouts[index]?.displayLatex),renderBlocks:cleanRenderBlocks(layouts[index]?.renderBlocks)}));
+      rendered=drafts.map((p:any,index:number)=>({...p,displayLatex:normalizeDisplayLatex(wrapLooseLatex(String(layouts[index]?.displayLatex??""))),renderBlocks:cleanRenderBlocks(layouts[index]?.renderBlocks)}));
       const layoutErrors=rendered.map((p:any,i:number)=>{if(Number(layouts[i]?.sourceSlot)!==i+1)return `${i+1}번 슬롯 오류`;const e=validateGeneratedMathLayout(p);return e?`${i+1}번 ${e}`:"";}).filter(Boolean);
       if(layoutErrors.length){lastError=`조판 검수 실패: ${layoutErrors.join(", ")}`;rendered=[];continue;}
       await updateGenerationStage(supabase,jobId,"RENDER_VERIFIED",6,total,"문제집 조판과 수식 구조 검수를 통과했습니다.",{rendered_payload:{problems:rendered}});
