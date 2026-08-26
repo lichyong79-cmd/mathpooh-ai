@@ -411,6 +411,23 @@ export function normalizeDisplayLatex(raw:any){
  * 실제 렌더러는 displayLatex만 쓰므로 판정 기준을 displayLatex로 옮긴다.
  * MathML은 '있으면 검사, 없으면 통과'로 낮춘다.
  */
+/**
+ * SOS293 · 예비 데이터(renderBlocks) 정리.
+ *
+ * MathML 안에 LaTeX 명령이 섞여 들어오는 일이 잦은데, 이 데이터는 화면에서 쓰이지 않는다.
+ * 그것 때문에 문항 묶음 전체를 버리는 대신, 오염된 블록만 빼고 나머지를 남긴다.
+ */
+function cleanRenderBlocks(raw:any){
+  if(!Array.isArray(raw))return [];
+  const dirty=/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end|left|right)\b/;
+  return raw.filter((b:any)=>{
+    const value=String(b?.value??"").trim();
+    if(!value)return false;
+    if(String(b?.type)!=="mathml")return true;
+    return !dirty.test(value);
+  });
+}
+
 function validateGeneratedMathLayout(problem:any){
   const latex=normalizeDisplayLatex(problem?.displayLatex);
   if(!latex)return "displayLatex 없음";
@@ -435,11 +452,10 @@ function validateGeneratedMathLayout(problem:any){
   if(/\bx\^\([^)]*\)/.test(latex))return "displayLatex 수식 바깥 원시 지수표기";
   if(/\blim[_\s]/.test(latex)&&!/\\lim/.test(latex))return "극한이 표준 LaTeX가 아님";
 
-  // renderBlocks는 현재 화면에서 쓰이지 않는 예비 데이터다.
-  // 존재할 때만 최소한의 오염 여부만 본다. 없다고 실패시키지 않는다.
-  const blocks=Array.isArray(problem?.renderBlocks)?problem.renderBlocks:[];
-  const math=blocks.filter((b:any)=>String(b?.type)==="mathml").map((b:any)=>String(b?.value??"")).join(" ");
-  if(math.trim()&&/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end|left|right)\b/.test(math))return "MathML 안에 LaTeX 명령이 남음";
+  // SOS293: renderBlocks(MathML)는 화면에 표시되지 않는 예비 데이터다.
+  // 학생이 보는 것은 displayLatex뿐인데, 예전에는 이 MathML에 LaTeX 명령이
+  // 섞였다는 이유만으로 멀쩡한 문항 묶음을 통째로 버리고 처음부터 다시 만들었다.
+  // 이제 검수 실패 사유로 삼지 않는다. 오염된 renderBlocks는 아래에서 걷어낸다.
   return "";
 }
 
@@ -634,7 +650,7 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 
 각 문항마다 displayLatex와 renderBlocks만 반환합니다.
 - displayLatex는 한국어 문장과 MathJax 수식을 포함한 완성 문제입니다. 수식은 \\( ... \\) 또는 \\[ ... \\] 안에 둡니다.\n- $ ... $ 또는 $$ ... $$ 표기는 절대 쓰지 않습니다. 여는 구분자와 닫는 구분자 개수를 반드시 일치시킵니다.\n- 문제 본문과 각 선택지 사이에는 실제 줄바꿈(\\n)을 넣습니다. 선택지가 있으면 1~5 각각을 별도 줄로 씁니다.
-- 분수 \\frac, 극한 \\lim, 적분 \\int, 근호 \\sqrt, 조각함수 \\begin{cases}를 표준 LaTeX로 사용합니다.
+- 분수 \\frac, 극한 \\lim, 적분 \\int, 근호 \\sqrt, 조각함수 \\begin{cases}를 표준 LaTeX로 사용합니다.\n- renderBlocks의 mathml 값에는 LaTeX 명령(\\frac, \\lim, \\sqrt 등)을 절대 넣지 않습니다. 순수 MathML 태그만 씁니다. 확신이 없으면 mathml 블록을 비우고 text 블록만 반환하세요.
 - renderBlocks의 일반 문장은 text, 수식은 mathml입니다. mathml은 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 구조여야 합니다.
 - 분수는 반드시 <mfrac>, 지수는 <msup>, 근호는 <msqrt>를 사용합니다.
 - MathML 안에 LaTeX 명령을 남기지 않습니다.
@@ -643,7 +659,7 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
       const r=await openAiJson(renderPrompt,stagedRenderSchema(count),undefined,{timeoutMs:150000,effort:"low"});
       const layouts=Array.isArray(r?.problems)?r.problems:[];
       if(layouts.length!==count){lastError=`조판 결과 수 ${layouts.length}/${count}`;rendered=[];continue;}
-      rendered=drafts.map((p:any,index:number)=>({...p,displayLatex:normalizeDisplayLatex(layouts[index]?.displayLatex),renderBlocks:Array.isArray(layouts[index]?.renderBlocks)?layouts[index].renderBlocks:[]}));
+      rendered=drafts.map((p:any,index:number)=>({...p,displayLatex:normalizeDisplayLatex(layouts[index]?.displayLatex),renderBlocks:cleanRenderBlocks(layouts[index]?.renderBlocks)}));
       const layoutErrors=rendered.map((p:any,i:number)=>{if(Number(layouts[i]?.sourceSlot)!==i+1)return `${i+1}번 슬롯 오류`;const e=validateGeneratedMathLayout(p);return e?`${i+1}번 ${e}`:"";}).filter(Boolean);
       if(layoutErrors.length){lastError=`조판 검수 실패: ${layoutErrors.join(", ")}`;rendered=[];continue;}
       await updateGenerationStage(supabase,jobId,"RENDER_VERIFIED",6,total,"문제집 조판과 수식 구조 검수를 통과했습니다.",{rendered_payload:{problems:rendered}});
