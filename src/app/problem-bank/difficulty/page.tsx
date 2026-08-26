@@ -59,6 +59,11 @@ type TestRow = Problem & { before: string; result?: RegradeResult };
 const D = DIFFICULTY_SCALE.map((x) => x.value);
 function norm(v: unknown, dna?: any) { return normalizeProblemDifficulty(v, dna, ""); }
 
+function normalizeSearchText(value: unknown) {
+  return String(value ?? "").normalize("NFKC").toLowerCase()
+    .replace(/[^0-9a-zA-Z가-힣]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function confidenceLabel(value: unknown) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "-";
@@ -225,8 +230,9 @@ export default function DifficultyManagementPage() {
     if (difficulty === "AI미검증" && difficultyAiJudged(x.problem_dna)) return false;
     if (difficulty !== "전체" && difficulty !== "미분류" && difficulty !== "AI미검증" && norm(x.difficulty,x.problem_dna) !== difficulty) return false;
     if (subject !== "전체" && canonicalSubject(x.subject) !== subject) return false;
-    const q = keyword.trim().toLowerCase();
-    if (q && ![x.problem_code,x.title,x.unit,x.topic,x.source_name].join(" ").toLowerCase().includes(q)) return false;
+    const tokens = normalizeSearchText(keyword).split(" ").filter(Boolean);
+    const haystack = normalizeSearchText([x.question_no, `${x.question_no}번`, x.problem_code, x.title, x.unit, x.topic, x.source_name, JSON.stringify(x.problem_dna ?? {})].join(" "));
+    if (tokens.length && !tokens.every(token => haystack.includes(token))) return false;
     return true;
   }), [items, keyword, difficulty, subject]);
 
@@ -692,7 +698,7 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
       </section>
 
       <div className="filter-bar">
-        <input value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="문항명·단원·유형·출처 검색"/>
+        <input value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="문항번호·시험지·단원·유형·출처·DNA 검색"/>
         <select value={subject} onChange={e=>setSubject(e.target.value)}>{subjects.map(x=><option key={x}>{x}</option>)}</select>
         <select value={difficulty} onChange={e=>setDifficulty(e.target.value)}><option>전체</option>{DIFFICULTY_SCALE.map(x=><option key={x.value} value={x.value}>{x.label}</option>)}<option value="미분류">미분류</option><option value="AI미검증">AI 미검증</option></select>
         <button disabled={running} onClick={runSampleRecheck} className="primary">① 표본 재풀이 검증</button>

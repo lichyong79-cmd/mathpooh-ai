@@ -61,8 +61,17 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat("ko-KR", { year: "2-digit", month: "2-digit", day: "2-digit" }).format(date);
 }
 
-function escapeLike(value: string) {
-  return value.replace(/[,%()]/g, " ").trim();
+function normalizeSearchText(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^0-9a-zA-Z가-힣]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function searchTokens(value: string) {
+  return normalizeSearchText(value).split(" ").filter(Boolean);
 }
 
 function confidencePercent(value: number | null) {
@@ -218,11 +227,16 @@ export default function ProblemBankClient() {
   }, [items]);
 
   const filtered = useMemo(() => {
-    const q = escapeLike(keyword).toLowerCase();
+    const tokens = searchTokens(keyword);
     return items.filter((item) => {
       const dnaText = item.problem_dna ? JSON.stringify(item.problem_dna) : "";
-      const haystack = [item.problem_code, item.title, item.subject, item.unit, item.topic, item.summary, item.answer, item.source_name, questionTypeLabel(item.question_type), dnaText].join(" ").toLowerCase();
-      return (!q || haystack.includes(q))
+      const haystack = normalizeSearchText([
+        item.question_no, `${item.question_no}번`, item.problem_code, item.title, item.grade, item.subject,
+        item.unit, item.topic, item.summary, item.answer, item.source_name, questionTypeLabel(item.question_type),
+        item.difficulty, difficultyLabel(item.difficulty), item.source_file_id, item.analysis_question_id,
+        item.content_role, item.training_course, dnaText,
+      ].join(" "));
+      return (tokens.length === 0 || tokens.every((token) => haystack.includes(token)))
         && (grade === "전체" || item.grade === grade)
         && (subject === "전체" || canonicalSubject(item.subject) === subject)
         && (unit === "전체" || item.unit === unit)
@@ -231,6 +245,14 @@ export default function ProblemBankClient() {
         && (sourceFileId === "전체" || item.source_file_id === sourceFileId);
     });
   }, [items, keyword, grade, subject, unit, difficulty, questionType, sourceFileId]);
+
+  // 검색/필터 결과가 바뀌었는데 기존 선택 문항이 결과 밖에 남아 있으면
+  // 우측 상세가 엉뚱한 문항을 계속 보여 "검색이 안 된 것"처럼 보인다.
+  // 현재 결과의 첫 문항을 자동 선택해 목록과 상세를 항상 동기화한다.
+  useEffect(() => {
+    if (filtered.length === 0) return;
+    if (!filtered.some((item) => item.id === selectedId)) setSelectedId(filtered[0].id);
+  }, [filtered, selectedId]);
 
   const resetFilters = () => {
     setKeyword(""); setGrade("전체"); setSubject("전체"); setUnit("전체");
@@ -437,7 +459,7 @@ export default function ProblemBankClient() {
       </section>
 
       <section className="filter-bar">
-        <label className="filter-search"><span>통합 검색</span><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="코드·단원·세부주제·핵심개념·요약 검색" /></label>
+        <label className="filter-search"><span>통합 검색</span><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="문항번호·시험지·코드·단원·유형·DNA·요약 검색" /></label>
         <label><span>시험지</span><select value={sourceFileId} onChange={(event) => setSourceFileId(event.target.value)}><option value="전체">전체 시험지</option>{sources.map(([id, title]) => <option key={id} value={id}>{title}</option>)}</select></label>
         <label><span>학년</span><select value={grade} onChange={(event) => setGrade(event.target.value)}><option>전체</option>{grades.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label><span>과목</span><select value={subject} onChange={(event) => setSubject(event.target.value)}><option>전체</option>{subjects.map((value) => <option key={value}>{value}</option>)}</select></label>
