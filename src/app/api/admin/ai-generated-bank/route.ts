@@ -12,7 +12,7 @@ export async function GET(){
   const supabase=createClient();
   const [questions,jobs]=await Promise.all([
     supabase.from("sos_ai_generated_questions").select("id,generation_kind,subject,major_unit,subunit,subunit_key,topic,core_type,difficulty,difficulty_meter,question_text,display_latex,answer,solution,generation_reason,verification,status,use_count,source_problem_id,source_training_session_id,source_training_order,created_at,updated_at").order("created_at",{ascending:false}).limit(1000),
-    supabase.from("sos_ai_generation_jobs").select("id,generation_kind,requested_count,status,attempt_count,last_error,result_session_id,requested_at,started_at,completed_at,updated_at,pipeline_version,stage,stage_index,stage_total,stage_message,stage_updated_at,draft_payload,rendered_payload,verification_payload").order("requested_at",{ascending:false}).limit(200)
+    supabase.from("sos_ai_generation_jobs").select("id,student_id,source_training_session_id,generation_kind,requested_count,status,attempt_count,last_error,result_session_id,requested_at,started_at,completed_at,updated_at,pipeline_version,stage,stage_index,stage_total,stage_message,stage_updated_at,draft_payload,rendered_payload,verification_payload,batch_payload").order("requested_at",{ascending:false}).limit(200)
   ]);
   if(questions.error)return NextResponse.json({message:questions.error.message},{status:400});
   if(jobs.error)return NextResponse.json({message:jobs.error.message},{status:400});

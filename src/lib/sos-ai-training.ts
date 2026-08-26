@@ -578,6 +578,14 @@ function validateStagedDrafts(list:any[],count:number){
 // 3제 굳히기(3문항)가 안정적으로 통과하므로 같은 크기로 맞춘다.
 const GENERATION_BATCH_SIZE = 3;
 
+async function saveBatchProgress(supabase:any,jobId:string|undefined,problems:any[]){
+  if(!jobId)return;
+  const saved=await supabase.from("sos_ai_generation_jobs")
+    .update({batch_payload:{problems},stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()})
+    .eq("id",jobId);
+  if(saved.error)throw saved.error;
+}
+
 /**
  * SOS290 · 문항 묶음을 나눠 생성한다.
  *
@@ -619,21 +627,45 @@ async function buildGeneratedProblemsInBatches(args:{supabase:any;jobId?:string;
 
     // 배치마다 독립된 job 상태를 쓰지 않도록 jobId를 넘기지 않는다.
     // 대신 배치 결과를 batch_payload에 누적한다.
-    const part=await buildStagedGeneratedProblems({
+    const batchArgs={
       ...args,
       jobId:undefined,
       count:size as 3|10,
       sourceSlots:args.sourceSlots.slice(start,start+size).map((slot:any,i:number)=>({...slot,slot:i+1})),
       sourceImages:args.sourceImages.slice(start,start+size),
       sourceSummary:args.sourceSummary.slice(start,start+size).map((x:any,i:number)=>({...x,slot:i+1})),
-    });
+    };
 
-    done=[...done,...part.map((x:any,i:number)=>({...x,sourceSlot:start+i+1}))];
-    if(jobId){
-      const saveBatch=await supabase.from("sos_ai_generation_jobs")
-        .update({batch_payload:{problems:done},stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()})
-        .eq("id",jobId);
-      if(saveBatch.error)throw saveBatch.error;
+    try{
+      const part=await buildStagedGeneratedProblems(batchArgs);
+      done=[...done,...part.map((x:any,i:number)=>({...x,sourceSlot:start+i+1}))];
+      await saveBatchProgress(supabase,jobId,done);
+    }catch(batchError){
+      // SOS296: 3문항 묶음 중 한 문항만 수학 검증/조판에 실패해도 정상 문항까지
+      // 전부 버리던 구조를 없앤다. 묶음 실패 시 한 문항씩 격리 생성하고, 통과한
+      // 문항은 즉시 batch_payload에 저장한다. 이후 실패해도 다음 실행은 저장된
+      // 다음 문항부터 이어가므로 이미 만든 문항이 사라지지 않는다.
+      for(let offset=0;offset<size;offset++){
+        const absolute=start+offset;
+        await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,8,
+          `${absolute}/${count}문항 보존 · 실패 묶음의 ${absolute+1}번 문항만 다시 검증합니다.`);
+        try{
+          const one=await buildStagedGeneratedProblems({
+            ...args,
+            jobId:undefined,
+            count:1 as 3,
+            sourceSlots:[{...args.sourceSlots[absolute],slot:1}],
+            sourceImages:[args.sourceImages[absolute]],
+            sourceSummary:[{...args.sourceSummary[absolute],slot:1}],
+          });
+          done=[...done,{...one[0],sourceSlot:absolute+1}];
+          await saveBatchProgress(supabase,jobId,done);
+        }catch(singleError){
+          const detail=singleError instanceof Error?singleError.message:String(singleError);
+          throw new Error(`AI 변형문항 ${absolute+1}번 개별 검증 실패: ${detail}`);
+        }
+      }
+      if(!done.length)throw batchError;
     }
   }
   await updateGenerationStage(supabase,jobId,"FINAL_VERIFIED",8,8,`${count}문항 생성·검증을 마쳤습니다.`);
@@ -670,9 +702,9 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
   await updateGenerationStage(supabase,jobId,"SOURCE_ANALYSIS",1,total,"원문 구조와 Problem DNA를 정리했습니다.");
   await updateGenerationStage(supabase,jobId,"TRANSFORM_DESIGN",2,total,`${transformLevel} 기준으로 변형 설계를 확정했습니다.`);
 
-  for(let attempt=1;attempt<=2;attempt++){
+  for(let attempt=1;attempt<=3;attempt++){
     if(!drafts.length){
-      await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,total,`문제 텍스트를 생성하고 있습니다. (${attempt}/2)`);
+      await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,total,`문제 텍스트를 생성하고 있습니다. (${attempt}/3)`);
       const prompt=`당신은 MATHPOOH SOS 수학 제한변형 출제 엔진입니다.
 생성 종류: ${kind==="HOMEWORK"?"3제 굳히기":"2차 AI 유사훈련"}
 변형 강도: ${transformLevel}
@@ -690,7 +722,7 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
 ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세요.`:""}`;
       const content:any[]=[{type:"input_text",text:prompt}];
       sourceSlots.forEach((slot,index)=>{content.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])content.push({type:"input_image",image_url:sourceImages[index]});else content.push({type:"input_text",text:JSON.stringify(slot.dna)});});
-      const d=await openAiJson(prompt,stagedDraftSchema(count),content,{timeoutMs:110000,effort:"low"});
+      const d=await openAiJson(prompt,stagedDraftSchema(count),content,{timeoutMs:110000,effort:"medium"});
       drafts=Array.isArray(d?.problems)?d.problems:[];
       lastError=validateStagedDrafts(drafts,count);
       if(lastError){drafts=[];continue;}
@@ -791,4 +823,3 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
   await updateGenerationStage(supabase,jobId,"READY",8,8,"학생 학습 배정까지 완료되었습니다.");
   return {session:session.data,problems:generated,pipelineVersion:"V2"};
 }
-
