@@ -491,6 +491,67 @@ function validateStagedDrafts(list:any[],count:number){
   return "";
 }
 
+/**
+ * SOS290 · 한 번에 처리할 문항 수.
+ *
+ * 파이프라인은 문항 묶음 하나에 AI를 세 번 부른다(텍스트 70초 + 조판 80초 + 재풀이 80초 = 230초).
+ * 3문항(3제 굳히기)은 300초 안에 끝나지만, 10문항(2차훈련)은 각 단계가 길어져 한도를 넘긴다.
+ * 그래서 조판 도중 함수가 죽고, 15분 뒤 회수되어 다시 처음부터 도는 일이 반복됐다.
+ *
+ * 이제 5문항씩 나눠 처리한다. 각 묶음이 여유 있게 300초 안에 끝나고,
+ * 중간에 죽어도 끝난 묶음은 저장되어 다음 실행에서 그대로 이어간다.
+ */
+const GENERATION_BATCH_SIZE = 5;
+
+/**
+ * SOS290 · 문항 묶음을 나눠 생성한다.
+ *
+ * count가 배치 크기 이하면 예전과 똑같이 한 번에 처리한다(3제 굳히기).
+ * 그보다 크면 배치로 쪼개고, 각 배치 결과를 job에 누적 저장해 재실행 시 이어받는다.
+ */
+async function buildGeneratedProblemsInBatches(args:{supabase:any;jobId?:string;kind:"HOMEWORK"|"SECOND_TRAINING";count:3|10;sourceSlots:any[];sourceImages:string[];sourceSummary:any[];weakness:any;target:any}){
+  const {supabase,jobId,count}=args;
+  if(count<=GENERATION_BATCH_SIZE)return buildStagedGeneratedProblems(args);
+
+  // 이미 끝난 배치가 있으면 이어받는다.
+  let done:any[]=[];
+  if(jobId){
+    const saved=await supabase.from("sos_ai_generation_jobs").select("batch_payload").eq("id",jobId).maybeSingle();
+    const list=Array.isArray(saved.data?.batch_payload?.problems)?saved.data.batch_payload.problems:[];
+    if(list.length&&list.length<count)done=list;
+    if(list.length>=count)return list.slice(0,count);
+  }
+
+  const batches=Math.ceil(count/GENERATION_BATCH_SIZE);
+  while(done.length<count){
+    const start=done.length;
+    const size=Math.min(GENERATION_BATCH_SIZE,count-start);
+    const batchNo=Math.floor(start/GENERATION_BATCH_SIZE)+1;
+    await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,8,`${count}문항을 ${batches}묶음으로 나눠 생성합니다. (${batchNo}/${batches})`);
+
+    // 배치마다 독립된 job 상태를 쓰지 않도록 jobId를 넘기지 않는다.
+    // 대신 배치 결과를 batch_payload에 누적한다.
+    const part=await buildStagedGeneratedProblems({
+      ...args,
+      jobId:undefined,
+      count:size as 3|10,
+      sourceSlots:args.sourceSlots.slice(start,start+size).map((slot:any,i:number)=>({...slot,slot:i+1})),
+      sourceImages:args.sourceImages.slice(start,start+size),
+      sourceSummary:args.sourceSummary.slice(start,start+size).map((x:any,i:number)=>({...x,slot:i+1})),
+    });
+
+    done=[...done,...part.map((x:any,i:number)=>({...x,sourceSlot:start+i+1}))];
+    if(jobId){
+      const saveBatch=await supabase.from("sos_ai_generation_jobs")
+        .update({batch_payload:{problems:done},stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()})
+        .eq("id",jobId);
+      if(saveBatch.error)throw saveBatch.error;
+    }
+  }
+  await updateGenerationStage(supabase,jobId,"FINAL_VERIFIED",8,8,`${count}문항 생성·검증을 마쳤습니다.`);
+  return done.slice(0,count);
+}
+
 async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kind:"HOMEWORK"|"SECOND_TRAINING";count:3|10;sourceSlots:any[];sourceImages:string[];sourceSummary:any[];weakness:any;target:any}){
   const {supabase,jobId,kind,count,sourceSlots,sourceImages,sourceSummary,weakness,target}=args;
   const total=8;
@@ -626,7 +687,8 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
   const sourceImages=await Promise.all(sourceSlots.map(async slot=>slot.imagePath?await signed(supabase,"question-images",slot.imagePath):""));
   const sourceSummary=sourceSlots.map((slot,index)=>({slot:slot.slot,trainingOrder:slot.trainingOrder,problemId:slot.problemId,sourceAnswer:slot.sourceAnswer,dna:slot.dna,hasOriginalImage:Boolean(sourceImages[index])}));
   const target=s.target_snapshot??{};
-  let generated=await buildStagedGeneratedProblems({supabase,jobId,kind,count,sourceSlots,sourceImages,sourceSummary,weakness,target});
+  // SOS290: 10문항은 배치로 나눠 생성한다. 3문항은 예전처럼 한 번에 처리된다.
+  let generated=await buildGeneratedProblemsInBatches({supabase,jobId,kind,count,sourceSlots,sourceImages,sourceSummary,weakness,target});
   generated=generated.map((p:any,index:number)=>{const ss=sourceSlots[index],si=ranked[index%ranked.length]??null,sp=si?.problem_bank_questions??{};return {...p,subject:target.subject??target.sourceSubject??"",majorUnit:target.majorUnit??target.sourceMajorUnit??"",subunit:target.subunit??target.sourceUnit??"",subunitKey:target.subunitKey??"",meter:clampMeter(p.meter,p.difficulty),generated:true,generatedIndex:index+1,sourceTrainingOrder:Number(ss?.trainingOrder??si?.item_order??0)||null,sourceProblemId:ss?.problemId??sp?.id??null,sourceTopic:String(sp?.topic??""),coreType:String(p.topic??weakness?.focusConcepts?.[0]??weakness?.weaknessTitle??"핵심 취약유형"),generationKind:kind,generationPolicy:"STAGED_PIPELINE_V2",barometerExcluded:kind==="HOMEWORK"};});
   generated=await archiveGeneratedProblems({supabase,studentId,sourceSessionId:firstTrainingSessionId,kind,problems:generated});
   await updateGenerationStage(supabase,jobId,"BANK_SAVED",8,8,"검증 문항을 AI 생성 문제은행에 저장했습니다.");
