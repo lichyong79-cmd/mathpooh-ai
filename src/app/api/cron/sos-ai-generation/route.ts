@@ -45,6 +45,20 @@ async function processJob(jobId:string,job:any){
     return {status:"READY",resultSessionId,message:""};
   }catch(error){
     const message=error instanceof Error?error.message:"AI 생성 실패";
+
+    // SOS292: 묶음 하나를 끝내고 시간이 남지 않아 스스로 멈춘 경우다.
+    // 실패가 아니라 "여기까지 저장하고 다음 실행에 이어감"이므로
+    // 시도 횟수를 올리지 않고 그대로 대기열로 돌려보낸다.
+    if(message.startsWith("PARTIAL_BATCH_DONE:")){
+      const progress=message.split(":")[1]??"";
+      await supabase.from("sos_ai_generation_jobs").update({
+        status:"QUEUED",attempt_count:0,started_at:null,
+        stage_message:`${progress}문항 완료 · 다음 실행에서 이어갑니다.`,last_error:null,
+        stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString(),
+      }).eq("id",jobId);
+      return {status:"PARTIAL",resultSessionId:null,message:progress};
+    }
+
     await supabase.from("sos_ai_generation_jobs").update({
       status:"FAILED",stage:"FAILED",
       stage_message:message.slice(0,300),

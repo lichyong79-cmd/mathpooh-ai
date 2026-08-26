@@ -501,7 +501,10 @@ function validateStagedDrafts(list:any[],count:number){
  * 이제 5문항씩 나눠 처리한다. 각 묶음이 여유 있게 300초 안에 끝나고,
  * 중간에 죽어도 끝난 묶음은 저장되어 다음 실행에서 그대로 이어간다.
  */
-const GENERATION_BATCH_SIZE = 5;
+// SOS292: 5문항 묶음도 조판 단계(80초 제한)를 못 넘겨 실패했다.
+// 조판은 문항마다 LaTeX/MathML을 만들어야 해서 출력량이 문항 수에 비례한다.
+// 3제 굳히기(3문항)가 안정적으로 통과하므로 같은 크기로 맞춘다.
+const GENERATION_BATCH_SIZE = 3;
 
 /**
  * SOS290 · 문항 묶음을 나눠 생성한다.
@@ -523,7 +526,20 @@ async function buildGeneratedProblemsInBatches(args:{supabase:any;jobId?:string;
   }
 
   const batches=Math.ceil(count/GENERATION_BATCH_SIZE);
+
+  // SOS292: 한 번의 함수 실행에서 묶음을 하나만 처리한다.
+  // 여러 묶음을 이어서 돌리면 결국 함수 300초 한도에 걸린다.
+  // 남은 묶음은 batch_payload에 저장된 채로 다음 cron이 이어받는다.
+  // 10문항이면 cron 4회(약 40분) 안에 완성된다.
+  const startedAt=Date.now();
+  const BUDGET_MS=210_000;
+
   while(done.length<count){
+    if(done.length>0&&Date.now()-startedAt>BUDGET_MS){
+      await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,8,
+        `${done.length}/${count}문항 완료 · 나머지는 다음 실행에서 이어갑니다.`);
+      throw new Error(`PARTIAL_BATCH_DONE:${done.length}/${count}`);
+    }
     const start=done.length;
     const size=Math.min(GENERATION_BATCH_SIZE,count-start);
     const batchNo=Math.floor(start/GENERATION_BATCH_SIZE)+1;
@@ -602,7 +618,7 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
 ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세요.`:""}`;
       const content:any[]=[{type:"input_text",text:prompt}];
       sourceSlots.forEach((slot,index)=>{content.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])content.push({type:"input_image",image_url:sourceImages[index]});else content.push({type:"input_text",text:JSON.stringify(slot.dna)});});
-      const d=await openAiJson(prompt,stagedDraftSchema(count),content,{timeoutMs:70000,effort:"low"});
+      const d=await openAiJson(prompt,stagedDraftSchema(count),content,{timeoutMs:110000,effort:"low"});
       drafts=Array.isArray(d?.problems)?d.problems:[];
       lastError=validateStagedDrafts(drafts,count);
       if(lastError){drafts=[];continue;}
@@ -624,7 +640,7 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 - MathML 안에 LaTeX 명령을 남기지 않습니다.
 - 문제 내용 자체를 수정하거나 조건을 추가/삭제하지 않습니다.`;
       // SOS270: 조판이 가장 자주 실패하던 단계인데 추론 강도가 minimal이었다. low로 올린다.
-      const r=await openAiJson(renderPrompt,stagedRenderSchema(count),undefined,{timeoutMs:80000,effort:"low"});
+      const r=await openAiJson(renderPrompt,stagedRenderSchema(count),undefined,{timeoutMs:150000,effort:"low"});
       const layouts=Array.isArray(r?.problems)?r.problems:[];
       if(layouts.length!==count){lastError=`조판 결과 수 ${layouts.length}/${count}`;rendered=[];continue;}
       rendered=drafts.map((p:any,index:number)=>({...p,displayLatex:normalizeDisplayLatex(layouts[index]?.displayLatex),renderBlocks:Array.isArray(layouts[index]?.renderBlocks)?layouts[index].renderBlocks:[]}));
@@ -647,7 +663,7 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 5) 하나라도 어기면 valid=false입니다.`;
     const verifyContent:any[]=[{type:"input_text",text:verifyPrompt}];
     sourceSlots.forEach((slot,index)=>{verifyContent.push({type:"input_text",text:`[검수 sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])verifyContent.push({type:"input_image",image_url:sourceImages[index]});else verifyContent.push({type:"input_text",text:JSON.stringify(slot.dna)});});
-    const v=await openAiJson(verifyPrompt,stagedVerifySchema(count),verifyContent,{timeoutMs:80000,effort:"medium"});
+    const v=await openAiJson(verifyPrompt,stagedVerifySchema(count),verifyContent,{timeoutMs:150000,effort:"medium"});
     checks=Array.isArray(v?.checks)?v.checks:[];
     const verifyErrors=checks.map((c:any,i:number)=>{const claimed=String(rendered[i]?.answer??"").trim(),computed=String(c?.computedAnswer??"").trim();if(Number(c?.index)!==i+1)return `${i+1}번 검수 순서 오류`;if(c?.valid!==true)return `${i+1}번 재풀이 실패(${String(c?.reason??"")})`;if(c?.sourceFaithful!==true)return `${i+1}번 원문 구조 이탈`;if(computed!==claimed)return `${i+1}번 정답 불일치(${claimed}≠${computed})`;return "";}).filter(Boolean);
     if(checks.length===count&&!verifyErrors.length){
