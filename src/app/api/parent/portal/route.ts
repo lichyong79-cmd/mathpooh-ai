@@ -21,8 +21,8 @@ export async function GET(){
 
   const [attemptResult,sessionResult,jobResult]=await Promise.all([
     supabase.from("exam_attempts").select("id,exam_id,student_id,status,score,correct_count,answers,wrong_numbers,unanswered_numbers,submitted_at,created_at,mathpooh_comment").in("student_id",ids).eq("status","submitted").order("submitted_at",{ascending:false}),
-    supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,target_snapshot,weakness_snapshot,cycle_kind,round_no,correct_count,total_count,baseline_meter,goal_meter,training_meter,review_meter,decision,created_at,updated_at").in("student_id",ids).order("created_at",{ascending:false}),
-    supabase.from("sos_ai_generation_jobs").select("student_id,status,generation_kind,requested_count,stage_message,requested_at,updated_at").in("student_id",ids).order("requested_at",{ascending:false})
+    supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,target_snapshot,weakness_snapshot,cycle_kind,round_no,correct_count,total_count,baseline_meter,goal_meter,training_meter,review_meter,decision,created_at,updated_at,sos_training_items(id,student_answer,answered_at,review_answered_at,is_correct)").in("student_id",ids).order("created_at",{ascending:false}),
+    supabase.from("sos_ai_generation_jobs").select("student_id,source_training_session_id,status,generation_kind,requested_count,stage_message,requested_at,updated_at").in("student_id",ids).order("requested_at",{ascending:false})
   ]);
   if(attemptResult.error||sessionResult.error)return NextResponse.json({message:attemptResult.error?.message||sessionResult.error?.message},{status:400});
   const attempts=attemptResult.data??[];
