@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAdminUser } from "@/lib/supabase/auth";
+import { ensureParentAccount } from "@/lib/parent-account";
 
 const digits = (value: unknown) => String(value ?? "").replace(/\D/g, "");
 // SOS280: 거부목록("student가 아니면 통과")이라 학부모·역할 미지정 계정까지 통과했다. 허용목록으로 바꾼다.
@@ -18,7 +19,8 @@ export async function POST(request: Request) {
   const created = await supabase.auth.admin.createUser({ email: `${phone}@student.matspu.local`, password: `Mp!${phone.slice(-4)}`, email_confirm: true, user_metadata: { role: "student", student_id: student.id, name: student.name } });
   if (created.error || !created.data.user) { await supabase.from("students").delete().eq("id", student.id); return NextResponse.json({ message: created.error?.message || "학생 계정 생성 실패" }, { status: 400 }); }
   const { data: linked } = await supabase.from("students").update({ auth_user_id: created.data.user.id, password_changed: false, password_reset_at: new Date().toISOString() }).eq("id", student.id).select().single();
-  return NextResponse.json({ student: output(linked), loginId: phone, temporaryPassword: phone.slice(-4) });
+  let parentWarning="";try{await ensureParentAccount(supabase,body.parentPhone);}catch(e){parentWarning=e instanceof Error?e.message:"학부모 계정 생성 실패";}
+  return NextResponse.json({ student: output(linked), loginId: phone, temporaryPassword: phone.slice(-4), parentAccountCreated:!parentWarning, parentWarning });
 }
 
 export async function PATCH(request: Request) {
@@ -94,10 +96,13 @@ export async function PATCH(request: Request) {
     }, { status: 400 });
   }
 
+  let parentWarning="";try{await ensureParentAccount(supabase,body.parentPhone);}catch(e){parentWarning=e instanceof Error?e.message:"학부모 계정 생성 실패";}
   return NextResponse.json({
     student: output(data),
     loginId: phone,
     loginIdChanged: phoneChanged,
+    parentAccountCreated:!parentWarning,
+    parentWarning,
   });
 }
 

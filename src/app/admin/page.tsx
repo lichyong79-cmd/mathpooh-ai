@@ -669,6 +669,21 @@ function StudentsPage({
   const [selectedRoundId, setSelectedRoundId] = useState("");
   const [registeredIds, setRegisteredIds] = useState<(string | number)[]>([]);
   const [registrationBusy, setRegistrationBusy] = useState(false);
+  const [parentSyncBusy, setParentSyncBusy] = useState(false);
+
+  const syncParentAccounts = async () => {
+    setParentSyncBusy(true);
+    try {
+      const response = await fetch("/api/admin/parents/sync", { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "학부모 계정 생성 실패");
+      alert(`학부모 계정 연결 완료\n신규 ${result.created}개 · 기존 ${result.linked}개${result.failed ? ` · 실패 ${result.failed}개` : ""}\n초기 비밀번호는 학부모 전화번호 뒤 4자리입니다.`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "학부모 계정을 만들지 못했습니다.");
+    } finally {
+      setParentSyncBusy(false);
+    }
+  };
 
   useEffect(() => {
     setTab(initialTab);
@@ -830,15 +845,20 @@ function StudentsPage({
           <h2>학생정보 관리</h2>
           <p>학생 기본정보와 계정 상태를 관리합니다.</p>
         </div>
-        <button
-          className="primary-button"
-          onClick={() => {
-            setEditing(null);
-            setIsAdding(true);
-          }}
-        >
-          ＋ 학생 등록
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="secondary-button" disabled={parentSyncBusy} onClick={() => void syncParentAccounts()}>
+            {parentSyncBusy ? "계정 연결 중..." : "학부모 페이지 열기"}
+          </button>
+          <button
+            className="primary-button"
+            onClick={() => {
+              setEditing(null);
+              setIsAdding(true);
+            }}
+          >
+            ＋ 학생 등록
+          </button>
+        </div>
       </section>
 
       {tab === "students" ? (

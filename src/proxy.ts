@@ -36,6 +36,9 @@ export async function proxy(request: NextRequest) {
     if (user?.user_metadata?.role === "student") {
       return NextResponse.redirect(new URL("/s", request.url));
     }
+    if (user?.user_metadata?.role === "parent") {
+      return NextResponse.redirect(new URL("/p", request.url));
+    }
     return NextResponse.rewrite(new URL("/student-login", request.url));
   }
 
@@ -107,7 +110,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
-  if (user?.user_metadata?.role === "parent" && pathname !== "/p" && !pathname.startsWith("/parent-login") && !pathname.startsWith("/auth/")) {
+  if (user?.user_metadata?.role === "parent" && pathname !== "/p" && !pathname.startsWith("/api/parent/") && !pathname.startsWith("/parent-login") && !pathname.startsWith("/auth/")) {
     return NextResponse.redirect(new URL("/p", request.url));
   }
 
