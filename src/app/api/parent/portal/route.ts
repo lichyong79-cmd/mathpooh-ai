@@ -20,8 +20,8 @@ export async function GET(){
   if(!ids.length)return NextResponse.json({parentPhone:phone,children:[],reports:[]});
 
   const [attemptResult,sessionResult,jobResult]=await Promise.all([
-    supabase.from("exam_attempts").select("id,exam_id,student_id,status,score,correct_count,answers,wrong_numbers,unanswered_numbers,submitted_at,created_at").in("student_id",ids).eq("status","submitted").order("submitted_at",{ascending:false}),
-    supabase.from("sos_training_sessions").select("id,student_id,phase,status,target_snapshot,weakness_snapshot,cycle_kind,round_no,correct_count,total_count,baseline_meter,goal_meter,training_meter,review_meter,decision,created_at,updated_at").in("student_id",ids).order("created_at",{ascending:false}),
+    supabase.from("exam_attempts").select("id,exam_id,student_id,status,score,correct_count,answers,wrong_numbers,unanswered_numbers,submitted_at,created_at,mathpooh_comment").in("student_id",ids).eq("status","submitted").order("submitted_at",{ascending:false}),
+    supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,target_snapshot,weakness_snapshot,cycle_kind,round_no,correct_count,total_count,baseline_meter,goal_meter,training_meter,review_meter,decision,created_at,updated_at").in("student_id",ids).order("created_at",{ascending:false}),
     supabase.from("sos_ai_generation_jobs").select("student_id,status,generation_kind,requested_count,stage_message,requested_at,updated_at").in("student_id",ids).order("requested_at",{ascending:false})
   ]);
   if(attemptResult.error||sessionResult.error)return NextResponse.json({message:attemptResult.error?.message||sessionResult.error?.message},{status:400});
@@ -44,7 +44,7 @@ export async function GET(){
       const d=String(meta.difficulty||"미분류");const dv=difficulties.get(d)??{total:0,correct:0};dv.total++;if(correct)dv.correct++;difficulties.set(d,dv);
     }
     const bars=(m:Map<string,{total:number;correct:number}>)=>[...m].map(([name,v])=>({name,total:v.total,correct:v.correct,rate:Math.round(v.correct/Math.max(1,v.total)*100)})).sort((a,b)=>b.total-a.total);
-    return {id:attempt.id,studentId:attempt.student_id,title:exam.title??"시험",examCode:exam.exam_code??"",examDate:exam.exam_date??attempt.submitted_at,subject:exam.subject??"",score:graded.score,totalScore:Number(exam.total_score??100),correct:graded.correct,total:Number(exam.question_count??0),wrong:graded.wrong,unanswered:graded.unanswered,submittedAt:attempt.submitted_at,units:bars(units),difficulties:bars(difficulties)};
+    return {id:attempt.id,studentId:attempt.student_id,title:exam.title??"시험",examCode:exam.exam_code??"",examDate:exam.exam_date??attempt.submitted_at,subject:exam.subject??"",score:graded.score,totalScore:Number(exam.total_score??100),correct:graded.correct,total:Number(exam.question_count??0),wrong:graded.wrong,unanswered:graded.unanswered,submittedAt:attempt.submitted_at,comment:String(attempt.mathpooh_comment??""),units:bars(units),difficulties:bars(difficulties)};
   });
   const reports=children.map((child:any)=>({
     student:{id:child.id,name:child.name,school:child.school,grade:child.grade,status:child.status},
