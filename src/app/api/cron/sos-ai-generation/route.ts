@@ -27,6 +27,10 @@ const STALE_MINUTES=7;
 // 10분 주기이므로 8회면 약 80분간 스스로 시도한다.
 const MAX_ATTEMPTS=8;
 
+// SOS298: 한 cron 호출에서 서로 다른 작업을 동시에 처리한다.
+// API/Vercel 부하를 급격히 올리지 않도록 기본값은 3, 운영 중 환경변수로 1~4 사이에서 조절한다.
+const CONCURRENCY=Math.min(4,Math.max(1,Number(process.env.SOS_AI_GENERATION_CONCURRENCY??3)||3));
+
 async function processJob(jobId:string,job:any){
   const supabase=createClient();
   try{
@@ -92,52 +96,58 @@ async function run(request:Request){
   const cols="id,student_id,source_training_session_id,generation_kind,requested_count,status,attempt_count,started_at";
   const staleCutoff=new Date(Date.now()-STALE_MINUTES*60000).toISOString();
 
-  // 1순위: 대기 중이거나 실패한 작업
+  // 1순위: 대기 중이거나 실패한 작업을 동시 처리 한도만큼 가져온다.
   const queued=await supabase.from("sos_ai_generation_jobs").select(cols)
     .in("status",["QUEUED","FAILED"]).lt("attempt_count",MAX_ATTEMPTS)
-    .order("requested_at",{ascending:true}).limit(1).maybeSingle();
+    .order("requested_at",{ascending:true}).limit(CONCURRENCY);
   if(queued.error)throw queued.error;
 
-  let job:any=queued.data;
-  let stale=false;
+  const candidates:Array<{job:any;stale:boolean}>=(queued.data??[]).map((job:any)=>({job,stale:false}));
 
-  // 2순위: 죽은 채 GENERATING으로 남은 작업 회수
-  if(!job){
+  // 2순위: 남는 슬롯으로 죽은 채 GENERATING인 작업을 회수한다.
+  const remaining=CONCURRENCY-candidates.length;
+  if(remaining>0){
     const stuck=await supabase.from("sos_ai_generation_jobs").select(cols)
       .eq("status","GENERATING").lt("attempt_count",MAX_ATTEMPTS).lt("started_at",staleCutoff)
-      .order("requested_at",{ascending:true}).limit(1).maybeSingle();
+      .order("requested_at",{ascending:true}).limit(remaining);
     if(stuck.error)throw stuck.error;
-    job=stuck.data;
-    stale=Boolean(job);
+    candidates.push(...(stuck.data??[]).map((job:any)=>({job,stale:true})));
   }
 
-  if(!job)return NextResponse.json({success:true,processed:0,message:"대기 중인 작업이 없습니다."});
+  if(!candidates.length)return NextResponse.json({success:true,processed:0,message:"대기 중인 작업이 없습니다."});
 
-  // 선점. 다른 인스턴스가 먼저 가져갔으면 조용히 물러난다.
-  const claim=supabase.from("sos_ai_generation_jobs").update({
-    status:"GENERATING",
-    started_at:new Date().toISOString(),
-    updated_at:new Date().toISOString(),
-    attempt_count:Number(job.attempt_count??0)+1,
-    last_error:null
-  }).eq("id",job.id);
-  const claimed=stale
-    ? await claim.eq("status","GENERATING").lt("started_at",staleCutoff).select("id").maybeSingle()
-    : await claim.in("status",["QUEUED","FAILED"]).select("id").maybeSingle();
-  if(claimed.error)throw claimed.error;
-  if(!claimed.data)return NextResponse.json({success:true,processed:0,raced:true,message:"다른 실행이 먼저 처리 중입니다."});
+  // 각 후보를 조건부 선점한다. cron 호출이 겹쳐도 먼저 상태를 바꾼 실행만 성공한다.
+  const claimResults=await Promise.all(candidates.map(async({job,stale})=>{
+    const claimedAt=new Date().toISOString();
+    const claim=supabase.from("sos_ai_generation_jobs").update({
+      status:"GENERATING",started_at:claimedAt,updated_at:claimedAt,
+      attempt_count:Number(job.attempt_count??0)+1,last_error:null
+    }).eq("id",job.id);
+    const claimed=stale
+      ? await claim.eq("status","GENERATING").lt("started_at",staleCutoff).select("id").maybeSingle()
+      : await claim.in("status",["QUEUED","FAILED"]).select("id").maybeSingle();
+    if(claimed.error)throw claimed.error;
+    return claimed.data?{job,stale}:null;
+  }));
+  const claimedJobs=claimResults.filter((x):x is {job:any;stale:boolean}=>Boolean(x));
+  if(!claimedJobs.length)return NextResponse.json({success:true,processed:0,raced:true,message:"다른 실행이 먼저 처리 중입니다."});
 
   if(sync){
-    const r=await processJob(String(job.id),job);
-    return NextResponse.json({success:r.status==="READY",processed:1,jobId:job.id,...r},{status:r.status==="READY"?200:500});
+    const results=await Promise.all(claimedJobs.map(({job})=>processJob(String(job.id),job)));
+    return NextResponse.json({
+      success:results.every(r=>r.status==="READY"),processed:results.length,
+      jobs:claimedJobs.map(({job},index)=>({jobId:job.id,...results[index]}))
+    },{status:results.every(r=>r.status==="READY")?200:500});
   }
 
-  // 응답을 먼저 돌려주고, 생성은 이어서 진행한다.
-  after(()=>processJob(String(job.id),job));
+  // 응답을 먼저 돌려주고, 선점한 작업들은 서로 독립적으로 병렬 실행한다.
+  // allSettled를 써서 한 작업의 예외가 다른 학생 작업을 취소하지 않게 한다.
+  after(async()=>{await Promise.allSettled(claimedJobs.map(({job})=>processJob(String(job.id),job)));});
   return NextResponse.json({
-    success:true,accepted:1,processed:1,jobId:job.id,status:"GENERATING",
-    reclaimed:stale,
-    message:"작업을 시작했습니다. 진행 상황은 AI 생성 문제은행에서 확인하세요."
+    success:true,accepted:claimedJobs.length,processed:claimedJobs.length,
+    jobIds:claimedJobs.map(({job})=>job.id),status:"GENERATING",
+    reclaimed:claimedJobs.filter(x=>x.stale).length,concurrency:CONCURRENCY,
+    message:`${claimedJobs.length}개 작업을 동시에 시작했습니다. 진행 상황은 AI 생성 문제은행에서 확인하세요.`
   },{status:202});
 }
 

@@ -635,7 +635,7 @@ async function buildGeneratedProblemsInBatches(args:{supabase:any;jobId?:string;
     const batchArgs={
       ...args,
       jobId:undefined,
-      count:size as 3|10,
+      count:size as 1|3|10,
       sourceSlots:args.sourceSlots.slice(start,start+size).map((slot:any,i:number)=>({...slot,slot:i+1})),
       sourceImages:args.sourceImages.slice(start,start+size),
       sourceSummary:args.sourceSummary.slice(start,start+size).map((x:any,i:number)=>({...x,slot:i+1})),
@@ -668,7 +668,7 @@ async function buildGeneratedProblemsInBatches(args:{supabase:any;jobId?:string;
   return done.slice(0,count);
 }
 
-async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kind:"HOMEWORK"|"SECOND_TRAINING";count:3|10;sourceSlots:any[];sourceImages:string[];sourceSummary:any[];weakness:any;target:any}){
+async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kind:"HOMEWORK"|"SECOND_TRAINING";count:1|3|10;sourceSlots:any[];sourceImages:string[];sourceSummary:any[];weakness:any;target:any}){
   const {supabase,jobId,kind,count,sourceSlots,sourceImages,sourceSummary,weakness,target}=args;
   const total=8;
   const transformLevel=kind==="HOMEWORK"?"안전변형":"표준변형";
