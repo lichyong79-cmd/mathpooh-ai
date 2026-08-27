@@ -557,7 +557,11 @@ function validateStagedDrafts(list:any[],count:number){
     const a=String(p?.answer??"").trim();
     if(!/^-?\d+$/.test(a))return `${i+1}번 정답이 정수가 아님`;
     const n=Number(a);if(!Number.isSafeInteger(n)||n<-999||n>999)return `${i+1}번 정답 범위 오류`;
-    if(String(p?.question??"").trim().length<18)return `${i+1}번 문제 본문이 너무 짧음`;
+    const question=String(p?.question??"").trim();
+    if(question.length<18)return `${i+1}번 문제 본문이 너무 짧음`;
+    // SOS302: 객관식 원문의 정답번호(1~5)를 수학적 답으로 복사하고 보기는 없애는 사고 방지.
+    if(/보기와\s*(?:동일|같은)\s*형태|보기에서\s*고르|옳은\s*것을\s*고르|정답\s*번호|선택지/i.test(question))return `${i+1}번 객관식 잔여 문구`;
+    if(/[①②③④⑤]/.test(question))return `${i+1}번 객관식 선택지 포함`;
     if(!String(p?.solution??"").trim())return `${i+1}번 풀이 없음`;
   }
   return "";
@@ -717,6 +721,10 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
 - 새 개념, 자유창작, 전혀 다른 풀이법을 추가하지 않습니다.
 - ${kind==="HOMEWORK"?"수치·계수·좌표·구간 등만 안전하게 변경합니다.":"수치·계수·동등한 조건을 변경하되 원문 구조를 유지합니다."}
 - answer는 -999~999의 유일한 정수 하나여야 합니다.
+- sourceAnswer가 1~5여도 객관식의 '정답 번호'일 수 있으므로 절대 복사하지 말고 새 문제를 직접 풀어 실제 수학적 값을 구합니다.
+- 객관식 보기와 ①~⑤를 모두 제거하고, '보기와 동일한 형태', '옳은 것을 고르시오', '정답 번호' 같은 문구도 절대 남기지 않습니다.
+- 계산 결과가 \\log 6, \\sqrt{2}, 3\\pi 같은 기호식이면 그 식을 답으로 요구하지 말고, 예를 들어 '값이 \\log m일 때 자연수 m'처럼 동치인 정수 매개변수를 묻도록 질문을 완결합니다.
+- 밑이 생략된 log는 상용로그입니다. \\log 6을 밑이 6인 로그로 해석하면 안 됩니다. 밑이 6인 로그는 반드시 \\log_{6}처럼 씁니다.
 - solution은 실제 계산이 확인되는 충분한 풀이를 적습니다.
 - reason은 원문에서 무엇을 유지하고 무엇만 바꿨는지 적습니다.
 ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세요.`:""}`;
@@ -764,10 +772,17 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 2) 정답은 유일한 -999~999 정수 하나입니다.
 3) computedAnswer가 claimedAnswer와 정확히 같아야 합니다.
 4) 같은 sourceSlot 원문의 핵심 개념·풀이 흐름·질문 유형을 유지한 제한변형이어야 sourceFaithful=true입니다.
-5) 하나라도 어기면 valid=false입니다.`;
+5) 하나라도 어기면 valid=false입니다.
+
+중요 로그·객관식 검수 규칙:
+- 밑이 생략된 log 또는 \\log는 상용로그입니다. \\log 6은 log_6(6)이 아니며 1이 아닙니다.
+- 원문 sourceAnswer 1~5는 선택지 번호일 수 있으므로 claimedAnswer의 근거로 사용하지 않습니다.
+- 보기가 없는데 '보기와 동일한 형태' 같은 문구가 남아 있으면 valid=false입니다.
+- 최종 결과가 기호식인데 문제는 그 식 자체를 요구하면 정수입력 문항이 아니므로 valid=false입니다.`;
     const verifyContent:any[]=[{type:"input_text",text:verifyPrompt}];
     sourceSlots.forEach((slot,index)=>{verifyContent.push({type:"input_text",text:`[검수 sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])verifyContent.push({type:"input_image",image_url:sourceImages[index]});else verifyContent.push({type:"input_text",text:JSON.stringify(slot.dna)});});
-    const v=await openAiJson(verifyPrompt,stagedVerifySchema(count),verifyContent,{timeoutMs:singleStepTimeout??150000,effort:"medium"});
+    const riskyLog=rendered.some((p:any)=>/\\?log\b|로그/.test(`${p.question??""} ${p.displayLatex??""}`));
+    const v=await openAiJson(verifyPrompt,stagedVerifySchema(count),verifyContent,{timeoutMs:singleStepTimeout??150000,effort:riskyLog?"high":"medium"});
     checks=Array.isArray(v?.checks)?v.checks:[];
     const verifyErrors=checks.map((c:any,i:number)=>{const claimed=String(rendered[i]?.answer??"").trim(),computed=String(c?.computedAnswer??"").trim();if(Number(c?.index)!==i+1)return `${i+1}번 검수 순서 오류`;if(c?.valid!==true)return `${i+1}번 재풀이 실패(${String(c?.reason??"")})`;if(c?.sourceFaithful!==true)return `${i+1}번 원문 구조 이탈`;if(computed!==claimed)return `${i+1}번 정답 불일치(${claimed}≠${computed})`;return "";}).filter(Boolean);
     if(checks.length===count&&!verifyErrors.length){
@@ -803,9 +818,9 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
     const bp=(b.is_correct===false?100:0)+(b.review_is_correct===false?60:0)+Math.min(60,Number(b.response_seconds??0)/5);return bp-ap;
   }).slice(0,5);
   if(!ranked.length)throw new Error("AI 유사문항의 원문이 되는 1차 훈련 문항을 찾을 수 없습니다.");
-  const sourceSlots=Array.from({length:count},(_,index)=>{const item=ranked[index%ranked.length],problem:any=item?.problem_bank_questions??{};return {slot:index+1,trainingOrder:Number(item?.item_order??0)||null,problemId:problem?.id??null,sourceAnswer:String(problem?.answer??""),dna:compactDna(problem),imagePath:String(problem?.question_image_path??"")};});
+  const sourceSlots=Array.from({length:count},(_,index)=>{const item=ranked[index%ranked.length],problem:any=item?.problem_bank_questions??{};return {slot:index+1,trainingOrder:Number(item?.item_order??0)||null,problemId:problem?.id??null,sourceAnswer:String(problem?.answer??""),sourceQuestionType:String(problem?.question_type??""),dna:compactDna(problem),imagePath:String(problem?.question_image_path??"")};});
   const sourceImages=await Promise.all(sourceSlots.map(async slot=>slot.imagePath?await inlineImage(supabase,"question-images",slot.imagePath):""));
-  const sourceSummary=sourceSlots.map((slot,index)=>({slot:slot.slot,trainingOrder:slot.trainingOrder,problemId:slot.problemId,sourceAnswer:slot.sourceAnswer,dna:slot.dna,hasOriginalImage:Boolean(sourceImages[index])}));
+  const sourceSummary=sourceSlots.map((slot,index)=>({slot:slot.slot,trainingOrder:slot.trainingOrder,problemId:slot.problemId,sourceAnswer:slot.sourceAnswer,sourceQuestionType:slot.sourceQuestionType,sourceAnswerWarning:/^[1-5]$/.test(slot.sourceAnswer)?"객관식 정답번호일 수 있음 · 실제 값을 새로 계산할 것":"",dna:slot.dna,hasOriginalImage:Boolean(sourceImages[index])}));
   const target=s.target_snapshot??{};
   // SOS290: 10문항은 배치로 나눠 생성한다. 3문항은 예전처럼 한 번에 처리된다.
   let generated=await buildGeneratedProblemsInBatches({supabase,jobId,kind,count,sourceSlots,sourceImages,sourceSummary,weakness,target});
