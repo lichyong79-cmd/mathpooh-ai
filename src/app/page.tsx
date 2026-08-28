@@ -1,5 +1,5 @@
 "use client";
-import {isSosReview,isSosStarted,isSosOpen} from "@/lib/sos-stage-state";
+import { isSosReview, isSosStarted, isSosOpen } from "@/lib/sos-stage-state";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -17,8 +17,9 @@ import {
   type LandmarkSubject,
   type LandmarkSummary,
 } from "@/lib/landmark";
-import {difficultyLabel, DIFFICULTY_WEIGHTS} from "@/lib/difficulty-scale";
-import {sosStageLabel} from "@/lib/sos-week";
+import { difficultyLabel, DIFFICULTY_WEIGHTS } from "@/lib/difficulty-scale";
+import { sosStageLabel } from "@/lib/sos-week";
+import SosUserManual from "@/components/sos-user-manual";
 
 type Attempt = {
   id: string;
@@ -83,20 +84,27 @@ type Portal = {
   };
   exams: Exam[];
   sosSessions?: Array<{
-    id:string;
-    phase:"DIAGNOSIS"|"TRAINING";
-    status:string;
-    target_snapshot:any;
-    round_no:number;
-    correct_count:number|null;
-    total_count:number;
-    decision:string|null;
-    created_at:string;
+    id: string;
+    phase: "DIAGNOSIS" | "TRAINING";
+    status: string;
+    target_snapshot: any;
+    round_no: number;
+    correct_count: number | null;
+    total_count: number;
+    decision: string | null;
+    created_at: string;
   }>;
   landmark?: LandmarkSummary;
-  posters: { id: string; title: string; image_url: string; link_url: string; sort_order: number }[];
+  posters: {
+    id: string;
+    title: string;
+    image_url: string;
+    link_url: string;
+    sort_order: number;
+  }[];
 };
-type StudentSection = "home" | "apply" | "exams" | "strategy" | "scores" | "learning";
+type StudentSection =
+  "home" | "apply" | "exams" | "strategy" | "scores" | "learning" | "guide";
 
 function StudentResultModal({
   exam,
@@ -117,28 +125,75 @@ function StudentResultModal({
   const [solutionAgreed, setSolutionAgreed] = useState(false);
   if (!attempt) return null;
 
-  const questionRows = Array.from({ length: exam.question_count }, (_, index) => {
-    const no = index + 1;
-    const answer = String(attempt.answers?.[no] ?? attempt.answers?.[String(no)] ?? "");
-    const key = String(keys[index] ?? "");
-    const info = metadata.get(no);
-    const difficulty = Number(info?.difficulty ?? 0) || null;
-    const correct = Boolean(answer) && answer === key;
-    const unanswered = !answer;
-    const rawType = info?.problem_types?.join(", ") || info?.detailed_topic || info?.question_type || "정보 없음";
-    const type = rawType.replace(/마코프\s*(체인|상태전이)?/gi, "상태변화 확률").replace(/Markov\s*(Chain|Transition)?/gi, "상태변화 확률").replace(/베이즈\s*(추론|네트워크)?/gi, "조건부확률");
-    return { no, answer, key, info, difficulty, correct, unanswered, type };
-  });
+  const questionRows = Array.from(
+    { length: exam.question_count },
+    (_, index) => {
+      const no = index + 1;
+      const answer = String(
+        attempt.answers?.[no] ?? attempt.answers?.[String(no)] ?? "",
+      );
+      const key = String(keys[index] ?? "");
+      const info = metadata.get(no);
+      const difficulty = Number(info?.difficulty ?? 0) || null;
+      const correct = Boolean(answer) && answer === key;
+      const unanswered = !answer;
+      const rawType =
+        info?.problem_types?.join(", ") ||
+        info?.detailed_topic ||
+        info?.question_type ||
+        "정보 없음";
+      const type = rawType
+        .replace(/마코프\s*(체인|상태전이)?/gi, "상태변화 확률")
+        .replace(/Markov\s*(Chain|Transition)?/gi, "상태변화 확률")
+        .replace(/베이즈\s*(추론|네트워크)?/gi, "조건부확률");
+      return { no, answer, key, info, difficulty, correct, unanswered, type };
+    },
+  );
   const weights = DIFFICULTY_WEIGHTS;
-  const totalWeight = questionRows.reduce((sum, item) => sum + (weights[item.difficulty ?? 0] ?? 1.2), 0);
-  const earnedWeight = questionRows.reduce((sum, item) => sum + (item.correct ? (weights[item.difficulty ?? 0] ?? 1.2) : 0), 0);
-  const weightedMastery = totalWeight ? (earnedWeight / totalWeight) * 100 : Number(attempt.score ?? 0);
-  const abilityIndex = Math.max(0, Math.min(100, Number(attempt.score ?? 0) * 0.62 + weightedMastery * 0.38));
-  const predictedPercentile = Math.max(1, Math.min(99, Math.round(100 / (1 + Math.exp(-(abilityIndex - 55) / 12)))));
-  const predictedGrade = predictedPercentile >= 96 ? 1 : predictedPercentile >= 89 ? 2 : predictedPercentile >= 77 ? 3 : predictedPercentile >= 60 ? 4 : predictedPercentile >= 40 ? 5 : predictedPercentile >= 23 ? 6 : predictedPercentile >= 11 ? 7 : predictedPercentile >= 4 ? 8 : 9;
+  const totalWeight = questionRows.reduce(
+    (sum, item) => sum + (weights[item.difficulty ?? 0] ?? 1.2),
+    0,
+  );
+  const earnedWeight = questionRows.reduce(
+    (sum, item) =>
+      sum + (item.correct ? (weights[item.difficulty ?? 0] ?? 1.2) : 0),
+    0,
+  );
+  const weightedMastery = totalWeight
+    ? (earnedWeight / totalWeight) * 100
+    : Number(attempt.score ?? 0);
+  const abilityIndex = Math.max(
+    0,
+    Math.min(100, Number(attempt.score ?? 0) * 0.62 + weightedMastery * 0.38),
+  );
+  const predictedPercentile = Math.max(
+    1,
+    Math.min(99, Math.round(100 / (1 + Math.exp(-(abilityIndex - 55) / 12)))),
+  );
+  const predictedGrade =
+    predictedPercentile >= 96
+      ? 1
+      : predictedPercentile >= 89
+        ? 2
+        : predictedPercentile >= 77
+          ? 3
+          : predictedPercentile >= 60
+            ? 4
+            : predictedPercentile >= 40
+              ? 5
+              : predictedPercentile >= 23
+                ? 6
+                : predictedPercentile >= 11
+                  ? 7
+                  : predictedPercentile >= 4
+                    ? 8
+                    : 9;
   const displayPercentile = Math.round(exam.percentile ?? predictedPercentile);
   const topRate = Math.max(1, 100 - displayPercentile);
-  const recommended = questionRows.filter((item) => !item.correct).sort((a, b) => (a.difficulty ?? 99) - (b.difficulty ?? 99) || a.no - b.no).slice(0, 5);
+  const recommended = questionRows
+    .filter((item) => !item.correct)
+    .sort((a, b) => (a.difficulty ?? 99) - (b.difficulty ?? 99) || a.no - b.no)
+    .slice(0, 5);
 
   const openSolution = () => {
     if (!exam.solution_url || !solutionAgreed) return;
@@ -170,15 +225,41 @@ function StudentResultModal({
           <button onClick={onClose}>×</button>
         </header>
         <section className="student-premium-overview">
-          <div className="student-premium-score"><small>총점</small><b>{attempt.score ?? 0}</b><span>점</span></div>
-          <div><small>전국 예상등급</small><b>{predictedGrade}등급</b><span>백분위 {displayPercentile}</span></div>
-          <div><small>전국 예상 위치</small><b>상위 약 {topRate}%</b><span>난이도 보정 추정</span></div>
-          <div><small>응시자</small><b>{exam.participants ?? "-"}</b><span>명</span></div>
+          <div className="student-premium-score">
+            <small>총점</small>
+            <b>{attempt.score ?? 0}</b>
+            <span>점</span>
+          </div>
+          <div>
+            <small>전국 예상등급</small>
+            <b>{predictedGrade}등급</b>
+            <span>백분위 {displayPercentile}</span>
+          </div>
+          <div>
+            <small>전국 예상 위치</small>
+            <b>상위 약 {topRate}%</b>
+            <span>난이도 보정 추정</span>
+          </div>
+          <div>
+            <small>응시자</small>
+            <b>{exam.participants ?? "-"}</b>
+            <span>명</span>
+          </div>
         </section>
         <section className="student-percentile-card">
-          <div><span>전국단위 예상 백분위</span><strong>{displayPercentile}</strong><p>예상 {predictedGrade}등급 · 상위 약 {topRate}%</p></div>
-          <i><em style={{ width: `${displayPercentile}%` }} /></i>
-          <small>※ 공식 전국 통계가 아닌 총점·문항 난이도 기반 추정치입니다.</small>
+          <div>
+            <span>전국단위 예상 백분위</span>
+            <strong>{displayPercentile}</strong>
+            <p>
+              예상 {predictedGrade}등급 · 상위 약 {topRate}%
+            </p>
+          </div>
+          <i>
+            <em style={{ width: `${displayPercentile}%` }} />
+          </i>
+          <small>
+            ※ 공식 전국 통계가 아닌 총점·문항 난이도 기반 추정치입니다.
+          </small>
         </section>
         <div className="student-result-summary">
           <div>
@@ -201,8 +282,37 @@ function StudentResultModal({
           metadata={exam.question_metadata ?? []}
         />
         <section className="student-recommend-card">
-          <div><small>NEXT REVIEW</small><h3>우선 복습 추천 5문항</h3><p>오답·미응답 중 쉬운 순서대로 제시합니다.</p></div>
-          {recommended.length ? <div className="student-recommend-list">{recommended.map((item, index) => <article key={item.no}><span>{index + 1}</span><b>{item.no}번</b><strong>{item.info?.minor_unit || item.info?.middle_unit || item.info?.major_unit || "단원 미분류"}</strong><small>{item.type}</small><em>{item.difficulty ? difficultyLabel(item.difficulty) : "난이도 미분류"}</em></article>)}</div> : <p className="student-perfect-message">추천할 오답 문항이 없습니다.</p>}
+          <div>
+            <small>NEXT REVIEW</small>
+            <h3>우선 복습 추천 5문항</h3>
+            <p>오답·미응답 중 쉬운 순서대로 제시합니다.</p>
+          </div>
+          {recommended.length ? (
+            <div className="student-recommend-list">
+              {recommended.map((item, index) => (
+                <article key={item.no}>
+                  <span>{index + 1}</span>
+                  <b>{item.no}번</b>
+                  <strong>
+                    {item.info?.minor_unit ||
+                      item.info?.middle_unit ||
+                      item.info?.major_unit ||
+                      "단원 미분류"}
+                  </strong>
+                  <small>{item.type}</small>
+                  <em>
+                    {item.difficulty
+                      ? difficultyLabel(item.difficulty)
+                      : "난이도 미분류"}
+                  </em>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="student-perfect-message">
+              추천할 오답 문항이 없습니다.
+            </p>
+          )}
         </section>
         <div className="student-result-table-wrap">
           <div className="student-result-table">
@@ -257,7 +367,9 @@ function StudentResultModal({
                     <i
                       className={`difficulty difficulty-${info?.difficulty || "none"}`}
                     >
-                      {info?.difficulty ? difficultyLabel(info.difficulty) : "-"}
+                      {info?.difficulty
+                        ? difficultyLabel(info.difficulty)
+                        : "-"}
                     </i>
                   </span>
                   <strong>{answer || "-"}</strong>
@@ -274,7 +386,11 @@ function StudentResultModal({
             })}
           </div>
         </div>
-        <section className="student-mathpooh-comment"><small>MATHPOOH COMMENT</small><h3>매쓰푸의 코멘트</h3><p>{exam.mathpooh_comment || "아직 등록된 코멘트가 없습니다."}</p></section>
+        <section className="student-mathpooh-comment">
+          <small>MATHPOOH COMMENT</small>
+          <h3>매쓰푸의 코멘트</h3>
+          <p>{exam.mathpooh_comment || "아직 등록된 코멘트가 없습니다."}</p>
+        </section>
         <footer className="student-result-actions">
           {exam.solution_url && exam.solution_open ? (
             <button
@@ -289,30 +405,64 @@ function StudentResultModal({
             </button>
           ) : (
             <div className="student-solution-locked">
-              <button type="button" className="student-solution-button" disabled>해설지 보기</button>
-              <span>{exam.solution_registered ? "관리자가 아직 해설을 공개하지 않았습니다." : "등록된 해설지가 없습니다."}</span>
+              <button
+                type="button"
+                className="student-solution-button"
+                disabled
+              >
+                해설지 보기
+              </button>
+              <span>
+                {exam.solution_registered
+                  ? "관리자가 아직 해설을 공개하지 않았습니다."
+                  : "등록된 해설지가 없습니다."}
+              </span>
             </div>
           )}
           <button onClick={onClose}>닫기</button>
         </footer>
         {solutionGuideOpen ? (
-          <div className="student-consent-backdrop" onMouseDown={() => setSolutionGuideOpen(false)}>
-            <section className="student-consent-modal" onMouseDown={(event) => event.stopPropagation()}>
+          <div
+            className="student-consent-backdrop"
+            onMouseDown={() => setSolutionGuideOpen(false)}
+          >
+            <section
+              className="student-consent-modal"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
               <div className="student-consent-icon">📖</div>
               <small>해설 확인 안내</small>
               <h3>해설을 보기 전에 스스로 다시 풀어보세요.</h3>
-              <p>본 해설은 복습을 위한 자료입니다. 외부 도움이나 자료를 이용하기 전에 자신의 힘으로 다시 한번 해결해 보시기 바랍니다.</p>
+              <p>
+                본 해설은 복습을 위한 자료입니다. 외부 도움이나 자료를 이용하기
+                전에 자신의 힘으로 다시 한번 해결해 보시기 바랍니다.
+              </p>
               <label className="student-consent-check">
                 <input
                   type="checkbox"
                   checked={solutionAgreed}
                   onChange={(event) => setSolutionAgreed(event.target.checked)}
                 />
-                <span>위 내용을 확인했으며, 스스로 다시 풀어본 후 해설을 확인하겠습니다.</span>
+                <span>
+                  위 내용을 확인했으며, 스스로 다시 풀어본 후 해설을
+                  확인하겠습니다.
+                </span>
               </label>
               <div className="student-consent-actions">
-                <button type="button" className="secondary" onClick={() => setSolutionGuideOpen(false)}>취소</button>
-                <button type="button" disabled={!solutionAgreed} onClick={openSolution}>동의하고 해설 보기</button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setSolutionGuideOpen(false)}
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  disabled={!solutionAgreed}
+                  onClick={openSolution}
+                >
+                  동의하고 해설 보기
+                </button>
               </div>
             </section>
           </div>
@@ -322,528 +472,1765 @@ function StudentResultModal({
   );
 }
 
+function SosFlowTree({
+  session,
+  sessions,
+  onSelect,
+}: {
+  session: any;
+  sessions: any[];
+  onSelect: (id: string) => void;
+}) {
+  const all = Array.isArray(sessions) ? sessions : [];
+  const by = (phase: string, round: number, kind?: string) =>
+    all.find(
+      (x: any) =>
+        String(x.phase) === phase &&
+        Number(x.round_no ?? 1) === round &&
+        (!kind || String(x.cycle_kind ?? "") === kind),
+    );
+  const diagnosis1 = by("DIAGNOSIS", 1);
+  const diagnosis2 = by("DIAGNOSIS", 2);
+  const training1 = all.find(
+    (x: any) =>
+      String(x.phase) === "TRAINING" &&
+      Number(x.round_no ?? 1) === 1 &&
+      String(x.cycle_kind ?? "") !== "HOMEWORK",
+  );
+  const training2 = all.find(
+    (x: any) =>
+      String(x.phase) === "TRAINING" &&
+      Number(x.round_no ?? 1) === 2 &&
+      String(x.cycle_kind ?? "") !== "HOMEWORK",
+  );
+  const homework = all.find(
+    (x: any) =>
+      String(x.phase) === "TRAINING" &&
+      String(x.cycle_kind ?? "") === "HOMEWORK",
+  );
+  const activeId = String(session?.id ?? "");
 
-function SosFlowTree({session,sessions,onSelect}:{session:any;sessions:any[];onSelect:(id:string)=>void}){
-  const all=Array.isArray(sessions)?sessions:[];
-  const by=(phase:string,round:number,kind?:string)=>all.find((x:any)=>String(x.phase)===phase&&Number(x.round_no??1)===round&&(!kind||String(x.cycle_kind??"")===kind));
-  const diagnosis1=by("DIAGNOSIS",1);
-  const diagnosis2=by("DIAGNOSIS",2);
-  const training1=all.find((x:any)=>String(x.phase)==="TRAINING"&&Number(x.round_no??1)===1&&String(x.cycle_kind??"")!=="HOMEWORK");
-  const training2=all.find((x:any)=>String(x.phase)==="TRAINING"&&Number(x.round_no??1)===2&&String(x.cycle_kind??"")!=="HOMEWORK");
-  const homework=all.find((x:any)=>String(x.phase)==="TRAINING"&&String(x.cycle_kind??"")==="HOMEWORK");
-  const activeId=String(session?.id??"");
+  const completed = (x: any) =>
+    !!x && ["COMPLETED", "PASSED"].includes(String(x.status));
+  const inReview = (x: any) => !!x && isSosReview(x);
+  const started = (x: any) => !!x && isSosStarted(x);
+  const wrongCount = (x: any) =>
+    Math.max(0, Number(x?.total_count ?? 0) - Number(x?.correct_count ?? 0));
+  const reviewDone = (x: any) => !!x && completed(x) && wrongCount(x) > 0;
+  const isActive = (x: any) => !!x && String(x.id) === activeId;
 
-  const completed=(x:any)=>!!x&&["COMPLETED","PASSED"].includes(String(x.status));
-  const inReview=(x:any)=>!!x&&isSosReview(x);
-  const started=(x:any)=>!!x&&isSosStarted(x);
-  const wrongCount=(x:any)=>Math.max(0,Number(x?.total_count??0)-Number(x?.correct_count??0));
-  const reviewDone=(x:any)=>!!x&&completed(x)&&wrongCount(x)>0;
-  const isActive=(x:any)=>!!x&&String(x.id)===activeId;
+  type Node = {
+    key: string;
+    label: string;
+    session?: any;
+    state: "done" | "now" | "pending" | "unknown";
+    sub?: string;
+    review?: boolean;
+  };
+  const nodes: Node[] = [];
+  nodes.push({ key: "candidate", label: "취약지점 후보", state: "done" });
 
-  type Node={key:string;label:string;session?:any;state:"done"|"now"|"pending"|"unknown";sub?:string;review?:boolean};
-  const nodes:Node[]=[];
-  nodes.push({key:"candidate",label:"취약지점 후보",state:"done"});
-
-  if(diagnosis1){
-    const d1ExamDone=started(diagnosis1)&&String(diagnosis1.status)!=="IN_PROGRESS";
-    nodes.push({key:"d1",label:"1차 진단",session:diagnosis1,state:String(diagnosis1.status)==="IN_PROGRESS"?"now":d1ExamDone?"done":isActive(diagnosis1)?"now":"pending"});
-    if(inReview(diagnosis1)||reviewDone(diagnosis1)) nodes.push({key:"d1r",label:"진단 오답",session:diagnosis1,review:true,state:inReview(diagnosis1)?"now":"done",sub:inReview(diagnosis1)?"진행중":"완료"});
-  }
-
-  if(diagnosis2){
-    nodes.push({key:"d2",label:"2차 진단",session:diagnosis2,state:String(diagnosis2.status)==="IN_PROGRESS"?"now":started(diagnosis2)&&String(diagnosis2.status)!=="IN_PROGRESS"?"done":isActive(diagnosis2)?"now":"pending"});
-    if(inReview(diagnosis2)||reviewDone(diagnosis2)) nodes.push({key:"d2r",label:"진단 오답",session:diagnosis2,review:true,state:inReview(diagnosis2)?"now":"done",sub:inReview(diagnosis2)?"진행중":"완료"});
-  }
-
-  if(training1||training2||homework) nodes.push({key:"weak",label:"취약점 확정",state:"done"});
-
-  if(training1){
-    const t1ExamDone=inReview(training1)||completed(training1);
-    nodes.push({key:"t1",label:"1차 훈련 10제",session:training1,state:String(training1.status)==="IN_PROGRESS"?"now":t1ExamDone?"done":isActive(training1)?"now":"pending"});
-    if(inReview(training1)||reviewDone(training1)) nodes.push({key:"t1r",label:"1차 훈련 오답",session:training1,review:true,state:inReview(training1)?"now":"done",sub:inReview(training1)?"진행중":"완료"});
-  }
-
-  if(training1&&completed(training1)) nodes.push({key:"judge1",label:"목표 판정",state:"done"});
-  else if(training1&&inReview(training1)) nodes.push({key:"judge1",label:"목표 판정",state:"unknown",sub:"오답 완료 후"});
-
-  if(homework){
-    nodes.push({key:"hw",label:"AI 유사문항 3제 굳히기",session:homework,state:String(homework.status)==="IN_PROGRESS"||inReview(homework)?"now":completed(homework)?"done":isActive(homework)?"now":"pending",sub:inReview(homework)?"오답 진행중":undefined});
-    if(completed(homework)) nodes.push({key:"finish-hw",label:"SOS 공략 완료",state:"done"});
-    else if(inReview(homework)) nodes.push({key:"finish-hw",label:"SOS 공략 완료",state:"unknown",sub:"교정 완료 후"});
-  }
-
-  if(training2){
-    const t2ExamDone=inReview(training2)||completed(training2);
-    nodes.push({key:"t2",label:"2차 유사훈련 10제",session:training2,state:String(training2.status)==="IN_PROGRESS"?"now":t2ExamDone?"done":isActive(training2)?"now":"pending"});
-    if(inReview(training2)||reviewDone(training2)) nodes.push({key:"t2r",label:"2차 훈련 오답",session:training2,review:true,state:inReview(training2)?"now":"done",sub:inReview(training2)?"진행중":"완료"});
-    if(completed(training2)) nodes.push({key:"finish",label:"이번 SOS 종료",state:"done"});
-    else if(inReview(training2)) nodes.push({key:"finish",label:"이번 SOS 종료",state:"unknown",sub:"오답 완료 후"});
-  }
-
-  const currentNode=nodes.find(n=>n.state==="now");
-  const terminalDone=!!session&&session.phase==="TRAINING"&&completed(session)&&(String(session.cycle_kind)==="HOMEWORK"||Number(session.round_no)===2);
-  const currentLabel=currentNode?.label??(terminalDone?"SOS 공략 완료":session?.phase==="DIAGNOSIS"?`진단 ${Number(session?.round_no??1)}차`:`${Number(session?.round_no??1)}차 훈련`);
-  const clickable=(n:Node)=>!!n.session;
-
-  return <section className="sos-flow-map">
-    <div className="sos-flow-title"><small>SOS 학습지도</small><b>현재 위치 · {currentLabel}</b><span>완료한 단계는 눌러 당시 결과를 다시 볼 수 있습니다.</span></div>
-    <div className="sos-flow-line">
-      {nodes.map((node,index)=><div key={node.key} className="flow-node-wrap">
-        <button type="button" disabled={!clickable(node)} onClick={()=>node.session&&onSelect(String(node.session.id))} className={`flow-node ${node.state} ${node.review&&node.state==="now"?"review-now":""} ${node.session&&String(node.session.id)===activeId?"selected":""}`}>
-          <i>{node.state==="done"?"✓":node.state==="now"?"●":node.state==="unknown"?"?":"·"}</i>
-          <span>{node.label}</span>
-          {node.sub?<small>{node.sub}</small>:null}
-          {node.state==="now"?<strong>진행중</strong>:null}
-        </button>
-        {index<nodes.length-1?<em>→</em>:null}
-      </div>)}
-    </div>
-    <p className="sos-flow-help"><b>i</b> 초록 체크는 완료, 크게 강조된 칸은 지금 진행 중인 단계입니다. 완료된 진단·훈련·오답 칸을 누르면 아래에서 그 결과를 확인할 수 있습니다.</p>
-  </section>;
-}
-
-
-function SosFinalCompletion({terminal,sessions,meters,onSelect}:{terminal:any;sessions:any[];meters:any[];onSelect:(id:string)=>void}){
-  const [showResults,setShowResults]=useState(false);
-  const byId=new Map((sessions??[]).map((x:any)=>[String(x.id),x]));
-  const chain:any[]=[]; const seen=new Set<string>(); let cursor:any=terminal;
-  while(cursor&&!seen.has(String(cursor.id))){chain.unshift(cursor);seen.add(String(cursor.id));cursor=cursor.parent_session_id?byId.get(String(cursor.parent_session_id)):null;}
-  const training1=chain.find((x:any)=>x.phase==="TRAINING"&&Number(x.round_no)===1);
-  const diagnosis=chain.find((x:any)=>x.phase==="DIAGNOSIS")??chain[0];
-  const key=String(terminal?.target_snapshot?.subunitKey??training1?.target_snapshot?.subunitKey??"");
-  const meterRow=(meters??[]).find((m:any)=>String(m.subunit_key)===key);
-  const baseline=Number(training1?.baseline_meter??training1?.target_snapshot?.baselineMeter??diagnosis?.target_snapshot?.studentDifficultyMeter??0);
-  const goal=Number(training1?.goal_meter??training1?.target_snapshot?.goalMeter??0);
-  const finalMeter=Number(meterRow?.difficulty_meter??terminal?.review_meter??terminal?.training_meter??baseline);
-  const delta=baseline>0?finalMeter-baseline:0;
-  const firstCorrect=chain.filter((x:any)=>x.phase==="TRAINING").reduce((n:number,x:any)=>n+Number(x.correct_count??0),0);
-  const totalSolved=chain.filter((x:any)=>x.phase==="TRAINING").reduce((n:number,x:any)=>n+Number(x.total_count??0),0);
-  const homework=String(terminal?.cycle_kind)==="HOMEWORK";
-  const diagnosisOnly=terminal?.phase==="DIAGNOSIS";
-  const stageLabel=(x:any)=>x.phase==="DIAGNOSIS"?`진단 ${x.round_no}차`:String(x.cycle_kind)==="HOMEWORK"?"AI 유사문항 3제 굳히기":Number(x.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련";
-  return <div className="sos-final-completion">
-    <div className="sos-confetti" aria-hidden="true">{Array.from({length:34},(_,i)=><i key={i} style={{left:`${(i*37)%100}%`,animationDelay:`-${(i%9)*.17}s`,animationDuration:`${2.2+(i%5)*.22}s`}}/>)}</div>
-    <section className="sos-final-hero">
-      <div className="sos-final-badge">✓ SOS COMPLETE</div>
-      <h2>{diagnosisOnly?"SOS 진단 완료!":"SOS 공략 완료!"}</h2>
-      <h3>금주의 학습이 모두 종료되었습니다.</h3>
-      <p>{diagnosisOnly?"1·2차 진단 전체에서 오답과 시간취약이 확인되지 않아 추가 집중훈련 없이 이번 SOS를 완료했습니다.":homework?"1차 훈련 통과 후 AI 유사문항 3제 굳히기와 필요한 오답 교정까지 모두 완료했습니다.":"2차 훈련과 남은 오답 교정까지 모두 완료했습니다."}</p>
-    </section>
-    <section className="sos-final-summary">
-      <article><small>공략 영역</small><b>{terminal?.target_snapshot?.subunit??"SOS 취약영역"}</b><span>{terminal?.weakness_snapshot?.weaknessTitle??training1?.weakness_snapshot?.weaknessTitle??"맞춤 취약점 보완"}</span></article>
-      <article><small>바로미터</small><b>{baseline>0?baseline.toFixed(2):"-"} → {finalMeter>0?finalMeter.toFixed(2):"-"}</b><span>{delta>=0?"+":""}{delta.toFixed(2)} 변화 {goal>0?`· 목표 ${goal.toFixed(2)}`:""}</span></article>
-      <article><small>{diagnosisOnly?"진단 결과":"훈련 기록"}</small><b>{diagnosisOnly?`${terminal?.correct_count??0}/${terminal?.total_count??0}`:`${firstCorrect}/${totalSolved}`}</b><span>{diagnosisOnly?"추가 집중훈련 불필요 판정":"최초 정답 합계 · "+(homework?"3제 굳히기는 바로미터 미반영":"2차 훈련까지 반영")}</span></article>
-    </section>
-    <div className="sos-final-route">{chain.map((x:any,index:number)=><span key={x.id}><i>✓</i>{stageLabel(x)}{index<chain.length-1?<em>→</em>:null}</span>)}</div>
-    <button type="button" className="sos-final-result-button" onClick={()=>setShowResults(v=>!v)}>{showResults?"결과 닫기":"전체 결과보기"}</button>
-    {showResults?<section className="sos-final-results">
-      <header><b>이번 SOS 전체 과정</b><span>완료한 단계별 최초 정답과 교정 결과를 다시 확인할 수 있습니다.</span></header>
-      <div>{chain.map((x:any)=><button key={x.id} type="button" onClick={()=>onSelect(String(x.id))}><span>{stageLabel(x)}</span><b>{x.correct_count===null||x.correct_count===undefined?"완료":`${x.correct_count}/${x.total_count}`}</b><em>{String(x.status)==="PASSED"?"완료 ✓":String(x.status)==="COMPLETED"?"완료":"기록"}</em></button>)}</div>
-    </section>:null}
-  </div>;
-}
-
-function SosTrainingWorkspace({ onRefresh }: { onRefresh: () => Promise<void> | void }) {
-  const [data,setData]=useState<any>({sessions:[],subunitMeters:[]});
-  const [loading,setLoading]=useState(true);
-  const [activeId,setActiveId]=useState("");
-  const [busy,setBusy]=useState("");
-  const [notice,setNotice]=useState("");
-  // SOS283: 학습이 끝난 뒤 문항별 해설을 다시 볼 수 있게 한다.
-  const [solutionView,setSolutionView]=useState<any>(null);
-  const [solutionBusy,setSolutionBusy]=useState("");
-
-  async function openSolution(sessionId:string,item:any,order:number){
-    const id=String(item?.id??"");
-    if(!id||solutionBusy)return;
-    setSolutionBusy(id);
-    try{
-      const res=await fetch("/api/student/sos-training",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({action:"item_solution",sessionId,itemId:id}),
+  if (diagnosis1) {
+    const d1ExamDone =
+      started(diagnosis1) && String(diagnosis1.status) !== "IN_PROGRESS";
+    nodes.push({
+      key: "d1",
+      label: "1차 진단",
+      session: diagnosis1,
+      state:
+        String(diagnosis1.status) === "IN_PROGRESS"
+          ? "now"
+          : d1ExamDone
+            ? "done"
+            : isActive(diagnosis1)
+              ? "now"
+              : "pending",
+    });
+    if (inReview(diagnosis1) || reviewDone(diagnosis1))
+      nodes.push({
+        key: "d1r",
+        label: "진단 오답",
+        session: diagnosis1,
+        review: true,
+        state: inReview(diagnosis1) ? "now" : "done",
+        sub: inReview(diagnosis1) ? "진행중" : "완료",
       });
-      const json=await res.json().catch(()=>({}));
-      if(!res.ok)throw new Error(json?.message||"해설을 불러오지 못했습니다.");
-      setSolutionView({...json,order,studentAnswer:String(item?.studentAnswer??""),isCorrect:item?.isCorrect});
-    }catch(e){
-      setNotice(e instanceof Error?e.message:"해설을 불러오지 못했습니다.");
-    }finally{setSolutionBusy("");}
   }
-  const [selectedCycleId,setSelectedCycleId]=useState("");
-  const nextRepairTriedRef=useRef<Set<string>>(new Set());
 
-  const load=useCallback(async(preferredActiveId?:string)=>{
+  if (diagnosis2) {
+    nodes.push({
+      key: "d2",
+      label: "2차 진단",
+      session: diagnosis2,
+      state:
+        String(diagnosis2.status) === "IN_PROGRESS"
+          ? "now"
+          : started(diagnosis2) && String(diagnosis2.status) !== "IN_PROGRESS"
+            ? "done"
+            : isActive(diagnosis2)
+              ? "now"
+              : "pending",
+    });
+    if (inReview(diagnosis2) || reviewDone(diagnosis2))
+      nodes.push({
+        key: "d2r",
+        label: "진단 오답",
+        session: diagnosis2,
+        review: true,
+        state: inReview(diagnosis2) ? "now" : "done",
+        sub: inReview(diagnosis2) ? "진행중" : "완료",
+      });
+  }
+
+  if (training1 || training2 || homework)
+    nodes.push({ key: "weak", label: "취약점 확정", state: "done" });
+
+  if (training1) {
+    const t1ExamDone = inReview(training1) || completed(training1);
+    nodes.push({
+      key: "t1",
+      label: "1차 훈련 10제",
+      session: training1,
+      state:
+        String(training1.status) === "IN_PROGRESS"
+          ? "now"
+          : t1ExamDone
+            ? "done"
+            : isActive(training1)
+              ? "now"
+              : "pending",
+    });
+    if (inReview(training1) || reviewDone(training1))
+      nodes.push({
+        key: "t1r",
+        label: "1차 훈련 오답",
+        session: training1,
+        review: true,
+        state: inReview(training1) ? "now" : "done",
+        sub: inReview(training1) ? "진행중" : "완료",
+      });
+  }
+
+  if (training1 && completed(training1))
+    nodes.push({ key: "judge1", label: "목표 판정", state: "done" });
+  else if (training1 && inReview(training1))
+    nodes.push({
+      key: "judge1",
+      label: "목표 판정",
+      state: "unknown",
+      sub: "오답 완료 후",
+    });
+
+  if (homework) {
+    nodes.push({
+      key: "hw",
+      label: "AI 유사문항 3제 굳히기",
+      session: homework,
+      state:
+        String(homework.status) === "IN_PROGRESS" || inReview(homework)
+          ? "now"
+          : completed(homework)
+            ? "done"
+            : isActive(homework)
+              ? "now"
+              : "pending",
+      sub: inReview(homework) ? "오답 진행중" : undefined,
+    });
+    if (completed(homework))
+      nodes.push({ key: "finish-hw", label: "SOS 공략 완료", state: "done" });
+    else if (inReview(homework))
+      nodes.push({
+        key: "finish-hw",
+        label: "SOS 공략 완료",
+        state: "unknown",
+        sub: "교정 완료 후",
+      });
+  }
+
+  if (training2) {
+    const t2ExamDone = inReview(training2) || completed(training2);
+    nodes.push({
+      key: "t2",
+      label: "2차 유사훈련 10제",
+      session: training2,
+      state:
+        String(training2.status) === "IN_PROGRESS"
+          ? "now"
+          : t2ExamDone
+            ? "done"
+            : isActive(training2)
+              ? "now"
+              : "pending",
+    });
+    if (inReview(training2) || reviewDone(training2))
+      nodes.push({
+        key: "t2r",
+        label: "2차 훈련 오답",
+        session: training2,
+        review: true,
+        state: inReview(training2) ? "now" : "done",
+        sub: inReview(training2) ? "진행중" : "완료",
+      });
+    if (completed(training2))
+      nodes.push({ key: "finish", label: "이번 SOS 종료", state: "done" });
+    else if (inReview(training2))
+      nodes.push({
+        key: "finish",
+        label: "이번 SOS 종료",
+        state: "unknown",
+        sub: "오답 완료 후",
+      });
+  }
+
+  const currentNode = nodes.find((n) => n.state === "now");
+  const terminalDone =
+    !!session &&
+    session.phase === "TRAINING" &&
+    completed(session) &&
+    (String(session.cycle_kind) === "HOMEWORK" ||
+      Number(session.round_no) === 2);
+  const currentLabel =
+    currentNode?.label ??
+    (terminalDone
+      ? "SOS 공략 완료"
+      : session?.phase === "DIAGNOSIS"
+        ? `진단 ${Number(session?.round_no ?? 1)}차`
+        : `${Number(session?.round_no ?? 1)}차 훈련`);
+  const clickable = (n: Node) => !!n.session;
+
+  return (
+    <section className="sos-flow-map">
+      <div className="sos-flow-title">
+        <small>SOS 학습지도</small>
+        <b>현재 위치 · {currentLabel}</b>
+        <span>완료한 단계는 눌러 당시 결과를 다시 볼 수 있습니다.</span>
+      </div>
+      <div className="sos-flow-line">
+        {nodes.map((node, index) => (
+          <div key={node.key} className="flow-node-wrap">
+            <button
+              type="button"
+              disabled={!clickable(node)}
+              onClick={() => node.session && onSelect(String(node.session.id))}
+              className={`flow-node ${node.state} ${node.review && node.state === "now" ? "review-now" : ""} ${node.session && String(node.session.id) === activeId ? "selected" : ""}`}
+            >
+              <i>
+                {node.state === "done"
+                  ? "✓"
+                  : node.state === "now"
+                    ? "●"
+                    : node.state === "unknown"
+                      ? "?"
+                      : "·"}
+              </i>
+              <span>{node.label}</span>
+              {node.sub ? <small>{node.sub}</small> : null}
+              {node.state === "now" ? <strong>진행중</strong> : null}
+            </button>
+            {index < nodes.length - 1 ? <em>→</em> : null}
+          </div>
+        ))}
+      </div>
+      <p className="sos-flow-help">
+        <b>i</b> 초록 체크는 완료, 크게 강조된 칸은 지금 진행 중인 단계입니다.
+        완료된 진단·훈련·오답 칸을 누르면 아래에서 그 결과를 확인할 수 있습니다.
+      </p>
+    </section>
+  );
+}
+
+function SosFinalCompletion({
+  terminal,
+  sessions,
+  meters,
+  onSelect,
+}: {
+  terminal: any;
+  sessions: any[];
+  meters: any[];
+  onSelect: (id: string) => void;
+}) {
+  const [showResults, setShowResults] = useState(false);
+  const byId = new Map((sessions ?? []).map((x: any) => [String(x.id), x]));
+  const chain: any[] = [];
+  const seen = new Set<string>();
+  let cursor: any = terminal;
+  while (cursor && !seen.has(String(cursor.id))) {
+    chain.unshift(cursor);
+    seen.add(String(cursor.id));
+    cursor = cursor.parent_session_id
+      ? byId.get(String(cursor.parent_session_id))
+      : null;
+  }
+  const training1 = chain.find(
+    (x: any) => x.phase === "TRAINING" && Number(x.round_no) === 1,
+  );
+  const diagnosis = chain.find((x: any) => x.phase === "DIAGNOSIS") ?? chain[0];
+  const key = String(
+    terminal?.target_snapshot?.subunitKey ??
+      training1?.target_snapshot?.subunitKey ??
+      "",
+  );
+  const meterRow = (meters ?? []).find(
+    (m: any) => String(m.subunit_key) === key,
+  );
+  const baseline = Number(
+    training1?.baseline_meter ??
+      training1?.target_snapshot?.baselineMeter ??
+      diagnosis?.target_snapshot?.studentDifficultyMeter ??
+      0,
+  );
+  const goal = Number(
+    training1?.goal_meter ?? training1?.target_snapshot?.goalMeter ?? 0,
+  );
+  const finalMeter = Number(
+    meterRow?.difficulty_meter ??
+      terminal?.review_meter ??
+      terminal?.training_meter ??
+      baseline,
+  );
+  const delta = baseline > 0 ? finalMeter - baseline : 0;
+  const firstCorrect = chain
+    .filter((x: any) => x.phase === "TRAINING")
+    .reduce((n: number, x: any) => n + Number(x.correct_count ?? 0), 0);
+  const totalSolved = chain
+    .filter((x: any) => x.phase === "TRAINING")
+    .reduce((n: number, x: any) => n + Number(x.total_count ?? 0), 0);
+  const homework = String(terminal?.cycle_kind) === "HOMEWORK";
+  const diagnosisOnly = terminal?.phase === "DIAGNOSIS";
+  const stageLabel = (x: any) =>
+    x.phase === "DIAGNOSIS"
+      ? `진단 ${x.round_no}차`
+      : String(x.cycle_kind) === "HOMEWORK"
+        ? "AI 유사문항 3제 굳히기"
+        : Number(x.round_no) === 2
+          ? "2차 AI 유사훈련"
+          : "1차 맞춤훈련";
+  return (
+    <div className="sos-final-completion">
+      <div className="sos-confetti" aria-hidden="true">
+        {Array.from({ length: 34 }, (_, i) => (
+          <i
+            key={i}
+            style={{
+              left: `${(i * 37) % 100}%`,
+              animationDelay: `-${(i % 9) * 0.17}s`,
+              animationDuration: `${2.2 + (i % 5) * 0.22}s`,
+            }}
+          />
+        ))}
+      </div>
+      <section className="sos-final-hero">
+        <div className="sos-final-badge">✓ SOS COMPLETE</div>
+        <h2>{diagnosisOnly ? "SOS 진단 완료!" : "SOS 공략 완료!"}</h2>
+        <h3>금주의 학습이 모두 종료되었습니다.</h3>
+        <p>
+          {diagnosisOnly
+            ? "1·2차 진단 전체에서 오답과 시간취약이 확인되지 않아 추가 집중훈련 없이 이번 SOS를 완료했습니다."
+            : homework
+              ? "1차 훈련 통과 후 AI 유사문항 3제 굳히기와 필요한 오답 교정까지 모두 완료했습니다."
+              : "2차 훈련과 남은 오답 교정까지 모두 완료했습니다."}
+        </p>
+      </section>
+      <section className="sos-final-summary">
+        <article>
+          <small>공략 영역</small>
+          <b>{terminal?.target_snapshot?.subunit ?? "SOS 취약영역"}</b>
+          <span>
+            {terminal?.weakness_snapshot?.weaknessTitle ??
+              training1?.weakness_snapshot?.weaknessTitle ??
+              "맞춤 취약점 보완"}
+          </span>
+        </article>
+        <article>
+          <small>바로미터</small>
+          <b>
+            {baseline > 0 ? baseline.toFixed(2) : "-"} →{" "}
+            {finalMeter > 0 ? finalMeter.toFixed(2) : "-"}
+          </b>
+          <span>
+            {delta >= 0 ? "+" : ""}
+            {delta.toFixed(2)} 변화{" "}
+            {goal > 0 ? `· 목표 ${goal.toFixed(2)}` : ""}
+          </span>
+        </article>
+        <article>
+          <small>{diagnosisOnly ? "진단 결과" : "훈련 기록"}</small>
+          <b>
+            {diagnosisOnly
+              ? `${terminal?.correct_count ?? 0}/${terminal?.total_count ?? 0}`
+              : `${firstCorrect}/${totalSolved}`}
+          </b>
+          <span>
+            {diagnosisOnly
+              ? "추가 집중훈련 불필요 판정"
+              : "최초 정답 합계 · " +
+                (homework
+                  ? "3제 굳히기는 바로미터 미반영"
+                  : "2차 훈련까지 반영")}
+          </span>
+        </article>
+      </section>
+      <div className="sos-final-route">
+        {chain.map((x: any, index: number) => (
+          <span key={x.id}>
+            <i>✓</i>
+            {stageLabel(x)}
+            {index < chain.length - 1 ? <em>→</em> : null}
+          </span>
+        ))}
+      </div>
+      <button
+        type="button"
+        className="sos-final-result-button"
+        onClick={() => setShowResults((v) => !v)}
+      >
+        {showResults ? "결과 닫기" : "전체 결과보기"}
+      </button>
+      {showResults ? (
+        <section className="sos-final-results">
+          <header>
+            <b>이번 SOS 전체 과정</b>
+            <span>
+              완료한 단계별 최초 정답과 교정 결과를 다시 확인할 수 있습니다.
+            </span>
+          </header>
+          <div>
+            {chain.map((x: any) => (
+              <button
+                key={x.id}
+                type="button"
+                onClick={() => onSelect(String(x.id))}
+              >
+                <span>{stageLabel(x)}</span>
+                <b>
+                  {x.correct_count === null || x.correct_count === undefined
+                    ? "완료"
+                    : `${x.correct_count}/${x.total_count}`}
+                </b>
+                <em>
+                  {String(x.status) === "PASSED"
+                    ? "완료 ✓"
+                    : String(x.status) === "COMPLETED"
+                      ? "완료"
+                      : "기록"}
+                </em>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function SosTrainingWorkspace({
+  onRefresh,
+}: {
+  onRefresh: () => Promise<void> | void;
+}) {
+  const [data, setData] = useState<any>({ sessions: [], subunitMeters: [] });
+  const [loading, setLoading] = useState(true);
+  const [activeId, setActiveId] = useState("");
+  const [busy, setBusy] = useState("");
+  const [notice, setNotice] = useState("");
+  // SOS283: 학습이 끝난 뒤 문항별 해설을 다시 볼 수 있게 한다.
+  const [solutionView, setSolutionView] = useState<any>(null);
+  const [solutionBusy, setSolutionBusy] = useState("");
+
+  async function openSolution(sessionId: string, item: any, order: number) {
+    const id = String(item?.id ?? "");
+    if (!id || solutionBusy) return;
+    setSolutionBusy(id);
+    try {
+      const res = await fetch("/api/student/sos-training", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "item_solution",
+          sessionId,
+          itemId: id,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok)
+        throw new Error(json?.message || "해설을 불러오지 못했습니다.");
+      setSolutionView({
+        ...json,
+        order,
+        studentAnswer: String(item?.studentAnswer ?? ""),
+        isCorrect: item?.isCorrect,
+      });
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "해설을 불러오지 못했습니다.");
+    } finally {
+      setSolutionBusy("");
+    }
+  }
+  const [selectedCycleId, setSelectedCycleId] = useState("");
+  const nextRepairTriedRef = useRef<Set<string>>(new Set());
+
+  const load = useCallback(async (preferredActiveId?: string) => {
     setLoading(true);
-    try{
-      const response=await fetch("/api/student/sos-training",{cache:"no-store"});
-      const json=await response.json();
-      if(!response.ok||json?.success!==true)throw new Error(json?.message||"진단·훈련을 불러오지 못했습니다.");
+    try {
+      const response = await fetch("/api/student/sos-training", {
+        cache: "no-store",
+      });
+      const json = await response.json();
+      if (!response.ok || json?.success !== true)
+        throw new Error(json?.message || "진단·훈련을 불러오지 못했습니다.");
       setData(json);
-      const allSessions=Array.isArray(json.sessions)?json.sessions:[];
-      const open=allSessions.find((x:any)=>isSosOpen(x));
-      setActiveId((current:string)=>{
+      const allSessions = Array.isArray(json.sessions) ? json.sessions : [];
+      const open = allSessions.find((x: any) => isSosOpen(x));
+      setActiveId((current: string) => {
         // SOS288: 단계 완료 API가 새 세션 id를 이미 알고 있으면 그 세션을 즉시 선택한다.
         // 이전에는 load()가 기존 activeId를 유지한 뒤 useEffect가 다시 판단해서,
         // 진단/오답 완료 후 새로고침해야 다음 단계가 보이는 상태 경쟁이 있었다.
-        if(preferredActiveId && allSessions.some((x:any)=>String(x.id)===String(preferredActiveId))) return String(preferredActiveId);
-        const currentSession=allSessions.find((x:any)=>String(x.id)===String(current));
+        if (
+          preferredActiveId &&
+          allSessions.some(
+            (x: any) => String(x.id) === String(preferredActiveId),
+          )
+        )
+          return String(preferredActiveId);
+        const currentSession = allSessions.find(
+          (x: any) => String(x.id) === String(current),
+        );
         // SOS251: 완료된 진단/훈련에 화면이 붙어 있지 않도록 새로 생성된 열린 세션을 최우선 선택한다.
         // 특히 진단 3/3 정답 → AI 분석 → 2차 진단 생성 시 학생이 "학습 종료"로 오해하지 않게 즉시 다음 단계로 이동.
-        if(open && (!currentSession || !isSosOpen(currentSession))) return String(open.id);
-        return current||String(open?.id??"");
+        if (open && (!currentSession || !isSosOpen(currentSession)))
+          return String(open.id);
+        return current || String(open?.id ?? "");
       });
-    }catch(error){setNotice(error instanceof Error?error.message:"진단·훈련 조회 실패");}
-    finally{setLoading(false);}
-  },[]);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "진단·훈련 조회 실패");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  useEffect(()=>{void load();},[load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const nextSessionIdFromResult=(json:any)=>String(
-    json?.next?.session?.id ?? json?.next?.id ??
-    json?.ai?.session?.id ?? json?.ai?.sessionId ??
-    json?.ai?.next?.session?.id ?? json?.ai?.next?.id ?? ""
-  );
-  async function refreshAfterStage(json:any){
-    const preferred=nextSessionIdFromResult(json);
-    await load(preferred||undefined);
+  const nextSessionIdFromResult = (json: any) =>
+    String(
+      json?.next?.session?.id ??
+        json?.next?.id ??
+        json?.ai?.session?.id ??
+        json?.ai?.sessionId ??
+        json?.ai?.next?.session?.id ??
+        json?.ai?.next?.id ??
+        "",
+    );
+  async function refreshAfterStage(json: any) {
+    const preferred = nextSessionIdFromResult(json);
+    await load(preferred || undefined);
     await onRefresh();
   }
 
-  const sessions=Array.isArray(data.sessions)?data.sessions:[];
-  const cycleRows=useMemo(()=>{const map=new Map<string,any>();for(const session of sessions){const c=session.learningCycle??null;const id=String(c?.id??"UNASSIGNED");const row=map.get(id)??{id,name:c?.name??"기존 SOS",startDate:c?.startDate??"",endDate:c?.endDate??"",dateLabel:c?.dateLabel??"회차 미지정",sessions:[]};row.sessions.push(session);map.set(id,row);}return [...map.values()].sort((a:any,b:any)=>String(b.startDate||"9999").localeCompare(String(a.startDate||"")));},[sessions]);
-  useEffect(()=>{if(!cycleRows.length)return;const valid=cycleRows.some((c:any)=>String(c.id)===selectedCycleId);if(valid)return;const openCycle=cycleRows.find((c:any)=>c.sessions.some((x:any)=>isSosOpen(x)));setSelectedCycleId(String((openCycle??cycleRows[0]).id));},[cycleRows,selectedCycleId]);
-  const rawVisibleSessions=selectedCycleId?sessions.filter((x:any)=>String(x.learningCycle?.id??"UNASSIGNED")===selectedCycleId):sessions;
-  // SOS255: 같은 회차/같은 단계가 중복 생성되어도 학생 화면에는 대표 세션 하나만 노출한다.
-  const visibleSessions=useMemo(()=>{
-    const rank=(x:any)=>["IN_PROGRESS","RETRAIN","ASSIGNED","PASSED","COMPLETED"].indexOf(String(x.status));
-    const key=(x:any)=>String(x.phase)==="DIAGNOSIS"?`D:${Number(x.round_no??1)}`:String(x.cycle_kind)==="HOMEWORK"?"T:HOMEWORK":`T:${Number(x.round_no??1)}`;
-    const map=new Map<string,any>();
-    for(const x of rawVisibleSessions){
-      const k=key(x), prev=map.get(k);
-      if(!prev){map.set(k,x);continue;}
-      const xr=rank(x), pr=rank(prev);
-      // 진행 가능한 세션 우선, 같은 상태면 더 최근 세션 우선.
-      if((xr>=0&&pr>=0&&xr<pr)||(xr===pr&&String(x.created_at??"")>String(prev.created_at??"")))map.set(k,x);
+  const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+  const cycleRows = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const session of sessions) {
+      const c = session.learningCycle ?? null;
+      const id = String(c?.id ?? "UNASSIGNED");
+      const row = map.get(id) ?? {
+        id,
+        name: c?.name ?? "기존 SOS",
+        startDate: c?.startDate ?? "",
+        endDate: c?.endDate ?? "",
+        dateLabel: c?.dateLabel ?? "회차 미지정",
+        sessions: [],
+      };
+      row.sessions.push(session);
+      map.set(id, row);
     }
-    return [...map.values()].sort((a:any,b:any)=>String(b.created_at??"").localeCompare(String(a.created_at??"")));
-  },[rawVisibleSessions]);
-  const active=visibleSessions.find((x:any)=>String(x.id)===activeId)??null;
-  useEffect(()=>{
-    if(!visibleSessions.length){setActiveId("");return;}
-    const open=visibleSessions.find((x:any)=>isSosOpen(x));
+    return [...map.values()].sort((a: any, b: any) =>
+      String(b.startDate || "9999").localeCompare(String(a.startDate || "")),
+    );
+  }, [sessions]);
+  useEffect(() => {
+    if (!cycleRows.length) return;
+    const valid = cycleRows.some((c: any) => String(c.id) === selectedCycleId);
+    if (valid) return;
+    const openCycle = cycleRows.find((c: any) =>
+      c.sessions.some((x: any) => isSosOpen(x)),
+    );
+    setSelectedCycleId(String((openCycle ?? cycleRows[0]).id));
+  }, [cycleRows, selectedCycleId]);
+  const rawVisibleSessions = selectedCycleId
+    ? sessions.filter(
+        (x: any) =>
+          String(x.learningCycle?.id ?? "UNASSIGNED") === selectedCycleId,
+      )
+    : sessions;
+  // SOS255: 같은 회차/같은 단계가 중복 생성되어도 학생 화면에는 대표 세션 하나만 노출한다.
+  const visibleSessions = useMemo(() => {
+    const rank = (x: any) =>
+      ["IN_PROGRESS", "RETRAIN", "ASSIGNED", "PASSED", "COMPLETED"].indexOf(
+        String(x.status),
+      );
+    const key = (x: any) =>
+      String(x.phase) === "DIAGNOSIS"
+        ? `D:${Number(x.round_no ?? 1)}`
+        : String(x.cycle_kind) === "HOMEWORK"
+          ? "T:HOMEWORK"
+          : `T:${Number(x.round_no ?? 1)}`;
+    const map = new Map<string, any>();
+    for (const x of rawVisibleSessions) {
+      const k = key(x),
+        prev = map.get(k);
+      if (!prev) {
+        map.set(k, x);
+        continue;
+      }
+      const xr = rank(x),
+        pr = rank(prev);
+      // 진행 가능한 세션 우선, 같은 상태면 더 최근 세션 우선.
+      if (
+        (xr >= 0 && pr >= 0 && xr < pr) ||
+        (xr === pr &&
+          String(x.created_at ?? "") > String(prev.created_at ?? ""))
+      )
+        map.set(k, x);
+    }
+    return [...map.values()].sort((a: any, b: any) =>
+      String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")),
+    );
+  }, [rawVisibleSessions]);
+  const active =
+    visibleSessions.find((x: any) => String(x.id) === activeId) ?? null;
+  useEffect(() => {
+    if (!visibleSessions.length) {
+      setActiveId("");
+      return;
+    }
+    const open = visibleSessions.find((x: any) => isSosOpen(x));
     // SOS251: 현재 선택이 완료 세션인데 같은 회차에 진행 가능한 다음 단계가 있으면 자동으로 그 단계 선택.
-    if(open && (!active || !isSosOpen(active))){
+    if (open && (!active || !isSosOpen(active))) {
       setActiveId(String(open.id));
       return;
     }
-    if(!active)setActiveId(String(visibleSessions[0].id));
-  },[selectedCycleId,visibleSessions.length,activeId,active?.status]);
-  const activeItems=Array.isArray(active?.items)?active.items:[];
+    if (!active) setActiveId(String(visibleSessions[0].id));
+  }, [selectedCycleId, visibleSessions.length, activeId, active?.status]);
+  const activeItems = Array.isArray(active?.items) ? active.items : [];
 
-  const childSessions=(parent:any)=>parent
-    ?visibleSessions.filter((x:any)=>String(x.parent_session_id??"")===String(parent.id))
-    :[];
+  const childSessions = (parent: any) =>
+    parent
+      ? visibleSessions.filter(
+          (x: any) => String(x.parent_session_id ?? "") === String(parent.id),
+        )
+      : [];
 
-  const nextChildFor=(parent:any)=>{
-    if(!parent)return null;
+  const nextChildFor = (parent: any) => {
+    if (!parent) return null;
     // SOS254: 1차훈련 다음은 같은 회차의 HOMEWORK/2차훈련을 우선 찾는다.
-    if(String(parent.phase)==="TRAINING"&&Number(parent.round_no)===1&&String(parent.cycle_kind)!=="HOMEWORK"){
-      const sameCycleNext=visibleSessions.find((x:any)=>String(x.cycle_kind)==="HOMEWORK")
-        ??visibleSessions.find((x:any)=>String(x.phase)==="TRAINING"&&Number(x.round_no)===2&&String(x.cycle_kind)!=="HOMEWORK");
-      if(sameCycleNext)return sameCycleNext;
+    if (
+      String(parent.phase) === "TRAINING" &&
+      Number(parent.round_no) === 1 &&
+      String(parent.cycle_kind) !== "HOMEWORK"
+    ) {
+      const sameCycleNext =
+        visibleSessions.find((x: any) => String(x.cycle_kind) === "HOMEWORK") ??
+        visibleSessions.find(
+          (x: any) =>
+            String(x.phase) === "TRAINING" &&
+            Number(x.round_no) === 2 &&
+            String(x.cycle_kind) !== "HOMEWORK",
+        );
+      if (sameCycleNext) return sameCycleNext;
     }
-    const children=childSessions(parent);
-    return children.find((x:any)=>isSosOpen(x))
-      ??children.find((x:any)=>["ASSIGNED","IN_PROGRESS","RETRAIN"].includes(String(x.status)))
-      ??children[0]
-      ??null;
+    const children = childSessions(parent);
+    return (
+      children.find((x: any) => isSosOpen(x)) ??
+      children.find((x: any) =>
+        ["ASSIGNED", "IN_PROGRESS", "RETRAIN"].includes(String(x.status)),
+      ) ??
+      children[0] ??
+      null
+    );
   };
 
-  const nextStageLabel=(x:any)=>{
-    if(!x)return "다음 학습";
-    if(String(x.phase)==="DIAGNOSIS")return `${Number(x.round_no)===2?"2차 진단":"진단"} 하러가기`;
-    if(String(x.cycle_kind)==="HOMEWORK")return "READY · 3제 굳히기 시작";
-    if(Number(x.round_no)===2)return "READY · 2차 훈련 시작";
+  const nextStageLabel = (x: any) => {
+    if (!x) return "다음 학습";
+    if (String(x.phase) === "DIAGNOSIS")
+      return `${Number(x.round_no) === 2 ? "2차 진단" : "진단"} 하러가기`;
+    if (String(x.cycle_kind) === "HOMEWORK") return "READY · 3제 굳히기 시작";
+    if (Number(x.round_no) === 2) return "READY · 2차 훈련 시작";
     return "1차 훈련 하러가기";
   };
 
-  const expectedNextKind=(x:any)=>{
-    if(!x||!["COMPLETED","PASSED"].includes(String(x.status)))return "";
-    if(String(x.phase)==="DIAGNOSIS"){
+  const expectedNextKind = (x: any) => {
+    if (!x || !["COMPLETED", "PASSED"].includes(String(x.status))) return "";
+    if (String(x.phase) === "DIAGNOSIS") {
       // 완료된 진단은 decision 문자열이 예전/누락 상태여도 절대 막히지 않게 실제 단계 규칙으로 복구한다.
-      if(Number(x.round_no)===1){
-        if(String(x.decision)==="PERFECT_DIAGNOSIS_AUTO_NEXT")return "SECOND_DIAGNOSIS";
+      if (Number(x.round_no) === 1) {
+        if (String(x.decision) === "PERFECT_DIAGNOSIS_AUTO_NEXT")
+          return "SECOND_DIAGNOSIS";
         return "FIRST_TRAINING";
       }
-      if(Number(x.round_no)===2){
-        if(String(x.decision)==="NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS")return "";
+      if (Number(x.round_no) === 2) {
+        if (String(x.decision) === "NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS")
+          return "";
         return "FIRST_TRAINING";
       }
       return "";
     }
-    if(String(x.phase)==="TRAINING" && String(x.cycle_kind)!=="HOMEWORK" && Number(x.round_no)===1){
-      const rate=Number(x.total_count)>0?Number(x.correct_count??0)/Number(x.total_count):0;
+    if (
+      String(x.phase) === "TRAINING" &&
+      String(x.cycle_kind) !== "HOMEWORK" &&
+      Number(x.round_no) === 1
+    ) {
+      const rate =
+        Number(x.total_count) > 0
+          ? Number(x.correct_count ?? 0) / Number(x.total_count)
+          : 0;
       // 1차훈련 완료 후 decision 값이 누락/구버전이어도 점수로 다음 단계를 반드시 결정한다.
-      if(String(x.decision)==="FIRST_TRAINING_PASSED" || rate>=0.9)return "HOMEWORK";
+      if (String(x.decision) === "FIRST_TRAINING_PASSED" || rate >= 0.9)
+        return "HOMEWORK";
       return "SECOND_TRAINING";
     }
     return "";
   };
 
-  const expectedNextLabel=(kind:string)=>{
-    if(kind==="SECOND_DIAGNOSIS")return "2차 진단 준비하기";
-    if(kind==="FIRST_TRAINING")return "1차 훈련 준비하기";
-    if(kind==="HOMEWORK")return "3제 굳히기 준비하기";
-    if(kind==="SECOND_TRAINING")return "2차 훈련 준비하기";
+  const expectedNextLabel = (kind: string) => {
+    if (kind === "SECOND_DIAGNOSIS") return "2차 진단 준비하기";
+    if (kind === "FIRST_TRAINING") return "1차 훈련 준비하기";
+    if (kind === "HOMEWORK") return "3제 굳히기 준비하기";
+    if (kind === "SECOND_TRAINING") return "2차 훈련 준비하기";
     return "다음 학습 준비하기";
   };
 
-  async function ensureNext(session:any,automatic=false){
-    if(!session?.id)return;
-    const key=String(session.id);
-    if(automatic&&nextRepairTriedRef.current.has(key))return;
-    if(automatic)nextRepairTriedRef.current.add(key);
+  async function ensureNext(session: any, automatic = false) {
+    if (!session?.id) return;
+    const key = String(session.id);
+    if (automatic && nextRepairTriedRef.current.has(key)) return;
+    if (automatic) nextRepairTriedRef.current.add(key);
     setBusy(`next:${key}`);
-    if(!automatic){setNotice("AI 맞춤문항 생성 작업을 예약하고 있습니다.");}
-    try{
-      const response=await fetch("/api/student/sos-training",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({action:"ensure_next",sessionId:session.id}),
+    if (!automatic) {
+      setNotice("AI 맞춤문항 생성 작업을 예약하고 있습니다.");
+    }
+    try {
+      const response = await fetch("/api/student/sos-training", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "ensure_next", sessionId: session.id }),
       });
-      const json=await response.json();
-      if(!response.ok)throw new Error(json.message||"다음 학습 준비 실패");
-      if(json?.nextStep==="AI_GENERATION_QUEUED"){
-        setNotice("AI 맞춤문항을 준비하고 있습니다. 짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 준비가 완료되면 READY로 변경됩니다. 나중에 다시 접속하여 남은 학습을 마무리해 주세요.");
-        await load();await onRefresh();return;
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.message || "다음 학습 준비 실패");
+      if (json?.nextStep === "AI_GENERATION_QUEUED") {
+        setNotice(
+          "AI 맞춤문항을 준비하고 있습니다. 짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 준비가 완료되면 READY로 변경됩니다. 나중에 다시 접속하여 남은 학습을 마무리해 주세요.",
+        );
+        await load();
+        await onRefresh();
+        return;
       }
       // READY 세션이 이미 생성된 경우 기존 시작 흐름을 유지한다.
       // 생성된 HOMEWORK 세션을 즉시 IN_PROGRESS로 바꾸고 바로 1번 문항으로 이동한다.
-      if(json?.nextStep==="HOMEWORK_ASSIGNED"){
-        const homeworkId=String(json?.next?.session?.id??json?.next?.id??"");
-        if(homeworkId){
-          const startResponse=await fetch("/api/student/sos-training",{
-            method:"POST",headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({action:"start",sessionId:homeworkId}),
+      if (json?.nextStep === "HOMEWORK_ASSIGNED") {
+        const homeworkId = String(
+          json?.next?.session?.id ?? json?.next?.id ?? "",
+        );
+        if (homeworkId) {
+          const startResponse = await fetch("/api/student/sos-training", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "start", sessionId: homeworkId }),
           });
-          const startJson=await startResponse.json();
+          const startJson = await startResponse.json();
           // 이미 IN_PROGRESS인 기존 세션이면 시작 API가 실패하더라도 해당 세션으로 이동한다.
-          if(!startResponse.ok&&!String(startJson?.message??"").includes("이미"))throw new Error(startJson?.message||"3제 굳히기 시작 실패");
+          if (
+            !startResponse.ok &&
+            !String(startJson?.message ?? "").includes("이미")
+          )
+            throw new Error(startJson?.message || "3제 굳히기 시작 실패");
           await load();
           setActiveId(homeworkId);
           await onRefresh();
-          setNotice("1차훈련 통과 · AI 유사문항 3제 굳히기 3문항 생성 완료 · 바로 1번 문항부터 시작합니다.");
+          setNotice(
+            "1차훈련 통과 · AI 유사문항 3제 굳히기 3문항 생성 완료 · 바로 1번 문항부터 시작합니다.",
+          );
           return;
         }
       }
       await load();
       await onRefresh();
-      if(json?.nextStep==="HOMEWORK_ASSIGNED")setNotice("AI 유사문항 3제 굳히기가 준비되었습니다. 3제 굳히기 시작을 눌러 주세요.");
-      else if(json?.nextStep==="SECOND_TRAINING_ASSIGNED")setNotice("2차 AI 유사훈련 10문항이 준비되었습니다.");
-      else if(json?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED")setNotice("2차 진단 3문항이 준비되었습니다.");
-      else if(json?.nextStep==="FIRST_TRAINING_ASSIGNED")setNotice("1차 맞춤훈련 10문항이 준비되었습니다.");
-    }catch(error){
-      setNotice(`다음 학습 자동 준비에 실패했습니다. 아래 버튼으로 다시 시도해 주세요. (${error instanceof Error?error.message:"오류"})`);
-    }finally{
+      if (json?.nextStep === "HOMEWORK_ASSIGNED")
+        setNotice(
+          "AI 유사문항 3제 굳히기가 준비되었습니다. 3제 굳히기 시작을 눌러 주세요.",
+        );
+      else if (json?.nextStep === "SECOND_TRAINING_ASSIGNED")
+        setNotice("2차 AI 유사훈련 10문항이 준비되었습니다.");
+      else if (json?.nextStep === "SECOND_DIAGNOSIS_ASSIGNED")
+        setNotice("2차 진단 3문항이 준비되었습니다.");
+      else if (json?.nextStep === "FIRST_TRAINING_ASSIGNED")
+        setNotice("1차 맞춤훈련 10문항이 준비되었습니다.");
+    } catch (error) {
+      setNotice(
+        `다음 학습 자동 준비에 실패했습니다. 아래 버튼으로 다시 시도해 주세요. (${error instanceof Error ? error.message : "오류"})`,
+      );
+    } finally {
       setBusy("");
     }
   }
-  const diagnosisClearCompleted=Boolean(active&&active.phase==="DIAGNOSIS"&&Number(active.round_no)===2&&String(active.status)==="COMPLETED"&&String(active.decision)==="NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS");
-  const finalCompleted=Boolean(active&&((active.phase==="TRAINING"&&["COMPLETED","PASSED"].includes(String(active.status))&&(String(active.cycle_kind)==="HOMEWORK"||Number(active.round_no)===2))||diagnosisClearCompleted));
+  const diagnosisClearCompleted = Boolean(
+    active &&
+    active.phase === "DIAGNOSIS" &&
+    Number(active.round_no) === 2 &&
+    String(active.status) === "COMPLETED" &&
+    String(active.decision) === "NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS",
+  );
+  const finalCompleted = Boolean(
+    active &&
+    ((active.phase === "TRAINING" &&
+      ["COMPLETED", "PASSED"].includes(String(active.status)) &&
+      (String(active.cycle_kind) === "HOMEWORK" ||
+        Number(active.round_no) === 2)) ||
+      diagnosisClearCompleted),
+  );
 
-  async function start(session:any){
-    setBusy("start");setNotice("");
-    try{
-      const response=await fetch("/api/student/sos-training",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({action:"start",sessionId:session.id}),
+  async function start(session: any) {
+    setBusy("start");
+    setNotice("");
+    try {
+      const response = await fetch("/api/student/sos-training", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start", sessionId: session.id }),
       });
-      const json=await response.json();
-      if(!response.ok)throw new Error(json.message||"시작 실패");
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.message || "시작 실패");
       setActiveId(String(session.id));
       await load();
-    }catch(error){setNotice(error instanceof Error?error.message:"시작 실패");}
-    finally{setBusy("");}
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "시작 실패");
+    } finally {
+      setBusy("");
+    }
   }
 
-  const latestMeters=Array.isArray(data.subunitMeters)?data.subunitMeters:[];
-  const aiGenerationJobs=Array.isArray(data.aiGenerationJobs)?data.aiGenerationJobs:[];
-  const generationJobFor=(source:any)=>aiGenerationJobs.find((j:any)=>String(j.source_training_session_id)===String(source?.id))??null;
+  const latestMeters = Array.isArray(data.subunitMeters)
+    ? data.subunitMeters
+    : [];
+  const aiGenerationJobs = Array.isArray(data.aiGenerationJobs)
+    ? data.aiGenerationJobs
+    : [];
+  const generationJobFor = (source: any) =>
+    aiGenerationJobs.find(
+      (j: any) => String(j.source_training_session_id) === String(source?.id),
+    ) ?? null;
 
-  const selectedCycle=cycleRows.find((c:any)=>String(c.id)===selectedCycleId)??null;
-  const completedFirstTrainingForCycle=visibleSessions.find((x:any)=>
-    String(x.phase)==="TRAINING"&&Number(x.round_no)===1&&String(x.cycle_kind)!=="HOMEWORK"&&["COMPLETED","PASSED"].includes(String(x.status))
-  )??null;
-  const selectedOpen=visibleSessions.find((x:any)=>{
-    if(!isSosOpen(x))return false;
+  const selectedCycle =
+    cycleRows.find((c: any) => String(c.id) === selectedCycleId) ?? null;
+  const completedFirstTrainingForCycle =
+    visibleSessions.find(
+      (x: any) =>
+        String(x.phase) === "TRAINING" &&
+        Number(x.round_no) === 1 &&
+        String(x.cycle_kind) !== "HOMEWORK" &&
+        ["COMPLETED", "PASSED"].includes(String(x.status)),
+    ) ?? null;
+  const selectedOpen = visibleSessions.find((x: any) => {
+    if (!isSosOpen(x)) return false;
     // SOS254: 이미 같은 회차에 완료된 1차훈련이 있으면 뒤늦게 잘못 생성된 중복 1차훈련은 현재 할 일로 올리지 않음
-    if(completedFirstTrainingForCycle && String(x.phase)==="TRAINING"&&Number(x.round_no)===1&&String(x.cycle_kind)!=="HOMEWORK")return false;
+    if (
+      completedFirstTrainingForCycle &&
+      String(x.phase) === "TRAINING" &&
+      Number(x.round_no) === 1 &&
+      String(x.cycle_kind) !== "HOMEWORK"
+    )
+      return false;
     return true;
   });
-  const cycleHomework=visibleSessions.find((x:any)=>String(x.cycle_kind)==="HOMEWORK")??null;
-  const cycleSecondTraining=visibleSessions.find((x:any)=>String(x.phase)==="TRAINING"&&Number(x.round_no)===2&&String(x.cycle_kind)!=="HOMEWORK")??null;
-  const cycleFirstTraining=visibleSessions.find((x:any)=>String(x.phase)==="TRAINING"&&Number(x.round_no)===1&&String(x.cycle_kind)!=="HOMEWORK")??null;
-  const cycleSecondDiagnosis=visibleSessions.find((x:any)=>String(x.phase)==="DIAGNOSIS"&&Number(x.round_no)===2)??null;
+  const cycleHomework =
+    visibleSessions.find((x: any) => String(x.cycle_kind) === "HOMEWORK") ??
+    null;
+  const cycleSecondTraining =
+    visibleSessions.find(
+      (x: any) =>
+        String(x.phase) === "TRAINING" &&
+        Number(x.round_no) === 2 &&
+        String(x.cycle_kind) !== "HOMEWORK",
+    ) ?? null;
+  const cycleFirstTraining =
+    visibleSessions.find(
+      (x: any) =>
+        String(x.phase) === "TRAINING" &&
+        Number(x.round_no) === 1 &&
+        String(x.cycle_kind) !== "HOMEWORK",
+    ) ?? null;
+  const cycleSecondDiagnosis =
+    visibleSessions.find(
+      (x: any) => String(x.phase) === "DIAGNOSIS" && Number(x.round_no) === 2,
+    ) ?? null;
 
   // SOS254: 다음 단계 유무는 부모-자식 링크가 아니라 같은 회차의 실제 단계 존재 여부로 판단
-  let recoverableParent:any=null;
-  if(!selectedOpen && !cycleHomework && !cycleSecondTraining && cycleFirstTraining && ["COMPLETED","PASSED"].includes(String(cycleFirstTraining.status))){
-    recoverableParent=cycleFirstTraining;
-  }else if(!selectedOpen && !cycleFirstTraining){
-    recoverableParent=visibleSessions.find((x:any)=>expectedNextKind(x))??null;
+  let recoverableParent: any = null;
+  if (
+    !selectedOpen &&
+    !cycleHomework &&
+    !cycleSecondTraining &&
+    cycleFirstTraining &&
+    ["COMPLETED", "PASSED"].includes(String(cycleFirstTraining.status))
+  ) {
+    recoverableParent = cycleFirstTraining;
+  } else if (!selectedOpen && !cycleFirstTraining) {
+    recoverableParent =
+      visibleSessions.find((x: any) => expectedNextKind(x)) ?? null;
   }
 
-  const pendingAiJob=recoverableParent?generationJobFor(recoverableParent):null;
-  const aiPreparing=Boolean(pendingAiJob&&["QUEUED","GENERATING"].includes(String(pendingAiJob.status)));
-  const aiFailed=Boolean(pendingAiJob&&String(pendingAiJob.status)==="FAILED");
-  const selectedCompleted=visibleSessions.length>0&&!selectedOpen&&!recoverableParent;
-  const today=new Date().toISOString().slice(0,10);
-  const selectedIsPast=Boolean(selectedCycle?.endDate&&selectedCycle.endDate<today);
-  const sourceTitles=[...new Set(visibleSessions.map((x:any)=>String(x.sourceExam?.title??x.target_snapshot?.sourceExamTitle??"")).filter(Boolean))];
-  const backlogCycles=cycleRows.filter((c:any)=>c.endDate&&c.endDate<today&&c.sessions.some((x:any)=>isSosOpen(x)));
+  const pendingAiJob = recoverableParent
+    ? generationJobFor(recoverableParent)
+    : null;
+  const aiPreparing = Boolean(
+    pendingAiJob &&
+    ["QUEUED", "GENERATING"].includes(String(pendingAiJob.status)),
+  );
+  const aiFailed = Boolean(
+    pendingAiJob && String(pendingAiJob.status) === "FAILED",
+  );
+  const selectedCompleted =
+    visibleSessions.length > 0 && !selectedOpen && !recoverableParent;
+  const today = new Date().toISOString().slice(0, 10);
+  const selectedIsPast = Boolean(
+    selectedCycle?.endDate && selectedCycle.endDate < today,
+  );
+  const sourceTitles = [
+    ...new Set(
+      visibleSessions
+        .map((x: any) =>
+          String(
+            x.sourceExam?.title ?? x.target_snapshot?.sourceExamTitle ?? "",
+          ),
+        )
+        .filter(Boolean),
+    ),
+  ];
+  const backlogCycles = cycleRows.filter(
+    (c: any) =>
+      c.endDate &&
+      c.endDate < today &&
+      c.sessions.some((x: any) => isSosOpen(x)),
+  );
 
   // SOS253: 원래 자동 생성돼야 할 다음 단계가 누락되어 있으면 페이지 진입 시 딱 한 번 자동 복구 시도.
-  useEffect(()=>{
-    if(loading||selectedOpen||!recoverableParent||aiPreparing)return;
-    void ensureNext(recoverableParent,true);
-  },[loading,selectedCycleId,recoverableParent?.id,selectedOpen?.id]);
+  useEffect(() => {
+    if (loading || selectedOpen || !recoverableParent || aiPreparing) return;
+    void ensureNext(recoverableParent, true);
+  }, [loading, selectedCycleId, recoverableParent?.id, selectedOpen?.id]);
 
   // SOS270: 생성 대기 중에는 학생이 새로고침을 눌러야만 READY를 알 수 있었다.
   // 대기 중인 작업이 있으면 45초마다 스스로 확인한다. 탭이 뒤에 있으면 확인하지 않는다.
-  const hasWaitingAiJob=aiGenerationJobs.some((j:any)=>["QUEUED","GENERATING"].includes(String(j.status)));
-  useEffect(()=>{
-    if(!hasWaitingAiJob)return;
-    const timer=window.setInterval(()=>{
-      if(document.visibilityState==="visible")void load();
-    },45000);
-    return()=>window.clearInterval(timer);
-  },[hasWaitingAiJob,load]);
+  const hasWaitingAiJob = aiGenerationJobs.some((j: any) =>
+    ["QUEUED", "GENERATING"].includes(String(j.status)),
+  );
+  useEffect(() => {
+    if (!hasWaitingAiJob) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, 45000);
+    return () => window.clearInterval(timer);
+  }, [hasWaitingAiJob, load]);
 
-  return <div className="sos-live-wrap">
-    <section className="sos-learning-status">
-      <div className="sos-week-picker"><div><small>SOS 학습현황</small><h3>{selectedCycle?`${selectedCycle.name} · ${selectedCycle.dateLabel}`:"SOS 회차"}</h3><p>{sourceTitles.length?`기준시험 · ${sourceTitles.join(" / ")}`:"회차를 선택해 지난 SOS 결과를 확인하세요."}</p></div><select value={selectedCycleId} onChange={(e)=>{setSelectedCycleId(e.target.value);setActiveId("");}}>{cycleRows.map((c:any)=><option key={c.id} value={c.id}>{c.name} · {c.dateLabel}{c.sessions.some((x:any)=>isSosOpen(x))?" · 진행중":" · 완료"}</option>)}</select></div>
-      <div className="sos-now-task"><span>{selectedOpen?selectedIsPast?"밀린 SOS":"지금 해야 할 SOS":recoverableParent?"다음 SOS 준비":"이 회차 SOS 완료"}</span><b>{selectedOpen?sosStageLabel(selectedOpen):recoverableParent?expectedNextLabel(expectedNextKind(recoverableParent)).replace(" 준비하기",""):selectedCompleted?"모든 학습 완료":"배정된 학습이 없습니다."}</b><p>{selectedOpen?`${selectedOpen.target_snapshot?.subunit??"소단원"} · ${Number(selectedOpen.correct_count??0)}/${Number(selectedOpen.total_count??0)} 정답/진행 기록`:aiPreparing?"AI 맞춤문항을 준비하고 있습니다. 문항 생성 및 검증에는 짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 준비가 완료되면 READY로 변경됩니다. 나중에 다시 접속하여 남은 학습을 마무리해 주세요.":aiFailed?"이전 AI 문항 생성이 실패했습니다. 아래 버튼을 눌러 즉시 다시 예약할 수 있습니다.":recoverableParent?"이전 단계가 완료되었습니다. 다음 AI 맞춤문항 생성 작업을 예약합니다.":selectedCompleted?"지난 진단·훈련 결과를 아래에서 다시 확인할 수 있습니다.":"관리자가 SOS를 배정하면 이곳에 표시됩니다."}</p>{selectedOpen?<button type="button" className={(String(selectedOpen.cycle_kind)==="HOMEWORK"||Number(selectedOpen.round_no)===2)&&String(selectedOpen.phase)==="TRAINING"&&String(selectedOpen.status)==="ASSIGNED"?"ai-ready":""} onClick={()=>setActiveId(String(selectedOpen.id))}>{(String(selectedOpen.cycle_kind)==="HOMEWORK"||Number(selectedOpen.round_no)===2)&&String(selectedOpen.phase)==="TRAINING"&&String(selectedOpen.status)==="ASSIGNED"?nextStageLabel(selectedOpen):"이어하기"} →</button>:aiPreparing?<button type="button" className="sos-ai-preparing" disabled>{String(pendingAiJob?.status)==="GENERATING"?"AI 생성·검증 중":"AI 문항 준비 중"}</button>:recoverableParent?<button type="button" className={aiFailed?"ai-ready":""} disabled={!!busy} onClick={()=>void ensureNext(recoverableParent,false)}>{busy===`next:${recoverableParent.id}`?"예약 중...":aiFailed?"AI 생성 다시 시도":"AI 맞춤문항 준비 예약"} →</button>:null}</div>
-      {backlogCycles.length?<div className="sos-backlog"><b>밀린 SOS</b><div>{backlogCycles.map((c:any)=><button type="button" key={c.id} onClick={()=>{setSelectedCycleId(String(c.id));setActiveId("");}}><span>{c.name}</span><small>{c.dateLabel}</small><em>{sosStageLabel(c.sessions.find((x:any)=>isSosOpen(x)))}</em></button>)}</div></div>:null}
-    </section>
-    <section className="sos-live-summary">
-      <article><span>대기·진행</span><b>{visibleSessions.filter((x:any)=>["ASSIGNED","IN_PROGRESS","RETRAIN"].includes(String(x.status))).length}</b><small>진단/훈련</small></article>
-      <article><span>완료</span><b>{visibleSessions.filter((x:any)=>["COMPLETED","PASSED"].includes(String(x.status))).length}</b><small>누적 세션</small></article>
-      <article><span>소단원 미터</span><b>{latestMeters.length}</b><small>측정된 영역</small></article>
-    </section>
-
-    {notice?<div className="sos-live-notice">{notice}</div>:null}
-
-    {loading?<MATHPOOHLoader title="진단·훈련을 가져오는 중입니다" detail="나의 SOS 진행상황, 바로미터, 진단·훈련 결과를 준비하고 있습니다." kind="loading"/>:(
-      <div className="sos-live-layout">
-        <aside className="sos-session-list">
-          <h3>나의 진단·훈련</h3>
-          {visibleSessions.map((session:any)=><button
-            key={session.id}
-            className={`${String(session.id)===String(active?.id)?"selected":""} ${session.phase==="DIAGNOSIS"?"stage-diagnosis":Number(session.round_no)===2?"stage-training2":"stage-training1"}`}
-            onClick={()=>setActiveId(String(session.id))}
+  return (
+    <div className="sos-live-wrap">
+      <section className="sos-learning-status">
+        <div className="sos-week-picker">
+          <div>
+            <small>SOS 학습현황</small>
+            <h3>
+              {selectedCycle
+                ? `${selectedCycle.name} · ${selectedCycle.dateLabel}`
+                : "SOS 회차"}
+            </h3>
+            <p>
+              {sourceTitles.length
+                ? `기준시험 · ${sourceTitles.join(" / ")}`
+                : "회차를 선택해 지난 SOS 결과를 확인하세요."}
+            </p>
+          </div>
+          <select
+            value={selectedCycleId}
+            onChange={(e) => {
+              setSelectedCycleId(e.target.value);
+              setActiveId("");
+            }}
           >
-            <div><b>{session.phase==="DIAGNOSIS"?`진단 ${session.round_no}차`:session.cycle_kind==="HOMEWORK"?"AI 유사문항 3제 굳히기":Number(session.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</b><span>{session.target_snapshot?.subunit??"소단원"}</span></div>
-            <em>{session.status==="ASSIGNED"&&(String(session.cycle_kind)==="HOMEWORK"||Number(session.round_no)===2)&&String(session.phase)==="TRAINING"?"READY":session.status==="ASSIGNED"?"시작 전":session.status==="IN_PROGRESS"?"진행 중":session.status==="PASSED"?"통과":session.status==="RETRAIN"?"오답 필수":"완료"}</em>
-            <small>{session.correct_count===null||session.correct_count===undefined?`${session.total_count}문항`:`${session.correct_count}/${session.total_count} 정답`}</small>
-          </button>)}
-          {!visibleSessions.length?<p>선택한 회차에 배정된 진단·훈련이 없습니다.</p>:null}
-        </aside>
-
-        <section className={`sos-session-main ${active?.phase==="DIAGNOSIS"?"theme-diagnosis":active?.round_no===2?"theme-training2":"theme-training1"}`}>
-          {!active?<div className="student-section-empty"><b>진행할 진단·훈련을 선택하세요.</b><span>관리자가 SOS 진단을 생성하면 이곳에 표시됩니다.</span></div>:<>
-            <SosFlowTree session={active} sessions={visibleSessions} onSelect={(id)=>setActiveId(id)}/>
-            <header className="sos-session-head">
-              <div><small>{active.phase==="DIAGNOSIS"?"SOS DIAGNOSIS":"SOS TRAINING"}</small><h3>{active.target_snapshot?.subunit??"소단원"} · {active.phase==="DIAGNOSIS"?`진단 ${active.round_no}차`:active.cycle_kind==="HOMEWORK"?"AI 유사문항 3제 굳히기":active.round_no===2?"2차 AI 유사훈련":"1차 맞춤훈련"}</h3><p>{active.target_snapshot?.subject??""} {active.target_snapshot?.majorUnit?`· ${active.target_snapshot.majorUnit}`:""} · 시작 미터 {Number(active.target_snapshot?.studentDifficultyMeter??0).toFixed(2)}</p></div>
-              <span>{active.total_count}문항</span>
-            </header>
-
-            {active.status==="ASSIGNED"?<div className="sos-start-box sos-diagnosis-guide">
-              <b>{active.phase==="DIAGNOSIS"?"SOS 진단 응시 안내":active.cycle_kind==="HOMEWORK"?"AI 유사문항 3제 굳히기":"현재 수준에 맞춘 10문항 훈련입니다."}</b>
-              {active.phase==="DIAGNOSIS"?<div className="sos-guide-list">
-                <p>진단은 현재 취약지점을 정확하게 찾기 위한 평가입니다.</p>
-                <p><strong>풀이 사진을 촬영할 수 있는 휴대폰·태블릿 등의 기기를 미리 준비</strong>해 주세요.</p>
-                <p>각 문항은 <strong>10초 준비화면 후 공개</strong>되며, 공개 순간부터 답안 확정까지 풀이시간이 기록됩니다.</p>
-                <p>답안을 확정하면 수정할 수 없으며, 이어서 <strong>종이에 작성한 풀이 사진을 반드시 제출</strong>해야 합니다.</p>
-                <p>답안 확정부터 풀이사진 제출까지 걸린 시간도 별도로 기록됩니다.</p>
-                <p className="warn">응시 중 다른 웹페이지·앱으로 이동하면 화면 이탈 기록이 저장되고 즉시 경고가 표시됩니다.</p>
-              </div>:active.cycle_kind==="HOMEWORK"?<div className="sos-guide-list"><p><strong>원문 기반 제한변형</strong>으로 만든 AI 유사문항 3제를 풀어 학습을 굳힙니다.</p><p><strong>시간 제한은 없습니다.</strong> 충분히 생각해서 풀어도 됩니다.</p><p>최초 정답과 오답 교정 완료 여부는 기록되지만 <strong>바로미터에는 반영되지 않습니다.</strong></p><p>틀리면 기존과 동일하게 힌트① → 재도전 → 힌트② → 재도전 → 정답·핵심풀이 확인 순서로 교정합니다.</p></div>:<div className="sos-guide-list"><p><strong>AI 취약점:</strong> {active.weakness_snapshot?.weaknessTitle||active.target_snapshot?.weaknessTitle||"맞춤 보완 영역"}</p><p>{active.weakness_snapshot?.weaknessDetail||active.target_snapshot?.weaknessDetail||"취약점을 집중 또는 포함하는 문항으로 훈련합니다."}</p><p>문항별 <strong>정오답과 풀이시간</strong>이 바로미터에 반영됩니다.</p><p>틀린 문항은 훈련 종료 전 <strong>오답을 반드시 다시 풉니다.</strong></p>{Number(active.baseline_meter)>0&&Number(active.goal_meter)>0?<><p>이번 목표: <strong>{Number(active.baseline_meter).toFixed(2)} → {Number(active.goal_meter).toFixed(2)}</strong></p><small className="sos-term-help">바로미터는 이 취약영역의 현재 실력을 보여주는 지표입니다. 훈련을 통해 목표선까지 끌어올리는 것이 이번 SOS의 목표입니다.</small></>:null}</div>}
-              <button disabled={!!busy} onClick={()=>void start(active)}>{busy==="start"?"준비 중...":active.phase==="DIAGNOSIS"?"안내 확인 · 진단 시작":active.cycle_kind==="HOMEWORK"?"3제 굳히기 시작":active.round_no===2?"2차 훈련 시작":"1차 훈련 시작"}</button>
-            </div>:null}
-
-            {active.status==="IN_PROGRESS"&&active.phase==="DIAGNOSIS"?<SosDiagnosisRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              if(json?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED")setNotice(`진단 ${json.correct}/${json.total} 정답 · 정오답과 풀이시간 분석 완료 · 2차 진단 3문항으로 자동 이어집니다.`);
-              else if(json?.nextStep==="FIRST_TRAINING_ASSIGNED")setNotice(`진단 ${json.correct}/${json.total} 정답 · 보완 신호를 확인해 1차 맞춤훈련 10문항을 자동 준비했습니다.`);
-              else if(json?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS")setNotice("1·2차 진단 전체에서 오답과 시간취약이 확인되지 않아 이번 SOS를 완료했습니다.");
-              else if(Number(json?.wrongCount??0)>0)setNotice(`진단 ${json.correct}/${json.total} 정답 · 오답 ${json.wrongCount}문항을 먼저 교정해 주세요.`);
-              else setNotice(json?.message||"진단 분석이 완료되었습니다. 다음 학습을 확인합니다.");
-              await refreshAfterStage(json);
-            }}/>:null}
-
-            {active.status==="IN_PROGRESS"&&active.phase!=="DIAGNOSIS"?<SosTrainingRunner session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              if(json.homework)setNotice(`3제 굳히기 풀이 완료 · 최초정답 ${json.correct}/${json.total} · ${json.wrongCount?`오답 ${json.wrongCount}문항을 교정해 주세요.`:"오답 없이 완료했습니다."} · 바로미터 미반영`);
-              else if(json.status==="RETRAIN")setNotice(`${Number(active.round_no)===2?"2차":"1차"} 훈련 완료 · ${json.correct}/${json.total} 정답 · 오답 ${json.wrongCount}문항을 반드시 다시 풀어야 합니다.`);
-              else setNotice(`훈련 완료 · 바로미터 ${Number(json.meter??0).toFixed(2)} / 목표 ${Number(json.goal??0).toFixed(2)}`);
-              await refreshAfterStage(json);
-            }}/>:null}
-
-            {active.status==="RETRAIN"&&active.phase==="DIAGNOSIS"?<SosTrainingReview session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              const w=json?.ai?.weakness;
-              setNotice(json?.ai?.created?`진단 교정 완료 · AI가 '${w?.weaknessTitle||"취약점"}'을 확인했습니다. 1차 맞춤훈련 10문항이 준비되었습니다.`:json?.ai?.nextStep==="SECOND_DIAGNOSIS_ASSIGNED"?"1차 진단에서 뚜렷한 취약점이 없어 바로미터가 가장 낮은 다른 영역의 2차 진단 3문항이 자동 준비되었습니다.":json?.ai?.nextStep==="DIAGNOSIS_COMPLETE_NO_WEAKNESS"?"1·2차 진단 전체에서 오답과 시간취약이 확인되지 않았습니다. 이번 SOS 진단을 완료했습니다.":json?.ai?.error?`진단 교정 완료 · AI 분석 확인 필요 (${json.ai.error})`:"진단 교정과 AI 분석이 완료되었습니다.");
-              await refreshAfterStage(json);
-            }}/>:null}
-
-            {active.status==="RETRAIN"&&active.phase==="TRAINING"?<SosTrainingReview session={active} onNotice={setNotice} onCompleted={async(json:any)=>{
-              if(String(active.cycle_kind)==="HOMEWORK")setNotice("AI 유사문항 3제 굳히기와 오답 교정까지 모두 완료했습니다.");
-              else if(Number(active.round_no)===2)setNotice("2차 훈련 오답 교정까지 모두 완료했습니다.");
-              else setNotice(json.passed
-                ?(json.passReason==="SCORE_90"
-                  ?`오답 완료 · 1차훈련 9/10 이상 통과 · 현재 바로미터 ${Number(json.meter).toFixed(2)} / 목표 ${Number(json.goal).toFixed(2)} · AI 유사문항 3제 굳히기 3문항이 생성됩니다.`
-                  :`오답 완료 · 목표 바로미터 달성 ${Number(json.meter).toFixed(2)} ≥ ${Number(json.goal).toFixed(2)} · AI 유사문항 3제 굳히기 3문항이 생성됩니다.`)
-                :`오답 완료 · 현재 ${Number(json.meter).toFixed(2)} / 목표 ${Number(json.goal).toFixed(2)} · 2차 AI 유사훈련 10문항이 생성됩니다.`);
-              await refreshAfterStage(json);
-            }}/>:null}
-
-            {finalCompleted?<SosFinalCompletion terminal={active} sessions={visibleSessions} meters={latestMeters} onSelect={(id)=>setActiveId(id)}/>:null}
-
-            {!finalCompleted&&["COMPLETED","PASSED"].includes(String(active.status))?<div className="sos-complete-box">
-              <b>{active.status==="PASSED"?"훈련 통과":active.phase==="DIAGNOSIS"?"진단 완료":"학습 완료"}</b>
-              <strong>{active.correct_count??0}/{active.total_count}</strong>
-              <p>{active.phase==="DIAGNOSIS"?"진단·오답 교정이 완료되었습니다. 이 최초 정오답과 풀이시간·풀이사진은 그대로 보존되며 AI 취약점 분석의 근거가 됩니다.":active.status==="PASSED"?"이 소단원 훈련을 통과했습니다.":"이번 훈련 결과가 기록되었습니다."}</p>
-              {active.phase==="DIAGNOSIS"?<div className="sos-diagnosis-result-list">{activeItems.map((item:any,index:number)=><article key={item.id} className={item.isCorrect===true?"correct":"wrong"}>
-                <div className="result-no"><b>{index+1}번</b><em>{item.isCorrect===true?"정답":"오답"}</em></div>
-                <div className="result-answer"><span>내 답 <strong>{item.studentAnswer||"-"}</strong></span><span>정답 <strong>{item.problem?.correctAnswer||"-"}</strong></span></div>
-                <div className="result-time"><span>풀이시간 <strong>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</strong></span><span>사진제출 <strong>{Math.floor(Number(item.photoSubmitSeconds??0)/60)}:{String(Number(item.photoSubmitSeconds??0)%60).padStart(2,"0")}</strong></span></div>
-                {item.isCorrect===false?<div className="student-review-history"><b>{item.reviewCompleted?(item.reviewIsCorrect===true?"✓ 스스로 오답 교정":"✓ 정답·풀이 확인 완료"):"오답 교정 미완료"}</b><span>재도전 {item.reviewAttemptCount??0}회 · 힌트 {item.reviewHintLevel??0}단계</span></div>:null}
-                <button type="button" className="sos-solution-btn" disabled={solutionBusy===String(item.id)} onClick={()=>void openSolution(String(active.id),item,index+1)}>{solutionBusy===String(item.id)?"불러오는 중...":"해설 보기"}</button>
-              </article>)}</div>:<div className="sos-report-grid">{activeItems.map((item:any)=><div key={item.id} className={`sos-report-item ${item.isCorrect===true?"correct":"wrong"} ${item.reviewAnswer?"reviewed":""}`}><span className="num">{item.order}번</span><b>{item.isCorrect===true?"O":"X"}</b><small>{Math.floor(Number(item.responseSeconds??0)/60)}:{String(Number(item.responseSeconds??0)%60).padStart(2,"0")}</small><em>{item.isCorrect===true?"정답":item.reviewAnswer?"오답완료 ✓":"오답"}</em><button type="button" className="sos-solution-btn" disabled={solutionBusy===String(item.id)} onClick={()=>void openSolution(String(active.id),item,Number(item.order))}>{solutionBusy===String(item.id)?"...":"해설"}</button></div>)}</div>}
-              {nextChildFor(active)?<button className="sos-next-stage-cta ai-ready" type="button" onClick={()=>setActiveId(String(nextChildFor(active).id))}>{nextStageLabel(nextChildFor(active))} →</button>
-                :generationJobFor(active)&&["QUEUED","GENERATING"].includes(String(generationJobFor(active)?.status))?<div className="sos-ai-generation-wait"><b>AI 맞춤문항 준비 중</b><p>짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 이 화면은 45초마다 자동으로 상태를 확인하므로 그대로 두어도 되고, 나중에 다시 접속해 마무리해도 됩니다.</p><button disabled>{String(generationJobFor(active)?.status)==="GENERATING"?`${Number(generationJobFor(active)?.stage_index??0)}/${Number(generationJobFor(active)?.stage_total??8)} · ${String(generationJobFor(active)?.stage_message??"생성·검증 중")}`:"생성 대기 중"}</button><button type="button" className="sos-ai-check-now" disabled={loading} onClick={()=>void load()}>{loading?"확인 중...":"지금 확인"}</button></div>
-                :generationJobFor(active)&&String(generationJobFor(active)?.status)==="FAILED"?<div className="sos-ai-generation-wait"><b>AI 문항 생성 재시도 필요</b><p>이전 생성 작업이 중단되었습니다. 아래 버튼을 누르면 같은 단계부터 다시 생성합니다.</p><button className="sos-next-stage-cta ai-ready" type="button" disabled={!!busy} onClick={()=>void ensureNext(active,false)}>{busy===`next:${active.id}`?"재예약 중...":"AI 생성 다시 시도"}</button></div>
-                :expectedNextKind(active)?<button className="sos-next-stage-cta" type="button" disabled={!!busy} onClick={()=>void ensureNext(active,false)}>{busy===`next:${active.id}`?"예약 중...":"AI 맞춤문항 준비 예약"} →</button>
-                :null}
-            </div>:null}
-          </>}
-        </section>
-      </div>
-    )}
-
-    {solutionView?<div className="sos-solution-modal" role="dialog" aria-modal="true" onClick={()=>setSolutionView(null)}>
-      <article onClick={(e)=>e.stopPropagation()}>
-        <header>
-          <div><b>{solutionView.order}번 해설</b><span>내 답 {solutionView.studentAnswer||"-"} · 정답 {solutionView.correctAnswer||"-"}</span></div>
-          <button type="button" onClick={()=>setSolutionView(null)} aria-label="닫기">✕</button>
-        </header>
-        <div className="sos-solution-body">
-          {solutionView.solutionText
-            ?solutionView.solutionText.split(/\n+/).filter(Boolean).map((line:string,i:number)=><p key={i}>{line}</p>)
-            :solutionView.solutionImageUrl
-              ?<img src={solutionView.solutionImageUrl} alt={`${solutionView.order}번 해설`}/>
-              :<p className="sos-solution-empty">이 문항은 등록된 해설이 없습니다. 정답만 확인해 주세요.</p>}
+            {cycleRows.map((c: any) => (
+              <option key={c.id} value={c.id}>
+                {c.name} · {c.dateLabel}
+                {c.sessions.some((x: any) => isSosOpen(x))
+                  ? " · 진행중"
+                  : " · 완료"}
+              </option>
+            ))}
+          </select>
         </div>
-      </article>
-    </div>:null}
+        <div className="sos-now-task">
+          <span>
+            {selectedOpen
+              ? selectedIsPast
+                ? "밀린 SOS"
+                : "지금 해야 할 SOS"
+              : recoverableParent
+                ? "다음 SOS 준비"
+                : "이 회차 SOS 완료"}
+          </span>
+          <b>
+            {selectedOpen
+              ? sosStageLabel(selectedOpen)
+              : recoverableParent
+                ? expectedNextLabel(
+                    expectedNextKind(recoverableParent),
+                  ).replace(" 준비하기", "")
+                : selectedCompleted
+                  ? "모든 학습 완료"
+                  : "배정된 학습이 없습니다."}
+          </b>
+          <p>
+            {selectedOpen
+              ? `${selectedOpen.target_snapshot?.subunit ?? "소단원"} · ${Number(selectedOpen.correct_count ?? 0)}/${Number(selectedOpen.total_count ?? 0)} 정답/진행 기록`
+              : aiPreparing
+                ? "AI 맞춤문항을 준비하고 있습니다. 문항 생성 및 검증에는 짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 준비가 완료되면 READY로 변경됩니다. 나중에 다시 접속하여 남은 학습을 마무리해 주세요."
+                : aiFailed
+                  ? "이전 AI 문항 생성이 실패했습니다. 아래 버튼을 눌러 즉시 다시 예약할 수 있습니다."
+                  : recoverableParent
+                    ? "이전 단계가 완료되었습니다. 다음 AI 맞춤문항 생성 작업을 예약합니다."
+                    : selectedCompleted
+                      ? "지난 진단·훈련 결과를 아래에서 다시 확인할 수 있습니다."
+                      : "관리자가 SOS를 배정하면 이곳에 표시됩니다."}
+          </p>
+          {selectedOpen ? (
+            <button
+              type="button"
+              className={
+                (String(selectedOpen.cycle_kind) === "HOMEWORK" ||
+                  Number(selectedOpen.round_no) === 2) &&
+                String(selectedOpen.phase) === "TRAINING" &&
+                String(selectedOpen.status) === "ASSIGNED"
+                  ? "ai-ready"
+                  : ""
+              }
+              onClick={() => setActiveId(String(selectedOpen.id))}
+            >
+              {(String(selectedOpen.cycle_kind) === "HOMEWORK" ||
+                Number(selectedOpen.round_no) === 2) &&
+              String(selectedOpen.phase) === "TRAINING" &&
+              String(selectedOpen.status) === "ASSIGNED"
+                ? nextStageLabel(selectedOpen)
+                : "이어하기"}{" "}
+              →
+            </button>
+          ) : aiPreparing ? (
+            <button type="button" className="sos-ai-preparing" disabled>
+              {String(pendingAiJob?.status) === "GENERATING"
+                ? "AI 생성·검증 중"
+                : "AI 문항 준비 중"}
+            </button>
+          ) : recoverableParent ? (
+            <button
+              type="button"
+              className={aiFailed ? "ai-ready" : ""}
+              disabled={!!busy}
+              onClick={() => void ensureNext(recoverableParent, false)}
+            >
+              {busy === `next:${recoverableParent.id}`
+                ? "예약 중..."
+                : aiFailed
+                  ? "AI 생성 다시 시도"
+                  : "AI 맞춤문항 준비 예약"}{" "}
+              →
+            </button>
+          ) : null}
+        </div>
+        {backlogCycles.length ? (
+          <div className="sos-backlog">
+            <b>밀린 SOS</b>
+            <div>
+              {backlogCycles.map((c: any) => (
+                <button
+                  type="button"
+                  key={c.id}
+                  onClick={() => {
+                    setSelectedCycleId(String(c.id));
+                    setActiveId("");
+                  }}
+                >
+                  <span>{c.name}</span>
+                  <small>{c.dateLabel}</small>
+                  <em>
+                    {sosStageLabel(c.sessions.find((x: any) => isSosOpen(x)))}
+                  </em>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </section>
+      <section className="sos-live-summary">
+        <article>
+          <span>대기·진행</span>
+          <b>
+            {
+              visibleSessions.filter((x: any) =>
+                ["ASSIGNED", "IN_PROGRESS", "RETRAIN"].includes(
+                  String(x.status),
+                ),
+              ).length
+            }
+          </b>
+          <small>진단/훈련</small>
+        </article>
+        <article>
+          <span>완료</span>
+          <b>
+            {
+              visibleSessions.filter((x: any) =>
+                ["COMPLETED", "PASSED"].includes(String(x.status)),
+              ).length
+            }
+          </b>
+          <small>누적 세션</small>
+        </article>
+        <article>
+          <span>소단원 미터</span>
+          <b>{latestMeters.length}</b>
+          <small>측정된 영역</small>
+        </article>
+      </section>
 
-    {latestMeters.length?<section className="sos-my-meters"><h3>나의 소단원 바로미터</h3><div>{latestMeters.slice(0,12).map((m:any)=><article key={m.subunit_key}><span>{m.subject}</span><b>{m.subunit}</b><strong>{Number(m.difficulty_meter).toFixed(2)}</strong><i><em style={{width:`${Math.max(0,Math.min(100,(Number(m.difficulty_meter)-1)/7*100))}%`}}/></i><small>{m.sample_count}문항 반영</small></article>)}</div></section>:null}
-  </div>;
+      {notice ? <div className="sos-live-notice">{notice}</div> : null}
+
+      {loading ? (
+        <MATHPOOHLoader
+          title="진단·훈련을 가져오는 중입니다"
+          detail="나의 SOS 진행상황, 바로미터, 진단·훈련 결과를 준비하고 있습니다."
+          kind="loading"
+        />
+      ) : (
+        <div className="sos-live-layout">
+          <aside className="sos-session-list">
+            <h3>나의 진단·훈련</h3>
+            {visibleSessions.map((session: any) => (
+              <button
+                key={session.id}
+                className={`${String(session.id) === String(active?.id) ? "selected" : ""} ${session.phase === "DIAGNOSIS" ? "stage-diagnosis" : Number(session.round_no) === 2 ? "stage-training2" : "stage-training1"}`}
+                onClick={() => setActiveId(String(session.id))}
+              >
+                <div>
+                  <b>
+                    {session.phase === "DIAGNOSIS"
+                      ? `진단 ${session.round_no}차`
+                      : session.cycle_kind === "HOMEWORK"
+                        ? "AI 유사문항 3제 굳히기"
+                        : Number(session.round_no) === 2
+                          ? "2차 AI 유사훈련"
+                          : "1차 맞춤훈련"}
+                  </b>
+                  <span>{session.target_snapshot?.subunit ?? "소단원"}</span>
+                </div>
+                <em>
+                  {session.status === "ASSIGNED" &&
+                  (String(session.cycle_kind) === "HOMEWORK" ||
+                    Number(session.round_no) === 2) &&
+                  String(session.phase) === "TRAINING"
+                    ? "READY"
+                    : session.status === "ASSIGNED"
+                      ? "시작 전"
+                      : session.status === "IN_PROGRESS"
+                        ? "진행 중"
+                        : session.status === "PASSED"
+                          ? "통과"
+                          : session.status === "RETRAIN"
+                            ? "오답 필수"
+                            : "완료"}
+                </em>
+                <small>
+                  {session.correct_count === null ||
+                  session.correct_count === undefined
+                    ? `${session.total_count}문항`
+                    : `${session.correct_count}/${session.total_count} 정답`}
+                </small>
+              </button>
+            ))}
+            {!visibleSessions.length ? (
+              <p>선택한 회차에 배정된 진단·훈련이 없습니다.</p>
+            ) : null}
+          </aside>
+
+          <section
+            className={`sos-session-main ${active?.phase === "DIAGNOSIS" ? "theme-diagnosis" : active?.round_no === 2 ? "theme-training2" : "theme-training1"}`}
+          >
+            {!active ? (
+              <div className="student-section-empty">
+                <b>진행할 진단·훈련을 선택하세요.</b>
+                <span>관리자가 SOS 진단을 생성하면 이곳에 표시됩니다.</span>
+              </div>
+            ) : (
+              <>
+                <SosFlowTree
+                  session={active}
+                  sessions={visibleSessions}
+                  onSelect={(id) => setActiveId(id)}
+                />
+                <header className="sos-session-head">
+                  <div>
+                    <small>
+                      {active.phase === "DIAGNOSIS"
+                        ? "SOS DIAGNOSIS"
+                        : "SOS TRAINING"}
+                    </small>
+                    <h3>
+                      {active.target_snapshot?.subunit ?? "소단원"} ·{" "}
+                      {active.phase === "DIAGNOSIS"
+                        ? `진단 ${active.round_no}차`
+                        : active.cycle_kind === "HOMEWORK"
+                          ? "AI 유사문항 3제 굳히기"
+                          : active.round_no === 2
+                            ? "2차 AI 유사훈련"
+                            : "1차 맞춤훈련"}
+                    </h3>
+                    <p>
+                      {active.target_snapshot?.subject ?? ""}{" "}
+                      {active.target_snapshot?.majorUnit
+                        ? `· ${active.target_snapshot.majorUnit}`
+                        : ""}{" "}
+                      · 시작 미터{" "}
+                      {Number(
+                        active.target_snapshot?.studentDifficultyMeter ?? 0,
+                      ).toFixed(2)}
+                    </p>
+                  </div>
+                  <span>{active.total_count}문항</span>
+                </header>
+
+                {active.status === "ASSIGNED" ? (
+                  <div className="sos-start-box sos-diagnosis-guide">
+                    <b>
+                      {active.phase === "DIAGNOSIS"
+                        ? "SOS 진단 응시 안내"
+                        : active.cycle_kind === "HOMEWORK"
+                          ? "AI 유사문항 3제 굳히기"
+                          : "현재 수준에 맞춘 10문항 훈련입니다."}
+                    </b>
+                    {active.phase === "DIAGNOSIS" ? (
+                      <div className="sos-guide-list">
+                        <p>
+                          진단은 현재 취약지점을 정확하게 찾기 위한 평가입니다.
+                        </p>
+                        <p>
+                          <strong>
+                            풀이 사진을 촬영할 수 있는 휴대폰·태블릿 등의 기기를
+                            미리 준비
+                          </strong>
+                          해 주세요.
+                        </p>
+                        <p>
+                          각 문항은 <strong>10초 준비화면 후 공개</strong>되며,
+                          공개 순간부터 답안 확정까지 풀이시간이 기록됩니다.
+                        </p>
+                        <p>
+                          답안을 확정하면 수정할 수 없으며, 이어서{" "}
+                          <strong>종이에 작성한 풀이 사진을 반드시 제출</strong>
+                          해야 합니다.
+                        </p>
+                        <p>
+                          답안 확정부터 풀이사진 제출까지 걸린 시간도 별도로
+                          기록됩니다.
+                        </p>
+                        <p className="warn">
+                          응시 중 다른 웹페이지·앱으로 이동하면 화면 이탈 기록이
+                          저장되고 즉시 경고가 표시됩니다.
+                        </p>
+                      </div>
+                    ) : active.cycle_kind === "HOMEWORK" ? (
+                      <div className="sos-guide-list">
+                        <p>
+                          <strong>원문 기반 제한변형</strong>으로 만든 AI
+                          유사문항 3제를 풀어 학습을 굳힙니다.
+                        </p>
+                        <p>
+                          <strong>시간 제한은 없습니다.</strong> 충분히 생각해서
+                          풀어도 됩니다.
+                        </p>
+                        <p>
+                          최초 정답과 오답 교정 완료 여부는 기록되지만{" "}
+                          <strong>바로미터에는 반영되지 않습니다.</strong>
+                        </p>
+                        <p>
+                          틀리면 기존과 동일하게 힌트① → 재도전 → 힌트② → 재도전
+                          → 정답·핵심풀이 확인 순서로 교정합니다.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="sos-guide-list">
+                        <p>
+                          <strong>AI 취약점:</strong>{" "}
+                          {active.weakness_snapshot?.weaknessTitle ||
+                            active.target_snapshot?.weaknessTitle ||
+                            "맞춤 보완 영역"}
+                        </p>
+                        <p>
+                          {active.weakness_snapshot?.weaknessDetail ||
+                            active.target_snapshot?.weaknessDetail ||
+                            "취약점을 집중 또는 포함하는 문항으로 훈련합니다."}
+                        </p>
+                        <p>
+                          문항별 <strong>정오답과 풀이시간</strong>이 바로미터에
+                          반영됩니다.
+                        </p>
+                        <p>
+                          틀린 문항은 훈련 종료 전{" "}
+                          <strong>오답을 반드시 다시 풉니다.</strong>
+                        </p>
+                        {Number(active.baseline_meter) > 0 &&
+                        Number(active.goal_meter) > 0 ? (
+                          <>
+                            <p>
+                              이번 목표:{" "}
+                              <strong>
+                                {Number(active.baseline_meter).toFixed(2)} →{" "}
+                                {Number(active.goal_meter).toFixed(2)}
+                              </strong>
+                            </p>
+                            <small className="sos-term-help">
+                              바로미터는 이 취약영역의 현재 실력을 보여주는
+                              지표입니다. 훈련을 통해 목표선까지 끌어올리는 것이
+                              이번 SOS의 목표입니다.
+                            </small>
+                          </>
+                        ) : null}
+                      </div>
+                    )}
+                    <button
+                      disabled={!!busy}
+                      onClick={() => void start(active)}
+                    >
+                      {busy === "start"
+                        ? "준비 중..."
+                        : active.phase === "DIAGNOSIS"
+                          ? "안내 확인 · 진단 시작"
+                          : active.cycle_kind === "HOMEWORK"
+                            ? "3제 굳히기 시작"
+                            : active.round_no === 2
+                              ? "2차 훈련 시작"
+                              : "1차 훈련 시작"}
+                    </button>
+                  </div>
+                ) : null}
+
+                {active.status === "IN_PROGRESS" &&
+                active.phase === "DIAGNOSIS" ? (
+                  <SosDiagnosisRunner
+                    session={active}
+                    onNotice={setNotice}
+                    onCompleted={async (json: any) => {
+                      if (json?.nextStep === "SECOND_DIAGNOSIS_ASSIGNED")
+                        setNotice(
+                          `진단 ${json.correct}/${json.total} 정답 · 정오답과 풀이시간 분석 완료 · 2차 진단 3문항으로 자동 이어집니다.`,
+                        );
+                      else if (json?.nextStep === "FIRST_TRAINING_ASSIGNED")
+                        setNotice(
+                          `진단 ${json.correct}/${json.total} 정답 · 보완 신호를 확인해 1차 맞춤훈련 10문항을 자동 준비했습니다.`,
+                        );
+                      else if (
+                        json?.nextStep === "DIAGNOSIS_COMPLETE_NO_WEAKNESS"
+                      )
+                        setNotice(
+                          "1·2차 진단 전체에서 오답과 시간취약이 확인되지 않아 이번 SOS를 완료했습니다.",
+                        );
+                      else if (Number(json?.wrongCount ?? 0) > 0)
+                        setNotice(
+                          `진단 ${json.correct}/${json.total} 정답 · 오답 ${json.wrongCount}문항을 먼저 교정해 주세요.`,
+                        );
+                      else
+                        setNotice(
+                          json?.message ||
+                            "진단 분석이 완료되었습니다. 다음 학습을 확인합니다.",
+                        );
+                      await refreshAfterStage(json);
+                    }}
+                  />
+                ) : null}
+
+                {active.status === "IN_PROGRESS" &&
+                active.phase !== "DIAGNOSIS" ? (
+                  <SosTrainingRunner
+                    session={active}
+                    onNotice={setNotice}
+                    onCompleted={async (json: any) => {
+                      if (json.homework)
+                        setNotice(
+                          `3제 굳히기 풀이 완료 · 최초정답 ${json.correct}/${json.total} · ${json.wrongCount ? `오답 ${json.wrongCount}문항을 교정해 주세요.` : "오답 없이 완료했습니다."} · 바로미터 미반영`,
+                        );
+                      else if (json.status === "RETRAIN")
+                        setNotice(
+                          `${Number(active.round_no) === 2 ? "2차" : "1차"} 훈련 완료 · ${json.correct}/${json.total} 정답 · 오답 ${json.wrongCount}문항을 반드시 다시 풀어야 합니다.`,
+                        );
+                      else
+                        setNotice(
+                          `훈련 완료 · 바로미터 ${Number(json.meter ?? 0).toFixed(2)} / 목표 ${Number(json.goal ?? 0).toFixed(2)}`,
+                        );
+                      await refreshAfterStage(json);
+                    }}
+                  />
+                ) : null}
+
+                {active.status === "RETRAIN" && active.phase === "DIAGNOSIS" ? (
+                  <SosTrainingReview
+                    session={active}
+                    onNotice={setNotice}
+                    onCompleted={async (json: any) => {
+                      const w = json?.ai?.weakness;
+                      setNotice(
+                        json?.ai?.created
+                          ? `진단 교정 완료 · AI가 '${w?.weaknessTitle || "취약점"}'을 확인했습니다. 1차 맞춤훈련 10문항이 준비되었습니다.`
+                          : json?.ai?.nextStep === "SECOND_DIAGNOSIS_ASSIGNED"
+                            ? "1차 진단에서 뚜렷한 취약점이 없어 바로미터가 가장 낮은 다른 영역의 2차 진단 3문항이 자동 준비되었습니다."
+                            : json?.ai?.nextStep ===
+                                "DIAGNOSIS_COMPLETE_NO_WEAKNESS"
+                              ? "1·2차 진단 전체에서 오답과 시간취약이 확인되지 않았습니다. 이번 SOS 진단을 완료했습니다."
+                              : json?.ai?.error
+                                ? `진단 교정 완료 · AI 분석 확인 필요 (${json.ai.error})`
+                                : "진단 교정과 AI 분석이 완료되었습니다.",
+                      );
+                      await refreshAfterStage(json);
+                    }}
+                  />
+                ) : null}
+
+                {active.status === "RETRAIN" && active.phase === "TRAINING" ? (
+                  <SosTrainingReview
+                    session={active}
+                    onNotice={setNotice}
+                    onCompleted={async (json: any) => {
+                      if (String(active.cycle_kind) === "HOMEWORK")
+                        setNotice(
+                          "AI 유사문항 3제 굳히기와 오답 교정까지 모두 완료했습니다.",
+                        );
+                      else if (Number(active.round_no) === 2)
+                        setNotice("2차 훈련 오답 교정까지 모두 완료했습니다.");
+                      else
+                        setNotice(
+                          json.passed
+                            ? json.passReason === "SCORE_90"
+                              ? `오답 완료 · 1차훈련 9/10 이상 통과 · 현재 바로미터 ${Number(json.meter).toFixed(2)} / 목표 ${Number(json.goal).toFixed(2)} · AI 유사문항 3제 굳히기 3문항이 생성됩니다.`
+                              : `오답 완료 · 목표 바로미터 달성 ${Number(json.meter).toFixed(2)} ≥ ${Number(json.goal).toFixed(2)} · AI 유사문항 3제 굳히기 3문항이 생성됩니다.`
+                            : `오답 완료 · 현재 ${Number(json.meter).toFixed(2)} / 목표 ${Number(json.goal).toFixed(2)} · 2차 AI 유사훈련 10문항이 생성됩니다.`,
+                        );
+                      await refreshAfterStage(json);
+                    }}
+                  />
+                ) : null}
+
+                {finalCompleted ? (
+                  <SosFinalCompletion
+                    terminal={active}
+                    sessions={visibleSessions}
+                    meters={latestMeters}
+                    onSelect={(id) => setActiveId(id)}
+                  />
+                ) : null}
+
+                {!finalCompleted &&
+                ["COMPLETED", "PASSED"].includes(String(active.status)) ? (
+                  <div className="sos-complete-box">
+                    <b>
+                      {active.status === "PASSED"
+                        ? "훈련 통과"
+                        : active.phase === "DIAGNOSIS"
+                          ? "진단 완료"
+                          : "학습 완료"}
+                    </b>
+                    <strong>
+                      {active.correct_count ?? 0}/{active.total_count}
+                    </strong>
+                    <p>
+                      {active.phase === "DIAGNOSIS"
+                        ? "진단·오답 교정이 완료되었습니다. 이 최초 정오답과 풀이시간·풀이사진은 그대로 보존되며 AI 취약점 분석의 근거가 됩니다."
+                        : active.status === "PASSED"
+                          ? "이 소단원 훈련을 통과했습니다."
+                          : "이번 훈련 결과가 기록되었습니다."}
+                    </p>
+                    {active.phase === "DIAGNOSIS" ? (
+                      <div className="sos-diagnosis-result-list">
+                        {activeItems.map((item: any, index: number) => (
+                          <article
+                            key={item.id}
+                            className={
+                              item.isCorrect === true ? "correct" : "wrong"
+                            }
+                          >
+                            <div className="result-no">
+                              <b>{index + 1}번</b>
+                              <em>
+                                {item.isCorrect === true ? "정답" : "오답"}
+                              </em>
+                            </div>
+                            <div className="result-answer">
+                              <span>
+                                내 답{" "}
+                                <strong>{item.studentAnswer || "-"}</strong>
+                              </span>
+                              <span>
+                                정답{" "}
+                                <strong>
+                                  {item.problem?.correctAnswer || "-"}
+                                </strong>
+                              </span>
+                            </div>
+                            <div className="result-time">
+                              <span>
+                                풀이시간{" "}
+                                <strong>
+                                  {Math.floor(
+                                    Number(item.responseSeconds ?? 0) / 60,
+                                  )}
+                                  :
+                                  {String(
+                                    Number(item.responseSeconds ?? 0) % 60,
+                                  ).padStart(2, "0")}
+                                </strong>
+                              </span>
+                              <span>
+                                사진제출{" "}
+                                <strong>
+                                  {Math.floor(
+                                    Number(item.photoSubmitSeconds ?? 0) / 60,
+                                  )}
+                                  :
+                                  {String(
+                                    Number(item.photoSubmitSeconds ?? 0) % 60,
+                                  ).padStart(2, "0")}
+                                </strong>
+                              </span>
+                            </div>
+                            {item.isCorrect === false ? (
+                              <div className="student-review-history">
+                                <b>
+                                  {item.reviewCompleted
+                                    ? item.reviewIsCorrect === true
+                                      ? "✓ 스스로 오답 교정"
+                                      : "✓ 정답·풀이 확인 완료"
+                                    : "오답 교정 미완료"}
+                                </b>
+                                <span>
+                                  재도전 {item.reviewAttemptCount ?? 0}회 · 힌트{" "}
+                                  {item.reviewHintLevel ?? 0}단계
+                                </span>
+                              </div>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="sos-solution-btn"
+                              disabled={solutionBusy === String(item.id)}
+                              onClick={() =>
+                                void openSolution(
+                                  String(active.id),
+                                  item,
+                                  index + 1,
+                                )
+                              }
+                            >
+                              {solutionBusy === String(item.id)
+                                ? "불러오는 중..."
+                                : "해설 보기"}
+                            </button>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="sos-report-grid">
+                        {activeItems.map((item: any) => (
+                          <div
+                            key={item.id}
+                            className={`sos-report-item ${item.isCorrect === true ? "correct" : "wrong"} ${item.reviewAnswer ? "reviewed" : ""}`}
+                          >
+                            <span className="num">{item.order}번</span>
+                            <b>{item.isCorrect === true ? "O" : "X"}</b>
+                            <small>
+                              {Math.floor(
+                                Number(item.responseSeconds ?? 0) / 60,
+                              )}
+                              :
+                              {String(
+                                Number(item.responseSeconds ?? 0) % 60,
+                              ).padStart(2, "0")}
+                            </small>
+                            <em>
+                              {item.isCorrect === true
+                                ? "정답"
+                                : item.reviewAnswer
+                                  ? "오답완료 ✓"
+                                  : "오답"}
+                            </em>
+                            <button
+                              type="button"
+                              className="sos-solution-btn"
+                              disabled={solutionBusy === String(item.id)}
+                              onClick={() =>
+                                void openSolution(
+                                  String(active.id),
+                                  item,
+                                  Number(item.order),
+                                )
+                              }
+                            >
+                              {solutionBusy === String(item.id)
+                                ? "..."
+                                : "해설"}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {nextChildFor(active) ? (
+                      <button
+                        className="sos-next-stage-cta ai-ready"
+                        type="button"
+                        onClick={() =>
+                          setActiveId(String(nextChildFor(active).id))
+                        }
+                      >
+                        {nextStageLabel(nextChildFor(active))} →
+                      </button>
+                    ) : generationJobFor(active) &&
+                      ["QUEUED", "GENERATING"].includes(
+                        String(generationJobFor(active)?.status),
+                      ) ? (
+                      <div className="sos-ai-generation-wait">
+                        <b>AI 맞춤문항 준비 중</b>
+                        <p>
+                          짧게는 10분, 길게는 30분 이상 소요될 수 있습니다. 이
+                          화면은 45초마다 자동으로 상태를 확인하므로 그대로
+                          두어도 되고, 나중에 다시 접속해 마무리해도 됩니다.
+                        </p>
+                        <button disabled>
+                          {String(generationJobFor(active)?.status) ===
+                          "GENERATING"
+                            ? `${Number(generationJobFor(active)?.stage_index ?? 0)}/${Number(generationJobFor(active)?.stage_total ?? 8)} · ${String(generationJobFor(active)?.stage_message ?? "생성·검증 중")}`
+                            : "생성 대기 중"}
+                        </button>
+                        <button
+                          type="button"
+                          className="sos-ai-check-now"
+                          disabled={loading}
+                          onClick={() => void load()}
+                        >
+                          {loading ? "확인 중..." : "지금 확인"}
+                        </button>
+                      </div>
+                    ) : generationJobFor(active) &&
+                      String(generationJobFor(active)?.status) === "FAILED" ? (
+                      <div className="sos-ai-generation-wait">
+                        <b>AI 문항 생성 재시도 필요</b>
+                        <p>
+                          이전 생성 작업이 중단되었습니다. 아래 버튼을 누르면
+                          같은 단계부터 다시 생성합니다.
+                        </p>
+                        <button
+                          className="sos-next-stage-cta ai-ready"
+                          type="button"
+                          disabled={!!busy}
+                          onClick={() => void ensureNext(active, false)}
+                        >
+                          {busy === `next:${active.id}`
+                            ? "재예약 중..."
+                            : "AI 생성 다시 시도"}
+                        </button>
+                      </div>
+                    ) : expectedNextKind(active) ? (
+                      <button
+                        className="sos-next-stage-cta"
+                        type="button"
+                        disabled={!!busy}
+                        onClick={() => void ensureNext(active, false)}
+                      >
+                        {busy === `next:${active.id}`
+                          ? "예약 중..."
+                          : "AI 맞춤문항 준비 예약"}{" "}
+                        →
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </section>
+        </div>
+      )}
+
+      {solutionView ? (
+        <div
+          className="sos-solution-modal"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setSolutionView(null)}
+        >
+          <article onClick={(e) => e.stopPropagation()}>
+            <header>
+              <div>
+                <b>{solutionView.order}번 해설</b>
+                <span>
+                  내 답 {solutionView.studentAnswer || "-"} · 정답{" "}
+                  {solutionView.correctAnswer || "-"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSolutionView(null)}
+                aria-label="닫기"
+              >
+                ✕
+              </button>
+            </header>
+            <div className="sos-solution-body">
+              {solutionView.solutionText ? (
+                solutionView.solutionText
+                  .split(/\n+/)
+                  .filter(Boolean)
+                  .map((line: string, i: number) => <p key={i}>{line}</p>)
+              ) : solutionView.solutionImageUrl ? (
+                <img
+                  src={solutionView.solutionImageUrl}
+                  alt={`${solutionView.order}번 해설`}
+                />
+              ) : (
+                <p className="sos-solution-empty">
+                  이 문항은 등록된 해설이 없습니다. 정답만 확인해 주세요.
+                </p>
+              )}
+            </div>
+          </article>
+        </div>
+      ) : null}
+
+      {latestMeters.length ? (
+        <section className="sos-my-meters">
+          <h3>나의 소단원 바로미터</h3>
+          <div>
+            {latestMeters.slice(0, 12).map((m: any) => (
+              <article key={m.subunit_key}>
+                <span>{m.subject}</span>
+                <b>{m.subunit}</b>
+                <strong>{Number(m.difficulty_meter).toFixed(2)}</strong>
+                <i>
+                  <em
+                    style={{
+                      width: `${Math.max(0, Math.min(100, ((Number(m.difficulty_meter) - 1) / 7) * 100))}%`,
+                    }}
+                  />
+                </i>
+                <small>{m.sample_count}문항 반영</small>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
 }
 
 export default function StudentHome() {
@@ -858,7 +2245,9 @@ export default function StudentHome() {
   const [error, setError] = useState("");
   const [resultExam, setResultExam] = useState<Exam | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [selectedTower, setSelectedTower] = useState<LandmarkSubject | null>(null);
+  const [selectedTower, setSelectedTower] = useState<LandmarkSubject | null>(
+    null,
+  );
   const [activeSection, setActiveSection] = useState<StudentSection>("home");
   const [profileOpen, setProfileOpen] = useState(false);
   const [examConsent, setExamConsent] = useState<Exam | null>(null);
@@ -866,7 +2255,9 @@ export default function StudentHome() {
   const [waitingExam, setWaitingExam] = useState<Exam | null>(null);
   const load = useCallback(async () => {
     // F5/최초 진입 시 portal이 정오답 기준 최종점수를 반환한다.
-    const portalResponse = await fetch("/api/student/portal", { cache: "no-store" });
+    const portalResponse = await fetch("/api/student/portal", {
+      cache: "no-store",
+    });
     if (portalResponse.status === 403) return window.location.replace("/admin");
     const data = await portalResponse.json();
     if (!portalResponse.ok)
@@ -880,8 +2271,22 @@ export default function StudentHome() {
   }, [load]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("matspu-student-section") as StudentSection | null;
-    if (saved && ["home", "apply", "exams", "strategy", "scores", "learning"].includes(saved)) setActiveSection(saved);
+    const saved = window.localStorage.getItem(
+      "matspu-student-section",
+    ) as StudentSection | null;
+    if (
+      saved &&
+      [
+        "home",
+        "apply",
+        "exams",
+        "strategy",
+        "scores",
+        "learning",
+        "guide",
+      ].includes(saved)
+    )
+      setActiveSection(saved);
   }, []);
   const moveSection = (section: StudentSection) => {
     setActiveSection(section);
@@ -912,7 +2317,12 @@ export default function StudentHome() {
     await fetch("/api/student/portal", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "activity-log", examId: exam.id, eventType: "exam_consent", detail: "응시 안내 동의" }),
+      body: JSON.stringify({
+        action: "activity-log",
+        examId: exam.id,
+        eventType: "exam_consent",
+        detail: "응시 안내 동의",
+      }),
       keepalive: true,
     });
     setExamConsent(null);
@@ -921,7 +2331,12 @@ export default function StudentHome() {
       await fetch("/api/student/portal", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "activity-log", examId: exam.id, eventType: "exam_waiting", detail: "관리자 시험 시작 대기" }),
+        body: JSON.stringify({
+          action: "activity-log",
+          examId: exam.id,
+          eventType: "exam_waiting",
+          detail: "관리자 시험 시작 대기",
+        }),
         keepalive: true,
       });
       setWaitingExam(exam);
@@ -949,21 +2364,31 @@ export default function StudentHome() {
     const end = exam.close_at
       ? new Date(exam.close_at).getTime()
       : new Date(data.attempt.started_at).getTime() + exam.time_limit * 60_000;
-    setRemaining(exam.paused_at
-      ? Number(exam.paused_remaining_seconds ?? 0)
-      : Math.max(0, Math.ceil((end - Date.now()) / 1000)));
+    setRemaining(
+      exam.paused_at
+        ? Number(exam.paused_remaining_seconds ?? 0)
+        : Math.max(0, Math.ceil((end - Date.now()) / 1000)),
+    );
   };
 
   useEffect(() => {
     if (!waitingExam) return;
     const check = async () => {
-      const response = await fetch("/api/student/portal", { cache: "no-store" });
+      const response = await fetch("/api/student/portal", {
+        cache: "no-store",
+      });
       if (!response.ok) return;
       const data = await response.json();
-      const current = (data.exams ?? []).find((item: Exam) => item.id === waitingExam.id);
+      const current = (data.exams ?? []).find(
+        (item: Exam) => item.id === waitingExam.id,
+      );
       if (!current) return;
       setPortal(data);
-      if (current.close_at && !current.paused_at && new Date(current.close_at).getTime() > Date.now()) {
+      if (
+        current.close_at &&
+        !current.paused_at &&
+        new Date(current.close_at).getTime() > Date.now()
+      ) {
         setWaitingExam(null);
         void startExam(current);
       }
@@ -1002,7 +2427,13 @@ export default function StudentHome() {
 
   const save = useCallback(
     async (silent = true) => {
-      if (!activeExam || !attempt || attempt.status !== "in_progress" || examPaused) return;
+      if (
+        !activeExam ||
+        !attempt ||
+        attempt.status !== "in_progress" ||
+        examPaused
+      )
+        return;
       setSaveState("저장 중...");
       const response = await fetch("/api/student/portal", {
         method: "POST",
@@ -1021,10 +2452,9 @@ export default function StudentHome() {
 
   useEffect(() => {
     if (!activeExam || !attempt) return;
-    const timer = window.setInterval(
-      () => { if (!examPaused) setRemaining((value) => Math.max(0, value - 1)); },
-      1000,
-    );
+    const timer = window.setInterval(() => {
+      if (!examPaused) setRemaining((value) => Math.max(0, value - 1));
+    }, 1000);
     const autosave = window.setInterval(() => void save(), 10000);
     return () => {
       clearInterval(timer);
@@ -1074,7 +2504,8 @@ export default function StudentHome() {
   // 관리자 pause/force-submit 실시간 동기화는 시험 안정화를 위해 일시 비활성화한다.
 
   useEffect(() => {
-    if (activeExam && attempt && !examPaused && remaining === 0) void submit(true);
+    if (activeExam && attempt && !examPaused && remaining === 0)
+      void submit(true);
   }, [activeExam, attempt, examPaused, remaining, submit]);
 
   useEffect(() => {
@@ -1084,15 +2515,27 @@ export default function StudentHome() {
       void fetch("/api/student/portal", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "activity-log", examId: activeExam.id, eventType, detail }),
+        body: JSON.stringify({
+          action: "activity-log",
+          examId: activeExam.id,
+          eventType,
+          detail,
+        }),
         keepalive: true,
       });
     };
     const onVisibility = () => {
-      if (document.hidden) { hiddenAt = Date.now(); log("page_hidden", "시험 화면 이탈"); }
-      else {
-        const seconds = hiddenAt ? Math.max(1, Math.round((Date.now() - hiddenAt) / 1000)) : 0;
-        log("page_visible", seconds ? `${seconds}초 후 복귀` : "시험 화면 복귀");
+      if (document.hidden) {
+        hiddenAt = Date.now();
+        log("page_hidden", "시험 화면 이탈");
+      } else {
+        const seconds = hiddenAt
+          ? Math.max(1, Math.round((Date.now() - hiddenAt) / 1000))
+          : 0;
+        log(
+          "page_visible",
+          seconds ? `${seconds}초 후 복귀` : "시험 화면 복귀",
+        );
         hiddenAt = 0;
       }
     };
@@ -1163,16 +2606,22 @@ export default function StudentHome() {
         kind: "diagnosis",
         eyebrow: "NEXT STEP",
         title: "SOS 진단을 받으시기 바랍니다.",
-        description: "진단을 통해 현재 부족한 개념과 문제 유형을 먼저 확인합니다.",
+        description:
+          "진단을 통해 현재 부족한 개념과 문제 유형을 먼저 확인합니다.",
         action: "SOS 공략 확인",
         section: "strategy" as StudentSection,
       };
     }
     const latest = submitted[0];
-    const submittedDate = new Date(latest.attempt?.submitted_at ?? latest.exam_date);
+    const submittedDate = new Date(
+      latest.attempt?.submitted_at ?? latest.exam_date,
+    );
     const todayDate = new Date(`${today}T00:00:00+09:00`);
     const latestDate = new Date(`${seoulDate(submittedDate)}T00:00:00+09:00`);
-    const daysSince = Math.max(0, Math.floor((todayDate.getTime() - latestDate.getTime()) / 86400000));
+    const daysSince = Math.max(
+      0,
+      Math.floor((todayDate.getTime() - latestDate.getTime()) / 86400000),
+    );
     if (daysSince <= 2) {
       return {
         kind: "diagnosis",
@@ -1187,23 +2636,40 @@ export default function StudentHome() {
       kind: "training",
       eyebrow: "TRAINING DAY",
       title: "SOS 훈련을 하시기 바랍니다.",
-      description: "진단 결과에 맞춰 배정된 훈련을 진행하고 취약 유형을 보완하세요.",
+      description:
+        "진단 결과에 맞춰 배정된 훈련을 진행하고 취약 유형을 보완하세요.",
       action: "훈련 시작",
       section: "strategy" as StudentSection,
     };
   }, [portal]);
-  const submittedExams = useMemo(() =>
-    (portal?.exams ?? [])
-      .filter((exam) => exam.attempt?.status === "submitted")
-      .sort((a, b) => String(b.attempt?.submitted_at ?? b.exam_date).localeCompare(String(a.attempt?.submitted_at ?? a.exam_date))),
+  const submittedExams = useMemo(
+    () =>
+      (portal?.exams ?? [])
+        .filter((exam) => exam.attempt?.status === "submitted")
+        .sort((a, b) =>
+          String(b.attempt?.submitted_at ?? b.exam_date).localeCompare(
+            String(a.attempt?.submitted_at ?? a.exam_date),
+          ),
+        ),
     [portal],
   );
   const scoreAverage = submittedExams.length
-    ? Math.round(submittedExams.reduce((sum, exam) => sum + Number(exam.attempt?.score ?? 0), 0) / submittedExams.length)
+    ? Math.round(
+        submittedExams.reduce(
+          (sum, exam) => sum + Number(exam.attempt?.score ?? 0),
+          0,
+        ) / submittedExams.length,
+      )
     : 0;
   const recentScore = Number(submittedExams[0]?.attempt?.score ?? 0);
-  const bestScore = submittedExams.length ? Math.max(...submittedExams.map((exam) => Number(exam.attempt?.score ?? 0))) : 0;
-  const subjectCards = (["대수", "미적분1", "확률과통계"] as LandmarkSubject[]).map((subject) => ({
+  const bestScore = submittedExams.length
+    ? Math.max(
+        ...submittedExams.map((exam) => Number(exam.attempt?.score ?? 0)),
+      )
+    : 0;
+  const subjectCards = (
+    ["대수", "미적분1", "확률과통계"] as LandmarkSubject[]
+  ).map((subject) => ({
     subject,
     floor: landmark.subjects?.[subject]?.floors ?? 0,
     best: landmark.subjects?.[subject]?.best ?? 0,
@@ -1229,7 +2695,11 @@ export default function StudentHome() {
   if (!portal)
     return (
       <main className="student-loading">
-        <MATHPOOHLoader title="학생 페이지를 준비하고 있습니다..." kind="loading" compact />
+        <MATHPOOHLoader
+          title="학생 페이지를 준비하고 있습니다..."
+          kind="loading"
+          compact
+        />
       </main>
     );
   // SOS280: 초기 비밀번호(전화번호 뒤 4자리 조합)를 아직 바꾸지 않았으면
@@ -1239,25 +2709,56 @@ export default function StudentHome() {
     return (
       <main className="student-loading">
         <strong>비밀번호를 먼저 변경해 주세요</strong>
-        <p style={{ margin: "10px 0 18px", color: "#5c6a62", fontSize: 14, lineHeight: 1.6, textAlign: "center" }}>
-          처음 받은 비밀번호는 전화번호로 쉽게 추측할 수 있습니다.<br />
-          내 학습 기록을 지키려면 나만 아는 비밀번호로 바꿔야 합니다.
+        <p
+          style={{
+            margin: "10px 0 18px",
+            color: "#5c6a62",
+            fontSize: 14,
+            lineHeight: 1.6,
+            textAlign: "center",
+          }}
+        >
+          처음 받은 비밀번호는 전화번호로 쉽게 추측할 수 있습니다.
+          <br />내 학습 기록을 지키려면 나만 아는 비밀번호로 바꿔야 합니다.
         </p>
-        <button onClick={() => { window.location.href = "/password"; }}>비밀번호 변경하기</button>
-        <button onClick={() => void signOut()} style={{ background: "transparent", color: "#7b857f", marginTop: 8 }}>로그아웃</button>
+        <button
+          onClick={() => {
+            window.location.href = "/password";
+          }}
+        >
+          비밀번호 변경하기
+        </button>
+        <button
+          onClick={() => void signOut()}
+          style={{ background: "transparent", color: "#7b857f", marginTop: 8 }}
+        >
+          로그아웃
+        </button>
       </main>
     );
   if (waitingExam)
     return (
       <main className="exam-waiting-room">
         <section>
-          <div className="waiting-pulse"><i /><i /><i /></div>
+          <div className="waiting-pulse">
+            <i />
+            <i />
+            <i />
+          </div>
           <small>MATHPOOH SOS · 시험 대기실</small>
           <h1>{waitingExam.title}</h1>
           <strong>시험 시작을 기다리고 있습니다.</strong>
-          <p>관리자가 시험을 시작하면 별도의 새로고침 없이 자동으로 시험 화면이 열립니다.</p>
-          <div><span>응시 동의 완료</span><b>대기 중</b></div>
-          <button type="button" onClick={() => setWaitingExam(null)}>시험 목록으로 돌아가기</button>
+          <p>
+            관리자가 시험을 시작하면 별도의 새로고침 없이 자동으로 시험 화면이
+            열립니다.
+          </p>
+          <div>
+            <span>응시 동의 완료</span>
+            <b>대기 중</b>
+          </div>
+          <button type="button" onClick={() => setWaitingExam(null)}>
+            시험 목록으로 돌아가기
+          </button>
         </section>
       </main>
     );
@@ -1268,14 +2769,21 @@ export default function StudentHome() {
           <div className="exam-pause-overlay">
             <section>
               <strong>시험이 일시정지되었습니다.</strong>
-              <p>관리자가 시험을 재개할 때까지 기다려 주세요. 남은 시간과 입력한 답안은 그대로 유지됩니다.</p>
+              <p>
+                관리자가 시험을 재개할 때까지 기다려 주세요. 남은 시간과 입력한
+                답안은 그대로 유지됩니다.
+              </p>
             </section>
           </div>
         ) : null}
         {busy ? (
           <MATHPOOHLoader
             title={busy}
-            kind={busy.includes("채점") || busy.includes("성적") ? "grading" : "exam"}
+            kind={
+              busy.includes("채점") || busy.includes("성적")
+                ? "grading"
+                : "exam"
+            }
             compact
           />
         ) : null}
@@ -1293,8 +2801,14 @@ export default function StudentHome() {
           </div>
           <div className="save-box">
             <span>{saveState}</span>
-            <button onClick={() => void save(false)} disabled={examPaused}>지금 저장</button>
-            <button className="submit-exam" onClick={() => void submit()} disabled={examPaused}>
+            <button onClick={() => void save(false)} disabled={examPaused}>
+              지금 저장
+            </button>
+            <button
+              className="submit-exam"
+              onClick={() => void submit()}
+              disabled={examPaused}
+            >
               최종 제출
             </button>
           </div>
@@ -1371,86 +2885,251 @@ export default function StudentHome() {
       {busy ? (
         <MATHPOOHLoader
           title={busy}
-          kind={busy.includes("채점") || busy.includes("성적") ? "grading" : "exam"}
+          kind={
+            busy.includes("채점") || busy.includes("성적") ? "grading" : "exam"
+          }
           compact
         />
       ) : null}
       <header className="mp-site-header">
-        <button className="mp-menu-button" onClick={() => setMenuOpen(true)} aria-label="메뉴 열기">
-          <span /><span /><span />
+        <button
+          className="mp-menu-button"
+          onClick={() => setMenuOpen(true)}
+          aria-label="메뉴 열기"
+        >
+          <span />
+          <span />
+          <span />
         </button>
         <div className="mp-site-brand">
           <img src="/mathpooh-logo.png" alt="MATHPOOH" />
           <strong>MATHPOOH</strong>
         </div>
         <nav className="mp-main-nav" aria-label="학생 메뉴">
-          <button className={activeSection === "home" ? "active" : ""} onClick={() => moveSection("home")}>나의SOS</button>
-          <button className={activeSection === "exams" ? "active" : ""} onClick={() => moveSection("exams")}>실전모의고사</button>
-          <button className={activeSection === "strategy" ? "active" : ""} onClick={() => moveSection("strategy")}>SOS 공략</button>
-          <button className={activeSection === "scores" ? "active" : ""} onClick={() => moveSection("scores")}>성적분석</button>
-          <button className={activeSection === "learning" ? "active" : ""} onClick={() => moveSection("learning")}>학습분석</button>
+          <button
+            className={activeSection === "home" ? "active" : ""}
+            onClick={() => moveSection("home")}
+          >
+            나의SOS
+          </button>
+          <button
+            className={activeSection === "exams" ? "active" : ""}
+            onClick={() => moveSection("exams")}
+          >
+            실전모의고사
+          </button>
+          <button
+            className={activeSection === "strategy" ? "active" : ""}
+            onClick={() => moveSection("strategy")}
+          >
+            SOS 공략
+          </button>
+          <button
+            className={activeSection === "scores" ? "active" : ""}
+            onClick={() => moveSection("scores")}
+          >
+            성적분석
+          </button>
+          <button
+            className={activeSection === "learning" ? "active" : ""}
+            onClick={() => moveSection("learning")}
+          >
+            학습분석
+          </button>
+          <button
+            className={activeSection === "guide" ? "active" : ""}
+            onClick={() => moveSection("guide")}
+          >
+            사용안내
+          </button>
         </nav>
         <div className="mp-header-actions">
-          <button className="mp-apply-button" onClick={() => moveSection("apply")}><span aria-hidden="true">＋</span>SOS 신청</button>
+          <button
+            className="mp-apply-button"
+            onClick={() => moveSection("apply")}
+          >
+            <span aria-hidden="true">＋</span>SOS 신청
+          </button>
           <div className="mp-profile-wrap">
-            <button className="mp-profile-button" onClick={() => setProfileOpen((value) => !value)} aria-expanded={profileOpen}>
-              <span className="mp-user-mark" aria-hidden="true"><span className="mp-user-head" /><span className="mp-user-body" /></span>
+            <button
+              className="mp-profile-button"
+              onClick={() => setProfileOpen((value) => !value)}
+              aria-expanded={profileOpen}
+            >
+              <span className="mp-user-mark" aria-hidden="true">
+                <span className="mp-user-head" />
+                <span className="mp-user-body" />
+              </span>
               <strong>{portal.student.name}</strong>
               <i>⌄</i>
             </button>
             {profileOpen ? (
               <div className="mp-profile-menu">
-                <button onClick={() => { setProfileOpen(false); window.location.href = "/password"; }}>비밀번호 변경</button>
-                <button className="logout" onClick={() => void signOut()}>로그아웃</button>
+                <button
+                  onClick={() => {
+                    setProfileOpen(false);
+                    window.location.href = "/password";
+                  }}
+                >
+                  비밀번호 변경
+                </button>
+                <button className="logout" onClick={() => void signOut()}>
+                  로그아웃
+                </button>
               </div>
             ) : null}
           </div>
         </div>
       </header>
-      {menuOpen ? <div className="mp-menu-backdrop" onClick={() => setMenuOpen(false)}>
-        <aside className="mp-side-menu" onClick={(event) => event.stopPropagation()}>
-          <div className="mp-side-menu-head">
-            <div className="mp-site-brand"><img src="/mathpooh-logo.png" alt="" /><strong>MATHPOOH</strong></div>
-            <button onClick={() => setMenuOpen(false)} aria-label="메뉴 닫기">×</button>
-          </div>
-          <nav>
-            <button className={activeSection === "home" ? "active" : ""} onClick={() => moveSection("home")}>나의SOS</button>
-            <button className={activeSection === "exams" ? "active" : ""} onClick={() => moveSection("exams")}>실전모의고사</button>
-            <button className={activeSection === "strategy" ? "active" : ""} onClick={() => moveSection("strategy")}>SOS 공략</button>
-            <button className={activeSection === "scores" ? "active" : ""} onClick={() => moveSection("scores")}>성적분석</button>
-          <button className={activeSection === "learning" ? "active" : ""} onClick={() => moveSection("learning")}>학습분석</button>
-            <button onClick={() => { setMenuOpen(false); window.location.href = "/password"; }}>비밀번호 변경</button>
-          </nav>
-          <button className="mp-menu-logout" onClick={() => void signOut()}>로그아웃</button>
-        </aside>
-      </div> : null}
+      {menuOpen ? (
+        <div className="mp-menu-backdrop" onClick={() => setMenuOpen(false)}>
+          <aside
+            className="mp-side-menu"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mp-side-menu-head">
+              <div className="mp-site-brand">
+                <img src="/mathpooh-logo.png" alt="" />
+                <strong>MATHPOOH</strong>
+              </div>
+              <button onClick={() => setMenuOpen(false)} aria-label="메뉴 닫기">
+                ×
+              </button>
+            </div>
+            <nav>
+              <button
+                className={activeSection === "home" ? "active" : ""}
+                onClick={() => moveSection("home")}
+              >
+                나의SOS
+              </button>
+              <button
+                className={activeSection === "exams" ? "active" : ""}
+                onClick={() => moveSection("exams")}
+              >
+                실전모의고사
+              </button>
+              <button
+                className={activeSection === "strategy" ? "active" : ""}
+                onClick={() => moveSection("strategy")}
+              >
+                SOS 공략
+              </button>
+              <button
+                className={activeSection === "scores" ? "active" : ""}
+                onClick={() => moveSection("scores")}
+              >
+                성적분석
+              </button>
+              <button
+                className={activeSection === "learning" ? "active" : ""}
+                onClick={() => moveSection("learning")}
+              >
+                학습분석
+              </button>
+              <button
+                className={activeSection === "guide" ? "active" : ""}
+                onClick={() => moveSection("guide")}
+              >
+                사용안내
+              </button>
+              <button
+                onClick={() => {
+                  setMenuOpen(false);
+                  window.location.href = "/password";
+                }}
+              >
+                비밀번호 변경
+              </button>
+            </nav>
+            <button className="mp-menu-logout" onClick={() => void signOut()}>
+              로그아웃
+            </button>
+          </aside>
+        </div>
+      ) : null}
       {activeSection === "home" ? (
         <>
           {todayTask ? (
             <section className={`student-today-task task-${todayTask.kind}`}>
               <div className="student-task-icon" aria-hidden="true">
-                {todayTask.kind === "exam" ? "01" : todayTask.kind === "diagnosis" ? "02" : "03"}
+                {todayTask.kind === "exam"
+                  ? "01"
+                  : todayTask.kind === "diagnosis"
+                    ? "02"
+                    : "03"}
               </div>
               <div className="student-task-copy">
                 <small>{todayTask.eyebrow}</small>
                 <h2>{todayTask.title}</h2>
                 <p>{todayTask.description}</p>
               </div>
-              <button onClick={() => moveSection(todayTask.section)}>{todayTask.action}</button>
+              <button onClick={() => moveSection(todayTask.section)}>
+                {todayTask.action}
+              </button>
             </section>
           ) : null}
           <section className="student-home-grid">
             <article className="student-home-card recent-score-card">
-              <div><small>RECENT SCORE</small><h3>최근 성적</h3></div>
-              {submittedExams.length ? <><strong>{recentScore}<span>점</span></strong><p>평균 {scoreAverage}점 · 최고 {bestScore}점</p><button onClick={() => moveSection("scores")}>성적표 확인</button></> : <><strong>-</strong><p>첫 시험을 완료하면 성적이 표시됩니다.</p><button onClick={() => moveSection("exams")}>시험 확인</button></>}
+              <div>
+                <small>RECENT SCORE</small>
+                <h3>최근 성적</h3>
+              </div>
+              {submittedExams.length ? (
+                <>
+                  <strong>
+                    {recentScore}
+                    <span>점</span>
+                  </strong>
+                  <p>
+                    평균 {scoreAverage}점 · 최고 {bestScore}점
+                  </p>
+                  <button onClick={() => moveSection("scores")}>
+                    성적표 확인
+                  </button>
+                </>
+              ) : (
+                <>
+                  <strong>-</strong>
+                  <p>첫 시험을 완료하면 성적이 표시됩니다.</p>
+                  <button onClick={() => moveSection("exams")}>
+                    시험 확인
+                  </button>
+                </>
+              )}
             </article>
             <article className="student-home-card progress-card">
-              <div><small>MY PROGRESS</small><h3>나의 성장</h3></div>
-              <strong>{submittedExams.length}<span>회</span></strong><p>완료한 실전모의고사</p><button onClick={() => moveSection("learning")}>성장 리포트</button>
+              <div>
+                <small>MY PROGRESS</small>
+                <h3>나의 성장</h3>
+              </div>
+              <strong>
+                {submittedExams.length}
+                <span>회</span>
+              </strong>
+              <p>완료한 실전모의고사</p>
+              <button onClick={() => moveSection("learning")}>
+                성장 리포트
+              </button>
             </article>
             <article className="student-home-card strategy-card">
-              <div><small>NEXT MISSION</small><h3>다음 공략</h3></div>
-              <strong>{todayTask?.kind === "exam" ? "시험" : todayTask?.kind === "diagnosis" ? "진단" : "훈련"}</strong><p>{todayTask?.title ?? "오늘의 학습을 확인하세요."}</p><button onClick={() => moveSection(todayTask?.section ?? "strategy")}>바로 시작</button>
+              <div>
+                <small>NEXT MISSION</small>
+                <h3>다음 공략</h3>
+              </div>
+              <strong>
+                {todayTask?.kind === "exam"
+                  ? "시험"
+                  : todayTask?.kind === "diagnosis"
+                    ? "진단"
+                    : "훈련"}
+              </strong>
+              <p>{todayTask?.title ?? "오늘의 학습을 확인하세요."}</p>
+              <button
+                onClick={() => moveSection(todayTask?.section ?? "strategy")}
+              >
+                바로 시작
+              </button>
             </article>
           </section>
           <SosLandmarkMap
@@ -1461,8 +3140,14 @@ export default function StudentHome() {
         </>
       ) : null}
       {selectedTower ? (
-        <div className="sos-tower-modal-backdrop" onMouseDown={() => setSelectedTower(null)}>
-          <section className="sos-tower-modal" onMouseDown={(event) => event.stopPropagation()}>
+        <div
+          className="sos-tower-modal-backdrop"
+          onMouseDown={() => setSelectedTower(null)}
+        >
+          <section
+            className="sos-tower-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
             <header>
               <div>
                 <small>SOS LANDMARK</small>
@@ -1471,19 +3156,24 @@ export default function StudentHome() {
               <button onClick={() => setSelectedTower(null)}>×</button>
             </header>
             <div className="sos-floor-grid">
-              {Array.from({ length: 10 }, (_, index) => index + 1).map((floor) => {
-                const active = floor <= landmark.subjects[selectedTower].floors;
-                return (
-                  <button
-                    key={floor}
-                    className={active ? "conquered" : "locked"}
-                    onClick={() => moveSection("exams")}
-                  >
-                    <b>{floor}층</b>
-                    <span>{active ? "완성" : `백분위 ${floor * 10 - 5} 필요`}</span>
-                  </button>
-                );
-              })}
+              {Array.from({ length: 10 }, (_, index) => index + 1).map(
+                (floor) => {
+                  const active =
+                    floor <= landmark.subjects[selectedTower].floors;
+                  return (
+                    <button
+                      key={floor}
+                      className={active ? "conquered" : "locked"}
+                      onClick={() => moveSection("exams")}
+                    >
+                      <b>{floor}층</b>
+                      <span>
+                        {active ? "완성" : `백분위 ${floor * 10 - 5} 필요`}
+                      </span>
+                    </button>
+                  );
+                },
+              )}
             </div>
             <p>
               {landmark.subjects[selectedTower].attempts
@@ -1493,188 +3183,531 @@ export default function StudentHome() {
           </section>
         </div>
       ) : null}
-      {activeSection !== "home" ? <header className={`student-hero section-${activeSection}`}>
-        <div>
-          <small>{activeSection === "apply" ? "SOS PROGRAM" : activeSection === "exams" ? "PRACTICE EXAM" : activeSection === "strategy" ? "SOS STRATEGY" : activeSection === "scores" ? "SCORE REPORT" : "LEARNING ANALYSIS"}</small>
-          <h1>{activeSection === "apply" ? "SOS 신청하기" : activeSection === "exams" ? "실전모의고사" : activeSection === "strategy" ? "SOS 공략" : activeSection === "scores" ? "성적분석" : "학습분석"}</h1>
-          <p>
-            {activeSection === "apply" ? "필요한 SOS 프로그램과 새로운 안내를 확인하세요." : activeSection === "exams" ? "신청·배정된 실전모의고사를 확인하고 응시하세요." : activeSection === "strategy" ? "시험 결과를 바탕으로 나에게 필요한 공략을 훈련합니다." : activeSection === "scores" ? "시험별 성적표와 예상등급, 추천문항을 확인합니다." : "진단·훈련·시험의 누적 성장 흐름을 확인합니다."}
-          </p>
-        </div>
-      </header> : null}
-      {activeSection === "exams" ? <section className="student-welcome">
-        <div>
-          <span>이번 주 목표</span>
-          <h2>아래 점수부터 하나씩 확보합니다.</h2>
-          <p>시험을 신청하고 배정이 완료되면 온라인으로 응시할 수 있습니다.</p>
-        </div>
-        <b>
-          {
-            portal.exams.filter(
-              (exam) =>
-                exam.application_status === "assigned" &&
-                exam.attempt?.status !== "submitted",
-            ).length
-          }
-          <small>배정 완료</small>
-        </b>
-      </section> : null}
-      {activeSection === "apply" ? <section className="student-poster-section">
-        <div className="student-list-heading"><div><i /><div><small>MATHPOOH SOS</small><h2>SOS 프로그램 신청·안내</h2></div></div><span>{portal.posters?.length ?? 0}개 안내</span></div>
-        <div className="student-poster-grid">{portal.posters.map((poster) => {
-          const content = <><img src={poster.image_url} alt={poster.title} /><div><strong>{poster.title}</strong><span>자세히 보기　→</span></div></>;
-          return poster.link_url ? <a key={poster.id} href={poster.link_url} target="_blank" rel="noreferrer">{content}</a> : <article key={poster.id}>{content}</article>;
-        })}</div>
-        {!portal.posters?.length ? <div className="student-section-empty"><b>현재 신청 가능한 SOS 프로그램이 없습니다.</b><span>새 프로그램이 열리면 이곳에 표시됩니다.</span></div> : null}
-      </section> : null}
-      {activeSection === "exams" ? <section className="student-exam-list">
-        <div className="student-list-heading"><div><i /> <div><small>MATHEMATICS PROGRAM</small><h2>실전모의고사 신청·응시</h2></div></div><span>{portal.exams.length}개 시험</span></div>
-        {portal.exams.map((exam) => (
-          <article key={exam.id}>
-            <div className="exam-date">
-              <b>{new Date(exam.exam_date).getDate()}</b>
-              <span>
-                {new Date(exam.exam_date).toLocaleDateString("ko-KR", {
-                  month: "short",
-                })}
-              </span>
+      {activeSection !== "home" ? (
+        <header className={`student-hero section-${activeSection}`}>
+          <div>
+            <small>
+              {activeSection === "apply"
+                ? "SOS PROGRAM"
+                : activeSection === "exams"
+                  ? "PRACTICE EXAM"
+                  : activeSection === "strategy"
+                    ? "SOS STRATEGY"
+                    : activeSection === "scores"
+                      ? "SCORE REPORT"
+                      : activeSection === "guide"
+                        ? "USER GUIDE"
+                        : "LEARNING ANALYSIS"}
+            </small>
+            <h1>
+              {activeSection === "apply"
+                ? "SOS 신청하기"
+                : activeSection === "exams"
+                  ? "실전모의고사"
+                  : activeSection === "strategy"
+                    ? "SOS 공략"
+                    : activeSection === "scores"
+                      ? "성적분석"
+                      : activeSection === "guide"
+                        ? "사용안내"
+                        : "학습분석"}
+            </h1>
+            <p>
+              {activeSection === "apply"
+                ? "필요한 SOS 프로그램과 새로운 안내를 확인하세요."
+                : activeSection === "exams"
+                  ? "신청·배정된 실전모의고사를 확인하고 응시하세요."
+                  : activeSection === "strategy"
+                    ? "시험 결과를 바탕으로 나에게 필요한 공략을 훈련합니다."
+                    : activeSection === "scores"
+                      ? "시험별 성적표와 예상등급, 추천문항을 확인합니다."
+                      : activeSection === "guide"
+                        ? "307 기준 시험·진단·훈련·AI 문항 생성과 오답 교정 이용법을 확인합니다."
+                        : "진단·훈련·시험의 누적 성장 흐름을 확인합니다."}
+            </p>
+          </div>
+        </header>
+      ) : null}
+      {activeSection === "exams" ? (
+        <section className="student-welcome">
+          <div>
+            <span>이번 주 목표</span>
+            <h2>아래 점수부터 하나씩 확보합니다.</h2>
+            <p>
+              시험을 신청하고 배정이 완료되면 온라인으로 응시할 수 있습니다.
+            </p>
+          </div>
+          <b>
+            {
+              portal.exams.filter(
+                (exam) =>
+                  exam.application_status === "assigned" &&
+                  exam.attempt?.status !== "submitted",
+              ).length
+            }
+            <small>배정 완료</small>
+          </b>
+        </section>
+      ) : null}
+      {activeSection === "apply" ? (
+        <section className="student-poster-section">
+          <div className="student-list-heading">
+            <div>
+              <i />
+              <div>
+                <small>MATHPOOH SOS</small>
+                <h2>SOS 프로그램 신청·안내</h2>
+              </div>
             </div>
-            <div className="exam-info">
-              <small>{exam.exam_code}</small>
-              <h3>{exam.title}</h3>
+            <span>{portal.posters?.length ?? 0}개 안내</span>
+          </div>
+          <div className="student-poster-grid">
+            {portal.posters.map((poster) => {
+              const content = (
+                <>
+                  <img src={poster.image_url} alt={poster.title} />
+                  <div>
+                    <strong>{poster.title}</strong>
+                    <span>자세히 보기　→</span>
+                  </div>
+                </>
+              );
+              return poster.link_url ? (
+                <a
+                  key={poster.id}
+                  href={poster.link_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {content}
+                </a>
+              ) : (
+                <article key={poster.id}>{content}</article>
+              );
+            })}
+          </div>
+          {!portal.posters?.length ? (
+            <div className="student-section-empty">
+              <b>현재 신청 가능한 SOS 프로그램이 없습니다.</b>
+              <span>새 프로그램이 열리면 이곳에 표시됩니다.</span>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+      {activeSection === "exams" ? (
+        <section className="student-exam-list">
+          <div className="student-list-heading">
+            <div>
+              <i />{" "}
+              <div>
+                <small>MATHEMATICS PROGRAM</small>
+                <h2>실전모의고사 신청·응시</h2>
+              </div>
+            </div>
+            <span>{portal.exams.length}개 시험</span>
+          </div>
+          {portal.exams.map((exam) => (
+            <article key={exam.id}>
+              <div className="exam-date">
+                <b>{new Date(exam.exam_date).getDate()}</b>
+                <span>
+                  {new Date(exam.exam_date).toLocaleDateString("ko-KR", {
+                    month: "short",
+                  })}
+                </span>
+              </div>
+              <div className="exam-info">
+                <small>{exam.exam_code}</small>
+                <h3>{exam.title}</h3>
+                <p>
+                  {exam.subject} · {exam.question_count}문항 · {exam.time_limit}
+                  분
+                  {exam.open_at
+                    ? ` · ${new Date(exam.open_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 시작`
+                    : ""}
+                </p>
+              </div>
+              <div className="exam-state">
+                {exam.attempt?.status === "submitted" ? (
+                  <>
+                    <b className="complete">제출 완료</b>
+                    <strong>{exam.attempt.score}점</strong>
+                    <button
+                      className="student-result-button"
+                      onClick={() => setResultExam(exam)}
+                    >
+                      결과 보기
+                    </button>
+                  </>
+                ) : exam.application_status === "none" ? (
+                  <>
+                    <b>신청 가능</b>
+                    <button
+                      onClick={() => void changeApplication(exam, "request")}
+                    >
+                      시험 신청
+                    </button>
+                  </>
+                ) : exam.application_status === "requested" ? (
+                  <>
+                    <b>배정 대기</b>
+                    <button
+                      onClick={() =>
+                        void changeApplication(exam, "cancel-request")
+                      }
+                    >
+                      신청 취소
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <b>{exam.attempt ? "응시 중" : "배정 완료"}</b>
+                    {exam.download_available &&
+                    exam.test_url &&
+                    !exam.attempt ? (
+                      <a
+                        className="exam-download"
+                        href={exam.test_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        시험지 받기
+                      </a>
+                    ) : null}
+                    <button
+                      disabled={!exam.available || !exam.test_url}
+                      onClick={() => requestStartExam(exam)}
+                    >
+                      {exam.attempt
+                        ? "이어서 풀기"
+                        : exam.available
+                          ? "시험 시작"
+                          : "응시시간 대기"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </article>
+          ))}
+          {portal.exams.length === 0 ? (
+            <div className="student-empty">
+              현재 신청 가능한 시험이 없습니다.
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+      {activeSection === "strategy" ? (
+        <section className="student-strategy-page">
+          <div className="student-list-heading">
+            <div>
+              <i />
+              <div>
+                <small>PERSONALIZED TRAINING</small>
+                <h2>나의 SOS 공략</h2>
+              </div>
+            </div>
+          </div>
+          <div className="strategy-summary">
+            <article>
+              <span>분석 완료 시험</span>
+              <b>
+                {
+                  portal.exams.filter(
+                    (exam) => exam.attempt?.status === "submitted",
+                  ).length
+                }
+                회
+              </b>
+              <small>제출한 시험 기준</small>
+            </article>
+            <article>
+              <span>공략 준비 상태</span>
+              <b>
+                {portal.exams.some(
+                  (exam) => exam.attempt?.status === "submitted",
+                )
+                  ? "분석 가능"
+                  : "시험 필요"}
+              </b>
+              <small>
+                {portal.exams.some(
+                  (exam) => exam.attempt?.status === "submitted",
+                )
+                  ? "진단·훈련 매칭을 준비합니다."
+                  : "실전모의고사 응시 후 생성됩니다."}
+              </small>
+            </article>
+          </div>
+          <SosTrainingWorkspace onRefresh={load} />
+        </section>
+      ) : null}
+      {activeSection === "scores" ? (
+        <section className="student-score-page student-app-page">
+          <div className="student-page-intro">
+            <div>
+              <small>PREMIUM SCORE REPORT</small>
+              <h2>나의 시험별 성적표</h2>
               <p>
-                {exam.subject} · {exam.question_count}문항 · {exam.time_limit}분
-                {exam.open_at
-                  ? ` · ${new Date(exam.open_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 시작`
-                  : ""}
+                시험을 선택하면 총점, 예상등급, 영역별 분석과 추천문항을 확인할
+                수 있습니다.
               </p>
             </div>
-            <div className="exam-state">
-              {exam.attempt?.status === "submitted" ? (
-                <>
-                  <b className="complete">제출 완료</b>
-                  <strong>{exam.attempt.score}점</strong>
-                  <button
-                    className="student-result-button"
-                    onClick={() => setResultExam(exam)}
-                  >
-                    결과 보기
-                  </button>
-                </>
-              ) : exam.application_status === "none" ? (
-                <>
-                  <b>신청 가능</b>
-                  <button
-                    onClick={() => void changeApplication(exam, "request")}
-                  >
-                    시험 신청
-                  </button>
-                </>
-              ) : exam.application_status === "requested" ? (
-                <>
-                  <b>배정 대기</b>
-                  <button
-                    onClick={() =>
-                      void changeApplication(exam, "cancel-request")
-                    }
-                  >
-                    신청 취소
-                  </button>
-                </>
-              ) : (
-                <>
-                  <b>{exam.attempt ? "응시 중" : "배정 완료"}</b>
-                  {exam.download_available && exam.test_url && !exam.attempt ? (
-                    <a
-                      className="exam-download"
-                      href={exam.test_url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      시험지 받기
-                    </a>
-                  ) : null}
-                  <button
-                    disabled={!exam.available || !exam.test_url}
-                    onClick={() => requestStartExam(exam)}
-                  >
-                    {exam.attempt
-                      ? "이어서 풀기"
-                      : exam.available
-                        ? "시험 시작"
-                        : "응시시간 대기"}
-                  </button>
-                </>
-              )}
+            <div className="student-kpi">
+              <span>응시 완료</span>
+              <b>{submittedExams.length}</b>
+              <em>회</em>
             </div>
-          </article>
-        ))}
-        {portal.exams.length === 0 ? (
-          <div className="student-empty">현재 신청 가능한 시험이 없습니다.</div>
-        ) : null}
-      </section> : null}
-      {activeSection === "strategy" ? <section className="student-strategy-page">
-        <div className="student-list-heading"><div><i /><div><small>PERSONALIZED TRAINING</small><h2>나의 SOS 공략</h2></div></div></div>
-        <div className="strategy-summary">
-          <article><span>분석 완료 시험</span><b>{portal.exams.filter((exam) => exam.attempt?.status === "submitted").length}회</b><small>제출한 시험 기준</small></article>
-          <article><span>공략 준비 상태</span><b>{portal.exams.some((exam) => exam.attempt?.status === "submitted") ? "분석 가능" : "시험 필요"}</b><small>{portal.exams.some((exam) => exam.attempt?.status === "submitted") ? "진단·훈련 매칭을 준비합니다." : "실전모의고사 응시 후 생성됩니다."}</small></article>
-        </div>
-        <SosTrainingWorkspace onRefresh={load} />
-      </section> : null}
-      {activeSection === "scores" ? <section className="student-score-page student-app-page">
-        <div className="student-page-intro"><div><small>PREMIUM SCORE REPORT</small><h2>나의 시험별 성적표</h2><p>시험을 선택하면 총점, 예상등급, 영역별 분석과 추천문항을 확인할 수 있습니다.</p></div><div className="student-kpi"><span>응시 완료</span><b>{submittedExams.length}</b><em>회</em></div></div>
-        <div className="student-score-summary">
-          <article><span>최근 점수</span><b>{submittedExams.length ? recentScore : "-"}{submittedExams.length ? <small>점</small> : null}</b></article>
-          <article><span>전체 평균</span><b>{submittedExams.length ? scoreAverage : "-"}{submittedExams.length ? <small>점</small> : null}</b></article>
-          <article><span>최고 점수</span><b>{submittedExams.length ? bestScore : "-"}{submittedExams.length ? <small>점</small> : null}</b></article>
-        </div>
-        <div className="student-score-cards">{submittedExams.map((exam) => <button key={exam.id} onClick={() => setResultExam(exam)}>
-          <div className="score-card-date"><b>{new Date(exam.exam_date).getDate()}</b><span>{new Date(exam.exam_date).toLocaleDateString("ko-KR", { month: "short" })}</span></div>
-          <div className="score-card-copy"><small>{exam.exam_code} · {exam.subject}</small><h3>{exam.title}</h3><p>{exam.attempt?.correct_count ?? 0}/{exam.question_count} 정답 · 오답 {(exam.attempt?.wrong_numbers ?? []).length} · 미응답 {(exam.attempt?.unanswered_numbers ?? []).length}</p></div>
-          <div className="score-card-score"><strong>{exam.attempt?.score ?? 0}<span>점</span></strong><em>성적표 보기 →</em></div>
-        </button>)}</div>
-        {!submittedExams.length ? <div className="student-section-empty"><b>아직 성적표가 없습니다.</b><span>실전모의고사를 제출하면 이곳에 시험별 성적표가 생성됩니다.</span><button onClick={() => moveSection("exams")}>시험 확인하기</button></div> : null}
-      </section> : null}
-      {activeSection === "learning" ? <section className="student-learning-page student-app-page">
-        <div className="student-page-intro learning"><div><small>LONG-TERM LEARNING REPORT</small><h2>나의 학습 성장 리포트</h2><p>시험 점수만이 아니라 진단·훈련·완성도의 장기 변화를 확인합니다.</p></div><div className="student-kpi"><span>현재 성장지수</span><b>{Math.round((scoreAverage + Math.min(100, submittedExams.length * 8)) / 2) || 0}</b><em>LV</em></div></div>
-        <div className="student-learning-hero">
-          <article><small>누적 응시</small><strong>{submittedExams.length}<span>회</span></strong><p>실전 데이터가 쌓일수록 분석이 정교해집니다.</p></article>
-          <article><small>최근 변화</small><strong>{submittedExams.length > 1 ? `${recentScore - Number(submittedExams[1]?.attempt?.score ?? 0) >= 0 ? "+" : ""}${recentScore - Number(submittedExams[1]?.attempt?.score ?? 0)}` : "-"}<span>{submittedExams.length > 1 ? "점" : ""}</span></strong><p>직전 시험 대비 변화</p></article>
-          <article><small>공략 준비</small><strong>{submittedExams.length ? "READY" : "WAIT"}</strong><p>{submittedExams.length ? "진단 3문항과 훈련 10문항을 연결할 수 있습니다." : "첫 시험 후 SOS 전략이 시작됩니다."}</p></article>
-        </div>
-        <section className="student-mastery-panel"><div className="panel-title"><div><small>SUBJECT MASTERY</small><h3>과목별 완성도</h3></div><span>랜드마크 데이터 연동</span></div>
-          <div className="mastery-list">{subjectCards.map((item) => <article key={item.subject}><div><b>{item.subject}</b><span>{item.attempts}회 응시</span></div><div className="mastery-track"><i style={{ width: `${Math.min(100, item.best)}%` }} /></div><strong>{item.best}<small>%</small></strong></article>)}</div>
+          </div>
+          <div className="student-score-summary">
+            <article>
+              <span>최근 점수</span>
+              <b>
+                {submittedExams.length ? recentScore : "-"}
+                {submittedExams.length ? <small>점</small> : null}
+              </b>
+            </article>
+            <article>
+              <span>전체 평균</span>
+              <b>
+                {submittedExams.length ? scoreAverage : "-"}
+                {submittedExams.length ? <small>점</small> : null}
+              </b>
+            </article>
+            <article>
+              <span>최고 점수</span>
+              <b>
+                {submittedExams.length ? bestScore : "-"}
+                {submittedExams.length ? <small>점</small> : null}
+              </b>
+            </article>
+          </div>
+          <div className="student-score-cards">
+            {submittedExams.map((exam) => (
+              <button key={exam.id} onClick={() => setResultExam(exam)}>
+                <div className="score-card-date">
+                  <b>{new Date(exam.exam_date).getDate()}</b>
+                  <span>
+                    {new Date(exam.exam_date).toLocaleDateString("ko-KR", {
+                      month: "short",
+                    })}
+                  </span>
+                </div>
+                <div className="score-card-copy">
+                  <small>
+                    {exam.exam_code} · {exam.subject}
+                  </small>
+                  <h3>{exam.title}</h3>
+                  <p>
+                    {exam.attempt?.correct_count ?? 0}/{exam.question_count}{" "}
+                    정답 · 오답 {(exam.attempt?.wrong_numbers ?? []).length} ·
+                    미응답 {(exam.attempt?.unanswered_numbers ?? []).length}
+                  </p>
+                </div>
+                <div className="score-card-score">
+                  <strong>
+                    {exam.attempt?.score ?? 0}
+                    <span>점</span>
+                  </strong>
+                  <em>성적표 보기 →</em>
+                </div>
+              </button>
+            ))}
+          </div>
+          {!submittedExams.length ? (
+            <div className="student-section-empty">
+              <b>아직 성적표가 없습니다.</b>
+              <span>
+                실전모의고사를 제출하면 이곳에 시험별 성적표가 생성됩니다.
+              </span>
+              <button onClick={() => moveSection("exams")}>
+                시험 확인하기
+              </button>
+            </div>
+          ) : null}
         </section>
-        <section className="student-growth-panel"><div className="panel-title"><div><small>SCORE HISTORY</small><h3>최근 시험 흐름</h3></div><button onClick={() => moveSection("scores")}>성적표 보기</button></div>
-          <div className="growth-bars">{submittedExams.slice(0, 8).reverse().map((exam) => <article key={exam.id}><div><i style={{ height: `${Math.max(8, Number(exam.attempt?.score ?? 0))}%` }} /></div><b>{exam.attempt?.score ?? 0}</b><span>{new Date(exam.exam_date).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" })}</span></article>)}</div>
-          {!submittedExams.length ? <p className="empty-growth">시험 결과가 쌓이면 점수 변화 그래프가 표시됩니다.</p> : null}
+      ) : null}
+      {activeSection === "learning" ? (
+        <section className="student-learning-page student-app-page">
+          <div className="student-page-intro learning">
+            <div>
+              <small>LONG-TERM LEARNING REPORT</small>
+              <h2>나의 학습 성장 리포트</h2>
+              <p>
+                시험 점수만이 아니라 진단·훈련·완성도의 장기 변화를 확인합니다.
+              </p>
+            </div>
+            <div className="student-kpi">
+              <span>현재 성장지수</span>
+              <b>
+                {Math.round(
+                  (scoreAverage + Math.min(100, submittedExams.length * 8)) / 2,
+                ) || 0}
+              </b>
+              <em>LV</em>
+            </div>
+          </div>
+          <div className="student-learning-hero">
+            <article>
+              <small>누적 응시</small>
+              <strong>
+                {submittedExams.length}
+                <span>회</span>
+              </strong>
+              <p>실전 데이터가 쌓일수록 분석이 정교해집니다.</p>
+            </article>
+            <article>
+              <small>최근 변화</small>
+              <strong>
+                {submittedExams.length > 1
+                  ? `${recentScore - Number(submittedExams[1]?.attempt?.score ?? 0) >= 0 ? "+" : ""}${recentScore - Number(submittedExams[1]?.attempt?.score ?? 0)}`
+                  : "-"}
+                <span>{submittedExams.length > 1 ? "점" : ""}</span>
+              </strong>
+              <p>직전 시험 대비 변화</p>
+            </article>
+            <article>
+              <small>공략 준비</small>
+              <strong>{submittedExams.length ? "READY" : "WAIT"}</strong>
+              <p>
+                {submittedExams.length
+                  ? "진단 3문항과 훈련 10문항을 연결할 수 있습니다."
+                  : "첫 시험 후 SOS 전략이 시작됩니다."}
+              </p>
+            </article>
+          </div>
+          <section className="student-mastery-panel">
+            <div className="panel-title">
+              <div>
+                <small>SUBJECT MASTERY</small>
+                <h3>과목별 완성도</h3>
+              </div>
+              <span>랜드마크 데이터 연동</span>
+            </div>
+            <div className="mastery-list">
+              {subjectCards.map((item) => (
+                <article key={item.subject}>
+                  <div>
+                    <b>{item.subject}</b>
+                    <span>{item.attempts}회 응시</span>
+                  </div>
+                  <div className="mastery-track">
+                    <i style={{ width: `${Math.min(100, item.best)}%` }} />
+                  </div>
+                  <strong>
+                    {item.best}
+                    <small>%</small>
+                  </strong>
+                </article>
+              ))}
+            </div>
+          </section>
+          <section className="student-growth-panel">
+            <div className="panel-title">
+              <div>
+                <small>SCORE HISTORY</small>
+                <h3>최근 시험 흐름</h3>
+              </div>
+              <button onClick={() => moveSection("scores")}>성적표 보기</button>
+            </div>
+            <div className="growth-bars">
+              {submittedExams
+                .slice(0, 8)
+                .reverse()
+                .map((exam) => (
+                  <article key={exam.id}>
+                    <div>
+                      <i
+                        style={{
+                          height: `${Math.max(8, Number(exam.attempt?.score ?? 0))}%`,
+                        }}
+                      />
+                    </div>
+                    <b>{exam.attempt?.score ?? 0}</b>
+                    <span>
+                      {new Date(exam.exam_date).toLocaleDateString("ko-KR", {
+                        month: "numeric",
+                        day: "numeric",
+                      })}
+                    </span>
+                  </article>
+                ))}
+            </div>
+            {!submittedExams.length ? (
+              <p className="empty-growth">
+                시험 결과가 쌓이면 점수 변화 그래프가 표시됩니다.
+              </p>
+            ) : null}
+          </section>
+          <section className="student-next-plan">
+            <div>
+              <small>NEXT STRATEGY</small>
+              <h3>다음 학습 전략</h3>
+              <p>
+                {submittedExams.length
+                  ? "최근 오답 중 쉬운 문항부터 진단하고, 확인된 취약 유형을 10문항 훈련으로 연결하세요."
+                  : "실전모의고사를 먼저 응시해 현재 위치를 확인하세요."}
+              </p>
+            </div>
+            <button
+              onClick={() =>
+                moveSection(submittedExams.length ? "strategy" : "exams")
+              }
+            >
+              {submittedExams.length ? "SOS 공략으로 이동" : "시험 확인"}
+            </button>
+          </section>
         </section>
-        <section className="student-next-plan"><div><small>NEXT STRATEGY</small><h3>다음 학습 전략</h3><p>{submittedExams.length ? "최근 오답 중 쉬운 문항부터 진단하고, 확인된 취약 유형을 10문항 훈련으로 연결하세요." : "실전모의고사를 먼저 응시해 현재 위치를 확인하세요."}</p></div><button onClick={() => moveSection(submittedExams.length ? "strategy" : "exams")}>{submittedExams.length ? "SOS 공략으로 이동" : "시험 확인"}</button></section>
-      </section> : null}
+      ) : null}
+      {activeSection === "guide" ? <SosUserManual audience="student" /> : null}
       {examConsent ? (
-        <div className="student-consent-backdrop" onMouseDown={() => setExamConsent(null)}>
-          <section className="student-consent-modal" onMouseDown={(event) => event.stopPropagation()}>
+        <div
+          className="student-consent-backdrop"
+          onMouseDown={() => setExamConsent(null)}
+        >
+          <section
+            className="student-consent-modal"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
             <div className="student-consent-icon">✓</div>
             <small>실전모의고사 응시 안내</small>
             <h3>현재 실력을 정확하게 확인하기 위한 시험입니다.</h3>
             <ul>
-              <li>외부 도움이나 자료를 이용하지 않고 본인의 힘으로 응시합니다.</li>
+              <li>
+                외부 도움이나 자료를 이용하지 않고 본인의 힘으로 응시합니다.
+              </li>
               <li>다른 사람의 도움을 받지 않습니다.</li>
               <li>인터넷 검색이나 참고자료를 이용하지 않습니다.</li>
               <li>현재 자신의 실력을 확인하기 위해 성실하게 응시합니다.</li>
             </ul>
-            <p className="student-consent-warning">외부 도움을 이용하거나 응시 과정의 신뢰성이 확보되지 않는 경우, 시험 결과는 무효 처리되거나 재응시 대상이 될 수 있습니다.</p>
+            <p className="student-consent-warning">
+              외부 도움을 이용하거나 응시 과정의 신뢰성이 확보되지 않는 경우,
+              시험 결과는 무효 처리되거나 재응시 대상이 될 수 있습니다.
+            </p>
             <label className="student-consent-check">
               <input
                 type="checkbox"
                 checked={examConsentChecked}
-                onChange={(event) => setExamConsentChecked(event.target.checked)}
+                onChange={(event) =>
+                  setExamConsentChecked(event.target.checked)
+                }
               />
               <span>위 내용을 확인하였으며 이에 동의합니다.</span>
             </label>
             <div className="student-consent-actions">
-              <button type="button" className="secondary" onClick={() => setExamConsent(null)}>취소</button>
-              <button type="button" disabled={!examConsentChecked} onClick={confirmStartExam}>동의하고 시험 시작</button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setExamConsent(null)}
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                disabled={!examConsentChecked}
+                onClick={confirmStartExam}
+              >
+                동의하고 시험 시작
+              </button>
             </div>
           </section>
         </div>
@@ -1686,7 +3719,13 @@ export default function StudentHome() {
         />
       ) : null}
       <footer className="mp-site-footer">
-        <div><div className="mp-site-brand"><img src="/mathpooh-logo.png" alt="" /><strong>MATHPOOH</strong></div><b>© 2026 MATHPOOH</b></div>
+        <div>
+          <div className="mp-site-brand">
+            <img src="/mathpooh-logo.png" alt="" />
+            <strong>MATHPOOH</strong>
+          </div>
+          <b>© 2026 MATHPOOH</b>
+        </div>
         <p>MATHPOOH 수학연구소 · 학생용 SOS 학습 시스템</p>
         <span>이용약관　 개인정보처리방침</span>
       </footer>
