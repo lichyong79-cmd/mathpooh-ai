@@ -2,16 +2,12 @@
 import { isSosReview, isSosStarted, isSosOpen } from "@/lib/sos-stage-state";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { createClient } from "@/lib/supabase/client";
 import "./student.css";
 import "./exam-updates.css";
 import "./sos-landmark.css";
-import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
-import SosLandmarkMap from "@/components/sos-landmark-map";
-import SosDiagnosisRunner from "@/components/sos-diagnosis-runner";
-import SosTrainingRunner from "@/components/sos-training-runner";
-import SosTrainingReview from "@/components/sos-training-review";
 import {
   summarizeExamsForLandmark,
   type LandmarkSubject,
@@ -20,6 +16,21 @@ import {
 import { difficultyLabel, DIFFICULTY_WEIGHTS } from "@/lib/difficulty-scale";
 import { sosStageLabel } from "@/lib/sos-week";
 import SosUserManual from "@/components/sos-user-manual";
+
+// SOS309: 첫 로그인에 필요 없는 무거운 분석·훈련 화면은 실제로 열 때 내려받는다.
+const ExamResultDiagnosis = dynamic(
+  () => import("@/components/exam-result-diagnosis"),
+);
+const SosLandmarkMap = dynamic(() => import("@/components/sos-landmark-map"));
+const SosDiagnosisRunner = dynamic(
+  () => import("@/components/sos-diagnosis-runner"),
+);
+const SosTrainingRunner = dynamic(
+  () => import("@/components/sos-training-runner"),
+);
+const SosTrainingReview = dynamic(
+  () => import("@/components/sos-training-review"),
+);
 
 type Attempt = {
   id: string;
@@ -973,9 +984,12 @@ function SosTrainingWorkspace({
   const load = useCallback(async (preferredActiveId?: string) => {
     setLoading(true);
     try {
-      const response = await fetch("/api/student/sos-training", {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `/api/student/sos-training${preferredActiveId ? `?sessionId=${encodeURIComponent(preferredActiveId)}` : ""}`,
+        {
+          cache: "no-store",
+        },
+      );
       const json = await response.json();
       if (!response.ok || json?.success !== true)
         throw new Error(json?.message || "진단·훈련을 불러오지 못했습니다.");
@@ -1112,7 +1126,12 @@ function SosTrainingWorkspace({
       setActiveId(String(open.id));
       return;
     }
-    if (!active) setActiveId(String(visibleSessions[0].id));
+    if (!active) {
+      const first = visibleSessions[0];
+      if (["ASSIGNED", "IN_PROGRESS", "RETRAIN"].includes(String(first.status)))
+        setActiveId(String(first.id));
+      else void load(String(first.id));
+    }
   }, [selectedCycleId, visibleSessions.length, activeId, active?.status]);
   const activeItems = Array.isArray(active?.items) ? active.items : [];
 
@@ -1429,7 +1448,20 @@ function SosTrainingWorkspace({
   useEffect(() => {
     if (!hasWaitingAiJob) return;
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void load();
+      if (document.visibilityState !== "visible") return;
+      void (async () => {
+        try {
+          const response = await fetch(
+            "/api/student/sos-training?mode=status",
+            { cache: "no-store" },
+          );
+          const json = await response.json();
+          if (response.ok && json?.success === true && !json.hasWaiting)
+            await load();
+        } catch {
+          // 다음 자동 확인에서 다시 시도한다.
+        }
+      })();
     }, 45000);
     return () => window.clearInterval(timer);
   }, [hasWaitingAiJob, load]);
@@ -1617,7 +1649,7 @@ function SosTrainingWorkspace({
               <button
                 key={session.id}
                 className={`${String(session.id) === String(active?.id) ? "selected" : ""} ${session.phase === "DIAGNOSIS" ? "stage-diagnosis" : Number(session.round_no) === 2 ? "stage-training2" : "stage-training1"}`}
-                onClick={() => setActiveId(String(session.id))}
+                onClick={() => void load(String(session.id))}
               >
                 <div>
                   <b>
@@ -1673,7 +1705,7 @@ function SosTrainingWorkspace({
                 <SosFlowTree
                   session={active}
                   sessions={visibleSessions}
-                  onSelect={(id) => setActiveId(id)}
+                  onSelect={(id) => void load(id)}
                 />
                 <header className="sos-session-head">
                   <div>
@@ -1930,7 +1962,7 @@ function SosTrainingWorkspace({
                     terminal={active}
                     sessions={visibleSessions}
                     meters={latestMeters}
-                    onSelect={(id) => setActiveId(id)}
+                    onSelect={(id) => void load(id)}
                   />
                 ) : null}
 
@@ -2374,27 +2406,37 @@ export default function StudentHome() {
   useEffect(() => {
     if (!waitingExam) return;
     const check = async () => {
-      const response = await fetch("/api/student/portal", {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `/api/student/portal?examStatus=${encodeURIComponent(waitingExam.id)}`,
+        {
+          cache: "no-store",
+        },
+      );
       if (!response.ok) return;
       const data = await response.json();
-      const current = (data.exams ?? []).find(
-        (item: Exam) => item.id === waitingExam.id,
-      );
-      if (!current) return;
-      setPortal(data);
+      const status = data.exam;
       if (
-        current.close_at &&
-        !current.paused_at &&
-        new Date(current.close_at).getTime() > Date.now()
+        data.assigned &&
+        status?.close_at &&
+        !status.paused_at &&
+        new Date(status.close_at).getTime() > Date.now()
       ) {
+        const fullResponse = await fetch("/api/student/portal", {
+          cache: "no-store",
+        });
+        if (!fullResponse.ok) return;
+        const fullData = await fullResponse.json();
+        const current = (fullData.exams ?? []).find(
+          (item: Exam) => item.id === waitingExam.id,
+        );
+        if (!current) return;
+        setPortal(fullData);
         setWaitingExam(null);
         void startExam(current);
       }
     };
     void check();
-    const timer = window.setInterval(() => void check(), 2000);
+    const timer = window.setInterval(() => void check(), 5000);
     return () => window.clearInterval(timer);
   }, [waitingExam?.id]);
 

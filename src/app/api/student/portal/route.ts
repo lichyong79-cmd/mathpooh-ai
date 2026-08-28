@@ -66,25 +66,44 @@ async function writeActivityLog(
   });
 }
 
-async function loadQuestionMetadata(
-  supabase: ReturnType<typeof createServerSupabase>,
-  examId: string,
-) {
-  const { data } = await supabase
-    .from("exam_question_analysis")
-    .select(
-      "question_no,major_unit,middle_unit,minor_unit,detailed_topic,question_type,problem_types,difficulty",
-    )
-    .eq("exam_id", examId)
-    .order("question_no");
-  return data ?? [];
-}
-
-export async function GET() {
+export async function GET(request: Request) {
   const ctx = await context();
   if (ctx.error) return ctx.error;
   const { student, supabase } = ctx;
   const now = new Date().toISOString();
+  // SOS309: 시험 시작 대기 화면은 종전까지 2초마다 학생 포털 전체를 다시 읽었다.
+  // 이 경량 분기는 해당 시험의 시작/중지 상태만 반환한다.
+  const statusExamId = new URL(request.url).searchParams.get("examStatus");
+  if (statusExamId) {
+    const [examResult, registrationResult] = await Promise.all([
+      supabase
+        .from("exams")
+        .select(
+          "id,open_at,close_at,paused_at,paused_remaining_seconds,status,student_open",
+        )
+        .eq("id", statusExamId)
+        .maybeSingle(),
+      supabase
+        .from("exam_registrations")
+        .select("status")
+        .eq("student_id", student.id)
+        .eq("exam_id", statusExamId)
+        .maybeSingle(),
+    ]);
+    if (examResult.error || !examResult.data)
+      return NextResponse.json(
+        { message: examResult.error?.message || "시험을 찾지 못했습니다." },
+        { status: 404 },
+      );
+    return NextResponse.json(
+      {
+        success: true,
+        exam: examResult.data,
+        assigned: registrationResult.data?.status === "assigned",
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const { data: registrations, error: registrationError } = await supabase
     .from("exam_registrations")
     .select("exam_id,status")
@@ -103,7 +122,9 @@ export async function GET() {
       "id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,question_points,objective_count,short_answer_count,test_file_path,solution_file_path,status,student_open,open_at,close_at,paused_at,paused_remaining_seconds,answer_keys,solution_open",
     )
     .eq("student_open", true)
-    .order("exam_date", { ascending: false });
+    .order("exam_date", { ascending: false })
+    // 최근 시험과 현재 배정 화면에 충분한 범위만 내려 장기 누적 시 초기 로딩을 보호한다.
+    .limit(60);
   if (error)
     return NextResponse.json({ message: error.message }, { status: 400 });
   const ids = (exams ?? []).map((exam) => exam.id);
@@ -117,6 +138,24 @@ export async function GET() {
   const attemptMap = new Map(
     (attempts ?? []).map((attempt) => [attempt.exam_id, attempt]),
   );
+  // SOS309: 제출 시험마다 문항 분석을 따로 읽던 N+1 쿼리를 한 번으로 합친다.
+  const submittedExamIds = (attempts ?? [])
+    .filter((attempt) => attempt.status === "submitted")
+    .map((attempt) => String(attempt.exam_id));
+  const metadataResult = submittedExamIds.length
+    ? await supabase
+        .from("exam_question_analysis")
+        .select(
+          "exam_id,question_no,major_unit,middle_unit,minor_unit,detailed_topic,question_type,problem_types,difficulty",
+        )
+        .in("exam_id", submittedExamIds)
+        .order("question_no")
+    : { data: [], error: null };
+  const metadataByExam = new Map<string, any[]>();
+  for (const row of metadataResult.data ?? []) {
+    const key = String(row.exam_id);
+    metadataByExam.set(key, [...(metadataByExam.get(key) ?? []), row]);
+  }
   const items = await Promise.all(
     (exams ?? []).map(async (exam) => {
       const savedStatus = registrationMap.get(exam.id);
@@ -153,8 +192,10 @@ export async function GET() {
         const changed =
           Number(attempt.score ?? -1) !== graded.score ||
           Number(attempt.correct_count ?? -1) !== graded.correct ||
-          JSON.stringify(attempt.wrong_numbers ?? []) !== JSON.stringify(graded.wrong) ||
-          JSON.stringify(attempt.unanswered_numbers ?? []) !== JSON.stringify(graded.unanswered);
+          JSON.stringify(attempt.wrong_numbers ?? []) !==
+            JSON.stringify(graded.wrong) ||
+          JSON.stringify(attempt.unanswered_numbers ?? []) !==
+            JSON.stringify(graded.unanswered);
         attempt = {
           ...attempt,
           score: graded.score,
@@ -164,18 +205,23 @@ export async function GET() {
           score_source: "auto",
         };
         if (changed) {
-          await supabase.from("exam_attempts").update({
-            score: graded.score,
-            correct_count: graded.correct,
-            wrong_numbers: graded.wrong,
-            unanswered_numbers: graded.unanswered,
-            graded_at: new Date().toISOString(),
-            score_source: "auto",
-          }).eq("id", attempt.id);
+          await supabase
+            .from("exam_attempts")
+            .update({
+              score: graded.score,
+              correct_count: graded.correct,
+              wrong_numbers: graded.wrong,
+              unanswered_numbers: graded.unanswered,
+              graded_at: new Date().toISOString(),
+              score_source: "auto",
+            })
+            .eq("id", attempt.id);
         }
       }
       let solutionUrl = "";
-      const solutionAllowed = submitted && ((attempt?.solution_override ?? exam.solution_open) === true);
+      const solutionAllowed =
+        submitted &&
+        (attempt?.solution_override ?? exam.solution_open) === true;
       if (solutionAllowed && exam.solution_file_path)
         solutionUrl =
           (
@@ -185,7 +231,7 @@ export async function GET() {
           ).data?.signedUrl ?? "";
       const { answer_keys, solution_file_path, ...safeExam } = exam;
       const questionMetadata = submitted
-        ? await loadQuestionMetadata(supabase, exam.id)
+        ? (metadataByExam.get(String(exam.id)) ?? [])
         : [];
       return {
         ...safeExam,
@@ -201,7 +247,9 @@ export async function GET() {
             : [],
         question_metadata: questionMetadata,
         attempt,
-        mathpooh_comment: submitted ? String(attempt?.mathpooh_comment ?? "") : "",
+        mathpooh_comment: submitted
+          ? String(attempt?.mathpooh_comment ?? "")
+          : "",
         solution_open: solutionAllowed,
         available:
           applicationStatus === "assigned" &&
@@ -216,17 +264,17 @@ export async function GET() {
      제출한 시험마다 같은 시험 응시자 전체 점수를 모아 실제 백분위를 계산합니다.
      응시 인원이 적으면(기본 8명 미만) 원점수 환산 추정 백분위로 대체합니다.
      응시자 점수는 집계에만 쓰고, 다른 학생 정보는 응답에 담지 않습니다. */
-  const submittedExamIds = items
+  const landmarkExamIds = items
     .filter((item) => item.attempt?.status === "submitted")
     .map((item) => item.id);
   const peerRows: { exam_id: string; score: number | null }[] =
-    submittedExamIds.length
+    landmarkExamIds.length
       ? ((
           await supabase
             .from("exam_attempts")
             .select("exam_id,score")
             .eq("status", "submitted")
-            .in("exam_id", submittedExamIds)
+            .in("exam_id", landmarkExamIds)
         ).data ?? [])
       : [];
   const peerScores = new Map<string, number[]>();
@@ -255,12 +303,17 @@ export async function GET() {
     );
     const basis: LandmarkBasis = cohort === null ? "estimated" : "cohort";
     const answers = (item.attempt?.answers ?? {}) as Record<string, unknown>;
-    const keys = Array.isArray(item.official_answers) ? item.official_answers.map(String) : [];
+    const keys = Array.isArray(item.official_answers)
+      ? item.official_answers.map(String)
+      : [];
     const buckets = new Map<string, { total: number; correct: number }>();
     for (const meta of item.question_metadata ?? []) {
       const no = Number(meta.question_no);
       const subject = classifyLandmarkQuestionSubject(
-        meta.major_unit, meta.middle_unit, meta.minor_unit, meta.detailed_topic,
+        meta.major_unit,
+        meta.middle_unit,
+        meta.minor_unit,
+        meta.detailed_topic,
       );
       if (!subject) continue;
       const row = buckets.get(subject) ?? { total: 0, correct: 0 };
@@ -272,10 +325,16 @@ export async function GET() {
     }
     if (!buckets.size) {
       const subject = classifyLandmarkSubject(item.subject, item.title);
-      if (subject) buckets.set(subject, { total: Number(item.question_count ?? 1), correct: Number(item.attempt.correct_count ?? 0) });
+      if (subject)
+        buckets.set(subject, {
+          total: Number(item.question_count ?? 1),
+          correct: Number(item.attempt.correct_count ?? 0),
+        });
     }
     for (const [subject, bucket] of buckets) {
-      const subjectScore = Math.round((bucket.correct / Math.max(1, bucket.total)) * 100);
+      const subjectScore = Math.round(
+        (bucket.correct / Math.max(1, bucket.total)) * 100,
+      );
       landmarkRecords.push({
         subject: subject as any,
         percentile: estimatePercentile(subjectScore, 100),
@@ -300,18 +359,27 @@ export async function GET() {
     .eq("is_published", true)
     .order("sort_order")
     .order("created_at", { ascending: false });
-  const posters = await Promise.all((posterRows ?? []).map(async (poster) => ({
-    id: poster.id,
-    title: poster.title,
-    link_url: poster.link_url,
-    sort_order: poster.sort_order,
-    image_url: (await supabase.storage.from("site-posters").createSignedUrl(poster.image_path, 60 * 60 * 3)).data?.signedUrl ?? "",
-  })));
+  const posters = await Promise.all(
+    (posterRows ?? []).map(async (poster) => ({
+      id: poster.id,
+      title: poster.title,
+      link_url: poster.link_url,
+      sort_order: poster.sort_order,
+      image_url:
+        (
+          await supabase.storage
+            .from("site-posters")
+            .createSignedUrl(poster.image_path, 60 * 60 * 3)
+        ).data?.signedUrl ?? "",
+    })),
+  );
   const { data: sosSessions } = await supabase
     .from("sos_training_sessions")
-    .select("id,phase,status,target_snapshot,round_no,correct_count,total_count,decision,created_at")
+    .select(
+      "id,phase,status,target_snapshot,round_no,correct_count,total_count,decision,created_at",
+    )
     .eq("student_id", student.id)
-    .in("status", ["ASSIGNED","IN_PROGRESS","COMPLETED","PASSED","RETRAIN"])
+    .in("status", ["ASSIGNED", "IN_PROGRESS", "COMPLETED", "PASSED", "RETRAIN"])
     .order("created_at", { ascending: false })
     .limit(20);
 
@@ -331,7 +399,8 @@ export async function GET() {
     },
     {
       headers: {
-        "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate, proxy-revalidate",
         Pragma: "no-cache",
         Expires: "0",
       },
@@ -385,10 +454,16 @@ export async function POST(request: Request) {
       .eq("student_id", student.id)
       .maybeSingle();
     const { error } = await supabase.from("exam_activity_logs").insert({
-      exam_id: examId, student_id: student.id, attempt_id: attemptRow?.id ?? null,
-      event_type: eventType, detail, occurred_at: new Date().toISOString(),
+      exam_id: examId,
+      student_id: student.id,
+      attempt_id: attemptRow?.id ?? null,
+      event_type: eventType,
+      detail,
+      occurred_at: new Date().toISOString(),
     });
-    return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ success: true });
+    return error
+      ? NextResponse.json({ message: error.message }, { status: 400 })
+      : NextResponse.json({ success: true });
   }
   if (action === "request") {
     const { data: exam } = await supabase
@@ -475,15 +550,35 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     if (existing) {
-      await writeActivityLog(supabase, examId, student.id, existing.id, "exam_started", "시험 응시 시작");
+      await writeActivityLog(
+        supabase,
+        examId,
+        student.id,
+        existing.id,
+        "exam_started",
+        "시험 응시 시작",
+      );
       return NextResponse.json({ attempt: existing });
     }
     const { data, error } = await supabase
       .from("exam_attempts")
-      .insert({ exam_id: examId, student_id: student.id, started_at: new Date().toISOString(), last_saved_at: new Date().toISOString() })
+      .insert({
+        exam_id: examId,
+        student_id: student.id,
+        started_at: new Date().toISOString(),
+        last_saved_at: new Date().toISOString(),
+      })
       .select()
       .single();
-    if (!error && data) await writeActivityLog(supabase, examId, student.id, data.id, "exam_started", "시험 응시 시작");
+    if (!error && data)
+      await writeActivityLog(
+        supabase,
+        examId,
+        student.id,
+        data.id,
+        "exam_started",
+        "시험 응시 시작",
+      );
     return error
       ? NextResponse.json({ message: error.message }, { status: 400 })
       : NextResponse.json({ attempt: data });
@@ -527,8 +622,17 @@ export async function POST(request: Request) {
       (key) => String(previous[key] ?? "") !== String(answers[key] ?? ""),
     );
     if (!error && answerChanged) {
-      const answeredCount = Object.values(answers).filter((value) => String(value ?? "").trim()).length;
-      await writeActivityLog(supabase, examId, student.id, existing.id, "answer_saved", `답안 ${answeredCount}개 저장`);
+      const answeredCount = Object.values(answers).filter((value) =>
+        String(value ?? "").trim(),
+      ).length;
+      await writeActivityLog(
+        supabase,
+        examId,
+        student.id,
+        existing.id,
+        "answer_saved",
+        `답안 ${answeredCount}개 저장`,
+      );
     }
     return error
       ? NextResponse.json({ message: error.message }, { status: 400 })
@@ -560,7 +664,15 @@ export async function POST(request: Request) {
         score_source: "auto",
       })
       .eq("id", existing.id);
-    if (!error) await writeActivityLog(supabase, examId, student.id, existing.id, "exam_submitted", `제출 완료 · ${score}점`);
+    if (!error)
+      await writeActivityLog(
+        supabase,
+        examId,
+        student.id,
+        existing.id,
+        "exam_submitted",
+        `제출 완료 · ${score}점`,
+      );
     return error
       ? NextResponse.json({ message: error.message }, { status: 400 })
       : NextResponse.json({ success: true, score, correct, wrong, unanswered });
