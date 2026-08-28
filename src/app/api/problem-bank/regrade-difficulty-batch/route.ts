@@ -11,29 +11,43 @@ export async function POST(request: NextRequest) {
     if (denied) return denied;
     const body = await request.json().catch(() => ({}));
     const ids = Array.isArray(body?.problemIds)
-      ? body.problemIds.map((v: unknown) => String(v ?? "").trim()).filter(Boolean)
+      ? body.problemIds
+          .map((v: unknown) => String(v ?? "").trim())
+          .filter(Boolean)
       : [];
 
     if (!ids.length) {
-      return NextResponse.json({ success: false, message: "problemIds가 필요합니다." }, { status: 400 });
+      return NextResponse.json(
+        { success: false, message: "problemIds가 필요합니다." },
+        { status: 400 },
+      );
     }
 
     const dryRun = body?.dryRun === true;
-    const referenceIds = Array.isArray(body?.referenceIds) ? body.referenceIds.map((v: unknown) => String(v ?? "").trim()).filter(Boolean).slice(0, 24) : [];
-    const targetIds = ids.slice(0, 20); // 한 번에 과도하게 호출하지 않도록 제한
+    const referenceIds = Array.isArray(body?.referenceIds)
+      ? body.referenceIds
+          .map((v: unknown) => String(v ?? "").trim())
+          .filter(Boolean)
+          .slice(0, 24)
+      : [];
+    // SOS304: 한 요청은 한 차례의 병렬 호출로 끝내 Vercel 실행시간 안에 마친다.
+    const targetIds = ids.slice(0, 4);
     const origin = new URL(request.url).origin;
     const results: any[] = [];
 
     async function regradeOne(problemId: string) {
-      const response = await fetch(`${origin}/api/problem-bank/regrade-difficulty`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          cookie: request.headers.get("cookie") ?? "",
+      const response = await fetch(
+        `${origin}/api/problem-bank/regrade-difficulty`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            cookie: request.headers.get("cookie") ?? "",
+          },
+          body: JSON.stringify({ problemId, dryRun, referenceIds }),
+          cache: "no-store",
         },
-        body: JSON.stringify({ problemId, dryRun, referenceIds }),
-        cache: "no-store",
-      });
+      );
 
       const raw = await response.text();
       let result: any = {};
@@ -48,7 +62,7 @@ export async function POST(request: NextRequest) {
     const concurrency = 4;
     for (let i = 0; i < targetIds.length; i += concurrency) {
       const chunk = targetIds.slice(i, i + concurrency);
-      results.push(...await Promise.all(chunk.map(regradeOne)));
+      results.push(...(await Promise.all(chunk.map(regradeOne))));
     }
 
     return NextResponse.json({
@@ -60,7 +74,13 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     return NextResponse.json(
-      { success: false, message: error instanceof Error ? error.message : "일괄 난이도 재판정 중 오류가 발생했습니다." },
+      {
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "일괄 난이도 재판정 중 오류가 발생했습니다.",
+      },
       { status: 500 },
     );
   }
