@@ -353,26 +353,8 @@ export async function GET(request: Request) {
   });
   const landmark = buildLandmarkSummary(landmarkRecords);
 
-  const { data: posterRows } = await supabase
-    .from("site_posters")
-    .select("id,title,image_path,link_url,sort_order")
-    .eq("is_published", true)
-    .order("sort_order")
-    .order("created_at", { ascending: false });
-  const posters = await Promise.all(
-    (posterRows ?? []).map(async (poster) => ({
-      id: poster.id,
-      title: poster.title,
-      link_url: poster.link_url,
-      sort_order: poster.sort_order,
-      image_url:
-        (
-          await supabase.storage
-            .from("site-posters")
-            .createSignedUrl(poster.image_path, 60 * 60 * 3)
-        ).data?.signedUrl ?? "",
-    })),
-  );
+  // SOS310: 포스터와 신청은 학부모 전용이다.
+  const posters: any[] = [];
   const { data: sosSessions } = await supabase
     .from("sos_training_sessions")
     .select(
@@ -382,6 +364,23 @@ export async function GET(request: Request) {
     .in("status", ["ASSIGNED", "IN_PROGRESS", "COMPLETED", "PASSED", "RETRAIN"])
     .order("created_at", { ascending: false })
     .limit(20);
+  const enrollmentResult = await supabase
+    .from("sos_program_enrollments")
+    .select("id,batch_id,status,enrolled_at,sos_program_batches(id,title,price)")
+    .eq("student_id", student.id)
+    .eq("status", "ACTIVE")
+    .order("enrolled_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  let programEnrollment: any = null;
+  if (!enrollmentResult.error && enrollmentResult.data) {
+    const cycleLinks = await supabase
+      .from("sos_program_batch_cycles")
+      .select("slot_no,learning_cycles(id,name,start_date,end_date,status)")
+      .eq("batch_id", enrollmentResult.data.batch_id)
+      .order("slot_no");
+    programEnrollment = { ...enrollmentResult.data, cycles: cycleLinks.data ?? [] };
+  }
 
   return NextResponse.json(
     {
@@ -396,6 +395,7 @@ export async function GET(request: Request) {
       sosSessions: sosSessions ?? [],
       landmark,
       posters,
+      programEnrollment,
     },
     {
       headers: {

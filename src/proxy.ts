@@ -54,6 +54,8 @@ export async function proxy(request: NextRequest) {
     pathname === "/login" ||
     pathname === "/student-login" ||
     pathname === "/parent-login" ||
+    pathname === "/apply" ||
+    pathname === "/api/program-applications" ||
     pathname === "/admin/login" ||
     pathname.startsWith("/auth/") ||
     // Vercel Cron 호출에는 로그인 쿠키가 없습니다.
@@ -110,7 +112,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
-  if (user?.user_metadata?.role === "parent" && pathname !== "/p" && !pathname.startsWith("/api/parent/") && !pathname.startsWith("/parent-login") && !pathname.startsWith("/auth/")) {
+  if (user?.user_metadata?.role === "parent" && pathname !== "/p" && pathname !== "/apply" && pathname !== "/api/program-applications" && !pathname.startsWith("/api/parent/") && !pathname.startsWith("/parent-login") && !pathname.startsWith("/auth/")) {
     return NextResponse.redirect(new URL("/p", request.url));
   }
 

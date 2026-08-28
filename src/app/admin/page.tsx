@@ -28,6 +28,7 @@ import {
   type SourceWorkflowState,
   type SourceWorkflowTone,
 } from "@/lib/source-workflow";
+import ProgramBatchesAdmin from "./ProgramBatchesAdmin";
 
 type CanonicalSourceAnalysisStatus = {
   success: boolean;
@@ -58,6 +59,7 @@ type AdminMenu =
   | "posters"
   | "students"
   | "applications"
+  | "program-applications"
   | "exam-list"
   | "exam-input"
   | "exam-analysis"
@@ -162,6 +164,7 @@ const menus: MenuItem[] = [
   { id: "posters", label: "포스터 관리", icon: "▧" },
   { id: "students", label: "학생정보 관리", icon: "♙" },
   { id: "applications", label: "신청 관리", icon: "✓" },
+  { id: "program-applications", label: "SOS 5회 신청", icon: "⑤" },
   { id: "cycles", label: "회차 관리", icon: "◉" },
   { id: "exam-list", label: "시험지 목록", icon: "▤" },
   { id: "exam-input", label: "시험지 입력", icon: "+" },
@@ -181,7 +184,7 @@ const menus: MenuItem[] = [
 ];
 
 const menuGroups: MenuGroup[] = [
-  { label: "기본 운영", items: menus.filter((item) => ["dashboard", "posters", "students", "applications"].includes(item.id)) },
+  { label: "기본 운영", items: menus.filter((item) => ["dashboard", "posters", "students", "applications", "program-applications"].includes(item.id)) },
   { label: "실전모의고사 관리", icon: "▤", items: menus.filter((item) => ["cycles", "exam-list", "exam-input", "exam-analysis", "exam-assignment"].includes(item.id)) },
   { label: "시험 운영", items: menus.filter((item) => item.id === "exam-progress") },
   { label: "문제은행 관리", icon: "▦", items: menus.filter((item) => ["problem-sources", "problem-analysis"].includes(item.id)) },
@@ -514,6 +517,8 @@ const [collapsed, setCollapsed] = useState(false);
         <div className="page-content">
           {active === "cycles" ? (
             <LearningCyclesPage />
+          ) : active === "program-applications" ? (
+            <ProgramBatchesAdmin />
           ) : active === "students" || active === "applications" ? (
             <StudentsPage key={active}
               initialTab={active === "applications" ? "registration" : "students"}
@@ -599,7 +604,7 @@ function PostersPage() {
       const response = await fetch("/api/admin/posters", { method: "POST", body: form });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "등록하지 못했습니다.");
-      setTitle(""); setLinkUrl(""); setImage(null); setMessage("학생 페이지에 포스터를 등록했습니다."); await load();
+      setTitle(""); setLinkUrl(""); setImage(null); setMessage("학부모 페이지에 포스터를 등록했습니다."); await load();
       const input = document.querySelector<HTMLInputElement>("#poster-image-input"); if (input) input.value = "";
     } catch (error) { setMessage(error instanceof Error ? error.message : "등록하지 못했습니다."); }
     finally { setBusy(""); }
@@ -617,7 +622,7 @@ function PostersPage() {
   };
 
   const remove = async (poster: SitePoster) => {
-    if (!window.confirm(`'${poster.title}' 포스터를 삭제할까요?\n학생 페이지에서도 즉시 사라집니다.`)) return;
+    if (!window.confirm(`'${poster.title}' 포스터를 삭제할까요?\n학부모 페이지에서도 즉시 사라집니다.`)) return;
     setBusy("포스터 삭제 중"); setMessage("");
     try { const response = await fetch(`/api/admin/posters?id=${encodeURIComponent(poster.id)}`, { method: "DELETE" }); const result = await response.json(); if (!response.ok) throw new Error(result.message || "삭제하지 못했습니다."); await load(); }
     catch (error) { setMessage(error instanceof Error ? error.message : "삭제하지 못했습니다."); }
@@ -626,7 +631,7 @@ function PostersPage() {
 
   return <section className="poster-admin-page">
     {busy ? <div className="admin-busy"><div><b>{busy}</b><span>잠시 기다려 주세요.</span></div></div> : null}
-    <div className="page-title-row"><div><h2>포스터 관리</h2><p>학생 홈에 노출할 MATHPOOH 프로그램·시험 안내 포스터를 관리합니다.</p></div></div>
+    <div className="page-title-row"><div><h2>포스터 관리</h2><p>학부모 페이지에 노출할 MATHPOOH 프로그램·시험 안내 포스터를 관리합니다.</p></div></div>
     <form className="panel poster-upload-panel" onSubmit={upload}>
       <div className="poster-upload-copy"><small>MATHPOOH CONTENT</small><h3>새 포스터 등록</h3><p>가로형·세로형 이미지를 모두 사용할 수 있습니다. 최대 10MB</p></div>
       <label><span>포스터 제목 *</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="예: SOS 2회 실전모의고사 안내" /></label>
@@ -638,12 +643,12 @@ function PostersPage() {
     <div className="poster-admin-grid">
       {posters.map((poster) => <article className={`poster-admin-card ${poster.is_published ? "published" : "hidden"}`} key={poster.id}>
         <div className="poster-preview"><img src={poster.image_url} alt={poster.title} /></div>
-        <div className="poster-card-body"><div><span className="poster-state">{poster.is_published ? "학생 공개 중" : "숨김"}</span><strong>{poster.title}</strong><small>{poster.link_url || "연결 주소 없음"}</small></div>
+        <div className="poster-card-body"><div><span className="poster-state">{poster.is_published ? "학부모 공개 중" : "숨김"}</span><strong>{poster.title}</strong><small>{poster.link_url || "연결 주소 없음"}</small></div>
           <label>순서 <input type="number" value={poster.sort_order} onChange={(event) => setPosters((current) => current.map((item) => item.id === poster.id ? { ...item, sort_order: Number(event.target.value) } : item))} onBlur={(event) => void update(poster, { sort_order: Number(event.target.value) || 0 })} /></label>
-          <div className="poster-card-actions"><button onClick={() => void update(poster, { is_published: !poster.is_published })}>{poster.is_published ? "학생에게 숨기기" : "학생에게 공개"}</button><button className="danger" onClick={() => void remove(poster)}>삭제</button></div>
+          <div className="poster-card-actions"><button onClick={() => void update(poster, { is_published: !poster.is_published })}>{poster.is_published ? "학부모에게 숨기기" : "학부모에게 공개"}</button><button className="danger" onClick={() => void remove(poster)}>삭제</button></div>
         </div>
       </article>)}
-      {!posters.length ? <div className="poster-empty"><b>등록된 포스터가 없습니다.</b><span>위에서 이미지를 등록하면 학생 홈에 바로 표시됩니다.</span></div> : null}
+      {!posters.length ? <div className="poster-empty"><b>등록된 포스터가 없습니다.</b><span>위에서 이미지를 등록하면 학부모 페이지에 바로 표시됩니다.</span></div> : null}
     </div>
   </section>;
 }

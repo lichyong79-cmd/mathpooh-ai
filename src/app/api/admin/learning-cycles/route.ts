@@ -29,7 +29,10 @@ export async function POST(request:Request){
  }
  if(action==="assign-exam"){
   const cycleId=String(b.cycleId??""),examId=String(b.examId??"");if(!cycleId||!examId)return NextResponse.json({message:"회차와 시험을 선택해 주세요."},{status:400});
-  const q=await ctx.supabase.from("learning_cycle_exams").upsert({cycle_id:cycleId,exam_id:examId,linked_at:new Date().toISOString()},{onConflict:"exam_id"});return q.error?NextResponse.json({message:missing(q.error.message)},{status:400}):NextResponse.json({success:true});
+  const assignedAt=new Date().toISOString();const q=await ctx.supabase.from("learning_cycle_exams").upsert({cycle_id:cycleId,exam_id:examId,linked_at:assignedAt},{onConflict:"exam_id"});if(q.error)return NextResponse.json({message:missing(q.error.message)},{status:400});
+  // SOS310: 시험지를 회차에 나중에 연결해도, 이 회차가 포함된 5회 묶음 등록 학생에게 즉시 배정한다.
+  const batchLinks=await ctx.supabase.from("sos_program_batch_cycles").select("batch_id").eq("cycle_id",cycleId);if(!batchLinks.error){const batchIds=(batchLinks.data??[]).map((x:any)=>x.batch_id);if(batchIds.length){const enrolled=await ctx.supabase.from("sos_program_enrollments").select("student_id").in("batch_id",batchIds).eq("status","ACTIVE");const studentIds=[...new Set((enrolled.data??[]).map((x:any)=>String(x.student_id)))];if(studentIds.length)await ctx.supabase.from("exam_registrations").upsert(studentIds.map(studentId=>({exam_id:examId,student_id:studentId,status:"assigned",assigned_at:assignedAt})),{onConflict:"exam_id,student_id"});}}
+  return NextResponse.json({success:true});
  }
  if(action==="unassign-exam"){
   const q=await ctx.supabase.from("learning_cycle_exams").delete().eq("exam_id",String(b.examId??""));return q.error?NextResponse.json({message:missing(q.error.message)},{status:400}):NextResponse.json({success:true});

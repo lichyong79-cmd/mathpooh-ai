@@ -3,9 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import SosUserManual from "@/components/sos-user-manual";
 
-type Tab = "home" | "scores" | "sos" | "report" | "guide";
+type Tab = "home" | "apply" | "scores" | "sos" | "report" | "guide";
 const TABS: [Tab, string][] = [
   ["home", "홈"],
+  ["apply", "SOS 신청"],
   ["scores", "성적분석"],
   ["sos", "SOS 학습"],
   ["report", "종합리포트"],
@@ -151,7 +152,8 @@ export default function ParentPortal() {
     [selected, setSelected] = useState(""),
     [tab, setTab] = useState<Tab>("home"),
     [loading, setLoading] = useState(true),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [applicationBusy, setApplicationBusy] = useState("");
   const load = async () => {
     setLoading(true);
     setError("");
@@ -176,7 +178,9 @@ export default function ParentPortal() {
   );
   const exams: any[] = report?.exams ?? [],
     sessions: any[] = report?.sos ?? [],
-    jobs: any[] = report?.generationJobs ?? [];
+    jobs: any[] = report?.generationJobs ?? [],
+    programBatches: any[] = data?.programBatches ?? [],
+    programApplications: any[] = data?.programApplications ?? [];
   const latestExam = exams[0],
     latestSession = sessions[0],
     completed = sessions.filter(done).length,
@@ -285,6 +289,26 @@ export default function ParentPortal() {
     if (!r.ok) return alert(j.message);
     alert("비밀번호를 변경했습니다.");
     await load();
+  };
+  const changeApplication = async (batch: any) => {
+    if (!selected || applicationBusy) return;
+    if (!confirm(`${report?.student.name} 학생으로 '${batch.title}' 5회 프로그램을 신청할까요?`)) return;
+    setApplicationBusy(String(batch.id));
+    try {
+      const r = await fetch("/api/program-applications", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ batchId: batch.id, studentId: selected, parentName: "학부모", parentPhone: data.parentPhone, studentName: report.student.name, studentPhone: report.student.phone, school: report.student.school, grade: report.student.grade }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || "신청을 처리하지 못했습니다.");
+      await load();
+      alert("5회 프로그램 신청이 접수되었습니다. 입금 확인 후 등록됩니다.");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "신청을 처리하지 못했습니다.");
+    } finally {
+      setApplicationBusy("");
+    }
   };
   // SOS305: 초기 비밀번호(전화번호 뒤 4자리)를 바꾸기 전에는 자녀 기록을 열지 않는다.
   // 이 계정 하나로 형제자매 전체의 성적과 진단 결과가 보이므로 학생 화면과 같은 기준을 적용한다.
@@ -671,6 +695,42 @@ export default function ParentPortal() {
             </>
           )}
 
+          {tab === "apply" && (
+            <>
+              <section className="section-intro apply-intro">
+                <div>
+                  <small>MATHPOOH SOS PROGRAM</small>
+                  <h2>{report?.student.name} 학생 SOS 신청</h2>
+                  <p>프로그램 안내를 확인하고 자녀 이름으로 바로 신청할 수 있습니다.</p>
+                </div>
+                <div><b>{programApplications.filter((x) => x.status === "REQUESTED" && String(x.student_id) === selected).length}</b><span>신청 대기</span></div>
+              </section>
+              <section className="parent-posters">
+                {(data.posters ?? []).map((poster: any) => {
+                  const content = <><img src={poster.image_url} alt={poster.title} /><div><b>{poster.title}</b><span>{poster.link_url ? "상세 안내 보기 →" : "프로그램 안내"}</span></div></>;
+                  return poster.link_url ? <a key={poster.id} href={poster.link_url} target="_blank" rel="noreferrer">{content}</a> : <article key={poster.id}>{content}</article>;
+                })}
+                {!data.posters?.length ? <div className="apply-empty">현재 등록된 프로그램 안내 포스터가 없습니다.</div> : null}
+              </section>
+              <section className="card application-card">
+                <Title en="APPLICATION" ko="신청 가능한 SOS 5회 프로그램" />
+                <p className="application-help">일정 5개가 한 묶음입니다. 입금 확인 후 5개 회차가 자녀에게 한 번에 등록됩니다.</p>
+                <div className="application-list">
+                  {programBatches.map((batch: any) => { const applied = programApplications.find((x) => String(x.batch_id) === String(batch.id) && (String(x.student_id) === selected || x.student_name === report?.student.name)); return (
+                    <article key={batch.id}>
+                      <div className="application-date"><b>5</b><span>회 묶음</span></div>
+                      <div className="application-info"><small>MATHPOOH SOS</small><b>{batch.title}</b><span>{batch.cycles.map((c: any) => `${c.slot_no}회 ${fmt(c.start_date)}`).join(" · ")}</span></div>
+                      <div className="application-action">
+                        {applied ? <><strong className={applied.status === "ENROLLED" ? "assigned" : "requested"}>{applied.status === "ENROLLED" ? "등록 완료" : applied.status === "REQUESTED" ? "신청 접수" : applied.status}</strong></> : <button className="request" disabled={applicationBusy === String(batch.id)} onClick={() => void changeApplication(batch)}>{applicationBusy === String(batch.id) ? "처리 중…" : `${Number(batch.price ?? 0).toLocaleString("ko-KR")}원 · 신청하기`}</button>}
+                      </div>
+                    </article>
+                  )})}
+                  {!programBatches.length ? <div className="apply-empty">현재 신청 가능한 5회 프로그램이 없습니다.</div> : null}
+                </div>
+              </section>
+            </>
+          )}
+
           {tab === "scores" && (
             <>
               <section className="section-intro">
@@ -1032,9 +1092,11 @@ function CycleMetrics({ cycle }: { cycle: any }) {
 function DetailStyle() {
   return (
     <style jsx global>{`
+      .parent-posters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0}.parent-posters>a,.parent-posters>article{overflow:hidden;border:1px solid #dbe5dd;border-radius:16px;background:#fff;color:#17251b;text-decoration:none}.parent-posters img{display:block;width:100%;max-height:520px;object-fit:contain;background:#f6f8f6}.parent-posters>a>div,.parent-posters>article>div{display:flex;justify-content:space-between;gap:10px;padding:14px}.parent-posters span{color:#39704b;font-size:11px;font-weight:900}.application-card{margin-top:14px}.application-help{margin:-6px 0 16px;color:#6f7d73;font-size:12px}.application-list{display:grid;gap:9px}.application-list>article{display:grid;grid-template-columns:68px 1fr auto;align-items:center;gap:14px;padding:13px;border:1px solid #e1e8e3;border-radius:12px}.application-date{display:grid;place-items:center;padding:8px;border-radius:10px;background:#eef6ef}.application-date b{font-size:22px;color:#2f6937}.application-date span{font-size:10px}.application-info>*{display:block}.application-info small{color:#78907d;font-size:9px;font-weight:900}.application-info b{margin:4px 0}.application-info span{color:#718078;font-size:11px}.application-action{display:flex;align-items:center;gap:7px}.application-action button{height:42px;padding:0 14px;border:1px solid #d5dfd7;border-radius:9px;background:#fff;font-weight:900;cursor:pointer}.application-action button.request{border-color:#2f6937;background:#2f6937;color:#fff}.application-action strong{padding:9px 11px;border-radius:9px;font-size:11px}.application-action .requested{background:#fff3dc;color:#a46212}.application-action .assigned{background:#eaf6ec;color:#28703c}.apply-empty{grid-column:1/-1;padding:25px;text-align:center;border:1px dashed #ccd9cf;border-radius:12px;color:#728078;background:#fff}
       .unfinished {
         margin-top: 13px;
       }
+      @media(max-width:700px){.parent-posters{grid-template-columns:1fr}.application-list>article{grid-template-columns:55px 1fr}.application-action{grid-column:2}.application-action button{width:100%}}
       .unfinished-head {
         display: flex;
         justify-content: space-between;

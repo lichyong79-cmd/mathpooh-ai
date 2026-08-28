@@ -29,7 +29,7 @@ export async function GET() {
   const supabase = createClient();
   const childrenResult = await supabase
     .from("students")
-    .select("id,name,school,grade,status,parent_phone")
+    .select("id,name,school,grade,status,parent_phone,phone")
     .eq("parent_phone", phone)
     .order("name");
   if (childrenResult.error)
@@ -50,9 +50,10 @@ export async function GET() {
       passwordChanged,
       children: [],
       reports: [],
+      posters: [],
     });
 
-  const [attemptResult, sessionResult, jobResult] = await Promise.all([
+  const [attemptResult, sessionResult, jobResult, posterResult] = await Promise.all([
     supabase
       .from("exam_attempts")
       .select(
@@ -78,10 +79,16 @@ export async function GET() {
       .in("student_id", ids)
       .order("requested_at", { ascending: false })
       .limit(Math.max(20, ids.length * 10)),
+    supabase
+      .from("site_posters")
+      .select("id,title,image_path,link_url,sort_order")
+      .eq("is_published", true)
+      .order("sort_order")
+      .order("created_at", { ascending: false }),
   ]);
-  if (attemptResult.error || sessionResult.error)
+  if (attemptResult.error || sessionResult.error || posterResult.error)
     return NextResponse.json(
-      { message: attemptResult.error?.message || sessionResult.error?.message },
+      { message: attemptResult.error?.message || sessionResult.error?.message || posterResult.error?.message },
       { status: 400 },
     );
   const attempts = attemptResult.data ?? [];
@@ -184,6 +191,7 @@ export async function GET() {
       school: child.school,
       grade: child.grade,
       status: child.status,
+      phone: child.phone ?? "",
     },
     exams: examRows
       .filter((x: any) => String(x.studentId) === String(child.id))
@@ -195,8 +203,32 @@ export async function GET() {
       .filter((x: any) => String(x.student_id) === String(child.id))
       .slice(0, 5),
   }));
+  const posters = await Promise.all(
+    (posterResult.data ?? []).map(async (poster: any) => ({
+      id: poster.id,
+      title: poster.title,
+      link_url: poster.link_url,
+      sort_order: poster.sort_order,
+      image_url:
+        (
+          await supabase.storage
+            .from("site-posters")
+            .createSignedUrl(poster.image_path, 60 * 60 * 3)
+        ).data?.signedUrl ?? "",
+    })),
+  );
+  const [programBatchResult, programLinkResult, parentApplicationResult] = await Promise.all([
+    supabase.from("sos_program_batches").select("id,title,price,application_start,application_end,capacity,memo,is_published,created_at").eq("is_published", true).order("created_at", { ascending: false }),
+    supabase.from("sos_program_batch_cycles").select("batch_id,slot_no,learning_cycles(id,name,start_date,end_date,status)").order("slot_no"),
+    supabase.from("sos_program_applications").select("id,batch_id,student_id,student_name,status,requested_at,paid_at,enrolled_at").eq("parent_phone", phone).order("requested_at", { ascending: false }),
+  ]);
+  const programMissing = programBatchResult.error?.message?.includes("sos_program_");
+  const programBatches = programMissing ? [] : (programBatchResult.data ?? []).map((batch: any) => ({
+    ...batch,
+    cycles: (programLinkResult.data ?? []).filter((x: any) => String(x.batch_id) === String(batch.id)).map((x: any) => ({ slot_no: x.slot_no, ...(x.learning_cycles ?? {}) })),
+  }));
   return NextResponse.json(
-    { parentPhone: phone, passwordChanged, children, reports },
+    { parentPhone: phone, passwordChanged, children, reports, posters, programBatches, programApplications: programMissing ? [] : (parentApplicationResult.data ?? []) },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
@@ -209,6 +241,61 @@ export async function POST(request: Request) {
       { status: 403 },
     );
   const body = await request.json();
+  const action = String(body.action ?? "");
+  if (action === "request" || action === "cancel-request") {
+    const phone = digits(
+      user.user_metadata?.parent_phone ?? String(user.email ?? "").split("@")[0],
+    );
+    const studentId = String(body.studentId ?? "");
+    const examId = String(body.examId ?? "");
+    const supabase = createClient();
+    const child = await supabase
+      .from("students")
+      .select("id")
+      .eq("id", studentId)
+      .eq("parent_phone", phone)
+      .maybeSingle();
+    if (child.error || !child.data)
+      return NextResponse.json(
+        { message: "연결된 자녀 정보를 확인할 수 없습니다." },
+        { status: 403 },
+      );
+    if (action === "request") {
+      const exam = await supabase
+        .from("exams")
+        .select("id")
+        .eq("id", examId)
+        .eq("student_open", true)
+        .maybeSingle();
+      if (exam.error || !exam.data)
+        return NextResponse.json(
+          { message: "현재 신청 가능한 시험이 아닙니다." },
+          { status: 404 },
+        );
+      const saved = await supabase.from("exam_registrations").upsert(
+        {
+          exam_id: examId,
+          student_id: studentId,
+          status: "requested",
+          requested_at: new Date().toISOString(),
+          assigned_at: null,
+        },
+        { onConflict: "exam_id,student_id" },
+      );
+      return saved.error
+        ? NextResponse.json({ message: saved.error.message }, { status: 400 })
+        : NextResponse.json({ success: true, status: "requested" });
+    }
+    const cancelled = await supabase
+      .from("exam_registrations")
+      .delete()
+      .eq("exam_id", examId)
+      .eq("student_id", studentId)
+      .eq("status", "requested");
+    return cancelled.error
+      ? NextResponse.json({ message: cancelled.error.message }, { status: 400 })
+      : NextResponse.json({ success: true, status: "none" });
+  }
   const password = String(body.password ?? "");
   if (password.length < 6)
     return NextResponse.json(

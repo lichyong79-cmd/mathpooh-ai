@@ -113,6 +113,7 @@ type Portal = {
     link_url: string;
     sort_order: number;
   }[];
+  programEnrollment?: { id: string; status: string; sos_program_batches?: { title?: string }; cycles?: Array<{ slot_no: number; learning_cycles?: { id: string; name: string; start_date: string; end_date: string; status: string } }> } | null;
 };
 type StudentSection =
   "home" | "apply" | "exams" | "strategy" | "scores" | "learning" | "guide";
@@ -2318,7 +2319,7 @@ export default function StudentHome() {
         "guide",
       ].includes(saved)
     )
-      setActiveSection(saved);
+      setActiveSection(saved === "apply" ? "exams" : saved);
   }, []);
   const moveSection = (section: StudentSection) => {
     setActiveSection(section);
@@ -2988,9 +2989,9 @@ export default function StudentHome() {
         <div className="mp-header-actions">
           <button
             className="mp-apply-button"
-            onClick={() => moveSection("apply")}
+            onClick={() => moveSection("exams")}
           >
-            <span aria-hidden="true">＋</span>SOS 신청
+            <span aria-hidden="true">＋</span>시험 신청
           </button>
           <div className="mp-profile-wrap">
             <button
@@ -3092,6 +3093,7 @@ export default function StudentHome() {
       ) : null}
       {activeSection === "home" ? (
         <>
+          {portal.programEnrollment ? <section className="student-program-pass"><div><small>SOS 5회 등록</small><h2>{portal.programEnrollment.sos_program_batches?.title ?? "SOS 5회 프로그램"}</h2><p>등록된 5개 운영 회차에 시험지가 연결되면 자동으로 시험이 배정됩니다.</p></div><div>{portal.programEnrollment.cycles?.map((x) => <span key={x.slot_no}><b>{x.slot_no}회</b>{x.learning_cycles?.name ?? "일정 준비"}</span>)}</div><small>신청·결제·다음 5회 등록은 학부모 페이지에서 확인해 주세요.</small></section> : null}
           {todayTask ? (
             <section className={`student-today-task task-${todayTask.kind}`}>
               <div className="student-task-icon" aria-hidden="true">
