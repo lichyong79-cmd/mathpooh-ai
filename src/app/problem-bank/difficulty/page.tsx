@@ -232,6 +232,9 @@ export default function DifficultyManagementPage() {
   const [savedDifficulty, setSavedDifficulty] = useState<
     Record<string, string>
   >({});
+  // SOS307: 목록에서 난이도를 바꾸려면 문제를 봐야 하는데 볼 방법이 없었다.
+  // 행을 누르면 그 자리에서 문항 이미지를 펼친다.
+  const [previewId, setPreviewId] = useState("");
   const [queue, setQueue] = useState<any>(null);
   const [queueBusy, setQueueBusy] = useState(false);
   const [fullPreviewResults, setFullPreviewResults] = useState<TestRow[]>([]);
@@ -1909,8 +1912,16 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
               <div className="loading-row">불러오는 중...</div>
             ) : (
               filtered.map((x) => (
-                <div key={x.id} className="bank-row">
-                  <b>{x.question_no}번</b>
+                <div key={x.id} className={`bank-row-wrap ${previewId === x.id ? "open" : ""}`}>
+                <div
+                  className="bank-row"
+                  onClick={(e) => {
+                    // 난이도 선택 조작은 펼침에 영향을 주지 않게 한다.
+                    if ((e.target as HTMLElement).closest("select")) return;
+                    setPreviewId(previewId === x.id ? "" : x.id);
+                  }}
+                >
+                  <b>{x.question_no}번 <i className="row-caret">{previewId === x.id ? "▾" : "▸"}</i></b>
                   <span>{x.problem_code}</span>
                   <span>
                     <b>{x.unit}</b>
@@ -1933,11 +1944,53 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
                     ))}
                   </select>
                 </div>
+                {previewId === x.id ? (
+                  <div className="bank-preview">
+                    <div className="bank-preview-image">
+                      <TestProblemImage problemId={x.id} questionNo={x.question_no} />
+                    </div>
+                    <div className="bank-preview-info">
+                      <b>{x.title || x.topic}</b>
+                      <p>{x.subject} · {x.unit}</p>
+                      <p className="muted">{x.source_name}</p>
+                      <p className="muted">
+                        {difficultyAiJudged(x.problem_dna)
+                          ? "AI 재풀이로 확정된 난이도입니다."
+                          : "AI 미검증 · DNA 점수로 계산한 추정치입니다."}
+                      </p>
+                      <p className="muted">문제를 보고 위의 난이도를 직접 바꾸면 관리자 확정으로 저장되어, 이후 자동 판정이 덮어쓰지 않습니다.</p>
+                    </div>
+                  </div>
+                ) : null}
+                </div>
               ))
             )}
           </div>
         </div>
         <style jsx>{`
+          /* SOS307 · 목록에서 문항 펼쳐보기 */
+          .bank-row-wrap { border-bottom: 1px solid #eef2ef; }
+          .bank-row-wrap.open { background: #f7fbf8; }
+          .bank-row { cursor: pointer; }
+          .bank-row:hover { background: #f4f8f5; }
+          .row-caret { font-style: normal; color: #8fa397; font-size: 11px; margin-left: 3px; }
+          .bank-preview {
+            display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+            gap: 16px; padding: 4px 16px 18px;
+          }
+          .bank-preview-image {
+            height: 460px; background: #fff; border: 1px solid #e3eae5;
+            border-radius: 12px; overflow: hidden;
+          }
+          .bank-preview-info { display: flex; flex-direction: column; gap: 7px; padding-top: 4px; }
+          .bank-preview-info b { font-size: 15px; color: #22402d; }
+          .bank-preview-info p { margin: 0; font-size: 13px; color: #4d5c53; line-height: 1.65; }
+          .bank-preview-info .muted { color: #7c8a82; font-size: 12px; }
+          @media (max-width: 900px) {
+            .bank-preview { grid-template-columns: 1fr; }
+            .bank-preview-image { height: 380px; }
+          }
+
           .difficulty-page {
             height: 100vh;
             min-height: 0;

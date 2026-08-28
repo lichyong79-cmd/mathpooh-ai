@@ -97,3 +97,16 @@
   .collapsed .signout{font-size:12px;padding:9px 10px}
   .collapsed .signout::after{content:""}
 }
+
+/* SOS306 · 막힌 AI 생성 작업 알림 */
+.stuckBar{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  margin:0 0 14px;padding:13px 16px;
+  background:#fff5e9;border:1px solid #f0d3a8;border-left:5px solid #d98324;
+  border-radius:12px;text-decoration:none;color:#8a5312;
+}
+.stuckBar:hover{background:#fdeed9}
+.stuckBar b{font-size:14px;font-weight:900}
+.stuckBar span{font-size:12.5px;color:#a1712f;flex:1 1 auto}
+.stuckBar em{font-style:normal;font-size:12.5px;font-weight:900;white-space:nowrap}
+@media(max-width:900px){.stuckBar{margin:56px 0 12px}}

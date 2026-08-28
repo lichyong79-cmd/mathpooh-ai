@@ -61,6 +61,8 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
   });
 
   const [mobileOpen, setMobileOpen] = useState(false);
+  // SOS306: 막힌 AI 생성 작업을 관리자 화면 어디에서든 알려준다.
+  const [stuck, setStuck] = useState<{ stuck: number; students: number; names: string[] } | null>(null);
   const [email, setEmail] = useState("");
   const [signingOut, setSigningOut] = useState(false);
 
@@ -73,6 +75,21 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
       } catch { /* 프록시가 이미 막으므로 무시합니다. */ }
     })();
     return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const res = await fetch("/api/admin/stuck-jobs", { cache: "no-store" });
+        const data = await res.json();
+        if (alive && data?.success) setStuck(data);
+      } catch { /* 배지는 부가 기능이라 실패해도 무시한다 */ }
+    };
+    void check();
+    // 5분마다, 탭이 화면에 보일 때만 확인한다.
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void check(); }, 300000);
+    return () => { alive = false; window.clearInterval(timer); };
   }, []);
 
   const signOut = async () => {
@@ -116,7 +133,14 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
         </button>
       </div>
     </aside>
-    <div className={styles.content}>{children}</div>
+    <div className={styles.content}>
+      {stuck && stuck.stuck > 0 ? <a className={styles.stuckBar} href="/admin/ai-generated-bank">
+        <b>⚠ 막힌 AI 생성 작업 {stuck.stuck}건</b>
+        <span>{stuck.students ? `학생 ${stuck.students}명 대기 중${stuck.names.length ? ` · ${stuck.names.join(", ")}` : ""}` : "확인이 필요합니다"}</span>
+        <em>보러 가기 →</em>
+      </a> : null}
+      {children}
+    </div>
   </div>;
 }
 
