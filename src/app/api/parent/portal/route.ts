@@ -17,7 +17,12 @@ export async function GET(){
   if(childrenResult.error)return NextResponse.json({message:childrenResult.error.message},{status:400});
   const children=childrenResult.data??[];
   const ids=children.map((x:any)=>x.id);
-  if(!ids.length)return NextResponse.json({parentPhone:phone,children:[],reports:[]});
+  // SOS305: 학부모 계정도 학생과 같은 초기 비밀번호(전화번호 뒤 4자리) 규칙을 쓴다.
+  // 학부모 전화번호는 학생들끼리도 아는 경우가 많고, 이 계정 하나로 형제자매 전체의
+  // 성적·진단·바로미터·교사 코멘트를 볼 수 있다. 첫 로그인 시 변경을 강제한다.
+  const passwordChanged=user.user_metadata?.password_changed===true;
+
+  if(!ids.length)return NextResponse.json({parentPhone:phone,passwordChanged,children:[],reports:[]});
 
   const [attemptResult,sessionResult,jobResult]=await Promise.all([
     supabase.from("exam_attempts").select("id,exam_id,student_id,status,score,correct_count,answers,wrong_numbers,unanswered_numbers,submitted_at,created_at,mathpooh_comment").in("student_id",ids).eq("status","submitted").order("submitted_at",{ascending:false}),
@@ -52,7 +57,7 @@ export async function GET(){
     sos:(sessionResult.data??[]).filter((x:any)=>String(x.student_id)===String(child.id)).slice(0,40),
     generationJobs:(jobResult.data??[]).filter((x:any)=>String(x.student_id)===String(child.id)).slice(0,5)
   }));
-  return NextResponse.json({parentPhone:phone,children,reports},{headers:{"Cache-Control":"no-store"}});
+  return NextResponse.json({parentPhone:phone,passwordChanged,children,reports},{headers:{"Cache-Control":"no-store"}});
 }
 
 export async function POST(request:Request){
@@ -60,6 +65,14 @@ export async function POST(request:Request){
   if(!user||String(user.user_metadata?.role)!=="parent")return NextResponse.json({message:"학부모 로그인이 필요합니다."},{status:403});
   const body=await request.json();const password=String(body.password??"");
   if(password.length<6)return NextResponse.json({message:"새 비밀번호는 6자리 이상이어야 합니다."},{status:400});
-  const updated=await createClient().auth.admin.updateUserById(user.id,{password});
+  // SOS305: 초기 비밀번호를 그대로 쓰지 못하게 막는다.
+  const phone=digits(user.user_metadata?.parent_phone??String(user.email??"").split("@")[0]);
+  if(phone.length>=4&&password===`Mp!${phone.slice(-4)}`)
+    return NextResponse.json({message:"처음 받은 비밀번호와 다른 값으로 정해 주세요."},{status:400});
+
+  const updated=await createClient().auth.admin.updateUserById(user.id,{
+    password,
+    user_metadata:{...user.user_metadata,password_changed:true},
+  });
   return updated.error?NextResponse.json({message:updated.error.message},{status:400}):NextResponse.json({success:true});
 }

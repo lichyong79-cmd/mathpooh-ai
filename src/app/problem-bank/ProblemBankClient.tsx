@@ -34,6 +34,7 @@ type Problem = {
   question_image_path: string | null;
   page_no: number | null;
   problem_dna: ProblemDNA | null;
+  dna_full?: boolean;   // SOS305: 전문을 받아왔는지 여부
   analysis_version: string | null;
   content_role?: "TRAINING" | "REFERENCE";
   training_course?: string;
@@ -125,7 +126,11 @@ export default function ProblemBankClient() {
       const fields = [
         "id", "source_file_id", "analysis_question_id", "question_no", "problem_code", "title",
         "grade", "subject", "unit", "topic", "difficulty", "question_type", "answer", "summary",
-        "source_name", "confidence", "status", "content_role", "training_course", "created_at", "updated_at", "question_image_path", "page_no", "problem_dna", "analysis_version",
+        "source_name", "confidence", "status", "content_role", "training_course", "created_at", "updated_at", "question_image_path", "page_no", "analysis_version",
+        // SOS305: problem_dna 전문은 문항 하나당 수 KB라, 5,000문항이면 목록을 열 때마다
+        // 수십 MB가 오갔다(Supabase egress 초과의 원인 중 하나). 목록에서 실제로 필요한 것은
+        // 난이도 판정 부분뿐이므로 그 조각만 받고, 전문은 문항을 선택할 때 따로 받는다.
+        "dna_difficulty:problem_dna->difficulty", "dna_summary:problem_dna->summary",
       ].join(",");
       // PostgREST는 프로젝트 설정에 따라 한 요청당 최대 1,000행만 반환할 수 있다.
       // 문제은행 전체를 정확히 보여주기 위해 1,000행씩 끝까지 페이지네이션한다.
@@ -142,7 +147,13 @@ export default function ProblemBankClient() {
         allRows.push(...pageRows);
         if (pageRows.length < pageSize) break;
       }
-      const rows = allRows.map((item) => ({ ...item, difficulty: normalizeDifficultyLegacy(item.difficulty, item.problem_dna) }));
+      const rows = allRows.map((item: any) => {
+        // 목록용 축약 DNA. 상세를 열면 전문으로 교체된다.
+        const lite = (item.dna_difficulty || item.dna_summary)
+          ? { difficulty: item.dna_difficulty ?? undefined, summary: item.dna_summary ?? undefined }
+          : null;
+        return { ...item, problem_dna: lite as any, dna_full: false, difficulty: normalizeDifficultyLegacy(item.difficulty, lite) };
+      });
       setItems(rows);
       setSelectedId((current) => rows.some((item) => item.id === current) ? current : rows[0]?.id ?? "");
     } catch (reason) {
@@ -160,6 +171,30 @@ export default function ProblemBankClient() {
   }, [searchParams]);
 
   const selected = items.find((item) => item.id === selectedId) ?? null;
+
+  // SOS305: 문항을 선택하면 그때 DNA 전문을 받아 목록 항목을 교체한다.
+  // 목록은 축약본만 들고 있어 가볍고, 상세 화면은 예전과 똑같이 동작한다.
+  useEffect(() => {
+    if (!selectedId || !selected || selected.dna_full) return;
+    let alive = true;
+    (async () => {
+      try {
+        const config = getSupabaseConfig();
+        if (!config) return;
+        const headers = { ...(await authHeaders()) };
+        const res = await fetch(
+          `${config.url}/rest/v1/problem_bank_questions?select=problem_dna&id=eq.${selectedId}`,
+          { headers, cache: "no-store" },
+        );
+        if (!res.ok) return;
+        const rows = await res.json();
+        const dna = rows?.[0]?.problem_dna ?? null;
+        if (!alive) return;
+        setItems((prev) => prev.map((x) => (x.id === selectedId ? { ...x, problem_dna: dna, dna_full: true } : x)));
+      } catch { /* 상세 DNA는 없어도 화면이 동작한다 */ }
+    })();
+    return () => { alive = false; };
+  }, [selectedId, selected?.dna_full]);
 
   useEffect(() => {
     if (!selected) {
@@ -308,6 +343,20 @@ export default function ProblemBankClient() {
     setMessage("");
     setError("");
     try {
+      // SOS305: 목록은 DNA 축약본만 들고 있다. 아직 전문을 못 받은 상태로 저장하면
+      // problem_dna 전체가 축약본으로 덮어써져 분석 데이터가 사라진다.
+      // 저장 직전에 반드시 전문을 확보한다.
+      let baseDna: any = selected.problem_dna ?? {};
+      if (!selected.dna_full) {
+        const dnaRes = await fetch(
+          `${config.url}/rest/v1/problem_bank_questions?select=problem_dna&id=eq.${selected.id}`,
+          { headers: { ...(await authHeaders()) }, cache: "no-store" },
+        );
+        if (!dnaRes.ok) throw new Error("문항 DNA를 불러오지 못해 저장을 중단했습니다.");
+        const dnaRows = await dnaRes.json();
+        baseDna = dnaRows?.[0]?.problem_dna ?? {};
+      }
+
       const response = await fetch(`${config.url}/rest/v1/problem_bank_questions?id=eq.${selected.id}`, {
         method: "PATCH",
         headers: {
@@ -319,9 +368,9 @@ export default function ProblemBankClient() {
           ...draft,
           problem_dna: draft.difficulty
             ? {
-                ...(selected.problem_dna ?? {}),
+                ...baseDna,
                 difficulty: {
-                  ...((selected.problem_dna as any)?.difficulty ?? {}),
+                  ...(baseDna?.difficulty ?? {}),
                   final_grade: Number(draft.difficulty),
                   scale_version: "sos8-v1",
                   admin_fixed: true,
@@ -329,7 +378,7 @@ export default function ProblemBankClient() {
                   admin_fixed_source: "problem-bank-admin",
                 },
               }
-            : selected.problem_dna,
+            : baseDna,   // SOS305: 축약본이 아니라 전문을 그대로 유지한다
           updated_at: new Date().toISOString(),
         }),
       });

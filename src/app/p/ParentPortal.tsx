@@ -41,7 +41,28 @@ export default function ParentPortal(){
  const actionText=jobs.some(j=>["QUEUED","GENERATING","FAILED"].includes(j.status))?"AI가 다음 학습 문항을 준비하고 있습니다.":incomplete?`${stageName(sessions.find(active))} 학습을 마무리할 차례입니다.`:sessions.length?"현재 배정된 SOS 학습을 모두 완료했습니다.":"새 SOS 학습 배정을 기다리고 있습니다.";
  const insight=weakUnit?`${weakUnit.name}의 누적 정답률이 ${weakUnit.rate}%로 가장 낮습니다. 다음 학습에서 이 단원을 우선 보완하는 것이 좋습니다.`:sessions.length?"SOS 진단·훈련 결과가 쌓이면 우선 보완 단원을 안내합니다.":"첫 진단이 완료되면 개인별 보완 방향을 안내합니다.";
  const signOut=async()=>{await createClient().auth.signOut();location.href="/parent-login";};
- const changePassword=async()=>{const p=prompt("새 비밀번호를 입력하세요. (6자리 이상)");if(!p)return;const r=await fetch("/api/parent/portal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({password:p})});const j=await r.json();alert(r.ok?"비밀번호를 변경했습니다.":j.message);};
+ const changePassword=async()=>{const p=prompt("새 비밀번호를 입력하세요. (6자리 이상)");if(!p)return;const r=await fetch("/api/parent/portal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({password:p})});const j=await r.json();if(!r.ok)return alert(j.message);alert("비밀번호를 변경했습니다.");await load();};
+ // SOS305: 초기 비밀번호(전화번호 뒤 4자리)를 바꾸기 전에는 자녀 기록을 열지 않는다.
+ // 이 계정 하나로 형제자매 전체의 성적과 진단 결과가 보이므로 학생 화면과 같은 기준을 적용한다.
+ if(!loading&&!error&&data&&data.passwordChanged===false)return <main className="pw-gate">
+  <div>
+   <small>MATHPOOH SOS</small>
+   <h1>비밀번호를 먼저 변경해 주세요</h1>
+   <p>처음 안내드린 비밀번호는 전화번호로 쉽게 추측할 수 있습니다.<br/>자녀의 학습 기록을 지키려면 나만 아는 비밀번호로 바꿔야 합니다.</p>
+   <button onClick={()=>void changePassword()}>비밀번호 변경하기</button>
+   <button className="ghost" onClick={()=>{location.href="/auth/signout";}}>로그아웃</button>
+  </div>
+  <style jsx>{`:global(body){margin:0}
+   .pw-gate{min-height:100vh;display:grid;place-items:center;background:#f2f6f3;padding:20px;font-family:Arial,'Noto Sans KR',sans-serif}
+   .pw-gate>div{width:100%;max-width:430px;background:#fff;border:1px solid #dbe6de;border-radius:18px;padding:30px;display:grid;gap:13px;box-shadow:0 18px 45px rgba(23,63,35,.1)}
+   small{color:#4d7d46;font-weight:900;font-size:12px}
+   h1{margin:0;color:#285c31;font-size:23px}
+   p{margin:0;color:#6c7b71;font-size:14px;line-height:1.7}
+   button{height:48px;border:0;border-radius:10px;background:#2f6937;color:#fff;font-weight:900;font-size:15px;cursor:pointer}
+   .ghost{height:42px;border:1px solid #d4dee6;background:#fff;color:#7b857f;font-size:13px}
+  `}</style>
+ </main>;
+
  if(loading)return <main className="loading"><img src="/mathpooh-logo.png" alt=""/><b>자녀의 성장 기록을 불러오고 있습니다.</b><style jsx>{`:global(body){margin:0}.loading{min-height:100vh;display:grid;place-content:center;gap:14px;text-align:center;background:#f2f6f3;color:#285c31;font-family:Arial,'Noto Sans KR',sans-serif}.loading img{width:72px;margin:auto}`}</style></main>;
  return <main className="portal">
   <header><div className="header-inner"><div className="brand"><img src="/mathpooh-logo.png" alt=""/><div><b>MATHPOOH</b><span>SOS PARENT</span></div></div><nav>{TABS.map(([id,name])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}>{name}</button>)}</nav><div className="tools"><button onClick={()=>{setTab("report");setTimeout(()=>window.print(),100);}}>리포트 인쇄</button><button onClick={changePassword}>비밀번호</button><button onClick={signOut}>로그아웃</button></div></div></header>

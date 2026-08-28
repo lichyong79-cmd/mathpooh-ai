@@ -352,6 +352,13 @@ export async function POST(request: Request) {
         { message: "새 비밀번호는 6자리 이상이어야 합니다." },
         { status: 400 },
       );
+    // SOS305: 처음 받은 비밀번호를 그대로 다시 넣으면 변경한 의미가 없다.
+    const initialPhone = String(student.phone ?? "").replace(/\D/g, "");
+    if (initialPhone.length >= 4 && password === `Mp!${initialPhone.slice(-4)}`)
+      return NextResponse.json(
+        { message: "처음 받은 비밀번호와 다른 값으로 정해 주세요." },
+        { status: 400 },
+      );
     const updated = await supabase.auth.admin.updateUserById(
       student.auth_user_id,
       { password },
