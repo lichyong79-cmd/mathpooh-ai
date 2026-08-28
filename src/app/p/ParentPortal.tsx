@@ -6,11 +6,11 @@ import SosUserManual from "@/components/sos-user-manual";
 type Tab = "home" | "apply" | "scores" | "sos" | "report" | "guide";
 const TABS: [Tab, string][] = [
   ["home", "홈"],
-  ["apply", "SOS 신청"],
   ["scores", "성적분석"],
   ["sos", "SOS 학습"],
   ["report", "종합리포트"],
   ["guide", "이용안내"],
+  ["apply", "SOS 신청"],
 ];
 const done = (s: any) => ["COMPLETED", "PASSED"].includes(String(s?.status));
 const active = (s: any) =>
@@ -436,7 +436,7 @@ export default function ParentPortal() {
             {TABS.map(([id, name]) => (
               <button
                 key={id}
-                className={tab === id ? "active" : ""}
+                className={`${tab === id ? "active" : ""} ${id === "apply" ? "apply-nav" : ""}`}
                 onClick={() => setTab(id)}
               >
                 {name}
@@ -1464,6 +1464,21 @@ function PortalStyle() {
         color: #285c31;
         border-bottom-color: #3c8656;
       }
+      .header-inner nav button.apply-nav {
+        align-self: center;
+        height: 38px;
+        margin-left: 5px;
+        padding: 0 15px;
+        border: 1px solid #c9ab5e;
+        border-radius: 10px;
+        background: #fff8e7;
+        color: #755513;
+      }
+      .header-inner nav button.apply-nav.active {
+        border-color: #2f6937;
+        background: #2f6937;
+        color: #fff;
+      }
       .tools {
         margin-left: auto;
         display: flex;
@@ -2095,6 +2110,11 @@ function PortalStyle() {
         .header-inner nav button {
           padding: 0 7px;
           font-size: 10px;
+        }
+        .header-inner nav button.apply-nav {
+          height: 34px;
+          margin-left: 2px;
+          padding: 0 7px;
         }
         .tools {
           margin-left: 0;
