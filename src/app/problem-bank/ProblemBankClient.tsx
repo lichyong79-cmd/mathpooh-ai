@@ -533,7 +533,7 @@ export default function ProblemBankClient() {
       <section className="bank-layout">
         <aside className="problem-list">
           <div className="list-head"><span>문항</span><span>단원 · 유형</span><span>난이도</span></div>
-          {loading ? <MATHPOOHLoader title="문제은행을 가져오는 중입니다" detail="문항 이미지, 난이도, DNA와 해설 연결정보를 준비하고 있습니다." kind="loading" audience="admin"/> : filtered.length === 0 ? <div className="empty">조건에 맞는 문항이 없습니다.</div> : filtered.map((item) => (
+          {loading ? <MATHPOOHLoader title="문제은행 불러오는 중" detail="문항 이미지, 난이도, DNA와 해설 연결정보를 준비하고 있습니다." kind="loading" audience="admin"/> : filtered.length === 0 ? <div className="empty">조건에 맞는 문항이 없습니다.</div> : filtered.map((item) => (
             <button key={item.id} type="button" className={`problem-row ${selectedId === item.id ? "selected" : ""}`} onClick={() => setSelectedId(item.id)}>
               <div><strong>{item.question_no}번</strong><small>{item.problem_code}</small></div>
               <div title={`${item.unit || "단원 미분류"}\n${item.topic || item.title}`}><b>{item.unit || "단원 미분류"}</b><small>{item.topic || item.title}</small></div>

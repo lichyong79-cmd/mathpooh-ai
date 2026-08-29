@@ -1638,7 +1638,7 @@ function SosTrainingWorkspace({
 
       {loading ? (
         <MATHPOOHLoader
-          title="진단·훈련을 가져오는 중입니다"
+          title="진단·훈련 불러오는 중"
           detail="나의 SOS 진행상황, 바로미터, 진단·훈련 결과를 준비하고 있습니다."
           kind="loading"
         />
@@ -2739,7 +2739,7 @@ export default function StudentHome() {
     return (
       <main className="student-loading">
         <MATHPOOHLoader
-          title="학생 페이지를 준비하고 있습니다..."
+          title="학생 페이지 불러오는 중"
           kind="loading"
           compact
         />

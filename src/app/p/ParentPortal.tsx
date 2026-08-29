@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import SosUserManual from "@/components/sos-user-manual";
+import MATHPOOHLoader from "@/components/math-pooh-loader";
 
 type Tab = "home" | "apply" | "scores" | "sos" | "report" | "guide";
 const TABS: [Tab, string][] = [
@@ -397,29 +398,12 @@ export default function ParentPortal() {
 
   if (loading)
     return (
-      <main className="loading">
-        <img src="/mathpooh-logo.png" alt="" />
-        <b>자녀의 성장 기록을 불러오고 있습니다.</b>
-        <style jsx>{`
-          :global(body) {
-            margin: 0;
-          }
-          .loading {
-            min-height: 100vh;
-            display: grid;
-            place-content: center;
-            gap: 14px;
-            text-align: center;
-            background: #f2f6f3;
-            color: #285c31;
-            font-family: Arial, "Noto Sans KR", sans-serif;
-          }
-          .loading img {
-            width: 72px;
-            margin: auto;
-          }
-        `}</style>
-      </main>
+      <MATHPOOHLoader
+        title="학부모 페이지 불러오는 중"
+        detail="자녀의 성적·SOS 학습·신청·리포트 정보를 준비하고 있습니다."
+        kind="report"
+        audience="student"
+      />
     );
   return (
     <main className="portal">

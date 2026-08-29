@@ -99,7 +99,7 @@ export default function SosResultsPage(){
 
       <section className="table">
         <div className="row head"><span>학생</span><span>구분</span><span>과목·소단원</span><span>상태</span><span>진도</span><span>결과</span><span>시작</span><span>경과</span><span>바로미터</span><span>상세</span></div>
-        {loading?<MATHPOOHLoader title="SOS 결과를 가져오는 중입니다" detail="진단·훈련 결과와 학생별 상세 데이터를 준비하고 있습니다." kind="loading" audience="admin"/>:filtered.length?filtered.map((r:any,index:number)=><Fragment key={r.id}>{index===0||cycleKey(filtered[index-1])!==cycleKey(r)?<div className="cycle-band"><b>{cycleTitle(r)}</b><span>{r.learningCycle?"이 회차의 완료·오답교정 결과":"회차를 지정하지 않은 과거/임시 SOS"}</span></div>:null}<div className={`row ${selectedId===String(r.id)?"selected":""}`}>
+        {loading?<MATHPOOHLoader title="SOS 결과 불러오는 중" detail="진단·훈련 결과와 학생별 상세 데이터를 준비하고 있습니다." kind="loading" audience="admin"/>:filtered.length?filtered.map((r:any,index:number)=><Fragment key={r.id}>{index===0||cycleKey(filtered[index-1])!==cycleKey(r)?<div className="cycle-band"><b>{cycleTitle(r)}</b><span>{r.learningCycle?"이 회차의 완료·오답교정 결과":"회차를 지정하지 않은 과거/임시 SOS"}</span></div>:null}<div className={`row ${selectedId===String(r.id)?"selected":""}`}>
           <span><b>{r.student?.name??"학생정보없음"}</b><small>{r.student?.school??"-"} · {r.student?.grade??"-"}</small></span>
           <span><b>{phaseText(r)}</b><small>{r.learningCycle?`${r.learningCycle.name} · ${r.learningCycle.dateLabel}`:"회차 미지정"}</small><small>{r.total}문항</small></span>
           <span><b>{r.subject||"-"}</b><small>{r.majorUnit?`${r.majorUnit} · `:""}{r.subunit||"-"}</small></span>

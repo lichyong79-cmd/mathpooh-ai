@@ -505,7 +505,7 @@ export default function SosProgressPage() {
         {resetBusy ? (
           <div className="reset-loader">
             <MATHPOOHLoader
-              title="SOS 진행단계를 초기화하고 있습니다"
+              title="SOS 진행단계 초기화 중"
               detail="선택한 단계와 이후 과정을 안전하게 정리하고 있습니다. 잠시만 기다려 주세요."
               kind="save"
               audience="admin"
@@ -618,7 +618,7 @@ export default function SosProgressPage() {
           </div>
           {loading ? (
             <MATHPOOHLoader
-              title="SOS 진행상황을 가져오는 중입니다"
+              title="SOS 진행상황 불러오는 중"
               detail="학생별 진단·훈련 단계와 진행 로그를 준비하고 있습니다."
               kind="loading"
               audience="admin"
