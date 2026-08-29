@@ -314,7 +314,6 @@ export async function buildDocumentAnchors(
     /** 단별로 따로 묶은 줄. 2단 편집에서 좌우 단이 한 줄로 합쳐지는 것을 막는다. */
     columnLines: Line[][];
     columns: ColumnBand[];
-    items: RawItem[];
     width: number;
     height: number;
   }> = [];
@@ -338,35 +337,9 @@ export async function buildDocumentAnchors(
       columnItems,
       columnLines,
       columns,
-      items,
       width,
       height,
     });
-  }
-
-  // SOS313: 페이지마다 단을 따로 추정하면 긴 수식이나 표가 중앙 여백을 침범한 쪽에서
-  // 좌측 단이 사라질 수 있다. 문서에서 반복되는 2단 경계를 대표값으로 정한 뒤 모든
-  // 본문 페이지에 같은 경계를 적용한다.
-  const detectedGutters = perPage
-    .filter((entry) => entry.columns.length === 2)
-    .map((entry) => entry.columns[0].right);
-  if (detectedGutters.length >= Math.max(2, Math.floor(perPage.length * 0.2))) {
-    const documentGutter = median(detectedGutters);
-    for (const entry of perPage) {
-      const localGutter = entry.columns.length === 2 ? entry.columns[0].right : null;
-      if (localGutter !== null && Math.abs(localGutter - documentGutter) <= 2.5) continue;
-      entry.columns = [{ left: 0, right: documentGutter }, { left: documentGutter, right: 100 }];
-      entry.columnItems = entry.columns.map((band) => {
-        const leftPx = (band.left / 100) * entry.width;
-        const rightPx = (band.right / 100) * entry.width;
-        return entry.items.filter((item) => {
-          const center = (item.left + item.right) / 2;
-          return center >= leftPx && center < rightPx;
-        });
-      });
-      entry.columnLines = entry.columnItems.map((column) => buildLines(column));
-      entry.lines = entry.columnLines.flat();
-    }
   }
 
   const totalLines = perPage.reduce((sum, entry) => sum + entry.lines.length, 0);
@@ -431,13 +404,7 @@ export async function buildDocumentAnchors(
   //    1차 통과분의 대표 x에서 크게 벗어난 후보는 가짜 번호로 보고 버린다.
   // 기대 문항번호가 명확한 분석 화면에서는 각 문항의 실제 후보를 우선한다.
   // 수식 글꼴 차이로 문항번호 x좌표가 조금 흔들려도 정상 문항을 버리지 않는다.
-  // SOS316: 누락 탐색에서 선택지·분수·본문 속 숫자가 실제 문항번호보다 먼저 나오면
-  // LIS가 그 가짜 위치를 채택해 앞 문항을 잘라 버렸다. expected 유무와 관계없이
-  // 각 단에서 가장 반복적으로 정렬되는 문항번호 x축만 먼저 남긴다.
-  const dominantAligned = alignByDominantLeftMargin(candidates);
-  const aligned = dominantAligned.length >= Math.max(2, Math.floor(firstPass.length * 0.6))
-    ? dominantAligned
-    : alignByLeftMargin(candidates, firstPass);
+  const aligned = expected ? candidates : alignByLeftMargin(candidates, firstPass);
   const kept = longestIncreasing(sortReading(aligned));
 
   // 3) 앵커 확정: 같은 쪽·같은 단의 다음 문항 시작점이 현재 문항의 하한선
@@ -511,34 +478,6 @@ function alignByLeftMargin(all: Candidate[], trusted: Candidate[]): Candidate[] 
     const base = baseline.get(item.column);
     if (base === undefined) return true;
     return Math.abs(item.left - base) <= item.width * 0.02;
-  });
-}
-
-/**
- * 실제 문항번호는 같은 단의 동일한 x축에 반복된다. 0.5% 단위로 가장 많은 서로 다른
- * 문항번호가 모인 축을 찾고 그 주변 2%만 남겨, 선택지/수식 속 `16.` 같은 가짜 시작점을
- * 문항 경계로 쓰지 않게 한다.
- */
-function alignByDominantLeftMargin(all: Candidate[]): Candidate[] {
-  if (all.length < 2) return all;
-  const baselines = new Map<number, number>();
-
-  for (const column of new Set(all.map((item) => item.column))) {
-    const columnItems = all.filter((item) => item.column === column);
-    const buckets = new Map<number, Set<number>>();
-    for (const item of columnItems) {
-      const key = Math.round((item.left / item.width) * 200); // 페이지 폭 0.5%
-      const numbers = buckets.get(key) ?? new Set<number>();
-      numbers.add(item.questionNo);
-      buckets.set(key, numbers);
-    }
-    const winner = [...buckets.entries()].sort((a, b) => b[1].size - a[1].size)[0];
-    if (winner) baselines.set(column, winner[0] / 200);
-  }
-
-  return all.filter((item) => {
-    const baseline = baselines.get(item.column);
-    return baseline === undefined || Math.abs(item.left / item.width - baseline) <= 0.02;
   });
 }
 

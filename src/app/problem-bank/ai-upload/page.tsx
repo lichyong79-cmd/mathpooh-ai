@@ -804,10 +804,6 @@ function recognitionDisplayRect(question: Question, anchors?: DocumentAnchors | 
   const anchor = anchorFor(question, anchors);
   if (!anchor || anchor.page !== Number(question.page_no)) return rect;
 
-  // 같은 단의 마지막 문항은 다음 번호가 없어 앵커의 최대영역이 꼬리말까지 내려간다.
-  // 이때는 기존 AI/수동 인식 사각형이 있으면 그것을 유지해 화면 전체가 선택되는 것을 막는다.
-  if (anchor.nextTopPct === null && hasValidCrop(question)) return rect;
-
   // 인식 화면은 AI의 임시 crop 좌표가 아니라 PDF에서 찾은 실제 문항번호 위치를 표시한다.
   // 같은 단의 다음 문항번호 직전까지를 해당 문항 영역으로 보여준다.
   const top = Math.max(0, anchor.topPct - 2.6);
@@ -988,23 +984,11 @@ export default function AnalysisWorkspacePage() {
   const activeQuestion =
     questions.find((item) => item.id === activeQuestionId) ?? questions[0] ?? null;
 
-  const nextMissingManualQuestion = (after = 0) => {
-    const existing = new Set(questions.map((item) => Number(item.question_no)));
-    if (after) existing.add(after);
-    const detected = anchors ? [...anchors.byQuestionNo.keys()].sort((a, b) => a - b) : [];
-    return detected.find((no) => no > after && !existing.has(no))
-      ?? detected.find((no) => !existing.has(no))
-      ?? Math.max(0, ...existing) + 1;
-  };
-
   const beginManualRecognition = () => {
-    const next = nextMissingManualQuestion();
     setManualRecognitionMode(true);
-    setManualRecognitionQuestionNo(String(next));
-    const anchor = anchors?.byQuestionNo.get(next);
-    if (anchor) setPageNo(anchor.page);
+    setManualRecognitionQuestionNo("");
     setDraft(null);
-    setMessage(`${next}번을 직접 추가합니다. PDF에서 문제 전체를 네모로 드래그하세요.`);
+    setMessage("추가할 문항번호를 입력한 뒤, 현재 PDF에서 문제 전체를 네모로 드래그하세요.");
   };
 
 
@@ -1552,11 +1536,8 @@ export default function AnalysisWorkspacePage() {
 
       await loadWorkspace(workspace.source.id);
       setActiveQuestionId(target.id);
-      const next = nextMissingManualQuestion(questionNo);
-      setManualRecognitionQuestionNo(String(next));
-      const nextAnchor = anchors?.byQuestionNo.get(next);
-      if (nextAnchor) setPageNo(nextAnchor.page);
-      setMessage(`${questionNo}번 직접 추가 완료 · 계속 추가하려면 ${next}번 영역을 드래그하세요.`);
+      setManualRecognitionQuestionNo("");
+      setMessage(`${questionNo}번 직접 추가 완료 · 다음 누락 문항번호를 입력하고 영역을 드래그하세요.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "수동 문제인식에 실패했습니다.");
     } finally {
@@ -2557,7 +2538,6 @@ export default function AnalysisWorkspacePage() {
               <div><strong>1단계 · 시험지 문항 확인</strong><span>AI가 찾은 문항 수와 번호를 확인하고 누락 문항을 채웁니다.</span></div>
               <div className="workflow-buttons">
                 <button onClick={() => void startAnalysis(true)} disabled={!workspace || !!busy}>{questions.length ? "AI 문제인식 다시 하기" : "AI 문제인식 시작"}</button>
-                {anchors?.hasTextLayer && questions.length ? <button onClick={() => void fillMissingQuestionsFromPdf()} disabled={!!busy}>좌·우 누락 자동 확인·복구</button> : null}
                 <button onClick={beginManualRecognition} disabled={!pdfDoc || !!busy}>＋ 누락 문항 직접 추가</button>
                 <button className="cancel-all" onClick={() => void resetStage("recognition")} disabled={!questions.length || !!busy}>문제인식 전체 취소</button>
                 <button
