@@ -12,6 +12,7 @@ import {
   useState,
 } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
+import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
 import { authHeaders, signedStorageUrl } from "@/lib/supabase/rest";
 import AccountBox from "../AccountBox";
 import "../exam-updates.css";
@@ -5744,12 +5745,6 @@ const loadFiles = useCallback(async () => {
 
     setUploading(true);
     try {
-      const config = getSupabaseConfig();
-      if (!config) throw new Error("Supabase 설정을 불러오지 못했습니다.");
-
-      // 300문항급 대용량 자료는 Vercel API로 파일 자체를 보내지 않습니다.
-      // 브라우저 → Supabase Storage 직행으로 업로드한 뒤, 경로만 서버에 commit합니다.
-      const folder = `${new Date().getFullYear()}/${crypto.randomUUID()}`;
       const lowerOriginal = hwpFile.name.toLowerCase();
       const hwpExtension = lowerOriginal.endsWith(".pdf")
         ? "pdf"
@@ -5757,37 +5752,33 @@ const loadFiles = useCallback(async () => {
           ? "hwpx"
           : "hwp";
 
-      const directUpload = async (file: File, fileName: string, contentType: string) => {
-        const path = `${folder}/${fileName}`;
-        const headers = await authHeaders();
-        const response = await fetch(
-          `${config.url}/storage/v1/object/exam-pdf/${encodeURI(path)}`,
-          {
-            method: "POST",
-            headers: {
-              ...headers,
-              "Content-Type": contentType,
-              "x-upsert": "false",
-            },
-            body: file,
-          },
-        );
-        if (!response.ok) {
-          const text = await response.text();
-          throw new Error(`${file.name} Storage 업로드 실패: ${text.slice(0, 500)}`);
-        }
-        return path;
+      // SOS312: Storage는 service_role 전용으로 잠겨 있으므로 서버에서 일회용 업로드 토큰을 받는다.
+      // 파일 바이트는 계속 Storage로 직행해 Vercel 본문 크기 제한을 피한다.
+      const preparedResponse = await fetch("/api/source-files/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "prepare", hwpExtension }),
+      });
+      const prepared = await preparedResponse.json();
+      if (!preparedResponse.ok) throw new Error(prepared.message || "업로드 준비에 실패했습니다.");
+      const uploadByKind = new Map((prepared.uploads ?? []).map((x: any) => [String(x.kind), x]));
+      const directUpload = async (file: File, kind: "hwp" | "exam" | "solution", contentType: string) => {
+        const target: any = uploadByKind.get(kind);
+        if (!target?.path || !target?.token) throw new Error(`${file.name}의 업로드 권한이 없습니다.`);
+        const uploaded = await createBrowserSupabase().storage.from("exam-pdf").uploadToSignedUrl(target.path, target.token, file, { contentType, upsert: false });
+        if (uploaded.error) throw new Error(`${file.name} Storage 업로드 실패: ${uploaded.error.message}`);
+        return String(target.path);
       };
 
       // 세 파일은 서로 독립적이므로 동시에 올립니다.
       const [hwpPath, examPdfPath, solutionPdfPath] = await Promise.all([
         directUpload(
           hwpFile,
-          `source.${hwpExtension}`,
+          "hwp",
           hwpFile.type || (hwpExtension === "pdf" ? "application/pdf" : "application/octet-stream"),
         ),
-        directUpload(examPdf, "exam.pdf", "application/pdf"),
-        directUpload(solutionPdf, "solution.pdf", "application/pdf"),
+        directUpload(examPdf, "exam", "application/pdf"),
+        directUpload(solutionPdf, "solution", "application/pdf"),
       ]);
 
       const response = await fetch("/api/source-files/upload", {
@@ -5799,7 +5790,7 @@ const loadFiles = useCallback(async () => {
           source: source.trim(),
           subject,
           contentRole,
-          folder,
+          folder: prepared.folder,
           hwpPath,
           examPdfPath,
           solutionPdfPath,

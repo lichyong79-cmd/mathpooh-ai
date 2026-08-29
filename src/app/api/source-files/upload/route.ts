@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireUser } from "@/lib/supabase/auth";
+import { requireAdmin } from "@/lib/supabase/auth";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,8 @@ function isOriginal(file: File) {
 
 
 type DirectUploadCommit = {
-  mode?: "direct";
+  mode?: "direct" | "prepare";
+  hwpExtension?: string;
   title?: string;
   source?: string;
   grade?: string;
@@ -42,14 +44,13 @@ function safeStoragePath(value: unknown) {
   return path;
 }
 
-async function commitDirectUpload(request: NextRequest) {
+async function commitDirectUpload(body: DirectUploadCommit) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) {
     return NextResponse.json({ success: false, message: "Supabase 환경변수가 없습니다." }, { status: 500 });
   }
 
-  const body = (await request.json()) as DirectUploadCommit;
   const title = String(body.title ?? "").trim();
   const source = String(body.source ?? "").trim();
   const grade = String(body.grade ?? "").trim();
@@ -117,13 +118,30 @@ async function commitDirectUpload(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const denied = await requireUser();
+  const denied = await requireAdmin();
   if (denied) return denied;
 
   // JSON이면 파일 바이트가 아니라 Storage 경로만 받는 대용량 직접 업로드 commit 요청입니다.
   if ((request.headers.get("content-type") ?? "").includes("application/json")) {
     try {
-      return await commitDirectUpload(request);
+      const body = (await request.json()) as DirectUploadCommit;
+      if (body.mode === "prepare") {
+        const ext = ["hwp", "hwpx", "pdf"].includes(String(body.hwpExtension)) ? String(body.hwpExtension) : "hwp";
+        const folder = `${new Date().getFullYear()}/${crypto.randomUUID()}`;
+        const supabase = createClient();
+        const files = [
+          { kind: "hwp", path: `${folder}/source.${ext}` },
+          { kind: "exam", path: `${folder}/exam.pdf` },
+          { kind: "solution", path: `${folder}/solution.pdf` },
+        ];
+        const uploads = await Promise.all(files.map(async (file) => {
+          const signed = await supabase.storage.from("exam-pdf").createSignedUploadUrl(file.path);
+          if (signed.error || !signed.data?.token) throw signed.error ?? new Error("일회용 업로드 권한을 만들지 못했습니다.");
+          return { ...file, token: signed.data.token };
+        }));
+        return NextResponse.json({ success: true, folder, uploads });
+      }
+      return await commitDirectUpload(body);
     } catch (error) {
       return NextResponse.json(
         { success: false, message: error instanceof Error ? error.message : "대용량 시험지 등록 중 오류가 발생했습니다." },
