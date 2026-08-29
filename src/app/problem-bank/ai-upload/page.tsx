@@ -1070,9 +1070,12 @@ export default function AnalysisWorkspacePage() {
       setSelectedId(sourceId);
       setActiveQuestionId(nextWorkspace.questions?.[0]?.id ?? "");
       const savedStep = String(nextWorkspace.analysis?.current_step ?? "");
-      if (savedStep.includes("3단계") || nextWorkspace.questions?.some((item) => item.status === "AUTO_REGISTERED" || item.status === "REVIEW" || item.status === "APPROVED")) {
+      // 단계는 문항 존재 여부나 status로 추측하지 않는다. 서버에 저장한 단계만 따른다.
+      // 인식 직후에도 문항 row는 존재하므로 questions.length로 2단계를 판정하면
+      // 재접속 순간 인식 검수가 건너뛰어진다.
+      if (savedStep.includes("3단계")) {
         setWorkflowStep(3);
-      } else if (savedStep.includes("2단계") || nextWorkspace.questions?.length) {
+      } else if (savedStep.includes("2단계")) {
         setWorkflowStep(2);
       } else {
         setWorkflowStep(1);
@@ -1523,8 +1526,6 @@ export default function AnalysisWorkspacePage() {
         ...(target.review_result ?? {}),
         recognition_manual: true,
         recognition_manual_at: new Date().toISOString(),
-        crop_manual: true,
-        crop_engine_version: CROP_ENGINE_VERSION,
       };
       const patchResponse = await fetch(`/api/analysis/questions/${target.id}`, {
         method: "PATCH",
@@ -1567,10 +1568,11 @@ export default function AnalysisWorkspacePage() {
       !window.confirm("문제인식을 다시 하면 기존 자르기와 문항분석 결과가 초기화됩니다. 1단계부터 다시 진행할까요?")
     ) return;
 
-    // 문항이 이미 있으면 AI를 다시 호출하지 않는다.
-    // 현재 좌표에 단일 Crop 엔진만 적용하여 같은 결과를 다시 저장한다.
+    // 문항이 이미 있으면 인식 결과만 유지한다. 자르기는 반드시 2단계에서 실행한다.
     if (questions.length > 0 && !forceRecognition) {
-      await recropAllQuestions();
+      setWorkflowStep(1);
+      setViewMode("single");
+      setMessage(`문제인식 결과 ${questions.length}문항을 확인하세요. 자르기는 1단계 통과 후 별도로 실행됩니다.`);
       return;
     }
 
@@ -1582,7 +1584,11 @@ export default function AnalysisWorkspacePage() {
       const response = await fetch("/api/analysis/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceFileId: workspace.source.id, mode: "crop-only" }),
+        body: JSON.stringify({
+          sourceFileId: workspace.source.id,
+          mode: "recognition-only",
+          force: forceRecognition,
+        }),
       });
       const payload = await response.json();
       if (!response.ok || !payload.success) {
@@ -2380,11 +2386,9 @@ export default function AnalysisWorkspacePage() {
       return;
     }
     try {
-      const cropped = await recropAllQuestions();
-      if (!cropped) return;
       await saveWorkflowStep(2, "2단계 · AI 자르기 검수");
       setViewMode("all");
-      setMessage(`${questions.length}문항 문제 인식 통과 · 전체 자르기 자동 완료 · 잘못된 문항만 수동 수정하세요.`);
+      setMessage(`${questions.length}문항 문제인식 통과 · 이제 '전체 문항 자르기'를 실행하세요.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "문제 인식 통과 처리에 실패했습니다.");
     }
@@ -2399,8 +2403,7 @@ export default function AnalysisWorkspacePage() {
     try {
       await saveWorkflowStep(3, "3단계 · AI 문항분석 대기");
       setViewMode("all");
-      const analyzed = await runAutoPipeline();
-      if (!analyzed) return;
+      setMessage(`${questions.length}문항 자르기 통과 · 이제 'AI 문항분석 시작'을 눌러 분석하세요.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "자르기 통과 처리에 실패했습니다.");
     }
@@ -2570,7 +2573,7 @@ export default function AnalysisWorkspacePage() {
               <div><strong>2단계 · 전체 자르기 검수</strong><span>전체를 먼저 저장한 뒤 잘못 잘린 문항만 수동으로 수정합니다.</span></div>
               <div className="workflow-buttons">
                 <button onClick={() => void recropAllQuestions()} disabled={!questions.length || !pdfDoc || anchorBusy || !!busy}>
-                  {!pdfDoc ? "PDF 불러오는 중..." : anchorBusy ? "자르기 기준 준비 중..." : busy === "recrop" ? `보정 중 ${queueProgress.done}/${queueProgress.total}` : "전체 보정 자르기"}
+                  {!pdfDoc ? "PDF 불러오는 중..." : anchorBusy ? "자르기 기준 준비 중..." : busy === "recrop" ? `자르는 중 ${queueProgress.done}/${queueProgress.total}` : "전체 문항 자르기"}
                 </button>
                 <button onClick={() => setViewMode("single")} disabled={!questions.length}>수동 자르기 화면</button>
                 <button className="cancel-all" onClick={() => void resetStage("crop")} disabled={!questions.length || !!busy}>자르기 전체 취소</button>
@@ -2589,7 +2592,7 @@ export default function AnalysisWorkspacePage() {
               <div><strong>3단계 · AI 문항분석</strong><span>자동 통과는 문제은행 대기, 확인이 필요한 문항만 보류로 분류합니다.</span></div>
               <div className="workflow-buttons">
                 <button onClick={() => void runAutoPipeline()} disabled={!analysisNeededQuestions.length || savedCropCount !== questions.length || !!busy}>
-                  {analysisNeededQuestions.length ? `재분석 필요 ${analysisNeededQuestions.length}문항 분석` : "분석 완료"}
+                  {analysisNeededQuestions.length ? `AI 문항분석 시작 · ${analysisNeededQuestions.length}문항` : "분석 완료"}
                 </button>
                 <button
                   className="analyze-one-prominent"

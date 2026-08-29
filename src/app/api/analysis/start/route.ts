@@ -17,18 +17,6 @@ type AiCropQuestion = {
   review_reason: string;
 };
 
-type AnalysisQuestion = {
-  question_no: number;
-  answer: string;
-  question_type: "objective" | "subjective" | "unknown";
-  subject: string;
-  unit: string;
-  topic: string;
-  difficulty: "하" | "중" | "상" | "최상";
-  confidence: number;
-  summary: string;
-};
-
 type OpenAiPayload = {
   id?: string;
   output_text?: string;
@@ -67,45 +55,6 @@ const cropSchema = {
           crop_height: { type: "number", minimum: 0.1, maximum: 100 },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           review_reason: { type: "string" },
-        },
-      },
-    },
-  },
-} as const;
-
-const analysisSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["questions"],
-  properties: {
-    questions: {
-      type: "array",
-      minItems: 1,
-      maxItems: 200,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: [
-          "question_no",
-          "answer",
-          "question_type",
-          "subject",
-          "unit",
-          "topic",
-          "difficulty",
-          "confidence",
-          "summary",
-        ],
-        properties: {
-          question_no: { type: "integer", minimum: 1, maximum: 200 },
-          answer: { type: "string" },
-          question_type: { type: "string", enum: ["objective", "subjective", "unknown"] },
-          subject: { type: "string" },
-          unit: { type: "string" },
-          topic: { type: "string" },
-          difficulty: { type: "string", enum: ["하", "중", "상", "최상"] },
-          confidence: { type: "number", minimum: 0, maximum: 1 },
-          summary: { type: "string" },
         },
       },
     },
@@ -185,7 +134,7 @@ async function callOpenAi(args: {
   prompt: string;
   files: string[];
   schemaName: string;
-  schema: typeof cropSchema | typeof analysisSchema;
+  schema: typeof cropSchema;
   maxOutputTokens: number;
 }) {
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -238,6 +187,7 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as {
       sourceFileId?: string;
       force?: boolean;
+      mode?: "recognition-only";
     };
     const sourceFileId = String(body.sourceFileId ?? "").trim();
     const force = body.force === true;
@@ -263,9 +213,9 @@ export async function POST(request: NextRequest) {
     }
 
     const source = sourceResult.data;
-    if (!source.exam_pdf_path || !source.solution_pdf_path) {
+    if (!source.exam_pdf_path) {
       return NextResponse.json(
-        { success: false, message: "시험지 PDF와 해설지 PDF가 모두 필요합니다." },
+        { success: false, message: "문제인식에는 시험지 PDF가 필요합니다." },
         { status: 400 },
       );
     }
@@ -337,7 +287,7 @@ export async function POST(request: NextRequest) {
     }
 
     const startedAt = new Date().toISOString();
-    const baseLogs = [{ at: startedAt, message: `AI 직접 자르기 시작 · ${model}` }];
+    const baseLogs = [{ at: startedAt, message: `1단계 AI 문제인식 시작 · ${model}` }];
 
     const job = await supabase
       .from("analysis_jobs")
@@ -360,7 +310,7 @@ export async function POST(request: NextRequest) {
       .update({
         status: "RUNNING",
         progress: 5,
-        current_step: "AI가 시험지를 직접 읽는 중",
+        current_step: "1단계 · AI 문제인식 진행 중",
         started_at: startedAt,
         finished_at: null,
         updated_at: startedAt,
@@ -375,24 +325,23 @@ export async function POST(request: NextRequest) {
       return signed.data.signedUrl;
     };
 
-    const [examUrl, solutionUrl] = await Promise.all([
-      sign(source.exam_pdf_path),
-      sign(source.solution_pdf_path),
-    ]);
+    const examUrl = await sign(source.exam_pdf_path);
 
     await supabase
       .from("source_analysis")
       .update({
         progress: 15,
-        current_step: "AI 직접 자르기와 문항 분석을 동시에 진행 중",
+        current_step: "1단계 · 문항번호와 위치 인식 중",
       })
       .eq("id", analysis.id);
 
     const cropPrompt = [
-      "너는 한국 수학 시험지의 문항 이미지를 직접 자르는 비전 판독기다.",
-      "첨부된 시험지 PDF를 페이지 이미지처럼 보고, 실제 문항마다 최종 crop 사각형을 직접 결정한다.",
+      "너는 한국 수학 시험지의 문항번호와 대략적인 문항 위치를 찾는 비전 판독기다.",
+      "첨부된 시험지 PDF를 페이지 이미지처럼 보고, 실제 문항마다 번호·페이지·검수용 영역을 찾는다.",
+      "이 단계에서는 정답, 단원, 유형, 난이도, 풀이, 문제 DNA를 분석하지 않는다.",
+      "반환 좌표는 관리자가 문항 존재와 위치를 확인하기 위한 1단계 인식 좌표이며 최종 이미지 자르기는 다음 단계에서 별도로 처리한다.",
       "PDF 텍스트 좌표, 고정 단 너비, 다음 문항 위치 공식 같은 규칙을 사용하지 말고 보이는 인쇄물 자체를 판단한다.",
-      "각 문항에 대해 page_no와 crop_x, crop_y, crop_width, crop_height를 반환한다.",
+      "각 문항에 대해 page_no와 인식 영역 crop_x, crop_y, crop_width, crop_height를 반환한다.",
       "좌표와 크기는 해당 PDF 페이지 전체를 기준으로 한 0~100 백분율이다.",
       "crop_x와 crop_y는 사각형의 왼쪽 위, crop_width와 crop_height는 그 지점부터의 폭과 높이다.",
       "문항번호, 본문, 모든 수식, 보기, 선택지, 표, 그래프, 도형을 빠짐없이 포함한다.",
@@ -408,41 +357,17 @@ export async function POST(request: NextRequest) {
       `시험지 정보: ${source.title} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
     ].join("\n");
 
-    const analysisPrompt = [
-      "너는 한국 중·고등 수학 문항 분석 전문가다.",
-      "첫 번째 PDF는 시험지, 두 번째 PDF는 해설지다.",
-      "문항 자르기나 좌표는 판단하지 않고 문항번호별 내용만 분석한다.",
-      "시험지에 실제 존재하는 모든 문항을 번호순으로 분석한다.",
-      "정답은 해설지의 정답표와 해당 해설을 교차 확인한다. 확인이 어려우면 빈 문자열로 둔다.",
-      "객관식은 objective, 단답형·서술형은 subjective로 분류한다.",
-      "unit은 교육과정 단원명으로 구체적으로 쓴다.",
-      "topic은 핵심 개념·발상·유형이 드러나도록 12~30자로 쓴다.",
-      "difficulty는 하·중·상·최상 중 하나다.",
-      "summary는 문제의 핵심 요구를 한 문장으로 요약한다.",
-      "문항번호를 누락하거나 중복하지 않는다.",
-      `시험지 정보: ${source.title} / ${source.source ?? ""} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
-    ].join("\n");
-
-    const [cropRaw, analysisRaw] = await Promise.all([
-      callOpenAi({
-        apiKey,
-        model,
-        prompt: cropPrompt,
-        files: [examUrl],
-        schemaName: "math_exam_direct_crop",
-        schema: cropSchema,
-        maxOutputTokens: 14000,
-      }),
-      callOpenAi({
-        apiKey,
-        model,
-        prompt: analysisPrompt,
-        files: [examUrl, solutionUrl],
-        schemaName: "math_exam_content_analysis",
-        schema: analysisSchema,
-        maxOutputTokens: 16000,
-      }),
-    ]);
+    // 1단계는 문항번호·페이지·위치만 인식한다.
+    // 정답·단원·난이도·DNA 분석은 자르기 검수가 끝난 뒤 3단계 API에서만 실행한다.
+    const cropRaw = await callOpenAi({
+      apiKey,
+      model,
+      prompt: cropPrompt,
+      files: [examUrl],
+      schemaName: "math_exam_recognition",
+      schema: cropSchema,
+      maxOutputTokens: 14000,
+    });
 
     const cropPayload = parseJson<{ questions: AiCropQuestion[] }>(cropRaw);
     const crops = normalizeAiCrops(cropPayload.questions);
@@ -450,37 +375,26 @@ export async function POST(request: NextRequest) {
       throw new Error("AI가 문항 영역을 찾지 못했습니다.");
     }
 
-    const analysisPayload = parseJson<{ questions: AnalysisQuestion[] }>(analysisRaw);
-    const analysisByNo = new Map(
-      analysisPayload.questions.map((item) => [Number(item.question_no), item]),
-    );
-
     await supabase
       .from("source_analysis")
       .update({
         progress: 80,
-        current_step: `AI 직접 자르기 완료 · ${crops.length}개 문항 저장 중`,
+        current_step: `1단계 · ${crops.length}개 문항 인식 결과 저장 중`,
       })
       .eq("id", analysis.id);
 
     await supabase.from("analysis_questions").delete().eq("analysis_id", analysis.id);
 
     const rows = crops.map((crop) => {
-      const meta = analysisByNo.get(crop.question_no);
-      const combinedConfidence = Math.min(
-        crop.confidence,
-        Number(meta?.confidence ?? 0.55),
-      );
-
       const cropNeedsReview =
         crop.confidence < 0.82 || Boolean(crop.review_reason.trim());
 
       return {
         analysis_id: analysis.id,
         question_no: crop.question_no,
-        answer: meta?.answer?.trim() || null,
-        status: "APPROVED",
-        confidence: combinedConfidence,
+        answer: null,
+        status: "WAITING",
+        confidence: crop.confidence,
         page_no: crop.page_no,
         crop_x: crop.crop_x,
         crop_y: crop.crop_y,
@@ -490,13 +404,7 @@ export async function POST(request: NextRequest) {
           ? crop.review_reason || "AI가 자른 문항 영역을 확인해 주세요."
           : null,
         ai_result: {
-          question_type: meta?.question_type ?? "unknown",
-          subject: meta?.subject || source.subject || null,
-          unit: meta?.unit || null,
-          topic: meta?.topic || null,
-          difficulty: meta?.difficulty ?? "중",
-          summary: meta?.summary || null,
-          crop_engine: "AI_DIRECT_VISION",
+          recognition_engine: "AI_DIRECT_VISION",
           ai_crop: {
             confidence: crop.confidence,
             review_reason: crop.review_reason || null,
@@ -515,14 +423,9 @@ export async function POST(request: NextRequest) {
     const insertedQuestions = inserted.data ?? [];
     const reviewIds = insertedQuestions
       .filter((question) => {
-        const result = (question.ai_result ?? {}) as Record<string, unknown>;
         return (
           Boolean(question.review_reason) ||
-          Number(question.confidence ?? 0) < 0.82 ||
-          !String(question.answer ?? "").trim() ||
-          !String(result.unit ?? "").trim() ||
-          !String(result.topic ?? "").trim() ||
-          String(result.question_type ?? "unknown") === "unknown"
+          Number(question.confidence ?? 0) < 0.82
         );
       })
       .map((question) => question.id);
@@ -535,23 +438,16 @@ export async function POST(request: NextRequest) {
       if (reviewUpdate.error) throw reviewUpdate.error;
     }
 
-    const objectiveCount = analysisPayload.questions.filter(
-      (question) => question.question_type === "objective",
-    ).length;
-    const subjectiveCount = analysisPayload.questions.filter(
-      (question) => question.question_type === "subjective",
-    ).length;
-
     const finishedAt = new Date().toISOString();
     const updated = await supabase
       .from("source_analysis")
       .update({
-        status: "REVIEW",
+        status: "WAITING",
         progress: 100,
-        current_step: `AI 직접 자르기 완료 · ${rows.length}개 문항 · 재확인 권장 ${reviewIds.length}개`,
+        current_step: `1단계 · AI 문제인식 완료 · ${rows.length}개 문항 · 위치 재확인 ${reviewIds.length}개`,
         total_questions: rows.length,
-        objective_count: objectiveCount,
-        subjective_count: subjectiveCount,
+        objective_count: 0,
+        subjective_count: 0,
         finished_at: finishedAt,
         updated_at: finishedAt,
       })
@@ -561,9 +457,7 @@ export async function POST(request: NextRequest) {
 
     if (updated.error) throw updated.error;
 
-    const totalTokens =
-      Number(cropRaw.usage?.total_tokens ?? 0) +
-      Number(analysisRaw.usage?.total_tokens ?? 0);
+    const totalTokens = Number(cropRaw.usage?.total_tokens ?? 0);
 
     await supabase
       .from("analysis_jobs")
@@ -576,7 +470,7 @@ export async function POST(request: NextRequest) {
           ...baseLogs,
           {
             at: finishedAt,
-            message: `${rows.length}개 AI 직접 자르기·분석 완료${
+            message: `${rows.length}개 1단계 문제인식 완료${
               totalTokens
                 ? ` · ${totalTokens.toLocaleString("ko-KR")} tokens`
                 : ""
