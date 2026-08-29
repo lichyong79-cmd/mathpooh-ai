@@ -799,13 +799,26 @@ function questionRect(question: Question): Rect {
   };
 }
 
+/**
+ * SOS318 · 검수 박스는 실제로 저장되는 자르기 영역을 그대로 보여준다.
+ *
+ * 예전에는 저장 좌표를 쓰지 않고 문항번호 위치에서 다시 계산했다(topPct - 2.6).
+ * 그 2.6%가 실제 문항번호 줄 높이와 맞지 않아 박스가 한 줄쯤 아래에서 시작했고,
+ * 아래로는 다음 문항번호(또는 단 끝)까지 잡혀 빈 공간이 길게 남았다.
+ *
+ * 그래서 자르기 결과는 멀쩡한데 검수 화면만 "첫 줄이 잘린 것처럼" 보였다.
+ * 검수 화면의 목적은 "실제로 이렇게 잘립니다"를 확인하는 것이므로,
+ * 저장된 crop 좌표를 그대로 표시한다.
+ *
+ * anchors는 좌표가 아직 없는 문항(수동 추가 직후 등)의 보조 표시에만 쓴다.
+ */
 function recognitionDisplayRect(question: Question, anchors?: DocumentAnchors | null): Rect {
   const rect = questionRect(question);
+  if (rect.width > 0 && rect.height > 0) return rect;
+
+  // 저장된 자르기 좌표가 아직 없을 때만 문항번호 위치로 임시 표시한다.
   const anchor = anchorFor(question, anchors);
   if (!anchor || anchor.page !== Number(question.page_no)) return rect;
-
-  // 인식 화면은 AI의 임시 crop 좌표가 아니라 PDF에서 찾은 실제 문항번호 위치를 표시한다.
-  // 같은 단의 다음 문항번호 직전까지를 해당 문항 영역으로 보여준다.
   const top = Math.max(0, anchor.topPct - 2.6);
   const bottom = Math.min(100, anchor.bottomPct);
   return {
