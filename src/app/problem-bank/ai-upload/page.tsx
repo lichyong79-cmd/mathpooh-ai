@@ -984,6 +984,25 @@ export default function AnalysisWorkspacePage() {
   const activeQuestion =
     questions.find((item) => item.id === activeQuestionId) ?? questions[0] ?? null;
 
+  const nextMissingManualQuestion = (after = 0) => {
+    const existing = new Set(questions.map((item) => Number(item.question_no)));
+    if (after) existing.add(after);
+    const detected = anchors ? [...anchors.byQuestionNo.keys()].sort((a, b) => a - b) : [];
+    return detected.find((no) => no > after && !existing.has(no))
+      ?? detected.find((no) => !existing.has(no))
+      ?? Math.max(0, ...existing) + 1;
+  };
+
+  const beginManualRecognition = () => {
+    const next = nextMissingManualQuestion();
+    setManualRecognitionMode(true);
+    setManualRecognitionQuestionNo(String(next));
+    const anchor = anchors?.byQuestionNo.get(next);
+    if (anchor) setPageNo(anchor.page);
+    setDraft(null);
+    setMessage(`${next}번을 직접 추가합니다. PDF에서 문제 전체를 네모로 드래그하세요.`);
+  };
+
 
   const checkAiHealth = useCallback(async () => {
     setAiHealth((current) => ({ ...current, checking: true, message: "AI 연결 확인 중..." }));
@@ -1160,8 +1179,8 @@ export default function AnalysisWorkspacePage() {
     return () => { cancelled = true; };
   }, [workspace?.solutionUrl, questionNumberKey]);
 
-  // 현재 인식된 문항번호를 기준으로 PDF의 실제 인쇄 위치를 다시 찾는다.
-  // 본문의 각주 번호가 문항번호 후보로 섞여 정상 앵커가 탈락하는 것을 막는다.
+  // SOS313: AI가 놓친 좌측 단까지 찾기 위해 시험지 PDF는 기존 문항목록으로 제한하지 않는다.
+  // 문서 전체의 순증가 번호 흐름과 공통 2단 경계로 가짜 번호를 걸러낸다.
   useEffect(() => {
     if (!pdfDoc) {
       setAnchors(null);
@@ -1173,11 +1192,7 @@ export default function AnalysisWorkspacePage() {
 
     void (async () => {
       try {
-        const expectedNumbers = questions.map((question) => Number(question.question_no));
-        const result = await buildDocumentAnchors(
-          pdfDoc,
-          expectedNumbers.length ? expectedNumbers : undefined,
-        );
+        const result = await buildDocumentAnchors(pdfDoc);
         if (!cancelled) setAnchors(result);
       } catch (caught) {
         console.error("문항 앵커 계산 실패", caught);
@@ -1531,8 +1546,11 @@ export default function AnalysisWorkspacePage() {
 
       await loadWorkspace(workspace.source.id);
       setActiveQuestionId(target.id);
-      setManualRecognitionQuestionNo("");
-      setMessage(`${questionNo}번 수동 인식 완료 · 이 좌표를 2단계 자르기가 그대로 사용합니다.`);
+      const next = nextMissingManualQuestion(questionNo);
+      setManualRecognitionQuestionNo(String(next));
+      const nextAnchor = anchors?.byQuestionNo.get(next);
+      if (nextAnchor) setPageNo(nextAnchor.page);
+      setMessage(`${questionNo}번 직접 추가 완료 · 계속 추가하려면 ${next}번 영역을 드래그하세요.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "수동 문제인식에 실패했습니다.");
     } finally {
@@ -2423,6 +2441,9 @@ export default function AnalysisWorkspacePage() {
   const missingRecognitionAnchors = anchors?.hasTextLayer
     ? questions.filter((question) => !anchors.byQuestionNo.has(Number(question.question_no)) && question.review_result?.recognition_manual !== true)
     : [];
+  const detectedMissingQuestions = anchors?.hasTextLayer
+    ? [...anchors.byQuestionNo.values()].filter((anchor) => !questions.some((question) => Number(question.question_no) === anchor.questionNo))
+    : [];
   const busyInfo: Record<string, { title: string; detail: string }> = {
     load: { title: "분석 화면을 불러오는 중", detail: "시험지와 기존 작업 내용을 준비하고 있습니다." },
     pdf: { title: "시험지를 불러오는 중", detail: "PDF 화면과 문항 좌표를 준비하고 있습니다." },
@@ -2531,7 +2552,8 @@ export default function AnalysisWorkspacePage() {
               <div><strong>1단계 · 시험지 문항 확인</strong><span>AI가 찾은 문항 수와 번호를 확인하고 누락 문항을 채웁니다.</span></div>
               <div className="workflow-buttons">
                 <button onClick={() => void startAnalysis(true)} disabled={!workspace || !!busy}>{questions.length ? "AI 문제인식 다시 하기" : "AI 문제인식 시작"}</button>
-                {anchors?.hasTextLayer && questions.length ? <button onClick={() => void fillMissingQuestionsFromPdf()} disabled={!!busy}>빠진 문항 채우기</button> : null}
+                {anchors?.hasTextLayer && questions.length ? <button className={detectedMissingQuestions.length ? "missing-found" : ""} onClick={() => void fillMissingQuestionsFromPdf()} disabled={!!busy}>{detectedMissingQuestions.length ? `좌·우 누락 ${detectedMissingQuestions.length}개 자동 복구` : "빠진 문항 확인"}</button> : null}
+                <button onClick={beginManualRecognition} disabled={!pdfDoc || !!busy}>＋ 누락 문항 직접 추가</button>
                 <button className="cancel-all" onClick={() => void resetStage("recognition")} disabled={!questions.length || !!busy}>문제인식 전체 취소</button>
                 <button
                   className="pass"
@@ -2783,8 +2805,8 @@ export default function AnalysisWorkspacePage() {
                   ? (manualRecognitionMode ? "문항번호 입력 → 실제 문항 영역을 드래그" : "자동 인식 결과를 확인하세요")
                   : (activeQuestion ? `${activeQuestion.question_no}번 영역을 드래그` : "문항을 선택하세요")}</span>
                 {workflowStep === 1 ? <div className="manual-recognition-tools">
-                  <button type="button" className={manualRecognitionMode ? "active" : ""} onClick={() => { setManualRecognitionMode((value) => !value); setDraft(null); }}>
-                    {manualRecognitionMode ? "수동 인식 종료" : "＋ 수동 인식"}
+                  <button type="button" className={manualRecognitionMode ? "active" : ""} onClick={() => { if (manualRecognitionMode) { setManualRecognitionMode(false); setDraft(null); } else beginManualRecognition(); }}>
+                    {manualRecognitionMode ? "직접 추가 종료" : "＋ 누락 문항 직접 추가"}
                   </button>
                   {manualRecognitionMode ? <input
                     inputMode="numeric"
@@ -2797,6 +2819,8 @@ export default function AnalysisWorkspacePage() {
                 </div> : null}
                 {workspace.examUrl ? <a href={workspace.examUrl} target="_blank" rel="noreferrer">원본 새 창</a> : null}
               </div>
+
+              {workflowStep === 1 && manualRecognitionMode ? <div className="manual-recognition-guide"><b>{manualRecognitionQuestionNo || "?"}번 직접 추가 중</b><span>문항번호가 목록에 없어도 괜찮습니다. 현재 PDF에서 문제 전체의 왼쪽 위부터 오른쪽 아래까지 드래그하면 새 문항으로 즉시 생성됩니다.</span><button type="button" onClick={() => setManualRecognitionMode(false)}>끝내기</button></div> : null}
 
               <div className="canvas-shell">
                 {busy === "pdf" ? <div className="loading">시험지를 불러오는 중입니다.</div> : null}
@@ -2992,6 +3016,9 @@ export default function AnalysisWorkspacePage() {
         section.workspace-grid.recognition-mode .overlay{cursor:default}
         section.workspace-grid.recognition-mode .overlay.manual-recognition-active{cursor:crosshair}
         .manual-recognition-tools{display:flex;align-items:center;gap:6px;margin-left:auto}.manual-recognition-tools button{white-space:nowrap}.manual-recognition-tools button.active{background:#285c31;color:#fff;border-color:#285c31}.manual-recognition-tools input{width:92px;height:36px;border:1px solid #cfd5e1;border-radius:8px;padding:0 9px;font-weight:900}
+        .workflow-buttons button.missing-found{background:#fff1d7;border-color:#d99a2b;color:#8b5509;box-shadow:0 0 0 2px rgba(217,154,43,.12)}
+        .manual-recognition-guide{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;padding:12px 15px;border:2px solid #2f6937;border-radius:11px;background:#eef8f1;color:#214d2a}.manual-recognition-guide b{font-size:14px}.manual-recognition-guide span{font-size:12px;line-height:1.5}.manual-recognition-guide button{height:34px;border:1px solid #bdd1c1;border-radius:8px;background:#fff;color:#285c31;font-weight:900}
+        @media(max-width:760px){.manual-recognition-guide{grid-template-columns:1fr}.manual-recognition-guide button{width:100%}}
         .crop-box.recognition-box{border:3px solid #2f6937;background:rgba(47,105,55,.08)}
         .crop-box.recognition-box.manual{border-color:#1e5aa8;background:rgba(30,90,168,.09)}
         .crop-box.recognition-box b{position:absolute;left:-3px;top:-27px;background:#2f6937;color:#fff;padding:4px 9px;border-radius:7px 7px 0 0;font-size:14px}

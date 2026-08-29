@@ -314,6 +314,7 @@ export async function buildDocumentAnchors(
     /** 단별로 따로 묶은 줄. 2단 편집에서 좌우 단이 한 줄로 합쳐지는 것을 막는다. */
     columnLines: Line[][];
     columns: ColumnBand[];
+    items: RawItem[];
     width: number;
     height: number;
   }> = [];
@@ -337,9 +338,35 @@ export async function buildDocumentAnchors(
       columnItems,
       columnLines,
       columns,
+      items,
       width,
       height,
     });
+  }
+
+  // SOS313: 페이지마다 단을 따로 추정하면 긴 수식이나 표가 중앙 여백을 침범한 쪽에서
+  // 좌측 단이 사라질 수 있다. 문서에서 반복되는 2단 경계를 대표값으로 정한 뒤 모든
+  // 본문 페이지에 같은 경계를 적용한다.
+  const detectedGutters = perPage
+    .filter((entry) => entry.columns.length === 2)
+    .map((entry) => entry.columns[0].right);
+  if (detectedGutters.length >= Math.max(2, Math.floor(perPage.length * 0.2))) {
+    const documentGutter = median(detectedGutters);
+    for (const entry of perPage) {
+      const localGutter = entry.columns.length === 2 ? entry.columns[0].right : null;
+      if (localGutter !== null && Math.abs(localGutter - documentGutter) <= 2.5) continue;
+      entry.columns = [{ left: 0, right: documentGutter }, { left: documentGutter, right: 100 }];
+      entry.columnItems = entry.columns.map((band) => {
+        const leftPx = (band.left / 100) * entry.width;
+        const rightPx = (band.right / 100) * entry.width;
+        return entry.items.filter((item) => {
+          const center = (item.left + item.right) / 2;
+          return center >= leftPx && center < rightPx;
+        });
+      });
+      entry.columnLines = entry.columnItems.map((column) => buildLines(column));
+      entry.lines = entry.columnLines.flat();
+    }
   }
 
   const totalLines = perPage.reduce((sum, entry) => sum + entry.lines.length, 0);
