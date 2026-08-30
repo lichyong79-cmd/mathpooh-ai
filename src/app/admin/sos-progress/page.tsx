@@ -903,6 +903,20 @@ export default function SosProgressPage() {
                                         ? ` · ${it.reviewIsCorrect === true ? "교정완료" : it.reviewAnswer ? "교정 진행중" : "오답 미진행"}`
                                         : ""}
                                     </small>
+                                    {/* SOS319: 학생 풀이사진. API가 내려주는데 화면이 그리지 않아
+                                        AI만 보고 관리자는 못 보던 자료다. 판정이 이상할 때 확인할 근거가 된다. */}
+                                    {it.solutionPhotoUrl ? (
+                                      <div className="solution-photo">
+                                        <a href={it.solutionPhotoUrl} target="_blank" rel="noreferrer" title="새 탭에서 크게 보기">
+                                          <img src={it.solutionPhotoUrl} alt={`${it.order}번 풀이사진`} />
+                                        </a>
+                                        <small>
+                                          풀이사진
+                                          {it.photoSubmitSeconds ? ` · 답 확정 후 ${it.photoSubmitSeconds}초` : ""}
+                                          {Number(it.screenExitCount ?? 0) > 0 ? ` · 화면이탈 ${it.screenExitCount}회` : ""}
+                                        </small>
+                                      </div>
+                                    ) : null}
                                     <ReviewAttemptTrail item={it} />
                                     {it.isCorrect === false &&
                                     it.reviewAnswer ? (
@@ -1289,6 +1303,32 @@ export default function SosProgressPage() {
             grid-template-columns: repeat(5, minmax(0, 1fr));
             gap: 7px;
           }
+          /* SOS319 · 학생 풀이사진 */
+          .solution-photo {
+            margin-top: 7px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+          }
+          .solution-photo a {
+            display: block;
+            border: 1px solid #dde5e0;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #fff;
+            max-height: 220px;
+          }
+          .solution-photo img {
+            display: block;
+            width: 100%;
+            height: auto;
+            object-fit: contain;
+          }
+          .solution-photo small {
+            font-size: 11px;
+            color: #7c8a82;
+          }
+
           .stage-item {
             border: 1px solid #e1e7e3;
             border-radius: 9px;

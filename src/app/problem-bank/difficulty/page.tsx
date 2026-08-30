@@ -31,6 +31,9 @@ type Problem = {
   status: string;
   question_image_path?: string | null;
   problem_dna?: any;
+  dna_full?: boolean;      // SOS319: DNA 전문을 받아왔는지
+  dna_difficulty?: any;    // SOS319: 목록용 축약 DNA(난이도 부분)
+  dna_summary?: any;       // SOS319: 목록용 축약 DNA(요약 부분)
   created_at?: string;
 };
 
@@ -263,7 +266,11 @@ export default function DifficultyManagementPage() {
         "source_name",
         "status",
         "question_image_path",
-        "problem_dna",
+        // SOS319: problem_dna 전문은 문항당 수 KB라 5,000문항이면 화면을 열 때마다
+        // 수십 MB가 오갔다. 이 화면이 쓰는 것은 난이도 판정 부분과 요약뿐이므로
+        // 그 조각만 받는다. 저장할 때는 전문을 다시 받아 병합한다.
+        "dna_difficulty:problem_dna->difficulty",
+        "dna_summary:problem_dna->summary",
         "created_at",
       ].join(",");
       const all: Problem[] = [];
@@ -277,7 +284,13 @@ export default function DifficultyManagementPage() {
         all.push(
           ...rows.map((x) => ({
             ...x,
-            difficulty: norm(x.difficulty, x.problem_dna),
+            problem_dna: (x.dna_difficulty || x.dna_summary)
+              ? { difficulty: x.dna_difficulty ?? undefined, summary: x.dna_summary ?? undefined }
+              : null,
+            dna_full: false,
+            difficulty: norm(x.difficulty, (x.dna_difficulty || x.dna_summary)
+              ? { difficulty: x.dna_difficulty ?? undefined, summary: x.dna_summary ?? undefined }
+              : null),
           })),
         );
         if (rows.length < 1000) break;
@@ -554,10 +567,27 @@ export default function DifficultyManagementPage() {
     const target = items.find((x) => x.id === id);
     if (!target) return;
     const previous = norm(target.difficulty, target.problem_dna);
+
+    // SOS319: 목록은 DNA 축약본만 들고 있다. 그대로 저장하면 problem_dna 전체가
+    // 축약본으로 덮어써져 분석 데이터가 사라진다. 저장 직전에 전문을 확보한다.
+    let baseDna: any = target.problem_dna || {};
+    if (!target.dna_full) {
+      const dnaRes = await fetch(
+        `${config.url}/rest/v1/problem_bank_questions?select=problem_dna&id=eq.${encodeURIComponent(id)}`,
+        { headers: { ...(await authHeaders()) }, cache: "no-store" },
+      );
+      if (!dnaRes.ok) {
+        setError("문항 DNA를 불러오지 못해 저장을 중단했습니다.");
+        return;
+      }
+      const dnaRows = await dnaRes.json().catch(() => []);
+      baseDna = dnaRows?.[0]?.problem_dna ?? {};
+    }
+
     const dna = {
-      ...(target.problem_dna || {}),
+      ...baseDna,
       difficulty: {
-        ...((target.problem_dna || {}).difficulty || {}),
+        ...(baseDna?.difficulty || {}),
         final_grade: Number(value),
         scale_version: DIFFICULTY_SCALE_VERSION,
         admin_fixed: true,

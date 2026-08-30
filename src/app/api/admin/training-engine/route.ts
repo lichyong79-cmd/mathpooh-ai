@@ -13,6 +13,9 @@ import {
 import { problemSubunit } from "@/lib/subunit-key";
 import { recordTrainingResult } from "@/lib/sos-training-result";
 
+// SOS319: 진단 분석·훈련 생성에 AI를 호출하므로 실행시간을 넉넉히 잡는다.
+export const maxDuration = 300;
+
 async function admin() {
   const user = await getSessionUser();
   return !user || ["student","parent"].includes(user.user_metadata?.role)

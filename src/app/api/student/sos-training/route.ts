@@ -13,6 +13,11 @@ import { reviewBonus } from "@/lib/sos-training-policy";
 import { cycleFromSnapshot } from "@/lib/sos-cycle";
 import { enqueueAiGeneration } from "@/lib/sos-ai-generation-queue";
 
+// SOS319: 이 라우트는 진단 완료 시 AI 취약점 분석과 1차 훈련 생성을 그 자리에서 돌린다.
+// AI를 여러 번 부르고 학생 풀이사진까지 함께 보내는데, maxDuration 선언이 없어
+// Vercel 기본값(60초)이 적용됐다. 즉 학생이 진단을 마치는 순간 실패할 수 있었다.
+export const maxDuration = 300;
+
 async function context() {
   const user = await getSessionUser();
   if (!user)
