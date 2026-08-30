@@ -2272,6 +2272,13 @@ export default function StudentHome() {
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [remaining, setRemaining] = useState(0);
+  // SOS320: 자동저장 함수는 answers가 바뀔 때마다 새로 만들어진다.
+  // 그걸 useEffect 의존성에 그대로 두면 타이머가 매 입력마다 초기화된다.
+  // 최신 함수를 ref에 담아 두고 타이머는 ref만 호출한다.
+  const saveRef = useRef<(silent?: boolean) => Promise<void>>(async () => {});
+  // 남은 시간은 1초씩 빼지 않고 종료 시각에서 계산한다.
+  // 모바일은 화면이 꺼지거나 앱을 전환하면 타이머를 멈추므로, 빼기 방식은 시간이 어긋난다.
+  const examEndAtRef = useRef<number>(0);
   const [examPaused, setExamPaused] = useState(false);
   const [busy, setBusy] = useState("");
   const [saveState, setSaveState] = useState("저장됨");
@@ -2397,6 +2404,7 @@ export default function StudentHome() {
     const end = exam.close_at
       ? new Date(exam.close_at).getTime()
       : new Date(data.attempt.started_at).getTime() + exam.time_limit * 60_000;
+    examEndAtRef.current = exam.paused_at ? 0 : end;
     setRemaining(
       exam.paused_at
         ? Number(exam.paused_remaining_seconds ?? 0)
@@ -2493,17 +2501,49 @@ export default function StudentHome() {
     [activeExam, answers, attempt, examPaused],
   );
 
+  // SOS320: save는 답을 입력할 때마다 새로 만들어지므로 ref에만 담는다.
   useEffect(() => {
-    if (!activeExam || !attempt) return;
-    const timer = window.setInterval(() => {
-      if (!examPaused) setRemaining((value) => Math.max(0, value - 1));
-    }, 1000);
-    const autosave = window.setInterval(() => void save(), 10000);
+    saveRef.current = save;
+  }, [save]);
+
+  // 남은 시간 표시. 종료 시각에서 계산하므로 화면이 꺼졌다 돌아와도 어긋나지 않는다.
+  useEffect(() => {
+    if (!activeExam || !attempt || examPaused) return;
+    const tick = () => {
+      const end = examEndAtRef.current;
+      if (!end) return;
+      setRemaining(Math.max(0, Math.ceil((end - Date.now()) / 1000)));
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    // 앱을 전환했다 돌아오면 즉시 다시 맞춘다.
+    const onWake = () => { if (document.visibilityState === "visible") tick(); };
+    document.addEventListener("visibilitychange", onWake);
     return () => {
       clearInterval(timer);
-      clearInterval(autosave);
+      document.removeEventListener("visibilitychange", onWake);
     };
-  }, [activeExam, attempt, save, examPaused]);
+  }, [activeExam, attempt, examPaused]);
+
+  // 자동저장. 의존성에 save를 넣지 않아 입력 중에도 10초마다 확실히 돈다.
+  useEffect(() => {
+    if (!activeExam || !attempt) return;
+    const autosave = window.setInterval(() => void saveRef.current(true), 10000);
+
+    // 모바일에서 가장 중요한 지점.
+    // 앱 전환·화면 잠금 때 브라우저가 페이지를 정리해 버리면 그때까지 입력한 답이 사라진다.
+    // 화면에서 벗어나는 순간 한 번 더 저장한다.
+    const onHide = () => {
+      if (document.visibilityState === "hidden") void saveRef.current(true);
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      clearInterval(autosave);
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onHide);
+    };
+  }, [activeExam, attempt]);
 
   const submit = useCallback(
     async (forced = false) => {
