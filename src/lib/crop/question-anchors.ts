@@ -419,12 +419,31 @@ export async function buildDocumentAnchors(
     // (1단으로 잘못 보면 좌우가 섞여 1 → 3 → 2 → 4 가 된다.)
     columns = pickBetterColumns(items, width, height, columns);
 
-    const columnItems = columns.map((band) => {
-      const leftPx = (band.left / 100) * width;
-      const rightPx = (band.right / 100) * width;
+    // SOS322: 단 경계를 글자 중심으로만 나누면, 단 왼쪽 끝에 붙은 문항번호가
+    // 반대쪽 단으로 넘어가 버린다. 그러면 그 줄이 옆 단 본문과 한 줄로 합쳐져
+    // "8." 같은 번호를 못 찾고, 앞 문항이 다음 문항 첫 줄까지 삼킨다.
+    // (그 결과 "위치 미확정" 이 남아 다음 단계 버튼까지 잠긴다.)
+    // 경계에 약간의 여유를 두고, 걸친 글자는 더 많이 겹치는 쪽으로 보낸다.
+    const slack = width * 0.02;
+    const columnItems = columns.map((band, bandIndex) => {
+      const leftPx = (band.left / 100) * width - (bandIndex === 0 ? 0 : slack);
+      const rightPx = (band.right / 100) * width + (bandIndex === columns.length - 1 ? 0 : slack);
       return items.filter((item) => {
         const center = (item.left + item.right) / 2;
-        return center >= leftPx && center < rightPx;
+        if (center >= leftPx && center < rightPx) {
+          // 여유 구간에 걸친 글자는 겹치는 폭이 큰 단에만 넣는다.
+          if (columns.length < 2) return true;
+          let bestIndex = bandIndex;
+          let bestOverlap = -1;
+          columns.forEach((other, otherIndex) => {
+            const oLeft = (other.left / 100) * width;
+            const oRight = (other.right / 100) * width;
+            const overlap = Math.min(item.right, oRight) - Math.max(item.left, oLeft);
+            if (overlap > bestOverlap) { bestOverlap = overlap; bestIndex = otherIndex; }
+          });
+          return bestIndex === bandIndex;
+        }
+        return false;
       });
     });
     const columnLines = columnItems.map((column) => buildLines(column));

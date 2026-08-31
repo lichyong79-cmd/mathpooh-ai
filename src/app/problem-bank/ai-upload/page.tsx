@@ -2381,8 +2381,8 @@ export default function AnalysisWorkspacePage() {
       ? questions.filter((question) => !anchors.byQuestionNo.has(Number(question.question_no)) && question.review_result?.recognition_manual !== true)
       : [];
     if (missingAnchors.length) {
-      setError(`문항 위치 ${missingAnchors.length}개가 아직 정확히 잡히지 않았습니다. 문제 인식을 다시 해주세요.`);
-      return;
+      // SOS322: 여기서 막으면 남은 문항을 수동으로 잡을 기회조차 없다. 경고만 남기고 진행한다.
+      setMessage(`문항 위치 ${missingAnchors.length}개는 자동으로 찾지 못했습니다. 수동 자르기 화면에서 확인해 주세요.`);
     }
     try {
       await saveWorkflowStep(2, "2단계 · AI 자르기 검수");
@@ -2553,13 +2553,22 @@ export default function AnalysisWorkspacePage() {
                 <button onClick={() => void startAnalysis(true)} disabled={!workspace || !!busy}>{questions.length ? "AI 문제인식 다시 하기" : "AI 문제인식 시작"}</button>
                 <button onClick={beginManualRecognition} disabled={!pdfDoc || !!busy}>＋ 누락 문항 직접 추가</button>
                 <button className="cancel-all" onClick={() => void resetStage("recognition")} disabled={!questions.length || !!busy}>문제인식 전체 취소</button>
+                {/* SOS322: 예전에는 위치 미확정이 하나만 있어도 버튼이 잠겨 작업 자체를 진행할 수 없었다.
+                    남은 문항은 수동 자르기에서 잡을 수 있으므로, 경고만 하고 진행은 막지 않는다. */}
                 <button
                   className="pass"
-                  onClick={() => void passRecognitionStep()}
-                  disabled={!questions.length || anchorBusy || !!busy || missingRecognitionAnchors.length > 0}
-                  title={missingRecognitionAnchors.length ? `위치 미확정 ${missingRecognitionAnchors.length}문항` : ""}
+                  onClick={() => {
+                    if (missingRecognitionAnchors.length && !window.confirm(
+                      `위치를 못 찾은 문항이 ${missingRecognitionAnchors.length}개 있습니다 (${missingRecognitionAnchors.map((q) => q.question_no).join(", ")}번).\n\n`
+                      + `그대로 진행하면 그 문항은 자르기 결과가 부정확할 수 있습니다.\n`
+                      + `다음 단계의 '수동 자르기 화면'에서 직접 맞출 수 있습니다.\n\n진행할까요?`,
+                    )) return;
+                    void passRecognitionStep();
+                  }}
+                  disabled={!questions.length || anchorBusy || !!busy}
+                  title={missingRecognitionAnchors.length ? `위치 미확정 ${missingRecognitionAnchors.length}문항 · 그대로 진행할 수 있습니다` : ""}
                 >
-                  {missingRecognitionAnchors.length ? `위치 미확정 ${missingRecognitionAnchors.length}문항` : "문제 인식 통과 →"}
+                  {missingRecognitionAnchors.length ? `위치 미확정 ${missingRecognitionAnchors.length}문항 · 계속 →` : "문제 인식 통과 →"}
                 </button>
               </div>
             </div>
