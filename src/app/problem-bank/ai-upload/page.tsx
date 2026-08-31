@@ -799,34 +799,53 @@ function questionRect(question: Question): Rect {
   };
 }
 
-/**
- * SOS318 · 검수 박스는 실제로 저장되는 자르기 영역을 그대로 보여준다.
- *
- * 예전에는 저장 좌표를 쓰지 않고 문항번호 위치에서 다시 계산했다(topPct - 2.6).
- * 그 2.6%가 실제 문항번호 줄 높이와 맞지 않아 박스가 한 줄쯤 아래에서 시작했고,
- * 아래로는 다음 문항번호(또는 단 끝)까지 잡혀 빈 공간이 길게 남았다.
- *
- * 그래서 자르기 결과는 멀쩡한데 검수 화면만 "첫 줄이 잘린 것처럼" 보였다.
- * 검수 화면의 목적은 "실제로 이렇게 잘립니다"를 확인하는 것이므로,
- * 저장된 crop 좌표를 그대로 표시한다.
- *
- * anchors는 좌표가 아직 없는 문항(수동 추가 직후 등)의 보조 표시에만 쓴다.
- */
-function recognitionDisplayRect(question: Question, anchors?: DocumentAnchors | null): Rect {
-  const rect = questionRect(question);
-  if (rect.width > 0 && rect.height > 0) return rect;
-
-  // 저장된 자르기 좌표가 아직 없을 때만 문항번호 위치로 임시 표시한다.
-  const anchor = anchorFor(question, anchors);
-  if (!anchor || anchor.page !== Number(question.page_no)) return rect;
-  const top = Math.max(0, anchor.topPct - 2.6);
-  const bottom = Math.min(100, anchor.bottomPct);
-  return {
-    x: Math.max(0, anchor.columnLeftPct + 0.15),
-    y: top,
-    width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct - 0.3),
-    height: Math.max(1, bottom - top),
+/** SOS324 · 1단계 녹색 인식박스는 실제 자르기 좌표와 완전히 분리한다. */
+function manualRecognitionRect(question: Question): { page: number; rect: Rect } | null {
+  const raw = question.review_result?.recognition_rect;
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const page = Number(value.page);
+  const rect = {
+    x: Number(value.x),
+    y: Number(value.y),
+    width: Number(value.width),
+    height: Number(value.height),
   };
+  if (!Number.isInteger(page) || page < 1) return null;
+  if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) return null;
+  if (rect.width <= 0 || rect.height <= 0) return null;
+  return { page, rect };
+}
+
+function recognitionDisplayPage(question: Question, anchors?: DocumentAnchors | null): number {
+  const manual = manualRecognitionRect(question);
+  if (manual) return manual.page;
+  const anchor = anchorFor(question, anchors);
+  if (anchor) return anchor.page;
+  return Math.max(1, Number(question.page_no ?? 1));
+}
+
+function recognitionDisplayRect(question: Question, anchors?: DocumentAnchors | null): Rect {
+  // 관리자가 1단계에서 직접 맞춘 녹색 박스가 최우선이다.
+  const manual = manualRecognitionRect(question);
+  if (manual) return manual.rect;
+
+  // 자동 인식박스도 '실제 crop 결과'가 아니라 PDF 문항번호 앵커 기준으로 표시한다.
+  // 이렇게 해야 2단계 자르기 엔진이 좌표를 정밀 보정해도 1단계 녹색 박스가 따라 변하지 않는다.
+  const anchor = anchorFor(question, anchors);
+  if (anchor) {
+    const top = Math.max(0, anchor.topPct - 2.6);
+    const bottom = Math.min(100, anchor.bottomPct);
+    return {
+      x: Math.max(0, anchor.columnLeftPct + 0.15),
+      y: top,
+      width: Math.max(1, anchor.columnRightPct - anchor.columnLeftPct - 0.3),
+      height: Math.max(1, bottom - top),
+    };
+  }
+
+  // 텍스트 앵커가 없는 스캔본은 최초 AI 인식 좌표(현재 저장 좌표)를 표시용으로만 쓴다.
+  return questionRect(question);
 }
 
 function hasValidCrop(question: Question | null) {
@@ -999,9 +1018,11 @@ export default function AnalysisWorkspacePage() {
 
   const beginManualRecognition = () => {
     setManualRecognitionMode(true);
-    setManualRecognitionQuestionNo("");
+    setManualRecognitionQuestionNo(activeQuestion ? String(activeQuestion.question_no) : "");
     setDraft(null);
-    setMessage("추가할 문항번호를 입력한 뒤, 현재 PDF에서 문제 전체를 네모로 드래그하세요.");
+    setMessage(activeQuestion
+      ? `${activeQuestion.question_no}번 인식영역 수정 모드 · 녹색 박스만 다시 드래그하세요. 실제 자르기는 변경되지 않습니다.`
+      : "수정할 문항번호를 선택하거나 입력한 뒤, 녹색 인식영역만 다시 드래그하세요. 실제 자르기는 변경되지 않습니다.");
   };
 
 
@@ -1528,21 +1549,20 @@ export default function AnalysisWorkspacePage() {
         ...(target.review_result ?? {}),
         recognition_manual: true,
         recognition_manual_at: new Date().toISOString(),
+        recognition_rect: {
+          page: pageNo,
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        },
       };
       const patchResponse = await fetch(`/api/analysis/questions/${target.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question_no: questionNo,
-          page_no: pageNo,
-          crop_x: rect.x,
-          crop_y: rect.y,
-          crop_width: rect.width,
-          crop_height: rect.height,
-          status: "WAITING",
-          review_reason: "관리자가 1단계 문제인식 영역을 수동 보정했습니다.",
-          review_result: reviewResult,
-        }),
+        // 중요: 1단계에서는 녹색 인식박스 메타데이터만 저장한다.
+        // crop_x/y/width/height, page_no, 이미지 파일은 절대 건드리지 않는다.
+        body: JSON.stringify({ review_result: reviewResult }),
       });
       const patchPayload = await patchResponse.json();
       if (!patchResponse.ok || !patchPayload.success) throw new Error(patchPayload.message || "수동 인식 좌표 저장에 실패했습니다.");
@@ -1550,7 +1570,7 @@ export default function AnalysisWorkspacePage() {
       await loadWorkspace(workspace.source.id);
       setActiveQuestionId(target.id);
       setManualRecognitionQuestionNo("");
-      setMessage(`${questionNo}번 직접 추가 완료 · 다음 누락 문항번호를 입력하고 영역을 드래그하세요.`);
+      setMessage(`${questionNo}번 녹색 인식영역 저장 완료 · 실제 자르기 결과는 변경하지 않았습니다.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "수동 문제인식에 실패했습니다.");
     } finally {
@@ -2551,7 +2571,7 @@ export default function AnalysisWorkspacePage() {
               <div><strong>1단계 · 시험지 문항 확인</strong><span>AI가 찾은 문항 수와 번호를 확인하고 누락 문항을 채웁니다.</span></div>
               <div className="workflow-buttons">
                 <button onClick={() => void startAnalysis(true)} disabled={!workspace || !!busy}>{questions.length ? "AI 문제인식 다시 하기" : "AI 문제인식 시작"}</button>
-                <button onClick={beginManualRecognition} disabled={!pdfDoc || !!busy}>＋ 누락 문항 직접 추가</button>
+                <button onClick={beginManualRecognition} disabled={!pdfDoc || !!busy}>✎ 인식영역 수정/추가</button>
                 <button className="cancel-all" onClick={() => void resetStage("recognition")} disabled={!questions.length || !!busy}>문제인식 전체 취소</button>
                 {/* SOS322: 예전에는 위치 미확정이 하나만 있어도 버튼이 잠겨 작업 자체를 진행할 수 없었다.
                     남은 문항은 수동 자르기에서 잡을 수 있으므로, 경고만 하고 진행은 막지 않는다. */}
@@ -2809,11 +2829,11 @@ export default function AnalysisWorkspacePage() {
                 <b>{pageCount ? `${pageNo} / ${pageCount}` : "PDF 로딩"}</b>
                 <button disabled={!pageCount || pageNo >= pageCount} onClick={() => setPageNo((value) => value + 1)}>다음 페이지</button>
                 <span>{workflowStep === 1
-                  ? (manualRecognitionMode ? "문항번호 입력 → 실제 문항 영역을 드래그" : "자동 인식 결과를 확인하세요")
+                  ? (manualRecognitionMode ? "문항 선택/입력 → 녹색 인식영역만 드래그" : "자동 인식 결과를 확인하세요")
                   : (activeQuestion ? `${activeQuestion.question_no}번 영역을 드래그` : "문항을 선택하세요")}</span>
                 {workflowStep === 1 ? <div className="manual-recognition-tools">
                   <button type="button" className={manualRecognitionMode ? "active" : ""} onClick={() => { if (manualRecognitionMode) { setManualRecognitionMode(false); setDraft(null); } else beginManualRecognition(); }}>
-                    {manualRecognitionMode ? "직접 추가 종료" : "＋ 누락 문항 직접 추가"}
+                    {manualRecognitionMode ? "인식영역 수정 종료" : "✎ 인식영역 수정/추가"}
                   </button>
                   {manualRecognitionMode ? <input
                     inputMode="numeric"
@@ -2827,7 +2847,7 @@ export default function AnalysisWorkspacePage() {
                 {workspace.examUrl ? <a href={workspace.examUrl} target="_blank" rel="noreferrer">원본 새 창</a> : null}
               </div>
 
-              {workflowStep === 1 && manualRecognitionMode ? <div className="manual-recognition-guide"><b>{manualRecognitionQuestionNo || "?"}번 직접 추가 중</b><span>문항번호가 목록에 없어도 괜찮습니다. 현재 PDF에서 문제 전체의 왼쪽 위부터 오른쪽 아래까지 드래그하면 새 문항으로 즉시 생성됩니다.</span><button type="button" onClick={() => setManualRecognitionMode(false)}>끝내기</button></div> : null}
+              {workflowStep === 1 && manualRecognitionMode ? <div className="manual-recognition-guide"><b>{manualRecognitionQuestionNo || "?"}번 인식영역 수정 중</b><span>기존 문항은 녹색 인식박스만 저장합니다. 실제 자르기 좌표와 자른 이미지는 절대 변경하지 않습니다. 목록에 없는 번호는 기존 방식대로 새 문항으로 추가할 수 있습니다.</span><button type="button" onClick={() => setManualRecognitionMode(false)}>끝내기</button></div> : null}
 
               <div className="canvas-shell">
                 {busy === "pdf" ? <div className="loading">시험지를 불러오는 중입니다.</div> : null}
@@ -2842,18 +2862,25 @@ export default function AnalysisWorkspacePage() {
                     onPointerCancel={workflowStep === 1 && !manualRecognitionMode ? undefined : handlePointerCancel}
                   >
                     {workflowStep === 1 ? questions
-                      .filter((question) => Number(question.page_no) === pageNo && hasValidCrop(question))
+                      .filter((question) => recognitionDisplayPage(question, anchors) === pageNo && hasValidCrop(question))
                       .map((question) => {
                         const rect = recognitionDisplayRect(question, anchors);
                         return (
                           <div
                             key={question.id}
-                            className={`crop-box recognition-box ${question.review_result?.recognition_manual === true ? "manual" : ""}`}
+                            className={`crop-box recognition-box ${question.review_result?.recognition_manual === true ? "manual" : ""} ${manualRecognitionMode ? "editable" : ""}`}
                             style={{
                               left: `${rect.x}%`,
                               top: `${rect.y}%`,
                               width: `${rect.width}%`,
                               height: `${rect.height}%`,
+                            }}
+                            onPointerDown={(event) => {
+                              if (!manualRecognitionMode) return;
+                              event.stopPropagation();
+                              setActiveQuestionId(question.id);
+                              setManualRecognitionQuestionNo(String(question.question_no));
+                              setMessage(`${question.question_no}번 선택 · 빈 곳에서 새 녹색 영역을 드래그하세요. 자르기는 변경되지 않습니다.`);
                             }}
                           >
                             <b>{question.question_no}</b>
@@ -3026,10 +3053,11 @@ export default function AnalysisWorkspacePage() {
         .workflow-buttons button.missing-found{background:#fff1d7;border-color:#d99a2b;color:#8b5509;box-shadow:0 0 0 2px rgba(217,154,43,.12)}
         .manual-recognition-guide{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;padding:12px 15px;border:2px solid #2f6937;border-radius:11px;background:#eef8f1;color:#214d2a}.manual-recognition-guide b{font-size:14px}.manual-recognition-guide span{font-size:12px;line-height:1.5}.manual-recognition-guide button{height:34px;border:1px solid #bdd1c1;border-radius:8px;background:#fff;color:#285c31;font-weight:900}
         @media(max-width:760px){.manual-recognition-guide{grid-template-columns:1fr}.manual-recognition-guide button{width:100%}}
-        .crop-box.recognition-box{border:3px solid #2f6937;background:rgba(47,105,55,.08)}
-        .crop-box.recognition-box.manual{border-color:#1e5aa8;background:rgba(30,90,168,.09)}
+        .crop-box.recognition-box{border:3px solid #2f6937;background:rgba(47,105,55,.08);pointer-events:none}
+        .crop-box.recognition-box.editable{pointer-events:auto;cursor:pointer}
+        .crop-box.recognition-box.manual{border-color:#2f6937;background:rgba(47,105,55,.12)}
         .crop-box.recognition-box b{position:absolute;left:-3px;top:-27px;background:#2f6937;color:#fff;padding:4px 9px;border-radius:7px 7px 0 0;font-size:14px}
-        .crop-box.recognition-box.manual b{background:#1e5aa8}
+        .crop-box.recognition-box.manual b{background:#2f6937}
         section.all-crops-grid.crop-three-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
         section.all-crops-grid.crop-three-grid .crop-card{min-width:0;min-height:520px;padding:14px}
         section.all-crops-grid.crop-three-grid .card-open{grid-template-rows:400px auto auto auto;gap:10px}
