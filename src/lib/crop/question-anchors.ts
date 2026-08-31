@@ -150,14 +150,104 @@ function detectColumns(items: RawItem[], pageWidth: number, pageHeight: number):
     if (!best || band.end - band.start > best.end - best.start) best = band;
   }
 
-  // 빈 띠가 페이지 폭의 1.5% 이상이어야 진짜 단 구분으로 본다.
-  if (!best || best.end - best.start + 1 < 3) return [{ left: 0, right: 100 }];
+  // SOS321: 완전히 빈 띠만 찾으면 단 구분에 실패하는 시험지가 있다.
+  // 상단 제목이나 가로 구분선이 페이지 가운데를 가로지르면 그 열의 카운트가 0이 아니게 되어
+  // "빈 띠 없음 → 1단"으로 판정되고, 그러면 좌우 단이 뒤섞여 문항번호가 1→3→2→4로 어긋난다.
+  //
+  // 본문 대부분이 비어 있으면 단 구분으로 본다. 소수의 전폭 요소는 무시한다.
+  if (!best || best.end - best.start + 1 < 3) {
+    const rowCount = body.length;
+    const sparse = Math.max(1, Math.floor(rowCount * 0.06));   // 6% 이하만 걸치면 빈 띠로 취급
+    let bestSparse: { start: number; end: number } | null = null;
+    let runSparse = -1;
+    for (let i = 60; i <= 140; i += 1) {
+      if (buckets[i] <= sparse) {
+        if (runSparse < 0) runSparse = i;
+      } else if (runSparse >= 0) {
+        const band = { start: runSparse, end: i - 1 };
+        if (!bestSparse || band.end - band.start > bestSparse.end - bestSparse.start) bestSparse = band;
+        runSparse = -1;
+      }
+    }
+    if (runSparse >= 0) {
+      const band = { start: runSparse, end: 140 };
+      if (!bestSparse || band.end - band.start > bestSparse.end - bestSparse.start) bestSparse = band;
+    }
+    if (!bestSparse || bestSparse.end - bestSparse.start + 1 < 3) return [{ left: 0, right: 100 }];
+    best = bestSparse;
+  }
 
   const gutterCenter = ((best.start + best.end + 1) / 2) / 2; // 0~100 %
   return [
     { left: 0, right: gutterCenter },
     { left: gutterCenter, right: 100 },
   ];
+}
+
+/**
+ * SOS321 · 단 구분 검증.
+ *
+ * 후보 배치(감지된 것, 1단, 가운데 2단)를 각각 적용해 보고
+ * "쪽 → 단 → 위에서 아래" 순서로 읽었을 때 문항번호가 가장 잘 증가하는 배치를 고른다.
+ * 시험지 번호는 항상 그 순서로 붙으므로 신뢰할 수 있는 기준이다.
+ */
+function columnOrderScore(items: RawItem[], width: number, bands: ColumnBand[]) {
+  const numbers: Array<{ column: number; top: number; no: number }> = [];
+  for (let c = 0; c < bands.length; c += 1) {
+    const leftPx = (bands[c].left / 100) * width;
+    const rightPx = (bands[c].right / 100) * width;
+    const inBand = items.filter((item) => {
+      const center = (item.left + item.right) / 2;
+      return center >= leftPx && center < rightPx;
+    });
+    for (const line of buildLines(inBand)) {
+      const match = /^\s*(\d{1,3})\s*[.,]/.exec(line.text);
+      if (!match) continue;
+      const no = Number(match[1]);
+      if (!Number.isFinite(no) || no < 1 || no > 200) continue;
+      numbers.push({ column: c, top: line.top, no });
+    }
+  }
+  if (numbers.length < 2) return 0;
+  numbers.sort((a, b) => a.column - b.column || a.top - b.top);
+
+  // 읽는 순서대로 번호가 커지는 최장 구간의 길이
+  const seq = numbers.map((x) => x.no);
+  const best = new Array(seq.length).fill(1);
+  let top = 1;
+  for (let i = 1; i < seq.length; i += 1) {
+    for (let j = 0; j < i; j += 1) {
+      if (seq[j] < seq[i] && best[j] + 1 > best[i]) best[i] = best[j] + 1;
+    }
+    if (best[i] > top) top = best[i];
+  }
+  return top / seq.length;   // 0~1. 1이면 완전히 순서대로
+}
+
+function pickBetterColumns(
+  items: RawItem[],
+  width: number,
+  height: number,
+  detected: ColumnBand[],
+): ColumnBand[] {
+  const candidates: ColumnBand[][] = [detected];
+  if (detected.length === 1) {
+    candidates.push([{ left: 0, right: 50 }, { left: 50, right: 100 }]);
+  } else {
+    candidates.push([{ left: 0, right: 100 }]);
+  }
+
+  let bestBands = detected;
+  let bestScore = -1;
+  for (const bands of candidates) {
+    const score = columnOrderScore(items, width, bands);
+    // 동점이면 먼저 온 후보(감지 결과)를 유지한다.
+    if (score > bestScore + 0.001) {
+      bestScore = score;
+      bestBands = bands;
+    }
+  }
+  return bestBands;
 }
 
 /** 같은 줄에 있는 글자 조각들을 한 줄로 합친다. ("11" + "." 처럼 쪼개져도 인식되게) */
@@ -321,7 +411,14 @@ export async function buildDocumentAnchors(
   for (let pageNo = 1; pageNo <= pdfDoc.numPages; pageNo += 1) {
     const page = await pdfDoc.getPage(pageNo);
     const { items, width, height } = await readItems(page);
-    const columns = detectColumns(items, width, height);
+    let columns = detectColumns(items, width, height);
+
+    // SOS321: 단 구분이 맞았는지 문항번호 순서로 검증한다.
+    // 시험지는 항상 쪽 → 단 → 위에서 아래 순서로 번호가 붙는다.
+    // 그 순서대로 읽었을 때 번호가 커지지 않으면 단 구분이 틀린 것이다.
+    // (1단으로 잘못 보면 좌우가 섞여 1 → 3 → 2 → 4 가 된다.)
+    columns = pickBetterColumns(items, width, height, columns);
+
     const columnItems = columns.map((band) => {
       const leftPx = (band.left / 100) * width;
       const rightPx = (band.right / 100) * width;
