@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
       .update({
         status: "DONE",
         progress: 100,
-        current_step: "문제은행 등록 완료",
+        current_step: "3단계 · 문제은행 등록 완료",
         finished_at: now,
         updated_at: now,
       })

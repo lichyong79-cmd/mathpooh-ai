@@ -1095,7 +1095,19 @@ export default function AnalysisWorkspacePage() {
       // 단계는 문항 존재 여부나 status로 추측하지 않는다. 서버에 저장한 단계만 따른다.
       // 인식 직후에도 문항 row는 존재하므로 questions.length로 2단계를 판정하면
       // 재접속 순간 인식 검수가 건너뛰어진다.
-      if (savedStep.includes("3단계")) {
+      // 문제은행 일부/전체 등록 후에도 반드시 3단계(최종 AI분석/문제은행 연결)로 복귀한다.
+      // 구버전 register API는 current_step을 "문제은행 등록 완료"로만 저장했기 때문에
+      // 재진입 시 1단계 문제인식으로 잘못 떨어지는 문제가 있었다.
+      const hasFinalBankFlow =
+        savedStep.includes("문제은행 등록") ||
+        (nextWorkspace.registeredQuestionIds?.length ?? 0) > 0 ||
+        (nextWorkspace.questions ?? []).some((question) =>
+          ["APPROVED", "AUTO_REGISTERED", "REVIEW", "FAILED", "REJECTED", "REGISTERED"].includes(
+            String(question.status ?? "").toUpperCase(),
+          ),
+        );
+
+      if (savedStep.includes("3단계") || hasFinalBankFlow) {
         setWorkflowStep(3);
       } else if (savedStep.includes("2단계")) {
         setWorkflowStep(2);
