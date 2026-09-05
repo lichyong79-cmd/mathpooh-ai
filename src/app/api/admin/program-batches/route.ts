@@ -4,6 +4,7 @@ import { getAdminUser } from "@/lib/supabase/auth";
 import { ensureParentAccount } from "@/lib/parent-account";
 
 const digits = (v: unknown) => String(v ?? "").replace(/\D/g, "");
+const koreaToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const missing = (m: string) => m.includes("sos_program_") ? "먼저 supabase-sos310-five-cycle-applications.sql을 실행해 주세요." : m;
 async function admin() { return await getAdminUser(); }
 
@@ -34,16 +35,33 @@ export async function POST(request: Request) {
     const cycleIds = [...new Set((Array.isArray(b.cycleIds) ? b.cycleIds : []).map(String))];
     if (cycleIds.length !== 5) return NextResponse.json({ message: "운영 회차를 정확히 5개 선택해 주세요." }, { status: 400 });
     const title = String(b.title ?? "").trim(); if (!title) return NextResponse.json({ message: "5회 묶음 이름을 입력해 주세요." }, { status: 400 });
-    const batch = await s.from("sos_program_batches").insert({ title, price: Number(b.price ?? 350000), application_start: b.applicationStart || null, application_end: b.applicationEnd || null, capacity: b.capacity ? Number(b.capacity) : null, memo: String(b.memo ?? ""), is_published: false }).select().single();
-    if (batch.error || !batch.data) return NextResponse.json({ message: missing(batch.error?.message || "묶음을 만들지 못했습니다.") }, { status: 400 });
     const cycleRows = await s.from("learning_cycles").select("id,start_date").in("id", cycleIds).order("start_date");
-    if (cycleRows.error || (cycleRows.data ?? []).length !== 5) { await s.from("sos_program_batches").delete().eq("id", batch.data.id); return NextResponse.json({ message: "선택한 운영 회차를 확인해 주세요." }, { status: 400 }); }
+    if (cycleRows.error || (cycleRows.data ?? []).length !== 5) return NextResponse.json({ message: "선택한 운영 회차를 확인해 주세요." }, { status: 400 });
+    const firstStart = String((cycleRows.data ?? [])[0]?.start_date ?? "").slice(0, 10);
+    if (!firstStart) return NextResponse.json({ message: "1회차 시작일이 없는 운영 회차는 묶을 수 없습니다." }, { status: 400 });
+    if (firstStart < koreaToday()) return NextResponse.json({ message: "이미 시작한 회차가 포함된 5회 묶음은 만들 수 없습니다." }, { status: 400 });
+    const batch = await s.from("sos_program_batches").insert({ title, price: Math.max(0, Number(b.price ?? 350000)), application_start: b.applicationStart || null, application_end: b.applicationEnd || null, capacity: b.capacity ? Math.max(1, Number(b.capacity)) : null, memo: String(b.memo ?? ""), is_published: false }).select().single();
+    if (batch.error || !batch.data) return NextResponse.json({ message: missing(batch.error?.message || "묶음을 만들지 못했습니다.") }, { status: 400 });
     const linked = await s.from("sos_program_batch_cycles").insert((cycleRows.data ?? []).map((x: any, i: number) => ({ batch_id: batch.data.id, cycle_id: x.id, slot_no: i + 1 })));
     if (linked.error) { await s.from("sos_program_batches").delete().eq("id", batch.data.id); return NextResponse.json({ message: missing(linked.error.message) }, { status: 400 }); }
     return NextResponse.json({ success: true, batch: batch.data });
   }
   if (action === "publish") {
-    const q = await s.from("sos_program_batches").update({ is_published: Boolean(b.published), updated_at: now }).eq("id", String(b.batchId ?? ""));
+    const batchId = String(b.batchId ?? "");
+    if (Boolean(b.published)) {
+      const [batchCheck, linkCheck] = await Promise.all([
+        s.from("sos_program_batches").select("id,application_start,application_end").eq("id", batchId).maybeSingle(),
+        s.from("sos_program_batch_cycles").select("slot_no,learning_cycles(start_date)").eq("batch_id", batchId).order("slot_no"),
+      ]);
+      if (batchCheck.error || !batchCheck.data) return NextResponse.json({ message: "5회 묶음을 찾지 못했습니다." }, { status: 404 });
+      if (linkCheck.error || (linkCheck.data ?? []).length !== 5) return NextResponse.json({ message: "정확히 5개 회차가 연결된 묶음만 신청을 열 수 있습니다." }, { status: 400 });
+      const starts = (linkCheck.data ?? []).map((x: any) => String(x.learning_cycles?.start_date ?? "").slice(0, 10)).filter(Boolean).sort();
+      if (starts.length !== 5) return NextResponse.json({ message: "시작일이 없는 회차가 있어 신청을 열 수 없습니다." }, { status: 400 });
+      if (starts[0] < koreaToday()) return NextResponse.json({ message: "1회차가 이미 지난 묶음은 신청을 열 수 없습니다." }, { status: 400 });
+      if (batchCheck.data.application_start && batchCheck.data.application_end && batchCheck.data.application_start > batchCheck.data.application_end)
+        return NextResponse.json({ message: "신청 시작일이 신청 종료일보다 늦습니다." }, { status: 400 });
+    }
+    const q = await s.from("sos_program_batches").update({ is_published: Boolean(b.published), updated_at: now }).eq("id", batchId);
     return q.error ? NextResponse.json({ message: missing(q.error.message) }, { status: 400 }) : NextResponse.json({ success: true });
   }
   if (action === "cancel") {

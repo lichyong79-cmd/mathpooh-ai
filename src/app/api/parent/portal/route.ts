@@ -271,7 +271,7 @@ export async function POST(request: Request) {
     if (action === "request") {
       const exam = await supabase
         .from("exams")
-        .select("id")
+        .select("id,exam_date")
         .eq("id", examId)
         .eq("student_open", true)
         .maybeSingle();
@@ -279,6 +279,13 @@ export async function POST(request: Request) {
         return NextResponse.json(
           { message: "현재 신청 가능한 시험이 아닙니다." },
           { status: 404 },
+        );
+      const todayKorea = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      const examDate = String(exam.data.exam_date ?? "").slice(0, 10);
+      if (examDate && examDate < todayKorea)
+        return NextResponse.json(
+          { message: "이미 지난 시험은 새로 신청할 수 없습니다." },
+          { status: 400 },
         );
       const saved = await supabase.from("exam_registrations").upsert(
         {
