@@ -70,8 +70,11 @@ export async function POST(request: Request) {
   const studentPhone = digits(body.studentPhone);
   const school = String(body.school ?? "").trim();
   const grade = String(body.grade ?? "고1").trim();
-  if (!batchId || !parentName || parentPhone.length < 10 || !studentName || !school)
-    return NextResponse.json({ message: "학부모·학생 정보를 빠짐없이 입력해 주세요." }, { status: 400 });
+  const paymentMethod = String(body.paymentMethod ?? "").toUpperCase();
+  if (!batchId || !parentName || parentPhone.length < 10 || !studentName || !school || studentPhone.length < 10)
+    return NextResponse.json({ message: "학부모·학생 정보와 학생 전화번호를 빠짐없이 입력해 주세요." }, { status: 400 });
+  if (!['CARD', 'BANK_TRANSFER'].includes(paymentMethod))
+    return NextResponse.json({ message: "결제 방법을 선택해 주세요." }, { status: 400 });
   const supabase = createClient();
   const now = new Date().toISOString();
   const batch = await supabase
@@ -99,6 +102,18 @@ export async function POST(request: Request) {
   if (firstStart && firstStart < koreaToday())
     return NextResponse.json({ message: "이미 시작한 SOS 5회 프로그램은 신청할 수 없습니다." }, { status: 400 });
 
+  const existingApplication = await supabase
+    .from("sos_program_applications")
+    .select("id,status")
+    .eq("batch_id", batchId)
+    .eq("parent_phone", parentPhone)
+    .eq("student_name", studentName)
+    .maybeSingle();
+  if (existingApplication.error)
+    return NextResponse.json({ message: missing(existingApplication.error.message) }, { status: 400 });
+  if (existingApplication.data && ["REQUESTED", "PAID", "ENROLLED"].includes(String(existingApplication.data.status)))
+    return NextResponse.json({ message: "이미 신청된 SOS 5회 프로그램입니다. 기존 신청 상태를 확인해 주세요." }, { status: 409 });
+
   if (batch.data.capacity) {
     const count = await supabase.from("sos_program_applications").select("id", { count: "exact", head: true }).eq("batch_id", batchId).in("status", ["REQUESTED", "PAID", "ENROLLED"]);
     if ((count.count ?? 0) >= Number(batch.data.capacity))
@@ -111,7 +126,7 @@ export async function POST(request: Request) {
     const linked = await supabase.from("students").select("id").eq("id", String(body.studentId ?? "")).eq("parent_phone", parentPhone).maybeSingle();
     if (linked.data) { studentId = linked.data.id; source = "PARENT"; }
   }
-  const saved = await supabase.from("sos_program_applications").upsert({
+  const payload = {
     batch_id: batchId,
     student_id: studentId,
     parent_name: parentName,
@@ -120,11 +135,17 @@ export async function POST(request: Request) {
     student_phone: studentPhone,
     school,
     grade,
+    payment_method: paymentMethod,
     status: "REQUESTED",
     source,
     requested_at: now,
+    paid_at: null,
+    enrolled_at: null,
     updated_at: now,
-  }, { onConflict: "batch_id,parent_phone,student_name" }).select("id,status").single();
+  };
+  const saved = existingApplication.data
+    ? await supabase.from("sos_program_applications").update(payload).eq("id", existingApplication.data.id).in("status", ["CANCELLED", "REFUNDED"]).select("id,status,payment_method").single()
+    : await supabase.from("sos_program_applications").insert(payload).select("id,status,payment_method").single();
   return saved.error
     ? NextResponse.json({ message: missing(saved.error.message) }, { status: 400 })
     : NextResponse.json({ success: true, application: saved.data });

@@ -154,7 +154,8 @@ export default function ParentPortal() {
     [tab, setTab] = useState<Tab>("home"),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
-    [applicationBusy, setApplicationBusy] = useState("");
+    [applicationBusy, setApplicationBusy] = useState(""),
+    [applicationPaymentMethod, setApplicationPaymentMethod] = useState("BANK_TRANSFER");
   const load = async () => {
     setLoading(true);
     setError("");
@@ -299,12 +300,12 @@ export default function ParentPortal() {
       const r = await fetch("/api/program-applications", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ batchId: batch.id, studentId: selected, parentName: "학부모", parentPhone: data.parentPhone, studentName: report.student.name, studentPhone: report.student.phone, school: report.student.school, grade: report.student.grade }),
+        body: JSON.stringify({ batchId: batch.id, studentId: selected, parentName: "학부모", parentPhone: data.parentPhone, studentName: report.student.name, studentPhone: report.student.phone, school: report.student.school, grade: report.student.grade, paymentMethod: applicationPaymentMethod }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || "신청을 처리하지 못했습니다.");
       await load();
-      alert("5회 프로그램 신청이 접수되었습니다. 입금 확인 후 등록됩니다.");
+      alert(`5회 프로그램 신청이 접수되었습니다. 결제 방법: ${applicationPaymentMethod === "CARD" ? "카드결제" : "계좌이체(현금영수증)"}. 결제 확인 후 등록됩니다.`);
     } catch (e) {
       alert(e instanceof Error ? e.message : "신청을 처리하지 못했습니다.");
     } finally {
@@ -698,7 +699,12 @@ export default function ParentPortal() {
               </section>
               <section className="card application-card">
                 <Title en="APPLICATION" ko="신청 가능한 SOS 5회 프로그램" />
-                <p className="application-help">일정 5개가 한 묶음입니다. 입금 확인 후 5개 회차가 자녀에게 한 번에 등록됩니다.</p>
+                <p className="application-help">일정 5개가 한 묶음입니다. 결제 확인 후 5개 회차가 자녀에게 한 번에 등록됩니다.</p>
+                <div className="application-payment">
+                  <b>결제 방법</b>
+                  <label className={applicationPaymentMethod === "CARD" ? "on" : ""}><input type="radio" checked={applicationPaymentMethod === "CARD"} onChange={() => setApplicationPaymentMethod("CARD")} /> 카드결제</label>
+                  <label className={applicationPaymentMethod === "BANK_TRANSFER" ? "on" : ""}><input type="radio" checked={applicationPaymentMethod === "BANK_TRANSFER"} onChange={() => setApplicationPaymentMethod("BANK_TRANSFER")} /> 계좌이체(현금영수증)</label>
+                </div>
                 <div className="application-list">
                   {programBatches.map((batch: any) => { const applied = programApplications.find((x) => String(x.batch_id) === String(batch.id) && (String(x.student_id) === selected || x.student_name === report?.student.name)); return (
                     <article key={batch.id}>
@@ -1076,7 +1082,7 @@ function CycleMetrics({ cycle }: { cycle: any }) {
 function DetailStyle() {
   return (
     <style jsx global>{`
-      .parent-posters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0}.parent-posters>a,.parent-posters>article{overflow:hidden;border:1px solid #dbe5dd;border-radius:16px;background:#fff;color:#17251b;text-decoration:none}.parent-posters img{display:block;width:100%;max-height:520px;object-fit:contain;background:#f6f8f6}.parent-posters>a>div,.parent-posters>article>div{display:flex;justify-content:space-between;gap:10px;padding:14px}.parent-posters span{color:#39704b;font-size:11px;font-weight:900}.application-card{margin-top:14px}.application-help{margin:-6px 0 16px;color:#6f7d73;font-size:12px}.application-list{display:grid;gap:9px}.application-list>article{display:grid;grid-template-columns:68px 1fr auto;align-items:center;gap:14px;padding:13px;border:1px solid #e1e8e3;border-radius:12px}.application-date{display:grid;place-items:center;padding:8px;border-radius:10px;background:#eef6ef}.application-date b{font-size:22px;color:#2f6937}.application-date span{font-size:10px}.application-info>*{display:block}.application-info small{color:#78907d;font-size:9px;font-weight:900}.application-info b{margin:4px 0}.application-info span{color:#718078;font-size:11px}.application-action{display:flex;align-items:center;gap:7px}.application-action button{height:42px;padding:0 14px;border:1px solid #d5dfd7;border-radius:9px;background:#fff;font-weight:900;cursor:pointer}.application-action button.request{border-color:#2f6937;background:#2f6937;color:#fff}.application-action strong{padding:9px 11px;border-radius:9px;font-size:11px}.application-action .requested{background:#fff3dc;color:#a46212}.application-action .assigned{background:#eaf6ec;color:#28703c}.apply-empty{grid-column:1/-1;padding:25px;text-align:center;border:1px dashed #ccd9cf;border-radius:12px;color:#728078;background:#fff}
+      .parent-posters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0}.parent-posters>a,.parent-posters>article{overflow:hidden;border:1px solid #dbe5dd;border-radius:16px;background:#fff;color:#17251b;text-decoration:none}.parent-posters img{display:block;width:100%;max-height:520px;object-fit:contain;background:#f6f8f6}.parent-posters>a>div,.parent-posters>article>div{display:flex;justify-content:space-between;gap:10px;padding:14px}.parent-posters span{color:#39704b;font-size:11px;font-weight:900}.application-card{margin-top:14px}.application-payment{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 14px}.application-payment>b{margin-right:4px}.application-payment label{padding:8px 11px;border:1px solid #dbe5dd;border-radius:9px;background:#fff;font-size:12px;font-weight:800;cursor:pointer}.application-payment label.on{border-color:#2f6937;background:#f0f7f1}.application-help{margin:-6px 0 16px;color:#6f7d73;font-size:12px}.application-list{display:grid;gap:9px}.application-list>article{display:grid;grid-template-columns:68px 1fr auto;align-items:center;gap:14px;padding:13px;border:1px solid #e1e8e3;border-radius:12px}.application-date{display:grid;place-items:center;padding:8px;border-radius:10px;background:#eef6ef}.application-date b{font-size:22px;color:#2f6937}.application-date span{font-size:10px}.application-info>*{display:block}.application-info small{color:#78907d;font-size:9px;font-weight:900}.application-info b{margin:4px 0}.application-info span{color:#718078;font-size:11px}.application-action{display:flex;align-items:center;gap:7px}.application-action button{height:42px;padding:0 14px;border:1px solid #d5dfd7;border-radius:9px;background:#fff;font-weight:900;cursor:pointer}.application-action button.request{border-color:#2f6937;background:#2f6937;color:#fff}.application-action strong{padding:9px 11px;border-radius:9px;font-size:11px}.application-action .requested{background:#fff3dc;color:#a46212}.application-action .assigned{background:#eaf6ec;color:#28703c}.apply-empty{grid-column:1/-1;padding:25px;text-align:center;border:1px dashed #ccd9cf;border-radius:12px;color:#728078;background:#fff}
       .unfinished {
         margin-top: 13px;
       }

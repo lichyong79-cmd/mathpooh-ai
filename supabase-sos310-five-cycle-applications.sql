@@ -32,6 +32,7 @@ create table if not exists public.sos_program_applications (
   student_phone text not null default '',
   school text not null default '',
   grade text not null default '고1',
+  payment_method text not null default 'BANK_TRANSFER' check (payment_method in ('CARD','BANK_TRANSFER')),
   status text not null default 'REQUESTED' check (status in ('REQUESTED','PAID','ENROLLED','CANCELLED','REFUNDED')),
   source text not null default 'PUBLIC' check (source in ('PUBLIC','PARENT')),
   requested_at timestamptz not null default now(),

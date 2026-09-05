@@ -53,6 +53,8 @@ export async function POST(request: Request) {
   if (action === "enroll") {
     const appResult = await s.from("sos_program_applications").select("*").eq("id", String(b.applicationId ?? "")).maybeSingle();
     const app: any = appResult.data; if (appResult.error || !app) return NextResponse.json({ message: "신청서를 찾지 못했습니다." }, { status: 404 });
+    if (!['REQUESTED', 'PAID'].includes(String(app.status)))
+      return NextResponse.json({ message: app.status === 'ENROLLED' ? "이미 등록 완료된 신청입니다." : "현재 상태에서는 등록할 수 없습니다." }, { status: 409 });
     let studentId = String(b.studentId ?? app.student_id ?? "");
     if (!studentId) {
       const phone = digits(app.student_phone); if (phone.length < 10) return NextResponse.json({ message: "신규 학생 계정 생성을 위해 학생 전화번호를 입력하거나 기존 학생을 연결해 주세요." }, { status: 400 });
@@ -68,14 +70,42 @@ export async function POST(request: Request) {
     }
     const child = await s.from("students").select("id,parent_phone").eq("id", studentId).maybeSingle();
     if (!child.data) return NextResponse.json({ message: "연결할 학생을 찾지 못했습니다." }, { status: 404 });
-    if (digits(child.data.parent_phone) !== digits(app.parent_phone)) await s.from("students").update({ parent_phone: digits(app.parent_phone) }).eq("id", studentId);
+    if (digits(child.data.parent_phone) !== digits(app.parent_phone)) {
+      const parentSync = await s.from("students").update({ parent_phone: digits(app.parent_phone) }).eq("id", studentId);
+      if (parentSync.error) return NextResponse.json({ message: `학생-학부모 연결 저장 실패: ${parentSync.error.message}` }, { status: 400 });
+    }
     try { await ensureParentAccount(s, app.parent_phone); } catch (e) { return NextResponse.json({ message: e instanceof Error ? e.message : "학부모 계정을 만들지 못했습니다." }, { status: 400 }); }
+    // 회차/시험 배정을 먼저 검증한다. 중간 실패를 조용히 무시하지 않는다.
+    const links = await s.from("sos_program_batch_cycles").select("cycle_id").eq("batch_id", app.batch_id);
+    if (links.error) return NextResponse.json({ message: `회차 연결 조회 실패: ${links.error.message}` }, { status: 400 });
+    const cycleIds = (links.data ?? []).map((x: any) => x.cycle_id);
+    if (cycleIds.length !== 5) return NextResponse.json({ message: `5회 묶음 연결이 올바르지 않습니다. 현재 ${cycleIds.length}회 연결되어 있습니다.` }, { status: 400 });
+
+    const exams = await s.from("learning_cycle_exams").select("exam_id").in("cycle_id", cycleIds);
+    if (exams.error) return NextResponse.json({ message: `시험 연결 조회 실패: ${exams.error.message}` }, { status: 400 });
+    const examIds = [...new Set((exams.data ?? []).map((x: any) => String(x.exam_id)).filter(Boolean))];
+    if (examIds.length) {
+      const assigned = await s.from("exam_registrations").upsert(
+        examIds.map((examId: string) => ({ exam_id: examId, student_id: studentId, status: "assigned", assigned_at: now })),
+        { onConflict: "exam_id,student_id" },
+      );
+      if (assigned.error) return NextResponse.json({ message: `시험 자동배정 실패: ${assigned.error.message}` }, { status: 400 });
+    }
+
     const enrollment = await s.from("sos_program_enrollments").upsert({ application_id: app.id, batch_id: app.batch_id, student_id: studentId, status: "ACTIVE", enrolled_at: now }, { onConflict: "application_id" });
-    if (enrollment.error) return NextResponse.json({ message: enrollment.error.message }, { status: 400 });
-    await s.from("sos_program_applications").update({ student_id: studentId, status: "ENROLLED", paid_at: now, enrolled_at: now, updated_at: now }).eq("id", app.id);
-    const links = await s.from("sos_program_batch_cycles").select("cycle_id").eq("batch_id", app.batch_id); const cycleIds = (links.data ?? []).map((x: any) => x.cycle_id);
-    if (cycleIds.length) { const exams = await s.from("learning_cycle_exams").select("exam_id").in("cycle_id", cycleIds); const examIds = (exams.data ?? []).map((x: any) => x.exam_id); if (examIds.length) await s.from("exam_registrations").upsert(examIds.map((examId: string) => ({ exam_id: examId, student_id: studentId, status: "assigned", assigned_at: now })), { onConflict: "exam_id,student_id" }); }
-    return NextResponse.json({ success: true, studentId });
+    if (enrollment.error) return NextResponse.json({ message: `5회 등록 저장 실패: ${enrollment.error.message}` }, { status: 400 });
+
+    const finalized = await s.from("sos_program_applications")
+      .update({ student_id: studentId, status: "ENROLLED", paid_at: now, enrolled_at: now, updated_at: now })
+      .eq("id", app.id)
+      .in("status", ["REQUESTED", "PAID"])
+      .select("id,status")
+      .maybeSingle();
+    if (finalized.error || !finalized.data) {
+      await s.from("sos_program_enrollments").delete().eq("application_id", app.id);
+      return NextResponse.json({ message: finalized.error?.message || "신청 상태 마감 처리에 실패했습니다. 다시 확인해 주세요." }, { status: 409 });
+    }
+    return NextResponse.json({ success: true, studentId, assignedExamCount: examIds.length });
   }
   return NextResponse.json({ message: "지원하지 않는 작업입니다." }, { status: 400 });
 }

@@ -220,7 +220,7 @@ export async function GET() {
   const [programBatchResult, programLinkResult, parentApplicationResult] = await Promise.all([
     supabase.from("sos_program_batches").select("id,title,price,application_start,application_end,capacity,memo,is_published,created_at").eq("is_published", true).order("created_at", { ascending: false }),
     supabase.from("sos_program_batch_cycles").select("batch_id,slot_no,learning_cycles(id,name,start_date,end_date,status)").order("slot_no"),
-    supabase.from("sos_program_applications").select("id,batch_id,student_id,student_name,status,requested_at,paid_at,enrolled_at").eq("parent_phone", phone).order("requested_at", { ascending: false }),
+    supabase.from("sos_program_applications").select("id,batch_id,student_id,student_name,status,payment_method,requested_at,paid_at,enrolled_at").eq("parent_phone", phone).order("requested_at", { ascending: false }),
   ]);
   const programMissing = programBatchResult.error?.message?.includes("sos_program_");
   const nowIso = new Date().toISOString();
