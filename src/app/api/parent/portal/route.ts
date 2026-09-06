@@ -53,7 +53,7 @@ export async function GET() {
       posters: [],
     });
 
-  const [attemptResult, sessionResult, jobResult, posterResult] = await Promise.all([
+  const [attemptResult, sessionResult, jobResult, posterResult, registrationResult] = await Promise.all([
     supabase
       .from("exam_attempts")
       .select(
@@ -85,10 +85,15 @@ export async function GET() {
       .eq("is_published", true)
       .order("sort_order")
       .order("created_at", { ascending: false }),
+    supabase
+      .from("exam_registrations")
+      .select("student_id,status,exam_id,requested_at,assigned_at")
+      .in("student_id", ids)
+      .in("status", ["requested", "assigned"]),
   ]);
-  if (attemptResult.error || sessionResult.error || posterResult.error)
+  if (attemptResult.error || sessionResult.error || posterResult.error || registrationResult.error)
     return NextResponse.json(
-      { message: attemptResult.error?.message || sessionResult.error?.message || posterResult.error?.message },
+      { message: attemptResult.error?.message || sessionResult.error?.message || posterResult.error?.message || registrationResult.error?.message },
       { status: 400 },
     );
   const attempts = attemptResult.data ?? [];
@@ -184,7 +189,16 @@ export async function GET() {
       difficulties: bars(difficulties),
     };
   });
-  const reports = children.map((child: any) => ({
+  const reports = children.map((child: any) => {
+    const registrations = (registrationResult.data ?? []).filter(
+      (x: any) => String(x.student_id) === String(child.id),
+    );
+    const assignmentStatus = registrations.some((x: any) => String(x.status) === "assigned")
+      ? "ASSIGNED"
+      : registrations.some((x: any) => String(x.status) === "requested")
+        ? "REQUESTED"
+        : "UNASSIGNED";
+    return {
     student: {
       id: child.id,
       name: child.name,
@@ -192,6 +206,7 @@ export async function GET() {
       grade: child.grade,
       status: child.status,
       phone: child.phone ?? "",
+      assignmentStatus,
     },
     exams: examRows
       .filter((x: any) => String(x.studentId) === String(child.id))
@@ -202,7 +217,8 @@ export async function GET() {
     generationJobs: (jobResult.data ?? [])
       .filter((x: any) => String(x.student_id) === String(child.id))
       .slice(0, 5),
-  }));
+    };
+  });
   const posters = await Promise.all(
     (posterResult.data ?? []).map(async (poster: any) => ({
       id: poster.id,

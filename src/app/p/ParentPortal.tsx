@@ -85,6 +85,9 @@ const itemAnswered = (s: any) =>
     (x: any) => x.answered_at || String(x.student_answer ?? "").trim(),
   ).length;
 
+const assignmentLabel = (s: string) =>
+  s === "ASSIGNED" ? "배정 완료" : s === "REQUESTED" ? "신청 접수" : "배정 전";
+
 function Bars({
   rows,
   empty = "분석 정보가 아직 없습니다.",
@@ -476,12 +479,14 @@ export default function ParentPortal() {
               >
                 {data.children.map((c: any) => (
                   <option key={c.id} value={c.id}>
-                    {c.name} · {c.school}
+                    {c.name} · {c.school} · {assignmentLabel(data.reports?.find((x: any) => String(x.student.id) === String(c.id))?.student?.assignmentStatus)}
                   </option>
                 ))}
               </select>
             ) : (
-              <span className="one-child">자녀 연결 완료</span>
+              <span className={`one-child ${report?.student?.assignmentStatus === "UNASSIGNED" ? "unassigned" : ""}`}>
+                {assignmentLabel(report?.student?.assignmentStatus)}
+              </span>
             )}
           </section>
 
@@ -493,8 +498,12 @@ export default function ParentPortal() {
                   <h2>{actionText}</h2>
                   <p>{insight}</p>
                 </div>
-                <b className={incomplete ? "warn" : "good"}>
-                  {incomplete ? `${incomplete}개 진행 필요` : "학습 확인 완료"}
+                <b className={report?.student?.assignmentStatus === "UNASSIGNED" ? "wait" : incomplete ? "warn" : "good"}>
+                  {report?.student?.assignmentStatus === "UNASSIGNED"
+                    ? "배정 전"
+                    : incomplete
+                      ? `${incomplete}개 진행 필요`
+                      : "학습 확인 완료"}
                 </b>
               </section>
               <section className="unfinished card">
@@ -1532,6 +1541,10 @@ function PortalStyle() {
         font-size: 11px;
         font-weight: 900;
       }
+      .one-child.unassigned {
+        background: #f2f4f7;
+        color: #667085;
+      }
       .hero {
         display: flex;
         justify-content: space-between;
@@ -1570,6 +1583,10 @@ function PortalStyle() {
       .hero .warn {
         background: #fff2d7;
         color: #925a10;
+      }
+      .hero .wait {
+        background: #f2f4f7;
+        color: #667085;
       }
       .stats,
       .report-grid {
