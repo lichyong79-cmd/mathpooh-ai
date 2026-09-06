@@ -23,7 +23,7 @@ const modeInfo = {
     lead: "등록된 학부모 전화번호와 비밀번호를 입력하세요.",
     idLabel: "학부모 전화번호",
     idPlaceholder: "01012345678",
-    help: "초기 비밀번호는 전화번호 뒤 4자리입니다. 처음 신청하는 경우 아래 SOS 5회 신규 신청을 이용해 주세요.",
+    help: "기존 학부모 계정은 안내받은 비밀번호로 로그인하세요. 처음 이용하는 학부모는 아래 신규가입을 이용해 주세요.",
   },
   admin: {
     tab: "관리자 로그인",
@@ -146,7 +146,7 @@ export default function LoginPage() {
             <a className="mp-admin-login-link" href="/admin/login">관리자 로그인 <span>→</span></a>
           )}
         </form>
-        {loginMode !== "admin" ? <div className="mp-login-under"><span>SOS 이용이 처음이신가요?</span>{loginMode === "parent" ? <a href="/apply">SOS 5회 신규 신청 →</a> : <b>신청은 학부모 페이지에서 진행합니다.</b>}</div> : null}
+        {loginMode !== "admin" ? <div className="mp-login-under"><span>SOS 이용이 처음이신가요?</span>{loginMode === "parent" ? <a href="/parent-signup">학부모 신규가입 →</a> : <b>신청은 학부모 페이지에서 진행합니다.</b>}</div> : null}
         <p className="mp-login-copyright">© 2026 MATHPOOH</p>
       </section>
     </main>

@@ -54,6 +54,8 @@ export async function proxy(request: NextRequest) {
     pathname === "/login" ||
     pathname === "/student-login" ||
     pathname === "/parent-login" ||
+    pathname === "/parent-signup" ||
+    pathname === "/api/parent/signup" ||
     pathname === "/apply" ||
     pathname === "/api/program-applications" ||
     pathname === "/admin/login" ||

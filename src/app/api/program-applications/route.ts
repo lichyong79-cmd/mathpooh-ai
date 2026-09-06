@@ -62,10 +62,13 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const user = await getSessionUser();
+  if (!user || String(user.user_metadata?.role) !== "parent")
+    return NextResponse.json({ message: "학부모 계정으로 로그인한 뒤 신청해 주세요." }, { status: 401 });
   const body = await request.json();
   const batchId = String(body.batchId ?? "");
-  const parentName = String(body.parentName ?? "").trim();
-  const parentPhone = digits(body.parentPhone);
+  const parentName = String(user.user_metadata?.name ?? body.parentName ?? "학부모").trim();
+  const parentPhone = digits(user.user_metadata?.parent_phone ?? String(user.email ?? "").split("@")[0]);
   const studentName = String(body.studentName ?? "").trim();
   const studentPhone = digits(body.studentPhone);
   const school = String(body.school ?? "").trim();
@@ -119,13 +122,10 @@ export async function POST(request: Request) {
     if ((count.count ?? 0) >= Number(batch.data.capacity))
       return NextResponse.json({ message: "신청 정원이 마감되었습니다." }, { status: 409 });
   }
-  let studentId: string | null = null;
-  let source = "PUBLIC";
-  const user = await getSessionUser();
-  if (user?.user_metadata?.role === "parent") {
-    const linked = await supabase.from("students").select("id").eq("id", String(body.studentId ?? "")).eq("parent_phone", parentPhone).maybeSingle();
-    if (linked.data) { studentId = linked.data.id; source = "PARENT"; }
-  }
+  const linked = await supabase.from("students").select("id,name,phone,school,grade").eq("id", String(body.studentId ?? "")).eq("parent_phone", parentPhone).maybeSingle();
+  if (linked.error || !linked.data) return NextResponse.json({ message: "먼저 학부모 페이지에서 신청할 자녀를 등록해 주세요." }, { status: 403 });
+  const studentId: string = linked.data.id;
+  const source = "PARENT";
   const payload = {
     batch_id: batchId,
     student_id: studentId,

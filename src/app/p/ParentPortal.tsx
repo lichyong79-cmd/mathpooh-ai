@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import SosUserManual from "@/components/sos-user-manual";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
+import ParentChildManager from "@/components/parent-child-manager";
 
 type Tab = "home" | "apply" | "scores" | "sos" | "report" | "guide";
 const TABS: [Tab, string][] = [
@@ -155,7 +156,8 @@ export default function ParentPortal() {
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [applicationBusy, setApplicationBusy] = useState(""),
-    [applicationPaymentMethod, setApplicationPaymentMethod] = useState("BANK_TRANSFER");
+    [applicationPaymentMethod, setApplicationPaymentMethod] = useState("BANK_TRANSFER"),
+    [childManagerOpen, setChildManagerOpen] = useState(false);
   const load = async () => {
     setLoading(true);
     setError("");
@@ -337,7 +339,7 @@ export default function ParentPortal() {
             로그아웃
           </button>
         </div>
-        <style jsx>{`
+      <style jsx>{`
           :global(body) {
             margin: 0;
           }
@@ -437,6 +439,7 @@ export default function ParentPortal() {
             >
               리포트 인쇄
             </button>
+            <button onClick={() => setChildManagerOpen(true)}>자녀 등록</button>
             <button onClick={changePassword}>비밀번호</button>
             <button onClick={signOut}>로그아웃</button>
           </div>
@@ -450,8 +453,10 @@ export default function ParentPortal() {
         </section>
       ) : !data?.children?.length ? (
         <section className="state">
-          <h1>연결된 자녀가 없습니다.</h1>
-          <p>관리자 학생정보의 학부모 전화번호를 확인해 주세요.</p>
+          <h1>자녀를 등록해 주세요.</h1>
+          <p>기존 MathPooh 학생은 학습기록을 그대로 연결하고, 처음 이용하는 학생은 새 계정을 만들 수 있습니다.</p>
+          <button onClick={() => setChildManagerOpen(true)}>자녀 등록하기</button>
+          {childManagerOpen ? <ParentChildManager onClose={() => setChildManagerOpen(false)} onDone={async () => { setChildManagerOpen(false); await load(); }} /> : null}
         </section>
       ) : (
         <div className="wrap">
@@ -995,6 +1000,7 @@ export default function ParentPortal() {
         </span>
         <b>MATHPOOH SOS</b>
       </footer>
+      {childManagerOpen && data?.children?.length ? <ParentChildManager onClose={() => setChildManagerOpen(false)} onDone={async () => { setChildManagerOpen(false); await load(); }} /> : null}
       <PortalStyle />
       <DetailStyle />
     </main>
