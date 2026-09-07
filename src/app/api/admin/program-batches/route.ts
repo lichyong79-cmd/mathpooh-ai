@@ -88,9 +88,17 @@ export async function POST(request: Request) {
 
   if (action === "delete-batch") {
     const batchId = String(b.batchId ?? "");
-    const count = await s.from("sos_program_applications").select("id", { count: "exact", head: true }).eq("batch_id", batchId);
-    if (count.error) return NextResponse.json({ message: count.error.message }, { status: 400 });
-    if ((count.count ?? 0) > 0) return NextResponse.json({ message: "신청 이력이 있는 묶음은 삭제할 수 없습니다. 운영 기록 보존을 위해 묶음은 비공개로 전환해 주세요." }, { status: 409 });
+    if (!batchId) return NextResponse.json({ message: "삭제할 모집안을 선택해 주세요." }, { status: 400 });
+    const applications = await s.from("sos_program_applications").select("id,status").eq("batch_id", batchId);
+    if (applications.error) return NextResponse.json({ message: applications.error.message }, { status: 400 });
+    const activeCount = (applications.data ?? []).filter((x: any) => !["CANCELLED", "REFUNDED"].includes(String(x.status))).length;
+    if (activeCount > 0) return NextResponse.json({ message: `진행 중인 신청 ${activeCount}건이 있습니다. 아래 신청 내역에서 먼저 취소하거나 삭제해 주세요.` }, { status: 409 });
+    // 취소/환불 신청만 남은 모집안은 해당 신청서를 함께 정리한다.
+    // 응시·성적·학습 데이터는 다른 테이블에 있으므로 삭제하지 않는다.
+    if ((applications.data ?? []).length) {
+      const removedApplications = await s.from("sos_program_applications").delete().eq("batch_id", batchId).in("status", ["CANCELLED", "REFUNDED"]);
+      if (removedApplications.error) return NextResponse.json({ message: `취소 신청 정리 실패: ${removedApplications.error.message}` }, { status: 400 });
+    }
     const q = await s.from("sos_program_batches").delete().eq("id", batchId);
     return q.error ? NextResponse.json({ message: q.error.message }, { status: 400 }) : NextResponse.json({ success: true });
   }
@@ -115,8 +123,30 @@ export async function POST(request: Request) {
   }
 
   if (action === "cancel") {
-    const q = await s.from("sos_program_applications").update({ status: "CANCELLED", updated_at: now }).eq("id", String(b.applicationId ?? "")).eq("status", "REQUESTED");
-    return q.error ? NextResponse.json({ message: q.error.message }, { status: 400 }) : NextResponse.json({ success: true });
+    const applicationId = String(b.applicationId ?? "");
+    const application = await s.from("sos_program_applications").select("id,status").eq("id", applicationId).maybeSingle();
+    if (application.error) return NextResponse.json({ message: application.error.message }, { status: 400 });
+    if (!application.data) return NextResponse.json({ message: "신청서를 찾지 못했습니다." }, { status: 404 });
+    if (["CANCELLED", "REFUNDED"].includes(String(application.data.status)))
+      return NextResponse.json({ success: true, status: application.data.status });
+    const enrollment = await s.from("sos_program_enrollments").update({ status: "CANCELLED" }).eq("application_id", applicationId);
+    if (enrollment.error) return NextResponse.json({ message: `등록 취소 실패: ${enrollment.error.message}` }, { status: 400 });
+    const q = await s.from("sos_program_applications").update({ status: "CANCELLED", updated_at: now }).eq("id", applicationId).select("id,status").maybeSingle();
+    return q.error || !q.data
+      ? NextResponse.json({ message: q.error?.message || "신청 취소 상태를 저장하지 못했습니다." }, { status: 400 })
+      : NextResponse.json({ success: true, status: q.data.status });
+  }
+
+  if (action === "delete-application") {
+    const applicationId = String(b.applicationId ?? "");
+    if (!applicationId) return NextResponse.json({ message: "삭제할 신청을 선택해 주세요." }, { status: 400 });
+    const application = await s.from("sos_program_applications").select("id,status").eq("id", applicationId).maybeSingle();
+    if (application.error) return NextResponse.json({ message: application.error.message }, { status: 400 });
+    if (!application.data) return NextResponse.json({ success: true });
+    const removed = await s.from("sos_program_applications").delete().eq("id", applicationId).select("id").maybeSingle();
+    return removed.error || !removed.data
+      ? NextResponse.json({ message: removed.error?.message || "신청서를 삭제하지 못했습니다." }, { status: 400 })
+      : NextResponse.json({ success: true });
   }
 
   if (action === "enroll") {
