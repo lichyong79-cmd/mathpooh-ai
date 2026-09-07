@@ -2,7 +2,7 @@ import {NextResponse} from "next/server";
 import {createClient} from "@/lib/supabase/server";
 import {getSessionUser} from "@/lib/supabase/auth";
 async function admin(){const user=await getSessionUser();if(!user||["student","parent"].includes(user.user_metadata?.role))return null;return {supabase:createClient(),user};}
-const missing=(m:string)=>m.includes("sos_program_cycle_enrollments")?"먼저 supabase-sos336-student-cycle-enrollments.sql을 Supabase SQL Editor에서 실행해 주세요.":m.includes("learning_cycles")||m.includes("learning_cycle_exams")?"먼저 supabase-v3.6-learning-cycles.sql을 Supabase SQL Editor에서 실행해 주세요.":m;
+const missing=(m:string)=>m.includes("learning_cycles")||m.includes("learning_cycle_exams")?"먼저 supabase-v3.6-learning-cycles.sql을 Supabase SQL Editor에서 실행해 주세요.":m;
 export async function GET(){
  const ctx=await admin();if(!ctx)return NextResponse.json({message:"관리자 권한이 필요합니다."},{status:403});
  const [cycles,links,exams,attempts]=await Promise.all([
@@ -41,20 +41,11 @@ export async function POST(request:Request){
  }
  if(action==="assign-exam"){
   const cycleId=String(b.cycleId??""),examId=String(b.examId??"");if(!cycleId||!examId)return NextResponse.json({message:"회차와 시험을 선택해 주세요."},{status:400});
-  const assignedAt=new Date().toISOString();const q=await ctx.supabase.from("learning_cycle_exams").upsert({cycle_id:cycleId,exam_id:examId,linked_at:assignedAt},{onConflict:"exam_id"});if(q.error)return NextResponse.json({message:missing(q.error.message)},{status:400});
-  // SOS336: 회차에 시험지를 나중에 연결해도, 이 회차에 등록된 학생에게 즉시 배정한다.
-  const enrolled=await ctx.supabase.from("sos_program_cycle_enrollments").select("student_id").eq("cycle_id",cycleId).eq("status","ACTIVE");
-  if(enrolled.error)return NextResponse.json({message:missing(enrolled.error.message)},{status:400});
-  const studentIds:string[]=[...new Set<string>((enrolled.data??[]).map((x:any)=>String(x.student_id)).filter(Boolean))];
-  if(studentIds.length){const synced=await ctx.supabase.from("exam_registrations").upsert(studentIds.map(studentId=>({exam_id:examId,student_id:studentId,status:"assigned",assigned_at:assignedAt})),{onConflict:"exam_id,student_id"});if(synced.error)return NextResponse.json({message:`회차 학생 시험 배정 실패: ${synced.error.message}`},{status:400});}
+  const linkedAt=new Date().toISOString();const q=await ctx.supabase.from("learning_cycle_exams").upsert({cycle_id:cycleId,exam_id:examId,linked_at:linkedAt},{onConflict:"exam_id"});if(q.error)return NextResponse.json({message:missing(q.error.message)},{status:400});
   return NextResponse.json({success:true});
  }
  if(action==="unassign-exam"){
-  const examId=String(b.examId??"");
-  const link=await ctx.supabase.from("learning_cycle_exams").select("cycle_id").eq("exam_id",examId).maybeSingle();
-  if(link.error)return NextResponse.json({message:missing(link.error.message)},{status:400});
-  if(link.data){const enrolled=await ctx.supabase.from("sos_program_cycle_enrollments").select("student_id").eq("cycle_id",link.data.cycle_id).eq("status","ACTIVE");if(enrolled.error)return NextResponse.json({message:missing(enrolled.error.message)},{status:400});const studentIds:string[]=[...new Set<string>((enrolled.data??[]).map((x:any)=>String(x.student_id)))];if(studentIds.length){const attempts=await ctx.supabase.from("exam_attempts").select("student_id").eq("exam_id",examId).in("student_id",studentIds);if(attempts.error)return NextResponse.json({message:attempts.error.message},{status:400});const attempted=new Set<string>((attempts.data??[]).map((x:any)=>String(x.student_id)));const removable:string[]=studentIds.filter((id:string)=>!attempted.has(id));if(removable.length){const unregistered=await ctx.supabase.from("exam_registrations").delete().eq("exam_id",examId).in("student_id",removable);if(unregistered.error)return NextResponse.json({message:unregistered.error.message},{status:400});}}}
-  const q=await ctx.supabase.from("learning_cycle_exams").delete().eq("exam_id",examId);return q.error?NextResponse.json({message:missing(q.error.message)},{status:400}):NextResponse.json({success:true});
+  const q=await ctx.supabase.from("learning_cycle_exams").delete().eq("exam_id",String(b.examId??""));return q.error?NextResponse.json({message:missing(q.error.message)},{status:400}):NextResponse.json({success:true});
  }
  return NextResponse.json({message:"지원하지 않는 작업입니다."},{status:400});
 }

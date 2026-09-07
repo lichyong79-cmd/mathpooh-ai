@@ -66,6 +66,14 @@ async function writeActivityLog(
   });
 }
 
+async function hasCycleAccess(supabase: any, studentId: string, examId: string) {
+  const links = await supabase.from("learning_cycle_exams").select("cycle_id").eq("exam_id", examId);
+  if (links.error || !(links.data ?? []).length) return false;
+  const cycleIds: string[] = (links.data ?? []).map((x: any) => String(x.cycle_id));
+  const membership = await supabase.from("learning_cycle_students").select("id").eq("student_id", studentId).eq("status", "ACTIVE").in("cycle_id", cycleIds).limit(1);
+  return !membership.error && Boolean(membership.data?.length);
+}
+
 export async function GET(request: Request) {
   const ctx = await context();
   if (ctx.error) return ctx.error;
@@ -95,11 +103,12 @@ export async function GET(request: Request) {
         { message: examResult.error?.message || "시험을 찾지 못했습니다." },
         { status: 404 },
       );
+    const cycleAssigned = registrationResult.data?.status === "assigned" ? false : await hasCycleAccess(supabase, String(student.id), statusExamId);
     return NextResponse.json(
       {
         success: true,
         exam: examResult.data,
-        assigned: registrationResult.data?.status === "assigned",
+        assigned: registrationResult.data?.status === "assigned" || cycleAssigned,
       },
       { headers: { "Cache-Control": "no-store" } },
     );
@@ -116,6 +125,14 @@ export async function GET(request: Request) {
   const registrationMap = new Map(
     (registrations ?? []).map((item) => [item.exam_id, item.status]),
   );
+  const memberships = await supabase.from("learning_cycle_students").select("cycle_id").eq("student_id", student.id).eq("status", "ACTIVE");
+  if (memberships.error) return NextResponse.json({ message: memberships.error.message }, { status: 400 });
+  const memberCycleIds: string[] = (memberships.data ?? []).map((x: any) => String(x.cycle_id));
+  if (memberCycleIds.length) {
+    const cycleExams = await supabase.from("learning_cycle_exams").select("exam_id").in("cycle_id", memberCycleIds);
+    if (cycleExams.error) return NextResponse.json({ message: cycleExams.error.message }, { status: 400 });
+    for (const row of cycleExams.data ?? []) registrationMap.set(row.exam_id, "assigned");
+  }
   const { data: exams, error } = await supabase
     .from("exams")
     .select(
@@ -508,7 +525,8 @@ export async function POST(request: Request) {
     .eq("exam_id", examId)
     .eq("student_id", student.id)
     .maybeSingle();
-  if (!registration || registration.status !== "assigned")
+  const cycleAssigned = registration?.status === "assigned" ? false : await hasCycleAccess(supabase, String(student.id), examId);
+  if ((!registration || registration.status !== "assigned") && !cycleAssigned)
     return NextResponse.json(
       { message: "아직 시험 배정이 완료되지 않았습니다." },
       { status: 403 },

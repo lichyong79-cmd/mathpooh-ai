@@ -164,13 +164,13 @@ const menus: MenuItem[] = [
   { id: "dashboard", label: "대시보드", icon: "⌂" },
   { id: "posters", label: "포스터 관리", icon: "▧" },
   { id: "students", label: "학생정보 관리", icon: "♙" },
-  { id: "applications", label: "실전모의고사 신청", icon: "✓" },
-  { id: "program-applications", label: "SOS 신청 관리", icon: "⑤" },
+  { id: "applications", label: "회차별 학생 등록", icon: "✓" },
+  { id: "program-applications", label: "SOS 모집·신청 관리", icon: "⑤" },
   { id: "cycles", label: "회차 관리", icon: "◉" },
   { id: "exam-list", label: "시험지 목록", icon: "▤" },
   { id: "exam-input", label: "시험지 입력", icon: "+" },
   { id: "exam-analysis", label: "AI 분석", icon: "✦" },
-  { id: "exam-assignment", label: "시험지 배정", icon: "↗" },
+  { id: "exam-assignment", label: "회차·시험지 연결", icon: "↗" },
   { id: "exam-progress", label: "실전모의고사 진행", icon: "▶" },
   { id: "problem-sources", label: "문제등록", icon: "▦" },
   { id: "problem-analysis", label: "AI 분석", icon: "✦" },
@@ -185,8 +185,9 @@ const menus: MenuItem[] = [
 ];
 
 const menuGroups: MenuGroup[] = [
-  { label: "기본 운영", items: menus.filter((item) => ["dashboard", "posters", "students", "applications", "program-applications"].includes(item.id)) },
-  { label: "실전모의고사 관리", icon: "▤", items: menus.filter((item) => ["cycles", "exam-list", "exam-input", "exam-analysis", "exam-assignment"].includes(item.id)) },
+  { label: "기본 관리", items: menus.filter((item) => ["dashboard", "posters", "students"].includes(item.id)) },
+  { label: "SOS 신청·회차 운영", icon: "◉", items: [menus.find((item) => item.id === "cycles")!, menus.find((item) => item.id === "program-applications")!, menus.find((item) => item.id === "applications")!] },
+  { label: "시험지 운영", icon: "▤", items: menus.filter((item) => ["exam-list", "exam-input", "exam-analysis", "exam-assignment"].includes(item.id)) },
   { label: "시험 운영", items: menus.filter((item) => item.id === "exam-progress") },
   { label: "문제은행 관리", icon: "▦", items: menus.filter((item) => ["problem-sources", "problem-analysis"].includes(item.id)) },
   { label: "SOS 운영", items: menus.filter((item) => ["ai-generated-bank", "sos-bank", "sos-difficulty", "sos-learning"].includes(item.id)) },
@@ -525,7 +526,6 @@ const [collapsed, setCollapsed] = useState(false);
               initialTab={active === "applications" ? "registration" : "students"}
               students={students}
               setStudents={setStudents}
-              exams={practiceExams}
             />
           ) : ["exam-list", "exam-input", "exam-analysis", "exam-assignment", "exam-progress", "exam-results"].includes(active) ? (
             <ExamsPage key={active}
@@ -658,12 +658,10 @@ function StudentsPage({
   initialTab = "students",
   students,
   setStudents,
-  exams,
 }: {
   initialTab?: StudentTab;
   students: Student[];
   setStudents: React.Dispatch<React.SetStateAction<Student[]>>;
-  exams: PracticeExam[];
 }) {
   const [search, setSearch] = useState("");
   const [grade, setGrade] = useState("전체");
@@ -673,6 +671,7 @@ function StudentsPage({
   const [isAdding, setIsAdding] = useState(false);
   const [tab, setTab] = useState<StudentTab>(initialTab);
   const [selectedRoundId, setSelectedRoundId] = useState("");
+  const [cycles, setCycles] = useState<any[]>([]);
   const [registeredIds, setRegisteredIds] = useState<(string | number)[]>([]);
   const [registrationBusy, setRegistrationBusy] = useState(false);
   const [parentSyncBusy, setParentSyncBusy] = useState(false);
@@ -700,14 +699,20 @@ function StudentsPage({
     window.localStorage.setItem("matspu-student-tab", tab);
   }, [tab]);
   useEffect(() => {
-    if (!selectedRoundId && exams[0]?.id) setSelectedRoundId(exams[0].id);
-  }, [exams, selectedRoundId]);
+    if (tab !== "registration") return;
+    fetch("/api/admin/learning-cycles", { cache: "no-store" })
+      .then(async (response) => { const result = await response.json(); if (!response.ok) throw new Error(result.message); setCycles(result.cycles ?? []); })
+      .catch((error) => alert(error instanceof Error ? error.message : "회차를 불러오지 못했습니다."));
+  }, [tab]);
+  useEffect(() => {
+    if (!selectedRoundId && cycles[0]?.id) setSelectedRoundId(String(cycles[0].id));
+  }, [cycles, selectedRoundId]);
 
   useEffect(() => {
     if (tab !== "registration" || !selectedRoundId) return;
     setRegistrationBusy(true);
     fetch(
-      `/api/admin/exam-registrations?examId=${encodeURIComponent(selectedRoundId)}`,
+      `/api/admin/cycle-students?cycleId=${encodeURIComponent(selectedRoundId)}`,
       { cache: "no-store" },
     )
       .then(async (response) => {
@@ -791,8 +796,7 @@ function StudentsPage({
     setSelected(null);
   };
 
-  const selectedRound =
-    exams.find((round) => round.id === selectedRoundId) ?? exams[0];
+  const selectedRound = cycles.find((round) => String(round.id) === String(selectedRoundId)) ?? cycles[0];
   const roundStudents = selectedRound
     ? students.filter((student) => student.status === "정상")
     : [];
@@ -803,11 +807,11 @@ function StudentsPage({
     if (!selectedRound) return;
     const isRegistered = registeredIds.map(String).includes(String(studentId));
     setRegistrationBusy(true);
-    const response = await fetch("/api/admin/exam-registrations", {
+    const response = await fetch("/api/admin/cycle-students", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        examId: selectedRound.id,
+        cycleId: selectedRound.id,
         studentId,
         registered: !isRegistered,
       }),
@@ -825,20 +829,20 @@ function StudentsPage({
   const replaceRegistrations = async (studentIds: (string | number)[]) => {
     if (!selectedRound) return;
     const message = studentIds.length
-      ? `${studentIds.length}명을 이 시험에 전체 등록할까요?`
-      : "이 시험의 학생 등록을 모두 취소할까요?";
+      ? `${studentIds.length}명을 이 회차에 전체 등록할까요?`
+      : "이 회차의 수동 학생 등록을 모두 해제할까요?\n학부모 신청으로 등록된 학생은 유지됩니다.";
     if (!window.confirm(message)) return;
     setRegistrationBusy(true);
-    const response = await fetch("/api/admin/exam-registrations", {
+    const response = await fetch("/api/admin/cycle-students", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ examId: selectedRound.id, studentIds }),
+      body: JSON.stringify({ cycleId: selectedRound.id, studentIds }),
     });
     const result = await response.json();
     setRegistrationBusy(false);
     if (!response.ok)
       return alert(result.message || "전체 등록 변경에 실패했습니다.");
-    setRegisteredIds(studentIds);
+    setRegisteredIds(result.studentIds ?? studentIds);
   };
   const registerAll = () =>
     void replaceRegistrations(roundStudents.map((student) => student.id));
@@ -848,10 +852,10 @@ function StudentsPage({
     <>
       <section className="page-title-row">
         <div>
-          <h2>학생정보 관리</h2>
-          <p>학생 기본정보와 계정 상태를 관리합니다.</p>
+          <h2>{tab === "registration" ? "회차별 학생 등록" : "학생정보 관리"}</h2>
+          <p>{tab === "registration" ? "학부모 신청 또는 관리자 등록으로 회차별 참여 학생을 관리합니다." : "학생 기본정보와 계정 상태를 관리합니다."}</p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        {tab === "students" ? <div style={{ display: "flex", gap: 8 }}>
           <button className="secondary-button" disabled={parentSyncBusy} onClick={() => void syncParentAccounts()}>
             {parentSyncBusy ? "계정 연결 중..." : "학부모 페이지 열기"}
           </button>
@@ -864,7 +868,7 @@ function StudentsPage({
           >
             ＋ 학생 등록
           </button>
-        </div>
+        </div> : null}
       </section>
 
       {tab === "students" ? (
@@ -985,14 +989,14 @@ function StudentsPage({
         <section className="panel registration-panel">
           <div className="registration-header">
             <div>
-              <span className="section-kicker">실전모의고사 선택</span>
+              <span className="section-kicker">운영 회차 선택</span>
               <select
                 value={selectedRoundId}
                 onChange={(e) => setSelectedRoundId(e.target.value)}
               >
-                {exams.map((round) => (
+                {cycles.map((round) => (
                   <option key={round.id} value={round.id}>
-                    {round.title} · {round.examDate} · {round.grade}
+                    {round.name} · {round.start_date} ~ {round.end_date}
                   </option>
                 ))}
               </select>
@@ -1007,7 +1011,7 @@ function StudentsPage({
                   registeredIds.length === 0
                 }
               >
-                전체 미등록
+                수동 등록 전체 해제
               </button>
               <button
                 className="primary-button"
@@ -1028,18 +1032,18 @@ function StudentsPage({
           </div>
           <div className="round-summary">
             <div>
-              <span>시험지</span>
+              <span>회차</span>
               <strong>
-                {selectedRound ? selectedRound.title : "등록된 시험 없음"}
+                {selectedRound ? selectedRound.name : "등록된 회차 없음"}
               </strong>
             </div>
             <div>
-              <span>시험일</span>
-              <strong>{selectedRound?.examDate ?? "-"}</strong>
+              <span>운영 기간</span>
+              <strong>{selectedRound ? `${selectedRound.start_date} ~ ${selectedRound.end_date}` : "-"}</strong>
             </div>
             <div>
               <span>등록 기준</span>
-              <strong>학년 제한 없음 · 학생별 지정</strong>
+              <strong>학부모 신청 또는 관리자 등록</strong>
             </div>
             <div>
               <span>등록 현황</span>
@@ -1099,7 +1103,7 @@ function StudentsPage({
             })}
             {!selectedRound ? (
               <div className="empty-list">
-                먼저 실전모의고사를 등록해 주세요.
+                먼저 회차 관리에서 운영 회차를 만들어 주세요.
               </div>
             ) : (
               roundStudents.length === 0 && (

@@ -7,5 +7,6 @@
 - 이미 응시한 시험, 성적, SOS 학습 기록과 원본 회차·시험지는 유지
 - 회차에서 시험지를 빼면 해당 회차의 미응시 자동배정만 해제
 
-## 필수 SQL
-배포 후 `supabase-sos336-student-cycle-enrollments.sql`을 Supabase SQL Editor에서 한 번 실행합니다.
+## 대체됨
+이 설계는 SOS338의 회차 중심 통합 구조로 대체되었습니다.
+`README_SOS338_CYCLE_FIRST_FLOW.md`와 `supabase-sos338-learning-cycle-students.sql`을 사용합니다.

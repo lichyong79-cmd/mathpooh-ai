@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import styles from "./admin-portal-sidebar.module.css";
 
 type CurrentMenu =
-  | "dashboard" | "posters" | "students" | "applications"
+  | "dashboard" | "posters" | "students" | "applications" | "program-applications" | "cycles"
   | "exam-list" | "exam-input" | "exam-analysis" | "exam-assignment"
   | "exam-progress" | "problem-sources" | "problem-analysis"
   | "ai-generated-bank" | "sos-bank" | "sos-difficulty" | "sos-learning" | "sos-status" | "exam-results"
@@ -14,17 +14,21 @@ type CurrentMenu =
 type Item = { id: CurrentMenu; label: string; icon: string; href?: string };
 
 const groups: { label: string; items: Item[] }[] = [
-  { label: "기본 운영", items: [
+  { label: "기본 관리", items: [
     { id: "dashboard", label: "대시보드", icon: "⌂" },
     { id: "posters", label: "포스터 관리", icon: "▧" },
     { id: "students", label: "학생정보 관리", icon: "♙" },
-    { id: "applications", label: "신청 관리", icon: "✓" },
   ] },
-  { label: "실전모의고사 관리", items: [
+  { label: "SOS 신청·회차 운영", items: [
+    { id: "cycles", label: "회차 관리", icon: "◉", href: "/admin?menu=cycles" },
+    { id: "program-applications", label: "SOS 모집·신청 관리", icon: "⑤", href: "/admin?menu=program-applications" },
+    { id: "applications", label: "회차별 학생 등록", icon: "✓", href: "/admin?menu=applications" },
+  ] },
+  { label: "시험지 운영", items: [
     { id: "exam-list", label: "시험지 목록", icon: "▤" },
     { id: "exam-input", label: "시험지 입력", icon: "+" },
     { id: "exam-analysis", label: "AI 분석", icon: "✦" },
-    { id: "exam-assignment", label: "시험지 배정", icon: "↗" },
+    { id: "exam-assignment", label: "회차·시험지 연결", icon: "↗" },
   ] },
   { label: "시험 운영", items: [
     { id: "exam-progress", label: "실전모의고사 진행", icon: "▶" },
@@ -143,4 +147,3 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
     </div>
   </div>;
 }
-
