@@ -79,7 +79,9 @@ export async function POST(request: Request) {
   const available = cycleRows.filter((x: any) => x.start && x.start >= today);
   if (!available.length) return NextResponse.json({ message: "모든 회차가 종료된 프로그램입니다." }, { status: 400 });
 
-  const requested = [...new Set((Array.isArray(body.selectedCycleIds) ? body.selectedCycleIds : []).map(String))];
+  const requested: string[] = Array.from(
+    new Set<string>((Array.isArray(body.selectedCycleIds) ? body.selectedCycleIds : []).map((id: unknown) => String(id)))
+  );
   let selectedCycleIds = applicationMode === "ALL" ? available.map((x: any) => x.cycleId) : requested.filter((id: string) => available.some((x: any) => x.cycleId === id));
   if (!selectedCycleIds.length) return NextResponse.json({ message: "신청할 회차를 1개 이상 선택해 주세요." }, { status: 400 });
   if (requested.some((id: string) => !available.some((x: any) => x.cycleId === id))) return NextResponse.json({ message: "이미 종료된 회차는 신청할 수 없습니다." }, { status: 400 });
