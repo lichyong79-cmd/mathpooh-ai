@@ -8,6 +8,32 @@ const koreaToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seou
 const missing = (m: string) => m.includes("sos_program_") ? "먼저 SOS 프로그램 관련 SQL을 실행해 주세요." : m;
 async function admin() { return await getAdminUser(); }
 
+async function cancelCycleAssignments(s: any, applicationId: string, now: string) {
+  const rows = await s.from("sos_program_cycle_enrollments").select("cycle_id,student_id").eq("application_id", applicationId).eq("status", "ACTIVE");
+  if (rows.error) return rows.error.message;
+  const cycleIds = [...new Set((rows.data ?? []).map((x: any) => String(x.cycle_id)).filter(Boolean))];
+  const studentIds = [...new Set((rows.data ?? []).map((x: any) => String(x.student_id)).filter(Boolean))];
+  if (cycleIds.length && studentIds.length) {
+    const links = await s.from("learning_cycle_exams").select("exam_id").in("cycle_id", cycleIds);
+    if (links.error) return links.error.message;
+    const examIds = [...new Set((links.data ?? []).map((x: any) => String(x.exam_id)).filter(Boolean))];
+    if (examIds.length) {
+      const attempts = await s.from("exam_attempts").select("exam_id,student_id").in("exam_id", examIds).in("student_id", studentIds);
+      if (attempts.error) return attempts.error.message;
+      const attempted = new Set((attempts.data ?? []).map((x: any) => `${x.exam_id}:${x.student_id}`));
+      for (const studentId of studentIds) {
+        const removable = examIds.filter((examId: string) => !attempted.has(`${examId}:${studentId}`));
+        if (removable.length) {
+          const q = await s.from("exam_registrations").delete().eq("student_id", studentId).in("exam_id", removable);
+          if (q.error) return q.error.message;
+        }
+      }
+    }
+  }
+  const cancelled = await s.from("sos_program_cycle_enrollments").update({ status: "CANCELLED", updated_at: now }).eq("application_id", applicationId).eq("status", "ACTIVE");
+  return cancelled.error?.message ?? "";
+}
+
 export async function GET() {
   if (!await admin()) return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
   const s = createClient();
@@ -129,6 +155,8 @@ export async function POST(request: Request) {
     if (!application.data) return NextResponse.json({ message: "신청서를 찾지 못했습니다." }, { status: 404 });
     if (["CANCELLED", "REFUNDED"].includes(String(application.data.status)))
       return NextResponse.json({ success: true, status: application.data.status });
+    const cycleCancelError = await cancelCycleAssignments(s, applicationId, now);
+    if (cycleCancelError) return NextResponse.json({ message: `회차 배정 취소 실패: ${missing(cycleCancelError)}` }, { status: 400 });
     const enrollment = await s.from("sos_program_enrollments").update({ status: "CANCELLED" }).eq("application_id", applicationId);
     if (enrollment.error) return NextResponse.json({ message: `등록 취소 실패: ${enrollment.error.message}` }, { status: 400 });
     const q = await s.from("sos_program_applications").update({ status: "CANCELLED", updated_at: now }).eq("id", applicationId).select("id,status").maybeSingle();
@@ -143,6 +171,10 @@ export async function POST(request: Request) {
     const application = await s.from("sos_program_applications").select("id,status").eq("id", applicationId).maybeSingle();
     if (application.error) return NextResponse.json({ message: application.error.message }, { status: 400 });
     if (!application.data) return NextResponse.json({ success: true });
+    if (!["CANCELLED", "REFUNDED"].includes(String(application.data.status))) {
+      const cycleCancelError = await cancelCycleAssignments(s, applicationId, now);
+      if (cycleCancelError) return NextResponse.json({ message: `회차 배정 취소 실패: ${missing(cycleCancelError)}` }, { status: 400 });
+    }
     const removed = await s.from("sos_program_applications").delete().eq("id", applicationId).select("id").maybeSingle();
     return removed.error || !removed.data
       ? NextResponse.json({ message: removed.error?.message || "신청서를 삭제하지 못했습니다." }, { status: 400 })
@@ -193,19 +225,23 @@ export async function POST(request: Request) {
     if (partial && !selected.length) return NextResponse.json({ message: "회차별 신청 정보가 비어 있습니다. 신청 내역을 확인해 주세요." }, { status: 400 });
     const cycleIds = partial ? selected : allCycleIds;
 
+    const enrollment = await s.from("sos_program_enrollments").upsert({ application_id: app.id, batch_id: app.batch_id, student_id: studentId, status: "ACTIVE", enrolled_at: now }, { onConflict: "application_id" });
+    if (enrollment.error) return NextResponse.json({ message: `SOS 등록 저장 실패: ${enrollment.error.message}` }, { status: 400 });
+
+    const cycleEnrollment = await s.from("sos_program_cycle_enrollments").upsert(
+      cycleIds.map((cycleId: string) => ({ application_id: app.id, batch_id: app.batch_id, cycle_id: cycleId, student_id: studentId, status: "ACTIVE", enrolled_at: now, updated_at: now })),
+      { onConflict: "application_id,cycle_id" },
+    );
+    if (cycleEnrollment.error) return NextResponse.json({ message: `학생-회차 연결 실패: ${missing(cycleEnrollment.error.message)}` }, { status: 400 });
+
+    // 회차에 시험지가 이미 연결된 경우에만 파생 배정을 만든다. 시험지가 나중에 연결되면 learning-cycles API가 자동 배정한다.
     const exams = await s.from("learning_cycle_exams").select("exam_id").in("cycle_id", cycleIds);
     if (exams.error) return NextResponse.json({ message: `시험 연결 조회 실패: ${exams.error.message}` }, { status: 400 });
     const examIds = [...new Set((exams.data ?? []).map((x: any) => String(x.exam_id)).filter(Boolean))];
     if (examIds.length) {
-      const assigned = await s.from("exam_registrations").upsert(
-        examIds.map((examId: string) => ({ exam_id: examId, student_id: studentId, status: "assigned", assigned_at: now })),
-        { onConflict: "exam_id,student_id" },
-      );
+      const assigned = await s.from("exam_registrations").upsert(examIds.map((examId: string) => ({ exam_id: examId, student_id: studentId, status: "assigned", assigned_at: now })), { onConflict: "exam_id,student_id" });
       if (assigned.error) return NextResponse.json({ message: `시험 자동배정 실패: ${assigned.error.message}` }, { status: 400 });
     }
-
-    const enrollment = await s.from("sos_program_enrollments").upsert({ application_id: app.id, batch_id: app.batch_id, student_id: studentId, status: "ACTIVE", enrolled_at: now }, { onConflict: "application_id" });
-    if (enrollment.error) return NextResponse.json({ message: `SOS 등록 저장 실패: ${enrollment.error.message}` }, { status: 400 });
 
     const finalized = await s.from("sos_program_applications")
       .update({ student_id: studentId, status: "ENROLLED", paid_at: now, enrolled_at: now, updated_at: now })
