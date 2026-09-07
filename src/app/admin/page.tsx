@@ -164,8 +164,8 @@ const menus: MenuItem[] = [
   { id: "dashboard", label: "대시보드", icon: "⌂" },
   { id: "posters", label: "포스터 관리", icon: "▧" },
   { id: "students", label: "학생정보 관리", icon: "♙" },
-  { id: "applications", label: "신청 관리", icon: "✓" },
-  { id: "program-applications", label: "SOS 5회 신청", icon: "⑤" },
+  { id: "applications", label: "실전모의고사 신청", icon: "✓" },
+  { id: "program-applications", label: "SOS 신청 관리", icon: "⑤" },
   { id: "cycles", label: "회차 관리", icon: "◉" },
   { id: "exam-list", label: "시험지 목록", icon: "▤" },
   { id: "exam-input", label: "시험지 입력", icon: "+" },
@@ -985,15 +985,14 @@ function StudentsPage({
         <section className="panel registration-panel">
           <div className="registration-header">
             <div>
-              <span className="section-kicker">시험회차 선택</span>
+              <span className="section-kicker">실전모의고사 선택</span>
               <select
                 value={selectedRoundId}
                 onChange={(e) => setSelectedRoundId(e.target.value)}
               >
                 {exams.map((round) => (
                   <option key={round.id} value={round.id}>
-                    {round.round}회 · {round.title} · {round.examDate} ·{" "}
-                    {round.grade}
+                    {round.title} · {round.examDate} · {round.grade}
                   </option>
                 ))}
               </select>
@@ -1029,11 +1028,9 @@ function StudentsPage({
           </div>
           <div className="round-summary">
             <div>
-              <span>시험 회차</span>
+              <span>시험지</span>
               <strong>
-                {selectedRound
-                  ? `${selectedRound.round}회 · ${selectedRound.title}`
-                  : "등록된 시험 없음"}
+                {selectedRound ? selectedRound.title : "등록된 시험 없음"}
               </strong>
             </div>
             <div>

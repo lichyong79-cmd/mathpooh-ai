@@ -49,9 +49,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "학부모 계정으로 로그인한 뒤 신청해 주세요." }, { status: 401 });
 
   const body = await request.json();
+  const action = String(body.action ?? "");
+  const parentPhoneFromUser = digits(user.user_metadata?.parent_phone ?? String(user.email ?? "").split("@")[0]);
+
+  if (action === "cancel") {
+    const applicationId = String(body.applicationId ?? "");
+    if (!applicationId) return NextResponse.json({ message: "취소할 신청을 선택해 주세요." }, { status: 400 });
+    const supabase = createClient();
+    const found = await supabase.from("sos_program_applications").select("id,status,parent_phone").eq("id", applicationId).maybeSingle();
+    if (found.error || !found.data || digits(found.data.parent_phone) !== parentPhoneFromUser)
+      return NextResponse.json({ message: "신청 정보를 확인할 수 없습니다." }, { status: 404 });
+    if (String(found.data.status) !== "REQUESTED")
+      return NextResponse.json({ message: "결제 확인 또는 등록이 완료된 신청은 학부모 화면에서 취소할 수 없습니다. 관리자에게 문의해 주세요." }, { status: 409 });
+    const cancelled = await supabase.from("sos_program_applications").update({ status: "CANCELLED", updated_at: new Date().toISOString() }).eq("id", applicationId).eq("status", "REQUESTED");
+    return cancelled.error ? NextResponse.json({ message: missing(cancelled.error.message) }, { status: 400 }) : NextResponse.json({ success: true });
+  }
+
   const batchId = String(body.batchId ?? "");
   const parentName = String(user.user_metadata?.name ?? body.parentName ?? "학부모").trim();
-  const parentPhone = digits(user.user_metadata?.parent_phone ?? String(user.email ?? "").split("@")[0]);
+  const parentPhone = parentPhoneFromUser;
   const studentName = String(body.studentName ?? "").trim();
   const studentPhone = digits(body.studentPhone);
   const school = String(body.school ?? "").trim();

@@ -155,7 +155,7 @@ function ScoreTrend({ exams }: { exams: any[] }) {
 export default function ParentPortal() {
   const [data, setData] = useState<any>(null),
     [selected, setSelected] = useState(""),
-    [tab, setTab] = useState<Tab>("home"),
+    [tab, setTab] = useState<Tab>(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "apply" ? "apply" : "home"),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [applicationBusy, setApplicationBusy] = useState(""),
@@ -322,6 +322,27 @@ export default function ParentPortal() {
       alert(`${chosen.length}개 회차 신청이 접수되었습니다. 결제 방법: ${applicationPaymentMethod === "CARD" ? "카드결제" : "계좌이체(현금영수증)"}. 결제 확인 후 선택한 회차만 등록됩니다.`);
     } catch (e) {
       alert(e instanceof Error ? e.message : "신청을 처리하지 못했습니다.");
+    } finally {
+      setApplicationBusy("");
+    }
+  };
+
+  const cancelProgramApplication = async (application: any) => {
+    if (!application?.id || applicationBusy) return;
+    if (!confirm("이 SOS 신청을 취소할까요?\n취소 후에는 다시 신청할 수 있습니다.")) return;
+    setApplicationBusy(`cancel-${application.id}`);
+    try {
+      const r = await fetch("/api/program-applications", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "cancel", applicationId: application.id }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || "신청 취소를 처리하지 못했습니다.");
+      await load();
+      alert("신청이 취소되었습니다.");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "신청 취소를 처리하지 못했습니다.");
     } finally {
       setApplicationBusy("");
     }
@@ -722,7 +743,7 @@ export default function ParentPortal() {
               </section>
               <section className="card application-card">
                 <Title en="APPLICATION" ko="신청 가능한 SOS 프로그램" />
-                <p className="application-help">5개 회차 중 남은 회차를 전부 신청하거나, 필요한 회차만 골라 신청할 수 있습니다. 지난 회차는 종료되어 선택할 수 없습니다.</p>
+                <p className="application-help">남은 회차 전체 또는 필요한 회차만 선택해 신청할 수 있습니다. 지난 날짜의 회차는 자동으로 종료되어 선택할 수 없고, 결제 확인 전에는 신청 취소도 가능합니다.</p>
                 <div className="application-payment">
                   <b>결제 방법</b>
                   <label className={applicationPaymentMethod === "CARD" ? "on" : ""}><input type="radio" checked={applicationPaymentMethod === "CARD"} onChange={() => setApplicationPaymentMethod("CARD")} /> 카드결제</label>
@@ -730,7 +751,7 @@ export default function ParentPortal() {
                 </div>
                 <div className="application-list">
                   {programBatches.map((batch: any) => {
-                    const applied = programApplications.find((x) => String(x.batch_id) === String(batch.id) && (String(x.student_id) === selected || x.student_name === report?.student.name));
+                    const applied = programApplications.find((x) => ["REQUESTED", "PAID", "ENROLLED"].includes(String(x.status)) && String(x.batch_id) === String(batch.id) && (String(x.student_id) === selected || x.student_name === report?.student.name));
                     const available = (batch.cycles ?? []).filter((c: any) => !c.is_closed);
                     const selectedCycles = cycleSelectionByBatch[String(batch.id)] ?? [];
                     const unitPrice = Math.round(Number(batch.price ?? 0) / 5);
@@ -738,11 +759,11 @@ export default function ParentPortal() {
                     const toggleCycle = (cycleId: string) => setCycleSelectionByBatch((prev) => ({ ...prev, [String(batch.id)]: (prev[String(batch.id)] ?? []).includes(cycleId) ? (prev[String(batch.id)] ?? []).filter((id) => id !== cycleId) : [...(prev[String(batch.id)] ?? []), cycleId] }));
                     return (
                     <article key={batch.id} className="application-program">
-                      <div className="application-program-head"><div><small>MATHPOOH SOS</small><b>{batch.title}</b><span>1회 {unitPrice.toLocaleString("ko-KR")}원 · 남은 회차 {available.length}개</span></div>{applied ? <strong className={applied.status === "ENROLLED" ? "assigned" : "requested"}>{applied.status === "ENROLLED" ? "등록 완료" : applied.status === "REQUESTED" ? "신청 접수" : applied.status}</strong> : null}</div>
+                      <div className="application-program-head"><div><small>MATHPOOH SOS</small><b>{batch.title}</b><span>1회 {unitPrice.toLocaleString("ko-KR")}원 · 남은 회차 {available.length}개</span></div>{applied ? <strong className={applied.status === "ENROLLED" ? "assigned" : "requested"}>{applied.status === "ENROLLED" ? "등록 완료" : applied.status === "PAID" ? "결제 확인" : "신청 접수"}</strong> : null}</div>
                       <div className="application-cycle-grid">
                         {(batch.cycles ?? []).map((c: any) => { const cycleId = String(c.cycle_id ?? c.id); const checked = selectedCycles.includes(cycleId); return <label key={cycleId} className={`${c.is_closed ? "closed" : ""} ${checked ? "picked" : ""}`}><input type="checkbox" disabled={c.is_closed || !!applied} checked={checked} onChange={() => toggleCycle(cycleId)} /><b>{c.slot_no}회</b><span>{fmt(c.start_date)}</span>{c.is_closed ? <em>종료</em> : <em>신청 가능</em>}</label>; })}
                       </div>
-                      {!applied ? <div className="application-buttons"><button className="request all" disabled={applicationBusy === String(batch.id) || !available.length} onClick={() => void changeApplication(batch, "ALL")}>{applicationBusy === String(batch.id) ? "처리 중…" : `${available.length === 5 ? "5회 전체 신청" : `남은 ${available.length}회 전체 신청`} · ${(unitPrice * available.length).toLocaleString("ko-KR")}원`}</button><button className="request selected" disabled={applicationBusy === String(batch.id) || !selectedCycles.length} onClick={() => void changeApplication(batch, "CYCLES")}>{selectedCycles.length ? `선택 ${selectedCycles.length}회 신청 · ${selectedPrice.toLocaleString("ko-KR")}원` : "회차를 선택해 주세요"}</button></div> : <div className="application-applied-detail">{Array.isArray(applied.selected_cycle_ids) && applied.selected_cycle_ids.length ? `신청 회차 ${applied.selected_cycle_ids.length}개 · ${Number(applied.charged_price ?? 0).toLocaleString("ko-KR")}원` : "전체 회차 신청"}</div>}
+                      {!applied ? <div className="application-buttons"><button className="request all" disabled={applicationBusy === String(batch.id) || !available.length} onClick={() => void changeApplication(batch, "ALL")}>{applicationBusy === String(batch.id) ? "처리 중…" : `${available.length === 5 ? "5회 전체 신청" : `남은 ${available.length}회 전체 신청`} · ${(unitPrice * available.length).toLocaleString("ko-KR")}원`}</button><button className="request selected" disabled={applicationBusy === String(batch.id) || !selectedCycles.length} onClick={() => void changeApplication(batch, "CYCLES")}>{selectedCycles.length ? `선택 ${selectedCycles.length}회 신청 · ${selectedPrice.toLocaleString("ko-KR")}원` : "회차를 선택해 주세요"}</button></div> : <div className="application-applied-detail"><span>{Array.isArray(applied.selected_cycle_ids) && applied.selected_cycle_ids.length ? `신청 회차 ${applied.selected_cycle_ids.length}개 · ${Number(applied.charged_price ?? 0).toLocaleString("ko-KR")}원` : "전체 회차 신청"}</span>{applied.status === "REQUESTED" ? <button disabled={applicationBusy === `cancel-${applied.id}`} onClick={() => void cancelProgramApplication(applied)}>{applicationBusy === `cancel-${applied.id}` ? "취소 처리 중…" : "신청 취소"}</button> : <small>결제 확인 또는 등록 완료 후 변경은 관리자에게 문의해 주세요.</small>}</div>}
                     </article>
                   )})}
                   {!programBatches.length ? <div className="apply-empty">현재 신청 가능한 프로그램이 없습니다.</div> : null}
@@ -753,7 +774,7 @@ export default function ParentPortal() {
 
 
       <style jsx>{`
-        .application-program{display:grid!important;gap:14px!important}.application-program-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.application-program-head>div{display:grid;gap:4px}.application-program-head small{color:#397248;font-weight:900}.application-program-head>b{font-size:17px}.application-program-head span{font-size:12px;color:#738078}.application-cycle-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.application-cycle-grid label{position:relative;display:grid;gap:3px;padding:10px;border:1px solid #dfe8e1;border-radius:10px;background:#f8fbf9;cursor:pointer}.application-cycle-grid label.picked{border-color:#2f6937;background:#eef7f0}.application-cycle-grid label.closed{opacity:.58;background:#f3f3f3;cursor:not-allowed}.application-cycle-grid input{position:absolute;right:8px;top:8px}.application-cycle-grid b{font-size:13px}.application-cycle-grid span{font-size:12px}.application-cycle-grid em{font-style:normal;font-size:10px;font-weight:900;color:#2f6937}.application-cycle-grid .closed em{color:#8b8b8b}.application-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px}.application-buttons .request{min-height:44px}.application-buttons .selected{background:#fff!important;color:#2f6937!important;border:1px solid #2f6937!important}.application-buttons button:disabled{opacity:.45;cursor:not-allowed}.application-applied-detail{padding:10px;border-radius:9px;background:#f5f8f6;color:#66756c;font-size:12px;font-weight:800}@media(max-width:720px){.application-cycle-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.application-buttons{grid-template-columns:1fr}}
+        .application-program{display:grid!important;gap:14px!important}.application-program-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.application-program-head>div{display:grid;gap:4px}.application-program-head small{color:#397248;font-weight:900}.application-program-head>b{font-size:17px}.application-program-head span{font-size:12px;color:#738078}.application-cycle-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.application-cycle-grid label{position:relative;display:grid;gap:3px;padding:10px;border:1px solid #dfe8e1;border-radius:10px;background:#f8fbf9;cursor:pointer}.application-cycle-grid label.picked{border-color:#2f6937;background:#eef7f0}.application-cycle-grid label.closed{opacity:.58;background:#f3f3f3;cursor:not-allowed}.application-cycle-grid input{position:absolute;right:8px;top:8px}.application-cycle-grid b{font-size:13px}.application-cycle-grid span{font-size:12px}.application-cycle-grid em{font-style:normal;font-size:10px;font-weight:900;color:#2f6937}.application-cycle-grid .closed em{color:#8b8b8b}.application-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px}.application-buttons .request{min-height:44px}.application-buttons .selected{background:#fff!important;color:#2f6937!important;border:1px solid #2f6937!important}.application-buttons button:disabled{opacity:.45;cursor:not-allowed}.application-applied-detail{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border-radius:9px;background:#f5f8f6;color:#66756c;font-size:12px;font-weight:800}.application-applied-detail button{height:34px;padding:0 12px;border:1px solid #dfc4c4;border-radius:8px;background:#fff;color:#9b3333;font-weight:900}.application-applied-detail small{color:#7b817d;font-weight:700}@media(max-width:720px){.application-cycle-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.application-buttons{grid-template-columns:1fr}}
       `}</style>
           {tab === "scores" && (
             <>
