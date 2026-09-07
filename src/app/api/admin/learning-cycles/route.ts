@@ -27,11 +27,34 @@ export async function POST(request:Request){
  if(action==="update"){
   const id=String(b.id??"");if(!id)return NextResponse.json({message:"회차를 선택해 주세요."},{status:400});const payload:any={updated_at:new Date().toISOString()};for(const [a,c] of [["name","name"],["startDate","start_date"],["endDate","end_date"],["status","status"],["memo","memo"]] as any[])if(b[a]!=null)payload[c]=b[a];const q=await ctx.supabase.from("learning_cycles").update(payload).eq("id",id).select().single();return q.error?NextResponse.json({message:missing(q.error.message)},{status:400}):NextResponse.json({cycle:q.data});
  }
+
+ if(action==="delete"){
+  const id=String(b.id??"");if(!id)return NextResponse.json({message:"회차를 선택해 주세요."},{status:400});
+  const [examLinks,batchLinks]=await Promise.all([
+   ctx.supabase.from("learning_cycle_exams").select("id",{count:"exact",head:true}).eq("cycle_id",id),
+   ctx.supabase.from("sos_program_batch_cycles").select("batch_id",{count:"exact",head:true}).eq("cycle_id",id)
+  ]);
+  if(examLinks.error||batchLinks.error)return NextResponse.json({message:examLinks.error?.message||batchLinks.error?.message||"회차 사용 여부를 확인하지 못했습니다."},{status:400});
+  if((examLinks.count??0)>0)return NextResponse.json({message:"이 회차에 배치된 시험이 있습니다. 먼저 시험을 회차에서 빼 주세요."},{status:409});
+  if((batchLinks.count??0)>0)return NextResponse.json({message:"이 회차가 SOS 5회 프로그램에 포함되어 있습니다. 먼저 5회 프로그램의 회차 구성을 수정해 주세요."},{status:409});
+  const q=await ctx.supabase.from("learning_cycles").delete().eq("id",id);return q.error?NextResponse.json({message:missing(q.error.message)},{status:400}):NextResponse.json({success:true});
+ }
  if(action==="assign-exam"){
   const cycleId=String(b.cycleId??""),examId=String(b.examId??"");if(!cycleId||!examId)return NextResponse.json({message:"회차와 시험을 선택해 주세요."},{status:400});
   const assignedAt=new Date().toISOString();const q=await ctx.supabase.from("learning_cycle_exams").upsert({cycle_id:cycleId,exam_id:examId,linked_at:assignedAt},{onConflict:"exam_id"});if(q.error)return NextResponse.json({message:missing(q.error.message)},{status:400});
   // SOS310: 시험지를 회차에 나중에 연결해도, 이 회차가 포함된 5회 묶음 등록 학생에게 즉시 배정한다.
-  const batchLinks=await ctx.supabase.from("sos_program_batch_cycles").select("batch_id").eq("cycle_id",cycleId);if(!batchLinks.error){const batchIds=(batchLinks.data??[]).map((x:any)=>x.batch_id);if(batchIds.length){const enrolled=await ctx.supabase.from("sos_program_enrollments").select("student_id").in("batch_id",batchIds).eq("status","ACTIVE");const studentIds=[...new Set((enrolled.data??[]).map((x:any)=>String(x.student_id)))];if(studentIds.length)await ctx.supabase.from("exam_registrations").upsert(studentIds.map(studentId=>({exam_id:examId,student_id:studentId,status:"assigned",assigned_at:assignedAt})),{onConflict:"exam_id,student_id"});}}
+  const batchLinks=await ctx.supabase.from("sos_program_batch_cycles").select("batch_id").eq("cycle_id",cycleId);
+  if(!batchLinks.error){
+   const batchIds=(batchLinks.data??[]).map((x:any)=>x.batch_id);
+   if(batchIds.length){
+    const enrolled=await ctx.supabase.from("sos_program_enrollments").select("student_id,application_id").in("batch_id",batchIds).eq("status","ACTIVE");
+    const applicationIds=[...new Set((enrolled.data??[]).map((x:any)=>String(x.application_id)).filter(Boolean))];
+    const applications=applicationIds.length?await ctx.supabase.from("sos_program_applications").select("id,application_mode,selected_cycle_ids").in("id",applicationIds):{data:[],error:null} as any;
+    const appMap=new Map<string,any>((applications.data??[]).map((x:any)=>[String(x.id),x]));
+    const studentIds=[...new Set((enrolled.data??[]).filter((x:any)=>{const app=appMap.get(String(x.application_id));if(!app)return true;if(String(app.application_mode??"ALL")!=="CYCLES")return true;const ids=Array.isArray(app.selected_cycle_ids)?app.selected_cycle_ids.map(String):[];return ids.includes(String(cycleId));}).map((x:any)=>String(x.student_id)))];
+    if(studentIds.length)await ctx.supabase.from("exam_registrations").upsert(studentIds.map(studentId=>({exam_id:examId,student_id:studentId,status:"assigned",assigned_at:assignedAt})),{onConflict:"exam_id,student_id"});
+   }
+  }
   return NextResponse.json({success:true});
  }
  if(action==="unassign-exam"){

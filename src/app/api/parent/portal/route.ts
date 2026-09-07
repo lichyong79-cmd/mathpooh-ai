@@ -235,21 +235,21 @@ export async function GET() {
   );
   const [programBatchResult, programLinkResult, parentApplicationResult] = await Promise.all([
     supabase.from("sos_program_batches").select("id,title,price,application_start,application_end,capacity,memo,is_published,created_at").eq("is_published", true).order("created_at", { ascending: false }),
-    supabase.from("sos_program_batch_cycles").select("batch_id,slot_no,learning_cycles(id,name,start_date,end_date,status)").order("slot_no"),
-    supabase.from("sos_program_applications").select("id,batch_id,student_id,student_name,status,payment_method,requested_at,paid_at,enrolled_at").eq("parent_phone", phone).order("requested_at", { ascending: false }),
+    supabase.from("sos_program_batch_cycles").select("batch_id,cycle_id,slot_no,learning_cycles(id,name,start_date,end_date,status)").order("slot_no"),
+    supabase.from("sos_program_applications").select("id,batch_id,student_id,student_name,status,payment_method,application_mode,selected_cycle_ids,charged_price,requested_at,paid_at,enrolled_at").eq("parent_phone", phone).order("requested_at", { ascending: false }),
   ]);
   const programMissing = programBatchResult.error?.message?.includes("sos_program_");
   const nowIso = new Date().toISOString();
   const todayKorea = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const programBatches = programMissing ? [] : (programBatchResult.data ?? []).map((batch: any) => ({
     ...batch,
-    cycles: (programLinkResult.data ?? []).filter((x: any) => String(x.batch_id) === String(batch.id)).map((x: any) => ({ slot_no: x.slot_no, ...(x.learning_cycles ?? {}) })),
+    cycles: (programLinkResult.data ?? [])
+      .filter((x: any) => String(x.batch_id) === String(batch.id))
+      .map((x: any) => ({ cycle_id: x.cycle_id, slot_no: x.slot_no, ...(x.learning_cycles ?? {}), is_closed: String(x.learning_cycles?.start_date ?? "").slice(0, 10) < todayKorea })),
   })).filter((batch: any) => {
     if (batch.application_start && batch.application_start > nowIso) return false;
     if (batch.application_end && batch.application_end < nowIso) return false;
-    const starts = (batch.cycles ?? []).map((cycle: any) => String(cycle.start_date ?? "").slice(0, 10)).filter(Boolean).sort();
-    // 학부모 화면에서도 1회차가 지난 묶음은 '신청 가능' 목록에서 제거한다.
-    return !starts[0] || starts[0] >= todayKorea;
+    return (batch.cycles ?? []).some((cycle: any) => !cycle.is_closed);
   });
   return NextResponse.json(
     { parentPhone: phone, passwordChanged, children, reports, posters, programBatches, programApplications: programMissing ? [] : (parentApplicationResult.data ?? []) },
