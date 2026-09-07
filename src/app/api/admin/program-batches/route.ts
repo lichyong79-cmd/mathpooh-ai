@@ -11,16 +11,16 @@ async function admin() { return await getAdminUser(); }
 async function cancelCycleAssignments(s: any, applicationId: string, now: string) {
   const rows = await s.from("sos_program_cycle_enrollments").select("cycle_id,student_id").eq("application_id", applicationId).eq("status", "ACTIVE");
   if (rows.error) return rows.error.message;
-  const cycleIds = [...new Set((rows.data ?? []).map((x: any) => String(x.cycle_id)).filter(Boolean))];
-  const studentIds = [...new Set((rows.data ?? []).map((x: any) => String(x.student_id)).filter(Boolean))];
+  const cycleIds: string[] = [...new Set<string>((rows.data ?? []).map((x: any) => String(x.cycle_id)).filter(Boolean))];
+  const studentIds: string[] = [...new Set<string>((rows.data ?? []).map((x: any) => String(x.student_id)).filter(Boolean))];
   if (cycleIds.length && studentIds.length) {
     const links = await s.from("learning_cycle_exams").select("exam_id").in("cycle_id", cycleIds);
     if (links.error) return links.error.message;
-    const examIds = [...new Set((links.data ?? []).map((x: any) => String(x.exam_id)).filter(Boolean))];
+    const examIds: string[] = [...new Set<string>((links.data ?? []).map((x: any) => String(x.exam_id)).filter(Boolean))];
     if (examIds.length) {
       const attempts = await s.from("exam_attempts").select("exam_id,student_id").in("exam_id", examIds).in("student_id", studentIds);
       if (attempts.error) return attempts.error.message;
-      const attempted = new Set((attempts.data ?? []).map((x: any) => `${x.exam_id}:${x.student_id}`));
+      const attempted = new Set<string>((attempts.data ?? []).map((x: any) => `${x.exam_id}:${x.student_id}`));
       for (const studentId of studentIds) {
         const removable = examIds.filter((examId: string) => !attempted.has(`${examId}:${studentId}`));
         if (removable.length) {
@@ -60,7 +60,7 @@ export async function GET() {
 }
 
 async function normalizedCycleRows(s: any, cycleIdsRaw: unknown) {
-  const cycleIds = [...new Set((Array.isArray(cycleIdsRaw) ? cycleIdsRaw : []).map(String))];
+  const cycleIds: string[] = [...new Set<string>((Array.isArray(cycleIdsRaw) ? cycleIdsRaw : []).map((id: unknown) => String(id)))];
   if (cycleIds.length !== 5) return { error: "운영 회차를 정확히 5개 선택해 주세요.", rows: [] as any[] };
   const q = await s.from("learning_cycles").select("id,start_date").in("id", cycleIds).order("start_date");
   if (q.error || (q.data ?? []).length !== 5) return { error: "선택한 운영 회차를 확인해 주세요.", rows: [] as any[] };
@@ -237,7 +237,7 @@ export async function POST(request: Request) {
     // 회차에 시험지가 이미 연결된 경우에만 파생 배정을 만든다. 시험지가 나중에 연결되면 learning-cycles API가 자동 배정한다.
     const exams = await s.from("learning_cycle_exams").select("exam_id").in("cycle_id", cycleIds);
     if (exams.error) return NextResponse.json({ message: `시험 연결 조회 실패: ${exams.error.message}` }, { status: 400 });
-    const examIds = [...new Set((exams.data ?? []).map((x: any) => String(x.exam_id)).filter(Boolean))];
+    const examIds: string[] = [...new Set<string>((exams.data ?? []).map((x: any) => String(x.exam_id)).filter(Boolean))];
     if (examIds.length) {
       const assigned = await s.from("exam_registrations").upsert(examIds.map((examId: string) => ({ exam_id: examId, student_id: studentId, status: "assigned", assigned_at: now })), { onConflict: "exam_id,student_id" });
       if (assigned.error) return NextResponse.json({ message: `시험 자동배정 실패: ${assigned.error.message}` }, { status: 400 });
