@@ -25,11 +25,16 @@ export default function ParentChildManager({
   const [school, setSchool] = useState("");
   const [grade, setGrade] = useState("고1");
   const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
   const submit = async () => {
     setMsg("");
+    if (mode === "create" && password !== passwordConfirm) {
+      setMsg("학생 비밀번호 확인이 일치하지 않습니다.");
+      return;
+    }
     setBusy(true);
     try {
       const r = await fetch("/api/parent/children", {
@@ -99,9 +104,16 @@ export default function ParentChildManager({
 
         <p className="guide">
           {mode === "link"
-            ? "이미 MathPooh에 등록된 학생은 기존 학습기록을 그대로 연결합니다."
-            : "처음 이용하는 학생의 로그인 계정을 새로 만듭니다."}
+            ? "이미 MathPooh에 등록된 학생은 기존 학습기록을 그대로 연결합니다. 연결해도 학생의 기존 비밀번호는 바뀌지 않습니다."
+            : "처음 이용하는 학생의 로그인 계정을 새로 만듭니다. 학생은 아래에서 정한 별도의 비밀번호로 로그인합니다."}
         </p>
+
+        {mode === "create" ? (
+          <div className="account-separation">
+            <b>학부모용과 학생용은 서로 다른 계정입니다.</b>
+            <span>학생 비밀번호는 학부모 비밀번호와 다르게 정해 주세요. 이후 학생이 자기 페이지에서 별도로 변경할 수 있습니다.</span>
+          </div>
+        ) : null}
 
         <label>학생 이름<input value={name} onChange={(e) => setName(e.target.value)} placeholder="학생 이름" /></label>
         <label>학생 휴대폰번호<input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="01012345678" /></label>
@@ -114,7 +126,8 @@ export default function ParentChildManager({
                 <option>중3</option><option>고1</option><option>고2</option><option>고3</option>
               </select>
             </label>
-            <label>학생 비밀번호<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6자리 이상" /></label>
+            <label>학생 비밀번호<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="학부모 비밀번호와 다르게 · 6자리 이상" /></label>
+            <label>학생 비밀번호 확인<input type="password" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} placeholder="학생 비밀번호를 한 번 더 입력" /></label>
           </>
         ) : null}
 
@@ -144,6 +157,7 @@ export default function ParentChildManager({
         .pcm-tabs button{border:0;border-radius:8px;padding:11px;background:transparent;font-weight:800;color:#65736a;cursor:pointer}
         .pcm-tabs .on{background:#2f6937;color:#fff}
         .guide{font-size:13px;line-height:1.55;color:#68766d;background:#f7faf7;padding:10px;border-radius:8px}
+        .account-separation{display:grid;gap:4px;padding:11px 13px;background:#fff7e9;border:1px solid #efd5a8;border-radius:9px;line-height:1.5}.account-separation b{font-size:12.5px;color:#704715}.account-separation span{font-size:11.5px;color:#846643}
         label{display:grid;gap:6px;margin-top:12px;font-size:13px;font-weight:800;color:#45544a}
         input,select{height:44px;border:1px solid #d5e0d8;border-radius:9px;padding:0 12px;font-size:14px;background:#fff}
         .msg{font-size:13px;color:#9a4d28}
