@@ -1,5 +1,6 @@
 "use client";
 import { isSosReview, isSosStarted, isSosOpen } from "@/lib/sos-stage-state";
+import { BUSINESS } from "@/lib/legal";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -3691,7 +3692,18 @@ export default function StudentHome() {
           <b>© 2026 MATHPOOH</b>
         </div>
         <p>MATHPOOH 수학연구소 · 학생용 SOS 학습 시스템</p>
-        <span>이용약관　 개인정보처리방침</span>
+        {/* SOS323: 전자상거래법 제10조에 따른 사업자 정보 표시와
+            개인정보보호법 제30조에 따른 처리방침 공개 링크입니다. */}
+        <small className="biz">
+          {BUSINESS.name} · 대표 {BUSINESS.owner} · 사업자등록번호 {BUSINESS.registrationNo}
+          <br />통신판매업신고 {BUSINESS.mailOrderNo} · {BUSINESS.address}
+          <br />{BUSINESS.phone} · {BUSINESS.email}
+        </small>
+        <span>
+          <a href="/terms">이용약관</a>
+          {"　"}
+          <a href="/privacy"><b>개인정보처리방침</b></a>
+        </span>
       </footer>
     </main>
   );

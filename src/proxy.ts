@@ -59,6 +59,10 @@ export async function proxy(request: NextRequest) {
     pathname === "/apply" ||
     pathname === "/api/program-applications" ||
     pathname === "/admin/login" ||
+    // SOS323: 이용약관·개인정보처리방침은 누구나 볼 수 있어야 합니다.
+    // 전자상거래법·개인정보보호법상 공개 의무가 있는 문서입니다.
+    pathname === "/terms" ||
+    pathname === "/privacy" ||
     pathname.startsWith("/auth/") ||
     // Vercel Cron 호출에는 로그인 쿠키가 없습니다.
     // 이 경로를 열어두지 않으면 프록시가 401을 돌려줘서 AI 생성 작업이 영원히 실행되지 않습니다.
