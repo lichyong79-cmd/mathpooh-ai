@@ -122,16 +122,17 @@ export async function GET(request: Request) {
       { message: registrationError.message },
       { status: 400 },
     );
-  const registrationMap = new Map(
-    (registrations ?? []).map((item) => [item.exam_id, item.status]),
+  const accessibleExamIds = new Set<string>(
+    (registrations ?? [])
+      .filter((item) => item.status === "assigned")
+      .map((item) => String(item.exam_id)),
   );
   const memberships = await supabase.from("learning_cycle_students").select("cycle_id").eq("student_id", student.id).eq("status", "ACTIVE");
-  if (memberships.error) return NextResponse.json({ message: memberships.error.message }, { status: 400 });
+  // 배포 직후 마이그레이션 전에도 학생 로그인 자체는 막지 않는다.
   const memberCycleIds: string[] = (memberships.data ?? []).map((x: any) => String(x.cycle_id));
   if (memberCycleIds.length) {
     const cycleExams = await supabase.from("learning_cycle_exams").select("exam_id").in("cycle_id", memberCycleIds);
-    if (cycleExams.error) return NextResponse.json({ message: cycleExams.error.message }, { status: 400 });
-    for (const row of cycleExams.data ?? []) registrationMap.set(row.exam_id, "assigned");
+    for (const row of cycleExams.data ?? []) accessibleExamIds.add(String(row.exam_id));
   }
   const { data: exams, error } = await supabase
     .from("exams")
@@ -174,20 +175,19 @@ export async function GET(request: Request) {
     metadataByExam.set(key, [...(metadataByExam.get(key) ?? []), row]);
   }
   const items = await Promise.all(
-    (exams ?? []).map(async (exam) => {
-      const savedStatus = registrationMap.get(exam.id);
-      const applicationStatus =
-        savedStatus === "assigned" || savedStatus === "requested"
-          ? savedStatus
-          : "none";
+    (exams ?? [])
+      .filter(
+        (exam) =>
+          accessibleExamIds.has(String(exam.id)) || attemptMap.has(exam.id),
+      )
+      .map(async (exam) => {
       const downloadAvailableAt = exam.open_at
         ? new Date(
             new Date(exam.open_at).getTime() - 60 * 60 * 1000,
           ).toISOString()
         : null;
       const downloadAvailable =
-        applicationStatus === "assigned" &&
-        (!downloadAvailableAt || downloadAvailableAt <= now);
+        !downloadAvailableAt || downloadAvailableAt <= now;
       let testUrl = "";
       if (downloadAvailable && exam.test_file_path)
         testUrl =
@@ -252,7 +252,6 @@ export async function GET(request: Request) {
         : [];
       return {
         ...safeExam,
-        application_status: applicationStatus,
         test_url: testUrl,
         solution_url: solutionUrl,
         solution_registered: Boolean(exam.solution_file_path),
@@ -269,7 +268,6 @@ export async function GET(request: Request) {
           : "",
         solution_open: solutionAllowed,
         available:
-          applicationStatus === "assigned" &&
           !exam.paused_at &&
           Boolean(exam.close_at) &&
           (!exam.open_at || exam.open_at <= now) &&
@@ -370,8 +368,6 @@ export async function GET(request: Request) {
   });
   const landmark = buildLandmarkSummary(landmarkRecords);
 
-  // SOS310: 포스터와 신청은 학부모 전용이다.
-  const posters: any[] = [];
   const { data: sosSessions } = await supabase
     .from("sos_training_sessions")
     .select(
@@ -381,24 +377,6 @@ export async function GET(request: Request) {
     .in("status", ["ASSIGNED", "IN_PROGRESS", "COMPLETED", "PASSED", "RETRAIN"])
     .order("created_at", { ascending: false })
     .limit(20);
-  const enrollmentResult = await supabase
-    .from("sos_program_enrollments")
-    .select("id,batch_id,status,enrolled_at,sos_program_batches(id,title,price)")
-    .eq("student_id", student.id)
-    .eq("status", "ACTIVE")
-    .order("enrolled_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  let programEnrollment: any = null;
-  if (!enrollmentResult.error && enrollmentResult.data) {
-    const cycleLinks = await supabase
-      .from("sos_program_batch_cycles")
-      .select("slot_no,learning_cycles(id,name,start_date,end_date,status)")
-      .eq("batch_id", enrollmentResult.data.batch_id)
-      .order("slot_no");
-    programEnrollment = { ...enrollmentResult.data, cycles: cycleLinks.data ?? [] };
-  }
-
   return NextResponse.json(
     {
       student: {
@@ -411,8 +389,6 @@ export async function GET(request: Request) {
       exams: examItems,
       sosSessions: sosSessions ?? [],
       landmark,
-      posters,
-      programEnrollment,
     },
     {
       headers: {
@@ -482,43 +458,11 @@ export async function POST(request: Request) {
       ? NextResponse.json({ message: error.message }, { status: 400 })
       : NextResponse.json({ success: true });
   }
-  if (action === "request") {
-    const { data: exam } = await supabase
-      .from("exams")
-      .select("id,student_open")
-      .eq("id", examId)
-      .eq("student_open", true)
-      .maybeSingle();
-    if (!exam)
-      return NextResponse.json(
-        { message: "현재 신청 가능한 시험이 아닙니다." },
-        { status: 404 },
-      );
-    const { error } = await supabase.from("exam_registrations").upsert(
-      {
-        exam_id: examId,
-        student_id: student.id,
-        status: "requested",
-        requested_at: new Date().toISOString(),
-        assigned_at: null,
-      },
-      { onConflict: "exam_id,student_id" },
+  if (action === "request" || action === "cancel-request")
+    return NextResponse.json(
+      { message: "학생 페이지에서는 처리할 수 없는 요청입니다." },
+      { status: 403 },
     );
-    return error
-      ? NextResponse.json({ message: error.message }, { status: 400 })
-      : NextResponse.json({ success: true, status: "requested" });
-  }
-  if (action === "cancel-request") {
-    const { error } = await supabase
-      .from("exam_registrations")
-      .delete()
-      .eq("exam_id", examId)
-      .eq("student_id", student.id)
-      .eq("status", "requested");
-    return error
-      ? NextResponse.json({ message: error.message }, { status: 400 })
-      : NextResponse.json({ success: true, status: "none" });
-  }
   const { data: registration } = await supabase
     .from("exam_registrations")
     .select("id,status")
@@ -528,7 +472,7 @@ export async function POST(request: Request) {
   const cycleAssigned = registration?.status === "assigned" ? false : await hasCycleAccess(supabase, String(student.id), examId);
   if ((!registration || registration.status !== "assigned") && !cycleAssigned)
     return NextResponse.json(
-      { message: "아직 시험 배정이 완료되지 않았습니다." },
+      { message: "이 회차에 등록된 학생만 응시할 수 있습니다." },
       { status: 403 },
     );
   const { data: exam } = await supabase

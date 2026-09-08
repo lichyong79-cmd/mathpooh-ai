@@ -69,7 +69,6 @@ type Exam = {
   paused_remaining_seconds?: number | null;
   official_answers?: string[];
   question_metadata?: QuestionMetadata[];
-  application_status: "none" | "requested" | "assigned";
   attempt: Attempt | null;
   percentile?: number | null;
   percentile_basis?: "cohort" | "estimated" | null;
@@ -106,17 +105,9 @@ type Portal = {
     created_at: string;
   }>;
   landmark?: LandmarkSummary;
-  posters: {
-    id: string;
-    title: string;
-    image_url: string;
-    link_url: string;
-    sort_order: number;
-  }[];
-  programEnrollment?: { id: string; status: string; sos_program_batches?: { title?: string }; cycles?: Array<{ slot_no: number; learning_cycles?: { id: string; name: string; start_date: string; end_date: string; status: string } }> } | null;
 };
 type StudentSection =
-  "home" | "apply" | "exams" | "strategy" | "scores" | "learning" | "guide";
+  "home" | "exams" | "strategy" | "scores" | "learning" | "guide";
 
 function StudentResultModal({
   exam,
@@ -2311,14 +2302,11 @@ export default function StudentHome() {
   }, [load]);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(
-      "matspu-student-section",
-    ) as StudentSection | null;
+    const saved = window.localStorage.getItem("matspu-student-section");
     if (
       saved &&
       [
         "home",
-        "apply",
         "exams",
         "strategy",
         "scores",
@@ -2326,7 +2314,7 @@ export default function StudentHome() {
         "guide",
       ].includes(saved)
     )
-      setActiveSection(saved === "apply" ? "exams" : saved);
+      setActiveSection(saved as StudentSection);
   }, []);
   const moveSection = (section: StudentSection) => {
     setActiveSection(section);
@@ -2448,33 +2436,6 @@ export default function StudentHome() {
     const timer = window.setInterval(() => void check(), 5000);
     return () => window.clearInterval(timer);
   }, [waitingExam?.id]);
-
-  const changeApplication = async (
-    exam: Exam,
-    action: "request" | "cancel-request",
-  ) => {
-    if (busy) return;
-    if (
-      action === "cancel-request" &&
-      !window.confirm("이 시험 신청을 취소할까요?")
-    )
-      return;
-    setBusy(
-      action === "request"
-        ? "시험을 신청하고 있습니다..."
-        : "시험 신청을 취소하고 있습니다...",
-    );
-    const response = await fetch("/api/student/portal", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action, examId: exam.id }),
-    });
-    const data = await response.json();
-    setBusy("");
-    if (!response.ok)
-      return alert(data.message || "시험 신청을 처리하지 못했습니다.");
-    await load();
-  };
 
   const save = useCallback(
     async (silent = true) => {
@@ -2664,7 +2625,6 @@ export default function StudentHome() {
     const todaysExam = portal.exams.find(
       (exam) =>
         seoulDate(exam.exam_date) === today &&
-        exam.application_status === "assigned" &&
         exam.attempt?.status !== "submitted",
     );
     if (todaysExam) {
@@ -3027,12 +2987,6 @@ export default function StudentHome() {
           </button>
         </nav>
         <div className="mp-header-actions">
-          <button
-            className="mp-apply-button"
-            onClick={() => moveSection("exams")}
-          >
-            <span aria-hidden="true">＋</span>시험 신청
-          </button>
           <div className="mp-profile-wrap">
             <button
               className="mp-profile-button"
@@ -3133,7 +3087,6 @@ export default function StudentHome() {
       ) : null}
       {activeSection === "home" ? (
         <>
-          {portal.programEnrollment ? <section className="student-program-pass"><div><small>SOS 5회 등록</small><h2>{portal.programEnrollment.sos_program_batches?.title ?? "SOS 5회 프로그램"}</h2><p>등록된 5개 운영 회차에 시험지가 연결되면 자동으로 시험이 배정됩니다.</p></div><div>{portal.programEnrollment.cycles?.map((x) => <span key={x.slot_no}><b>{x.slot_no}회</b>{x.learning_cycles?.name ?? "일정 준비"}</span>)}</div><small>신청·결제·다음 5회 등록은 학부모 페이지에서 확인해 주세요.</small></section> : null}
           {todayTask ? (
             <section className={`student-today-task task-${todayTask.kind}`}>
               <div className="student-task-icon" aria-hidden="true">
@@ -3271,9 +3224,7 @@ export default function StudentHome() {
         <header className={`student-hero section-${activeSection}`}>
           <div>
             <small>
-              {activeSection === "apply"
-                ? "SOS PROGRAM"
-                : activeSection === "exams"
+              {activeSection === "exams"
                   ? "PRACTICE EXAM"
                   : activeSection === "strategy"
                     ? "SOS STRATEGY"
@@ -3284,9 +3235,7 @@ export default function StudentHome() {
                         : "LEARNING ANALYSIS"}
             </small>
             <h1>
-              {activeSection === "apply"
-                ? "SOS 신청하기"
-                : activeSection === "exams"
+              {activeSection === "exams"
                   ? "실전모의고사"
                   : activeSection === "strategy"
                     ? "SOS 공략"
@@ -3297,10 +3246,8 @@ export default function StudentHome() {
                         : "학습분석"}
             </h1>
             <p>
-              {activeSection === "apply"
-                ? "필요한 SOS 프로그램과 새로운 안내를 확인하세요."
-                : activeSection === "exams"
-                  ? "신청·배정된 실전모의고사를 확인하고 응시하세요."
+              {activeSection === "exams"
+                  ? "응시할 실전모의고사를 확인하고 시험을 진행하세요."
                   : activeSection === "strategy"
                     ? "시험 결과를 바탕으로 나에게 필요한 공략을 훈련합니다."
                     : activeSection === "scores"
@@ -3318,64 +3265,17 @@ export default function StudentHome() {
             <span>이번 주 목표</span>
             <h2>아래 점수부터 하나씩 확보합니다.</h2>
             <p>
-              시험을 신청하고 배정이 완료되면 온라인으로 응시할 수 있습니다.
+              응시 가능한 시간을 확인한 뒤 온라인으로 시험을 진행하세요.
             </p>
           </div>
           <b>
             {
               portal.exams.filter(
-                (exam) =>
-                  exam.application_status === "assigned" &&
-                  exam.attempt?.status !== "submitted",
+                (exam) => exam.attempt?.status !== "submitted",
               ).length
             }
-            <small>배정 완료</small>
+            <small>응시 예정</small>
           </b>
-        </section>
-      ) : null}
-      {activeSection === "apply" ? (
-        <section className="student-poster-section">
-          <div className="student-list-heading">
-            <div>
-              <i />
-              <div>
-                <small>MATHPOOH SOS</small>
-                <h2>SOS 프로그램 신청·안내</h2>
-              </div>
-            </div>
-            <span>{portal.posters?.length ?? 0}개 안내</span>
-          </div>
-          <div className="student-poster-grid">
-            {portal.posters.map((poster) => {
-              const content = (
-                <>
-                  <img src={poster.image_url} alt={poster.title} />
-                  <div>
-                    <strong>{poster.title}</strong>
-                    <span>자세히 보기　→</span>
-                  </div>
-                </>
-              );
-              return poster.link_url ? (
-                <a
-                  key={poster.id}
-                  href={poster.link_url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {content}
-                </a>
-              ) : (
-                <article key={poster.id}>{content}</article>
-              );
-            })}
-          </div>
-          {!portal.posters?.length ? (
-            <div className="student-section-empty">
-              <b>현재 신청 가능한 SOS 프로그램이 없습니다.</b>
-              <span>새 프로그램이 열리면 이곳에 표시됩니다.</span>
-            </div>
-          ) : null}
         </section>
       ) : null}
       {activeSection === "exams" ? (
@@ -3385,7 +3285,7 @@ export default function StudentHome() {
               <i />{" "}
               <div>
                 <small>MATHEMATICS PROGRAM</small>
-                <h2>실전모의고사 신청·응시</h2>
+                <h2>실전모의고사 응시</h2>
               </div>
             </div>
             <span>{portal.exams.length}개 시험</span>
@@ -3423,29 +3323,9 @@ export default function StudentHome() {
                       결과 보기
                     </button>
                   </>
-                ) : exam.application_status === "none" ? (
-                  <>
-                    <b>신청 가능</b>
-                    <button
-                      onClick={() => void changeApplication(exam, "request")}
-                    >
-                      시험 신청
-                    </button>
-                  </>
-                ) : exam.application_status === "requested" ? (
-                  <>
-                    <b>배정 대기</b>
-                    <button
-                      onClick={() =>
-                        void changeApplication(exam, "cancel-request")
-                      }
-                    >
-                      신청 취소
-                    </button>
-                  </>
                 ) : (
                   <>
-                    <b>{exam.attempt ? "응시 중" : "배정 완료"}</b>
+                    <b>{exam.attempt ? "응시 중" : "응시 예정"}</b>
                     {exam.download_available &&
                     exam.test_url &&
                     !exam.attempt ? (
@@ -3475,7 +3355,7 @@ export default function StudentHome() {
           ))}
           {portal.exams.length === 0 ? (
             <div className="student-empty">
-              현재 신청 가능한 시험이 없습니다.
+              현재 응시할 시험이 없습니다.
             </div>
           ) : null}
         </section>
