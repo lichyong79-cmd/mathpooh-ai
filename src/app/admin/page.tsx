@@ -1234,12 +1234,33 @@ function StudentModal({
               placeholder="010-0000-0000"
             />
           </Field>
-          <Field label="학부모 연락처">
+          {/* SOS324: 학부모 계정은 이 번호로 자녀를 찾는다.
+              잘못 연결되면 다른 집 학부모에게 학습기록이 보이므로 즉시 끊을 수 있어야 한다. */}
+          <Field label="학부모 연락처 (연결 기준)">
             <input
               value={form.parentPhone}
               onChange={(e) => set("parentPhone", e.target.value)}
               placeholder="010-0000-0000"
             />
+            {form.parentPhone ? (
+              <button
+                type="button"
+                className="unlink-parent"
+                onClick={() => {
+                  if (!window.confirm(
+                    `이 학생과 학부모 계정(${form.parentPhone})의 연결을 끊을까요?\n\n`
+                    + `해당 학부모 페이지에서 이 학생이 더 이상 보이지 않습니다.\n`
+                    + `학생의 학습기록은 그대로 유지됩니다.\n\n`
+                    + `저장을 눌러야 실제로 반영됩니다.`,
+                  )) return;
+                  set("parentPhone", "");
+                }}
+              >
+                자녀 연결 끊기
+              </button>
+            ) : (
+              <small className="unlink-hint">연결된 학부모 계정이 없습니다.</small>
+            )}
           </Field>
           <Field label="등록일">
             <input
@@ -1796,7 +1817,7 @@ function LearningCyclesPage(){
         <h4 style={{margin:"22px 0 8px"}}>기존 실전모의고사 배치</h4><p style={{margin:"0 0 10px",fontSize:12,color:"#667085"}}>이미 학생들이 응시한 모의고사도 배치할 수 있습니다. 점수·답안·분석 결과는 그대로 유지되고 회차 연결만 생깁니다.</p><div style={{display:"grid",gap:7,maxHeight:470,overflow:"auto"}}>{(data.exams??[]).map((e:any)=><div key={e.id} style={{display:"grid",gridTemplateColumns:"1fr 150px 110px",gap:10,alignItems:"center",padding:10,border:"1px solid #e3e8e5",borderRadius:10,opacity:String(e.cycleId)===String(selected.id)?.58:1}}><div><b>{e.round?`${e.round}회 · `:""}{e.title}</b><small style={{display:"block",color:"#667085",marginTop:3}}>{e.exam_date} · 응시완료 {e.submittedCount}명{e.cycleName?` · 현재 ${e.cycleName}`:" · 회차 미지정"}</small></div><span style={{fontSize:11,fontWeight:900,color:e.submittedCount?"#176d42":"#667085"}}>{e.submittedCount?"응시 데이터 있음":"응시 전"}</span><button className={String(e.cycleId)===String(selected.id)?"secondary-button":"primary-button"} disabled={busy===String(e.id)||String(e.cycleId)===String(selected.id)} onClick={()=>void assign(e)}>{String(e.cycleId)===String(selected.id)?"배치됨":e.cycleId?"이 회차로 이동":"회차에 배치"}</button></div>)}</div>
       </>:<div style={{padding:30,textAlign:"center",color:"#667085"}}>회차를 생성하거나 선택해 주세요.</div>}</section>
     </div>}
-    <style jsx>{`@media(max-width:900px){.panel>div[style*="grid-template-columns: 1fr 180px"]{grid-template-columns:1fr!important}}`}</style>
+    <style jsx>{`@media(max-width:900px){.panel>div[style*="grid-template-columns: 1fr 180px"]{grid-template-columns:1fr!important}}.unlink-parent{margin-top:7px;border:1px solid #e6cccc;background:#fff7f7;color:#a04141;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer}.unlink-parent:hover{background:#fdeeee}.unlink-hint{display:block;margin-top:7px;font-size:11.5px;color:#8b968f}`}</style>
   </>;
 }
 

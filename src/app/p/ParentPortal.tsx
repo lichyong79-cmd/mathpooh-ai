@@ -472,7 +472,7 @@ export default function ParentPortal() {
             >
               리포트 인쇄
             </button>
-            <button onClick={() => setChildManagerOpen(true)}>자녀 등록</button>
+            <button onClick={() => setChildManagerOpen(true)}>자녀 관리</button>
             <button onClick={changePassword}>비밀번호</button>
             <button onClick={signOut}>로그아웃</button>
           </div>
@@ -485,11 +485,15 @@ export default function ParentPortal() {
           <button onClick={() => void load()}>다시 불러오기</button>
         </section>
       ) : !data?.children?.length ? (
+        /* SOS324: 연결된 자녀가 없으면 다른 화면으로 갈 수 없다.
+           안내만 띄우고 방치하면 학부모가 무엇을 해야 할지 몰라 이탈한다.
+           로그인 즉시 자녀 등록 화면을 띄우고 닫지 못하게 한다. */
         <section className="state">
-          <h1>자녀를 등록해 주세요.</h1>
-          <p>기존 MathPooh 학생은 학습기록을 그대로 연결하고, 처음 이용하는 학생은 새 계정을 만들 수 있습니다.</p>
+          <h1>등록된 자녀가 없습니다.</h1>
+          <p>자녀를 등록해야 학습 현황을 볼 수 있습니다.<br/>기존 MathPooh 학생은 학습기록을 그대로 연결하고, 처음 이용하는 학생은 새 계정을 만듭니다.</p>
           <button onClick={() => setChildManagerOpen(true)}>자녀 등록하기</button>
-          {childManagerOpen ? <ParentChildManager onClose={() => setChildManagerOpen(false)} onDone={async () => { setChildManagerOpen(false); await load(); }} /> : null}
+          <button className="ghost" onClick={signOut}>로그아웃</button>
+          <ParentChildManager required onDone={async () => { setChildManagerOpen(false); await load(); }} />
         </section>
       ) : (
         <div className="wrap">
@@ -502,22 +506,35 @@ export default function ParentPortal() {
                 {fmt(new Date().toISOString(), true)} 기준
               </p>
             </div>
-            {data.children.length > 1 ? (
-              <select
-                value={selected}
-                onChange={(e) => setSelected(e.target.value)}
-              >
-                {data.children.map((c: any) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} · {c.school} · {assignmentLabel(data.reports?.find((x: any) => String(x.student.id) === String(c.id))?.student?.assignmentStatus)}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className={`one-child ${report?.student?.assignmentStatus === "UNASSIGNED" ? "unassigned" : ""}`}>
-                {assignmentLabel(report?.student?.assignmentStatus)}
-              </span>
-            )}
+            {/* SOS324: 자녀가 둘 이상이면 탭으로 바로 오갈 수 있게 하고,
+                한 명이면 이름과 연결 상태만 보여준 뒤 추가는 작게 둔다. */}
+            <div className="child-switch">
+              {data.children.length > 1 ? (
+                <div className="child-tabs">
+                  {data.children.map((c: any) => {
+                    const status = data.reports?.find((x: any) => String(x.student.id) === String(c.id))?.student?.assignmentStatus;
+                    return (
+                      <button
+                        key={c.id}
+                        className={String(selected) === String(c.id) ? "on" : ""}
+                        onClick={() => setSelected(String(c.id))}
+                      >
+                        <b>{c.name}</b>
+                        <small>{assignmentLabel(status)}</small>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="child-one">
+                  <b>{data.children[0]?.name}</b>
+                  <span className={`badge ${report?.student?.assignmentStatus === "UNASSIGNED" ? "unassigned" : ""}`}>
+                    {report?.student?.assignmentStatus === "ASSIGNED" ? "연결중" : assignmentLabel(report?.student?.assignmentStatus)}
+                  </span>
+                </div>
+              )}
+              <button className="add-child" onClick={() => setChildManagerOpen(true)}>＋ 자녀 추가</button>
+            </div>
           </section>
 
           {tab === "home" && (
@@ -1050,7 +1067,7 @@ export default function ParentPortal() {
         </span>
         <b>MATHPOOH SOS</b>
       </footer>
-      {childManagerOpen && data?.children?.length ? <ParentChildManager onClose={() => setChildManagerOpen(false)} onDone={async () => { setChildManagerOpen(false); await load(); }} /> : null}
+      {childManagerOpen && data?.children?.length ? <ParentChildManager onClose={() => setChildManagerOpen(false)} onDone={async () => { setChildManagerOpen(false); await load(); }} linked={data.children} /> : null}
       <PortalStyle />
       <DetailStyle />
     </main>
@@ -1540,6 +1557,31 @@ function PortalStyle() {
         font-weight: 800;
         cursor: pointer;
       }
+      /* SOS324 · 자녀 전환 */
+      .child-switch { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .child-tabs { display: flex; gap: 6px; background: #eef4ef; border-radius: 11px; padding: 4px; flex-wrap: wrap; }
+      .child-tabs button {
+        border: 0; border-radius: 9px; background: transparent; cursor: pointer;
+        padding: 8px 15px; display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+      }
+      .child-tabs button b { font-size: 15px; color: #4a5a50; }
+      .child-tabs button small { font-size: 11px; color: #7f8d84; }
+      .child-tabs .on { background: #2f6937; box-shadow: 0 2px 8px rgba(47,105,55,.25); }
+      .child-tabs .on b, .child-tabs .on small { color: #fff; }
+      .child-one { display: flex; align-items: center; gap: 9px; }
+      .child-one b { font-size: 17px; color: #275032; }
+      .child-one .badge {
+        font-size: 12px; font-weight: 800; color: #226b3d;
+        background: #e7f4ec; border: 1px solid #c9e4d4; border-radius: 999px; padding: 5px 11px;
+      }
+      .child-one .badge.unassigned { color: #8a5312; background: #fff5e9; border-color: #f0d3a8; }
+      .add-child {
+        border: 1px dashed #cfd9d2; background: #fff; color: #7b877f;
+        border-radius: 9px; padding: 7px 11px; font-size: 12px; font-weight: 800; cursor: pointer;
+      }
+      .add-child:hover { color: #2f6937; border-color: #b6cdbd; }
+      .state .ghost { background: transparent; border-color: transparent; color: #8b968f; }
+
       .wrap {
         max-width: 1180px;
         margin: auto;
