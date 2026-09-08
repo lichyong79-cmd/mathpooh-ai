@@ -9,13 +9,41 @@ export async function POST(request:Request){
  const body=await request.json();const action=String(body.action??"");
  const name=String(body.name??"").trim(),phone=digits(body.phone);
  if(!name||phone.length<10)return NextResponse.json({message:"학생 이름과 휴대폰번호를 정확히 입력해 주세요."},{status:400});
+
+ // SOS327: 학부모가 자기 번호를 자녀 번호 칸에 넣는 실수가 흔하다.
+ // 그대로 두면 학생·학부모 계정의 초기 비밀번호까지 같아진다.
+ // 막지는 않되(형제자매·특수 사정 가능) 확인을 한 번 받는다.
+ if(phone===ctx.phone&&body.confirmSamePhone!==true)
+   return NextResponse.json({
+     message:"입력하신 번호가 학부모님 번호와 같습니다. 자녀의 휴대폰번호가 맞는지 확인해 주세요.",
+     needsConfirm:"samePhone",
+   },{status:409});
  if(action==="link"){
-   // 기존 학생은 이름+학생 휴대폰을 모두 맞춰야 연결 가능. 다른 학부모가 이미 연결된 학생은 임의 이전 금지.
-   const found=await ctx.supabase.from("students").select("id,name,parent_phone,phone,phone_last8").eq("name",name).or(`phone.eq.${phone},phone_last8.eq.${phone.slice(-8)}`).limit(2);
+   // SOS326: 예전에는 이름을 완전히 일치시켜야만 찾았다(.eq("name",name)).
+   // 저장된 이름에 공백이 섞이거나 학부모가 한 글자만 다르게 입력해도
+   // "일치하는 기존 학생을 찾지 못했습니다"가 떠서, 자녀를 알고 있는데도 연결이 막혔다.
+   // 특히 학부모가 탈퇴 후 재가입할 때 이 문제로 자녀를 되찾지 못했다.
+   //
+   // 이제 전화번호로 먼저 찾고 이름은 공백을 무시해 비교한다.
+   // 전화번호는 학생마다 고유하므로 이것만으로도 특정이 된다.
+   const norm=(v:unknown)=>String(v??"").replace(/\s+/g,"").toLowerCase();
+   const found=await ctx.supabase.from("students")
+     .select("id,name,parent_phone,phone,phone_last8,status")
+     .or(`phone.eq.${phone},phone_last8.eq.${phone.slice(-8)}`).limit(5);
    if(found.error)return NextResponse.json({message:found.error.message},{status:400});
-   if((found.data??[]).length!==1)return NextResponse.json({message:(found.data??[]).length?"같은 정보의 학생이 여러 명입니다. 관리자에게 연결을 요청해 주세요.":"일치하는 기존 학생을 찾지 못했습니다."},{status:404});
-   const student=found.data![0];const oldParent=digits(student.parent_phone);
-   if(oldParent&&oldParent!==ctx.phone)return NextResponse.json({message:"이미 다른 학부모 계정에 연결된 학생입니다. 관리자에게 확인해 주세요."},{status:409});
+
+   const all=found.data??[];
+   if(!all.length)
+     return NextResponse.json({message:"해당 번호로 등록된 학생을 찾지 못했습니다. 번호를 확인하시거나 학원으로 문의해 주세요."},{status:404});
+
+   const matched=all.filter((x:any)=>norm(x.name)===norm(name));
+   if(!matched.length)
+     return NextResponse.json({message:`해당 번호는 다른 학생(${String(all[0].name??"").slice(0,1)}○○)으로 등록되어 있습니다. 학생 이름을 확인해 주세요.`},{status:404});
+   if(matched.length>1)
+     return NextResponse.json({message:"같은 정보의 학생이 여러 명입니다. 학원으로 연결을 요청해 주세요."},{status:409});
+
+   const student=matched[0];const oldParent=digits(student.parent_phone);
+   if(oldParent&&oldParent!==ctx.phone)return NextResponse.json({message:"이미 다른 학부모 계정에 연결된 학생입니다. 학원으로 문의해 주세요."},{status:409});
    const saved=await ctx.supabase.from("students").update({parent_phone:ctx.phone}).eq("id",student.id).select("id,name,school,grade,phone").single();
    return saved.error?NextResponse.json({message:saved.error.message},{status:400}):NextResponse.json({success:true,student:saved.data});
  }

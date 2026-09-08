@@ -683,13 +683,22 @@ function StudentsPage({
     if (!input) return;
     const phone = input.replace(/\D/g, "");
     if (phone.length < 10) { alert("전화번호를 정확히 입력해 주세요."); return; }
-    if (!window.confirm(`${input} 학부모 계정을 탈퇴 처리할까요?\n\n· 학부모 로그인 계정이 삭제됩니다\n· 연결된 자녀와의 연결이 해제됩니다\n· 자녀의 학습기록은 그대로 유지됩니다\n\n되돌릴 수 없습니다.`)) return;
+    if (!window.confirm(`${input} 학부모 계정을 탈퇴 처리할까요?\n\n· 학부모 로그인 계정이 삭제됩니다\n· 자녀의 학습기록은 그대로 유지됩니다\n\n계속하시겠습니까?`)) return;
+    // SOS326: 연결까지 끊을지 물어본다.
+    // 연결을 남겨두면 같은 번호로 다시 가입할 때 자녀가 자동으로 보인다.
+    // 완전히 그만두는 경우에만 연결을 끊는 것이 맞다.
+    const keepLink = window.confirm(
+      "자녀와의 연결 정보를 남겨둘까요?\n\n"
+      + "[확인] 남겨둡니다 — 같은 번호로 다시 가입하면 자녀가 자동으로 다시 보입니다.\n"
+      + "        (잠시 쉬거나 비밀번호를 초기화하는 경우)\n\n"
+      + "[취소] 연결도 끊습니다 — 완전히 그만두는 경우.",
+    );
     setParentSyncBusy(true);
     try {
       const response = await fetch("/api/admin/parents/withdraw", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({ phone, keepLink }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "탈퇴 처리에 실패했습니다.");
@@ -1203,6 +1212,23 @@ function StudentModal({
     e.preventDefault();
     if (!form.name.trim() || !form.school.trim())
       return alert("학생 이름과 학교를 입력해 주세요.");
+
+    // SOS327: 학부모가 자녀 번호를 자기 번호로 잘못 적는 실수가 흔하다.
+    // 그러면 학부모 계정이 자녀를 찾지 못하는데 원인을 알아채기 어렵다.
+    // 형제자매나 특수한 사정이 있을 수 있으므로 막지는 않고 확인만 받는다.
+    const onlyDigits = (v: string) => String(v ?? "").replace(/\D/g, "");
+    if (
+      onlyDigits(form.phone) &&
+      onlyDigits(form.phone) === onlyDigits(form.parentPhone) &&
+      !window.confirm(
+        "학생 번호와 학부모 번호가 같습니다.\n\n"
+        + "학부모가 자녀 번호를 잘못 적은 경우일 수 있습니다.\n"
+        + "이대로 두면 학생 계정과 학부모 계정의 초기 비밀번호도 같아집니다.\n\n"
+        + "그대로 저장할까요?",
+      )
+    )
+      return;
+
     onSave(form);
   };
   return (

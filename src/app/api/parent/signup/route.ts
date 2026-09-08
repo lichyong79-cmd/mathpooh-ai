@@ -34,5 +34,18 @@ export async function POST(request:Request){
     const duplicate=/already|registered|duplicate|exists/i.test(created.error?.message??"");
     return NextResponse.json({message:duplicate?"이미 가입된 학부모 전화번호입니다. 학부모 로그인으로 들어가 주세요.":created.error?.message||"학부모 계정을 만들지 못했습니다."},{status:duplicate?409:400});
   }
-  return NextResponse.json({success:true,phone});
+  // SOS326: 학부모가 탈퇴 후 다시 가입하거나, 관리자가 학생에 학부모 번호를 미리
+  // 넣어둔 경우가 있다. 그때 이미 같은 번호로 연결된 자녀가 있으면
+  // 학부모가 따로 "기존 자녀 연결"을 하지 않아도 바로 보이도록 알려준다.
+  const linked=await supabase.from("students").select("id,name").eq("parent_phone",phone);
+  const linkedNames=(linked.data??[]).map((x:any)=>String(x.name??"")).filter(Boolean);
+
+  return NextResponse.json({
+    success:true,phone,
+    linkedCount:linkedNames.length,
+    linkedNames,
+    message:linkedNames.length
+      ? `가입이 완료되었습니다. 등록된 자녀 ${linkedNames.length}명(${linkedNames.join(", ")})이 자동으로 연결되었습니다.`
+      : "가입이 완료되었습니다. 로그인 후 자녀를 등록해 주세요.",
+  });
 }

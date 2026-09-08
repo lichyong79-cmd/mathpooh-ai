@@ -38,6 +38,20 @@ export default function ParentChildManager({
         body: JSON.stringify({ action: mode, name, phone, school, grade, password }),
       });
       const j = await r.json();
+      // SOS327: 학부모 번호와 자녀 번호가 같으면 한 번 확인받는다.
+      if (!r.ok && j.needsConfirm === "samePhone") {
+        if (!window.confirm(`${j.message}\n\n그대로 진행할까요?`)) { setBusy(false); return; }
+        const retry = await fetch("/api/parent/children", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: mode, name, phone, school, grade, password, confirmSamePhone: true }),
+        });
+        const rj = await retry.json();
+        if (!retry.ok) throw new Error(rj.message);
+        setMsg(mode === "link" ? "기존 자녀가 연결되었습니다." : "새 학생 계정이 만들어졌습니다.");
+        setTimeout(onDone, 500);
+        return;
+      }
       if (!r.ok) throw new Error(j.message);
       setMsg(mode === "link" ? "기존 자녀가 연결되었습니다." : "새 학생 계정이 만들어졌습니다.");
       setTimeout(onDone, 500);

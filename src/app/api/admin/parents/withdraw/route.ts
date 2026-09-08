@@ -23,6 +23,11 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => ({} as any));
   const phone = digits(body.phone);
+  // SOS326: 연결을 끊을지 여부를 선택할 수 있게 한다.
+  //   keepLink=true  → 계정만 삭제하고 학생의 학부모 번호는 남긴다.
+  //                    같은 번호로 다시 가입하면 자녀가 자동으로 다시 보인다.
+  //   keepLink=false → 연결까지 끊는다. 학부모가 완전히 그만두는 경우.
+  const keepLink = body.keepLink === true;
   if (phone.length < 10)
     return NextResponse.json({ message: "학부모 전화번호를 확인해 주세요." }, { status: 400 });
 
@@ -37,7 +42,7 @@ export async function POST(request: Request) {
     if (children.error) throw children.error;
 
     const names = (children.data ?? []).map((c: any) => String(c.name ?? "")).filter(Boolean);
-    if (children.data?.length) {
+    if (!keepLink && children.data?.length) {
       const unlink = await supabase
         .from("students")
         .update({ parent_phone: null })
@@ -70,11 +75,14 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       accountDeleted: deleted,
-      unlinked: children.data?.length ?? 0,
+      keepLink,
+      unlinked: keepLink ? 0 : (children.data?.length ?? 0),
       children: names,
-      message: deleted
-        ? `학부모 계정을 삭제했습니다. 자녀 ${names.length}명의 학습기록은 그대로 유지됩니다.`
-        : `연결만 해제했습니다. 해당 전화번호의 학부모 계정을 찾지 못했습니다.`,
+      message: !deleted
+        ? "해당 전화번호의 학부모 계정을 찾지 못했습니다."
+        : keepLink
+          ? `학부모 계정을 삭제했습니다. 자녀 ${names.length}명의 연결 정보는 남겨두었으므로, 같은 번호로 다시 가입하면 자동으로 다시 보입니다.`
+          : `학부모 계정을 삭제하고 자녀 ${names.length}명과의 연결을 해제했습니다. 학습기록은 그대로 유지됩니다.`,
     });
   } catch (error) {
     return NextResponse.json(
