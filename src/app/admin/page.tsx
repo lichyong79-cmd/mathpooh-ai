@@ -676,6 +676,33 @@ function StudentsPage({
   const [registrationBusy, setRegistrationBusy] = useState(false);
   const [parentSyncBusy, setParentSyncBusy] = useState(false);
 
+  // SOS325: 학부모 탈퇴. 학부모 계정만 지우고 학생·학습기록은 그대로 둔다.
+  // 학습기록은 학생의 것이지 학부모의 것이 아니고, 재등록 시 이어서 써야 한다.
+  const withdrawParent = async () => {
+    const input = window.prompt("탈퇴 처리할 학부모의 휴대폰번호를 입력하세요.\n\n학부모 계정만 삭제되고 자녀의 학습기록은 그대로 유지됩니다.");
+    if (!input) return;
+    const phone = input.replace(/\D/g, "");
+    if (phone.length < 10) { alert("전화번호를 정확히 입력해 주세요."); return; }
+    if (!window.confirm(`${input} 학부모 계정을 탈퇴 처리할까요?\n\n· 학부모 로그인 계정이 삭제됩니다\n· 연결된 자녀와의 연결이 해제됩니다\n· 자녀의 학습기록은 그대로 유지됩니다\n\n되돌릴 수 없습니다.`)) return;
+    setParentSyncBusy(true);
+    try {
+      const response = await fetch("/api/admin/parents/withdraw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "탈퇴 처리에 실패했습니다.");
+      alert(`${result.message}${result.children?.length ? `\n\n연결 해제된 자녀 : ${result.children.join(", ")}` : ""}`);
+      // 학생 목록에서 학부모 연결이 풀린 것을 바로 보이게 새로고침한다.
+      window.location.reload();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "탈퇴 처리에 실패했습니다.");
+    } finally {
+      setParentSyncBusy(false);
+    }
+  };
+
   const syncParentAccounts = async () => {
     setParentSyncBusy(true);
     try {
@@ -858,6 +885,9 @@ function StudentsPage({
         {tab === "students" ? <div style={{ display: "flex", gap: 8 }}>
           <button className="secondary-button" disabled={parentSyncBusy} onClick={() => void syncParentAccounts()}>
             {parentSyncBusy ? "계정 연결 중..." : "학부모 페이지 열기"}
+          </button>
+          <button className="secondary-button" disabled={parentSyncBusy} onClick={() => void withdrawParent()}>
+            학부모 탈퇴
           </button>
           <button
             className="primary-button"

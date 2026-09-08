@@ -45,6 +45,25 @@ async function context() {
         { status: 404 },
       ),
     };
+
+  // SOS325: 휴원·퇴원 상태는 저장만 되고 아무 효과가 없었다.
+  // 휴원 학생도 그대로 로그인해 학습을 진행할 수 있었다.
+  // 학습기록은 그대로 두고 접근만 막는다. 복귀 시 상태만 되돌리면 이어서 쓸 수 있다.
+  const membershipStatus = String(student.status ?? "");
+  if (membershipStatus === "휴원" || membershipStatus === "퇴원")
+    return {
+      error: NextResponse.json(
+        {
+          message:
+            membershipStatus === "휴원"
+              ? "현재 휴원 중입니다. 학습을 다시 시작하려면 학원으로 문의해 주세요."
+              : "퇴원 처리된 계정입니다. 학원으로 문의해 주세요.",
+          suspended: membershipStatus,
+        },
+        { status: 403 },
+      ),
+    };
+
   return { user, student, supabase };
 }
 

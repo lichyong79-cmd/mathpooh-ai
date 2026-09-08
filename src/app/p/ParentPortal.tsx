@@ -520,7 +520,7 @@ export default function ParentPortal() {
                         onClick={() => setSelected(String(c.id))}
                       >
                         <b>{c.name}</b>
-                        <small>{assignmentLabel(status)}</small>
+                        <small>{c.status === "휴원" || c.status === "퇴원" ? `${c.status} 중` : assignmentLabel(status)}</small>
                       </button>
                     );
                   })}
@@ -528,9 +528,15 @@ export default function ParentPortal() {
               ) : (
                 <div className="child-one">
                   <b>{data.children[0]?.name}</b>
-                  <span className={`badge ${report?.student?.assignmentStatus === "UNASSIGNED" ? "unassigned" : ""}`}>
-                    {report?.student?.assignmentStatus === "ASSIGNED" ? "연결중" : assignmentLabel(report?.student?.assignmentStatus)}
-                  </span>
+                  {/* SOS325: 휴원·퇴원 중이면 배정 상태보다 그 사실을 먼저 알려야 한다.
+                      아무 표시 없이 학습이 멈추면 학부모는 시스템 오류로 오해한다. */}
+                  {data.children[0]?.status === "휴원" || data.children[0]?.status === "퇴원" ? (
+                    <span className="badge paused">{data.children[0].status} 중</span>
+                  ) : (
+                    <span className={`badge ${report?.student?.assignmentStatus === "UNASSIGNED" ? "unassigned" : ""}`}>
+                      {report?.student?.assignmentStatus === "ASSIGNED" ? "연결중" : assignmentLabel(report?.student?.assignmentStatus)}
+                    </span>
+                  )}
                 </div>
               )}
               <button className="add-child" onClick={() => setChildManagerOpen(true)}>＋ 자녀 추가</button>
@@ -1575,6 +1581,7 @@ function PortalStyle() {
         background: #e7f4ec; border: 1px solid #c9e4d4; border-radius: 999px; padding: 5px 11px;
       }
       .child-one .badge.unassigned { color: #8a5312; background: #fff5e9; border-color: #f0d3a8; }
+      .child-one .badge.paused { color: #6b6b6b; background: #f1f2f1; border-color: #dcdedc; }
       .add-child {
         border: 1px dashed #cfd9d2; background: #fff; color: #7b877f;
         border-radius: 9px; padding: 7px 11px; font-size: 12px; font-weight: 800; cursor: pointer;
