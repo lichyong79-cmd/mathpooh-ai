@@ -6,6 +6,25 @@ export const runtime = "nodejs";
 
 const allowedKinds = new Set(["test", "solution", "original"]);
 
+export async function GET(request: Request) {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const path = new URL(request.url).searchParams.get("path")?.trim() ?? "";
+  if (!path || path.includes(".."))
+    return NextResponse.json({ message: "파일 경로가 올바르지 않습니다." }, { status: 400 });
+
+  const signed = await createClient().storage
+    .from("exam-files")
+    .createSignedUrl(path, 60 * 15);
+  if (signed.error || !signed.data?.signedUrl)
+    return NextResponse.json(
+      { message: "저장된 파일을 찾을 수 없습니다. 파일 변경에서 다시 선택해 주세요." },
+      { status: 404 },
+    );
+  return NextResponse.json({ url: signed.data.signedUrl });
+}
+
 export async function POST(request: Request) {
   const denied = await requireAdmin();
   if (denied) return denied;

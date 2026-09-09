@@ -13,7 +13,7 @@ import {
 } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
 import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
-import { authHeaders, signedStorageUrl } from "@/lib/supabase/rest";
+import { authHeaders } from "@/lib/supabase/rest";
 import AccountBox from "../AccountBox";
 import "../exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
@@ -2427,10 +2427,15 @@ function examToRow(
   };
 }
 
-// exam-files 버킷은 비공개입니다. 공개 URL 대신 만료되는 서명 URL을 만듭니다.
+// exam-files 버킷은 관리자 서버만 접근합니다. 브라우저 RLS와 무관하게
+// 관리자 인증을 확인한 서버에서 만료되는 주소를 발급합니다.
 async function storageFileUrl(path?: string) {
   if (!path) return "";
-  return await signedStorageUrl("exam-files", path);
+  const response = await fetch(`/api/admin/exam-files?path=${encodeURIComponent(path)}`);
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.url)
+    throw new Error(result.message || "파일 주소를 만들지 못했습니다.");
+  return String(result.url);
 }
 
 async function uploadExamFile(
@@ -3722,13 +3727,9 @@ function ExamsPage({
     let examRowCommitted = false;
     const newlyUploadedPaths: string[] = [];
     try {
-      let answersForSave = form.answers;
-      const solutionSource =
-        draftFiles.solution ?? (await getPdfSource("solution"));
-      if (solutionSource && !form.answers.some(Boolean)) {
-        answersForSave = await readAnswersFromPdf(solutionSource);
-        set("answers", answersForSave);
-      }
+      // 빠른정답 OCR은 오독 가능성이 있으므로 저장 시 몰래 실행하지 않는다.
+      // 관리자가 직접 '마지막 빠른정답 읽기'를 누르고 검수한 값만 저장한다.
+      const answersForSave = form.answers;
       const formForSave = { ...form, answers: answersForSave };
       const previousAnswers = editingId ? (exams.find((item) => item.id === editingId)?.answers ?? []) : [];
       const answersChanged = Boolean(editingId) && JSON.stringify(previousAnswers.map(String)) !== JSON.stringify(answersForSave.map(String));
@@ -3841,16 +3842,40 @@ function ExamsPage({
     }
   };
 
-  const remove = async (id: string) => {
-    if (!window.confirm("이 실전모의고사를 삭제할까요?")) return;
-    const config = getSupabaseConfig();
-    if (!config) return alert("Supabase 연결을 확인해 주세요.");
-    const response = await fetch(`${config.url}/rest/v1/exams?id=eq.${id}`, {
+  const remove = async (exam: PracticeExam) => {
+    if (!window.confirm(`'${exam.title}' 시험을 삭제할까요?\n\n응시기록·학생배정·회차연결이 있으면 삭제되지 않습니다.`)) return;
+    const response = await fetch("/api/admin/exams/delete", {
       method: "DELETE",
-      headers: { ...(await authHeaders()) },
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: exam.id }),
     });
-    if (!response.ok) return alert(`삭제 실패: ${await response.text()}`);
-    setExams((prev) => prev.filter((exam) => exam.id !== id));
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(`삭제 실패: ${result.message || "알 수 없는 오류"}`);
+    if (result.blocked?.length)
+      return alert("응시기록·학생배정 또는 회차연결이 있어 삭제하지 않았습니다.");
+    setExams((prev) => prev.filter((item) => item.id !== exam.id));
+  };
+
+  const emptyDrafts = exams.filter(
+    (exam) =>
+      exam.status === "작성중" &&
+      !exam.testFilePath &&
+      !exam.solutionFilePath &&
+      !exam.originalFilePath,
+  );
+  const cleanupEmptyDrafts = async () => {
+    if (!emptyDrafts.length) return alert("정리할 빈 시험이 없습니다.");
+    if (!window.confirm(`파일이 하나도 없는 작성중 시험 ${emptyDrafts.length}개를 정리할까요?\n\n응시기록·학생배정·회차연결이 있는 시험은 자동으로 제외됩니다.`)) return;
+    const response = await fetch("/api/admin/exams/delete", {
+      method: "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids: emptyDrafts.map((exam) => exam.id) }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) return alert(`일괄 정리 실패: ${result.message || "알 수 없는 오류"}`);
+    const deleted = new Set((result.deletedIds ?? []).map(String));
+    setExams((prev) => prev.filter((exam) => !deleted.has(String(exam.id))));
+    alert(`빈 시험 ${result.deleted ?? 0}개를 삭제했습니다.${result.blocked?.length ? `\n연결 데이터가 있는 ${result.blocked.length}개는 유지했습니다.` : ""}`);
   };
 
   const selectExamFile = (
@@ -3942,12 +3967,24 @@ function ExamsPage({
   };
 
   const updateAnswer = (index: number, value: string) => {
-    const next = Array.from(
-      { length: form.questionCount },
-      (_, i) => form.answers[i] ?? "",
-    );
-    next[index] = value.trim();
-    set("answers", next);
+    setForm((prev) => {
+      const next = Array.from(
+        { length: prev.questionCount },
+        (_, i) => prev.answers[i] ?? "",
+      );
+      next[index] = value.trim();
+      return { ...prev, answers: next, answerVerified: false };
+    });
+  };
+
+  const changeAnswerTypeAt = (no: number, makeObjective: boolean) => {
+    const objectiveCount = makeObjective ? no : no - 1;
+    setForm((prev) => ({
+      ...prev,
+      objectiveCount,
+      shortAnswerCount: Math.max(0, prev.questionCount - objectiveCount),
+      answerVerified: false,
+    }));
   };
 
   const normalizePdfToken = (value: string) =>
@@ -4069,39 +4106,24 @@ function ExamsPage({
             .trim(),
         );
 
-      for (const line of lineTexts) {
-        // 표준 형식: 1. ③ / 22. 8 / 30. 50
-        const match = line.match(
-          /^\s*(\d{1,3})\s*[.．)]?\s*([①②③④⑤]|-?\d+)\s*$/,
-        );
-        if (!match) continue;
-        const no = Number(match[1]);
-        if (no < 1 || no > form.questionCount) continue;
-        const answer = normalizePdfToken(match[2]).replace(/[^0-9-]/g, "");
-        if (!/^-?\d+$/.test(answer)) continue;
-        if (no <= form.objectiveCount && !/^[1-5]$/.test(answer)) continue;
+      const acceptPair = (noToken: string, answerToken: string) => {
+        const no = Number(noToken);
+        if (no < 1 || no > form.questionCount || parsed[no - 1]) return;
+        const answer = normalizePdfToken(answerToken).replace(/[^0-9-]/g, "");
+        if (!/^-?\d+$/.test(answer)) return;
+        if (no <= form.objectiveCount && !/^[1-5]$/.test(answer)) return;
         parsed[no - 1] = answer;
+      };
+
+      for (const line of lineTexts) {
+        // 한 줄에 하나인 표준 형식과 여러 셀이 나란히 추출된 표 형식을 모두 처리한다.
+        // 반드시 같은 줄 안에서 문항번호-정답 쌍이 확인된 경우만 채운다.
+        const pairs = [...line.matchAll(/(?:^|\s)(\d{1,3})\s*[.．)]?\s+([①②③④⑤]|-?\d+)(?=\s|$)/g)];
+        for (const pair of pairs) acceptPair(pair[1], pair[2]);
       }
 
-      // 일부 PDF는 번호와 답을 한 줄이 아닌 별도 토큰으로 내보내므로 토큰 순서 방식도 보조 적용합니다.
-      if (parsed.filter(Boolean).length < form.questionCount) {
-        const tokens = ordered
-          .flatMap((item) => item.text.split(/\s+/))
-          .filter(Boolean);
-        for (let i = 0; i < tokens.length - 1; i += 1) {
-          const noMatch = tokens[i].match(/^(\d{1,3})[.．)]?$/);
-          if (!noMatch) continue;
-          const no = Number(noMatch[1]);
-          if (no < 1 || no > form.questionCount || parsed[no - 1]) continue;
-          const answer = normalizePdfToken(tokens[i + 1]).replace(
-            /[^0-9-]/g,
-            "",
-          );
-          if (!/^-?\d+$/.test(answer)) continue;
-          if (no <= form.objectiveCount && !/^[1-5]$/.test(answer)) continue;
-          parsed[no - 1] = answer;
-        }
-      }
+      // 종전의 전역 토큰 순서 보조 인식은 제거한다. PDF 표의 다른 숫자를
+      // 정답으로 잘못 연결할 수 있으므로 애매한 칸은 빈칸으로 남기는 편이 안전하다.
 
       const found = parsed.filter(Boolean).length;
       if (found === form.questionCount) return parsed;
@@ -4118,12 +4140,12 @@ function ExamsPage({
     if (!source) return alert("해설지 PDF를 먼저 등록해 주세요.");
     try {
       const next = await readAnswersFromPdf(source);
-      set("answers", next);
+      setForm((prev) => ({ ...prev, answers: next, answerVerified: false }));
       const found = next.filter(Boolean).length;
       alert(
         found === form.questionCount
-          ? `정답 ${found}개를 모두 자동 추출했습니다.`
-          : `${found}/${form.questionCount}개를 추출했습니다. 비어 있는 답만 확인해 주세요.`,
+          ? `정답 ${found}개를 자동 인식했습니다. 오독될 수 있으니 반드시 빠른정답 원본과 대조해 주세요.`
+          : `${found}/${form.questionCount}개를 인식했습니다. 빈칸과 잘못 읽은 답을 직접 수정해 주세요.`,
       );
     } catch (error) {
       console.error(error);
@@ -4387,6 +4409,26 @@ function ExamsPage({
             flex-wrap: nowrap;
             white-space: nowrap;
           }
+          .cleanup-empty-exams {
+            border: 1px solid #dfb6b6;
+            border-radius: 9px;
+            background: #fff5f5;
+            color: #a33131;
+            padding: 9px 13px;
+            font-size: 12px;
+            font-weight: 900;
+          }
+          .quick-exam-delete {
+            width: max-content;
+            margin-top: 3px;
+            border: 0;
+            background: transparent;
+            color: #b23a3a;
+            padding: 0;
+            font-size: 11px;
+            font-weight: 800;
+            text-decoration: underline;
+          }
         }
       `}</style>
       {tab !== "monitor-results" ? <>
@@ -4434,8 +4476,9 @@ function ExamsPage({
           </section>
           <section className={`panel exam-list-panel ${tab === "analysis" ? "analysis-list-panel" : ""}`}>
             <div className="list-summary">
-              <strong>{tab === "analysis" ? `AI 문항분석 대상 ${exams.length}회` : `실전모의고사 ${exams.length}회`}</strong>
-              <span>{tab === "analysis" ? "시험별 분석 진행률과 문항 수를 확인하세요." : "컴퓨터가 달라도 동일한 DB 내용을 표시합니다."}</span>
+              <div><strong>{tab === "analysis" ? `AI 문항분석 대상 ${exams.length}회` : `실전모의고사 ${exams.length}회`}</strong>
+              <span>{tab === "analysis" ? "시험별 분석 진행률과 문항 수를 확인하세요." : "컴퓨터가 달라도 동일한 DB 내용을 표시합니다."}</span></div>
+              {tab === "list" && emptyDrafts.length ? <button className="cleanup-empty-exams" onClick={() => void cleanupEmptyDrafts()}>빈 작성중 시험 {emptyDrafts.length}개 일괄 삭제</button> : null}
             </div>
             <div className={`data-table exam-list ${tab === "analysis" ? "analysis-card-list" : ""}`}>
               <div className="table-head">
@@ -4458,6 +4501,7 @@ function ExamsPage({
                       <div>
                         <strong>{exam.title}</strong>
                         <small>{exam.range || "범위 미입력"}</small>
+                        {tab === "list" ? <button className="quick-exam-delete" onClick={() => void remove(exam)}>이 시험 삭제</button> : null}
                       </div>
                     </div>
                     <b data-label="시험코드">{exam.examCode}</b>
@@ -4556,7 +4600,7 @@ function ExamsPage({
                       <button onClick={() => editExam(exam)}>수정</button>
                       <button
                         className="delete"
-                        onClick={() => remove(exam.id)}
+                        onClick={() => void remove(exam)}
                       >
                         삭제
                       </button>
@@ -4674,6 +4718,8 @@ function ExamsPage({
                     setForm((prev) => ({
                       ...prev,
                       questionCount: count,
+                      objectiveCount: Math.min(prev.objectiveCount, count),
+                      shortAnswerCount: Math.max(0, count - Math.min(prev.objectiveCount, count)),
                       answers: Array.from(
                         { length: count },
                         (_, i) => prev.answers[i] ?? "",
@@ -4694,24 +4740,23 @@ function ExamsPage({
                   onChange={(e) => set("totalScore", Number(e.target.value))}
                 />
               </Field>
-              <Field label="객관식 문항">
+              <Field label="객관식 마지막 번호">
                 <input
                   type="number"
                   min="0"
+                  max={form.questionCount}
                   value={form.objectiveCount}
-                  onChange={(e) =>
-                    set("objectiveCount", Number(e.target.value))
-                  }
+                  onChange={(e) => {
+                    const objectiveCount = Math.max(0, Math.min(form.questionCount, Number(e.target.value)));
+                    setForm((prev) => ({ ...prev, objectiveCount, shortAnswerCount: prev.questionCount - objectiveCount, answerVerified: false }));
+                  }}
                 />
               </Field>
-              <Field label="단답형 문항">
+              <Field label="단답형 문항 (자동)">
                 <input
                   type="number"
-                  min="0"
                   value={form.shortAnswerCount}
-                  onChange={(e) =>
-                    set("shortAnswerCount", Number(e.target.value))
-                  }
+                  readOnly
                 />
               </Field>
               <Field label="시험 시간(분)">
@@ -4878,7 +4923,7 @@ function ExamsPage({
                   <h3>빠른 정답 자동 추출</h3>
                   <p>
                     해설지 마지막 페이지의 ‘빠른정답’을 읽어 1~30번 답을 자동
-                    입력합니다.
+                    입력합니다. AI 인식값은 임시값이므로 원본과 반드시 대조해 주세요.
                   </p>
                 </div>
               </div>
@@ -4889,8 +4934,8 @@ function ExamsPage({
                   {form.answers.filter(Boolean).length}/{form.questionCount}개 입력 · 배점합 {form.questionPoints.reduce((sum, v) => sum + Number(v || 0), 0)}/{form.totalScore}점
                 </strong>
                 <span>
-                  1~{form.objectiveCount}번 객관식 · {form.objectiveCount + 1}~
-                  {form.questionCount}번 단답형
+                  {form.objectiveCount ? `1~${form.objectiveCount}번 객관식 · ` : ""}
+                  {form.objectiveCount + 1}~{form.questionCount}번 주관식
                 </span>
               </div>
               <div>
@@ -4912,6 +4957,17 @@ function ExamsPage({
                 </button>
                 <button
                   type="button"
+                  className="secondary-button"
+                  disabled={!form.answers.some(Boolean)}
+                  onClick={() => {
+                    if (!window.confirm("현재 입력된 AI 인식값과 수동 입력값을 모두 지울까요?")) return;
+                    setForm((prev) => ({ ...prev, answers: Array(prev.questionCount).fill(""), answerVerified: false }));
+                  }}
+                >
+                  인식값 전체 초기화
+                </button>
+                <button
+                  type="button"
                   className={`verify-button ${form.answerVerified ? "verified" : ""}`}
                   onClick={() => verifyCurrentStep("answer")}
                 >
@@ -4929,6 +4985,18 @@ function ExamsPage({
                     className={!form.answers[index] ? "answer-missing" : ""}
                   >
                     <b>{no}</b>
+                    <button
+                      type="button"
+                      className={`answer-type-toggle ${objective ? "objective" : "short"}`}
+                      title={`${no}번을 ${objective ? "주관식" : "객관식"}부터 시작하도록 변경`}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        changeAnswerTypeAt(no, !objective);
+                      }}
+                    >
+                      {objective ? "객관식" : "주관식"}
+                    </button>
                     {objective ? (
                       <select
                         value={form.answers[index] ?? ""}
