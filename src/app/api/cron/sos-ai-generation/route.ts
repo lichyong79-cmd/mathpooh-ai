@@ -27,9 +27,9 @@ const STALE_MINUTES=7;
 // 10분 주기이므로 8회면 약 80분간 스스로 시도한다.
 const MAX_ATTEMPTS=8;
 
-// SOS298: 한 cron 호출에서 서로 다른 작업을 동시에 처리한다.
-// API/Vercel 부하를 급격히 올리지 않도록 기본값은 3, 운영 중 환경변수로 1~4 사이에서 조절한다.
-const CONCURRENCY=Math.min(4,Math.max(1,Number(process.env.SOS_AI_GENERATION_CONCURRENCY??3)||3));
+// SOS360: Supabase 유료 운영과 실제 7명 동시 응시 규모에 맞춰 기본 동시처리를 4명으로 올린다.
+// AI/Vercel 300초 제한 때문에 한 학생의 생성 묶음 크기는 그대로 유지한다.
+const CONCURRENCY=Math.min(4,Math.max(1,Number(process.env.SOS_AI_GENERATION_CONCURRENCY??4)||4));
 
 async function processJob(jobId:string,job:any){
   const supabase=createClient();
@@ -62,10 +62,13 @@ async function processJob(jobId:string,job:any){
     // 시도 횟수를 올리지 않고 그대로 대기열로 돌려보낸다.
     if(message.startsWith("PARTIAL_BATCH_DONE:")){
       const progress=message.split(":")[1]??"";
+      const requeuedAt=new Date().toISOString();
       await supabase.from("sos_ai_generation_jobs").update({
         status:"QUEUED",attempt_count:0,started_at:null,
         stage_message:`${progress}문항 완료 · 다음 실행에서 이어갑니다.`,last_error:null,
-        stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString(),
+        // 완료한 묶음은 대기열 뒤로 보낸다. 7명이 한꺼번에 몰려도 앞의
+        // 4명만 계속 선점하지 않고 나머지 학생도 다음 실행에서 생성이 시작된다.
+        requested_at:requeuedAt,stage_updated_at:requeuedAt,updated_at:requeuedAt,
       }).eq("id",jobId);
       return {status:"PARTIAL",resultSessionId:null,message:progress};
     }

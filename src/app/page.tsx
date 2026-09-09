@@ -1443,8 +1443,8 @@ function SosTrainingWorkspace({
     void ensureNext(recoverableParent, true);
   }, [loading, selectedCycleId, recoverableParent?.id, selectedOpen?.id]);
 
-  // SOS270: 생성 대기 중에는 학생이 새로고침을 눌러야만 READY를 알 수 있었다.
-  // 대기 중인 작업이 있으면 45초마다 스스로 확인한다. 탭이 뒤에 있으면 확인하지 않는다.
+  // SOS360: 생성 대기 중에는 15초마다 READY를 확인한다.
+  // 가벼운 상태 API만 호출하며, 탭이 뒤에 있으면 확인하지 않는다.
   const hasWaitingAiJob = aiGenerationJobs.some((j: any) =>
     ["QUEUED", "GENERATING"].includes(String(j.status)),
   );
@@ -1465,7 +1465,7 @@ function SosTrainingWorkspace({
           // 다음 자동 확인에서 다시 시도한다.
         }
       })();
-    }, 45000);
+    }, 15000);
     return () => window.clearInterval(timer);
   }, [hasWaitingAiJob, load]);
 
