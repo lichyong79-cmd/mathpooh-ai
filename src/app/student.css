@@ -985,3 +985,38 @@
   .student-portal .exam-state button,
   .student-portal .exam-download{min-width:116px}
 }
+
+/* SOS362 · student home: next exam and SOS to-do */
+.student-home-priority{max-width:1180px;margin:32px auto 16px;display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:16px}
+.student-home-priority>article{min-height:292px;padding:25px;border:1px solid #dfe9e2;border-radius:26px;background:#fff;box-shadow:var(--sos-shadow,0 12px 34px rgba(28,70,42,.07));display:flex;flex-direction:column}
+.student-home-priority header{display:flex;align-items:center;gap:13px;margin-bottom:20px}
+.student-home-priority header small{display:block;color:#18703b;font-size:10px;font-weight:950;letter-spacing:.15em}
+.student-home-priority header h2{margin:3px 0 0;font-size:22px;letter-spacing:-.035em}
+.student-priority-icon{width:45px;height:45px;flex:0 0 45px;border-radius:14px;background:linear-gradient(145deg,#174d2e,#237142);display:grid;place-items:center;color:#fff;font-size:16px;font-weight:950;box-shadow:0 7px 17px rgba(23,77,46,.2)}
+.student-next-exam-card{background:linear-gradient(145deg,#fff 55%,#f1f8f3)!important}
+.student-next-exam-content{display:flex;flex:1;flex-direction:column;align-items:flex-start}
+.student-next-exam-content>span{padding:6px 10px;border-radius:999px;background:#edf7f0;color:#176b38;font-size:11px;font-weight:900}
+.student-next-exam-content>span.is-pending{background:#fff6df;color:#855e0b}
+.student-next-exam-content>strong{display:block;margin-top:15px;color:#173e28;font-size:25px;line-height:1.28;letter-spacing:-.04em}
+.student-next-exam-content>p{margin:7px 0 17px;color:#69786e;font-size:14px;font-weight:800}
+.student-home-priority>article>button{align-self:flex-start;margin-top:auto;padding:11px 15px;border:0;border-radius:12px;background:#174d2e;color:#fff;font-weight:900;cursor:pointer;transition:.18s ease}
+.student-home-priority>article>button:hover{background:#0f3d23;transform:translateY(-1px)}
+.student-home-empty{flex:1;padding:20px 0;color:#68756c}
+.student-home-empty strong{display:block;color:#25382b;font-size:17px}
+.student-home-empty p{margin:7px 0;line-height:1.55;font-size:13px}
+.student-sos-todo-card header{align-items:center}
+.student-sos-counts{margin-left:auto;display:flex;gap:7px}
+.student-sos-counts span{padding:7px 9px;border-radius:10px;background:#f1f6f2;color:#536359;font-size:11px;font-weight:850;white-space:nowrap}
+.student-sos-counts b{margin-left:3px;color:#174d2e;font-size:14px}
+.student-sos-counts .has-overdue{background:#fff2e8;color:#a24d20}
+.student-sos-counts .has-overdue b{color:#bb421d}
+.student-sos-task-list{display:grid;gap:8px;margin-bottom:16px}
+.student-sos-task-list>div{display:grid;grid-template-columns:70px 1fr;align-items:center;gap:10px;padding:11px 12px;border:1px solid #e3ebe5;border-radius:13px;background:#f8fbf9}
+.student-sos-task-list span{font-size:11px;font-weight:900;color:#176b38}
+.student-sos-task-list p{margin:0;color:#536158;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.student-sos-task-list p b{color:#25382b}
+.student-sos-task-list>div.is-overdue{border-color:#f0d4c4;background:#fff8f3}
+.student-sos-task-list>div.is-overdue span{color:#c04a20}
+.student-sos-empty{padding-top:8px}
+@media(max-width:980px){.student-home-priority{grid-template-columns:1fr}.student-home-priority>article{min-height:260px}}
+@media(max-width:640px){.student-home-priority{margin:18px 14px 14px}.student-home-priority>article{min-height:0;padding:20px;border-radius:20px}.student-home-priority header{align-items:flex-start;flex-wrap:wrap}.student-home-priority header h2{font-size:20px}.student-sos-counts{width:100%;margin-left:58px}.student-next-exam-content>strong{font-size:21px}.student-home-priority>article>button{width:100%}.student-sos-task-list>div{grid-template-columns:64px minmax(0,1fr)}}

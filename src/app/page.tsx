@@ -17,6 +17,7 @@ import {
 } from "@/lib/landmark";
 import { difficultyLabel, DIFFICULTY_WEIGHTS } from "@/lib/difficulty-scale";
 import { sosStageLabel } from "@/lib/sos-week";
+import { cycleFromSnapshot } from "@/lib/sos-cycle";
 import SosUserManual from "@/components/sos-user-manual";
 
 // SOS309: 첫 로그인에 필요 없는 무거운 분석·훈련 화면은 실제로 열 때 내려받는다.
@@ -107,6 +108,7 @@ type Portal = {
   sosSessions?: Array<{
     id: string;
     phase: "DIAGNOSIS" | "TRAINING";
+    cycle_kind?: string | null;
     status: string;
     target_snapshot: any;
     round_no: number;
@@ -2796,6 +2798,146 @@ export default function StudentHome() {
       section: "strategy" as StudentSection,
     };
   }, [portal]);
+  const studentHomeOverview = useMemo(() => {
+    if (!portal) return null;
+    const seoulDate = (value: Date | string) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Seoul",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(value));
+    const today = seoulDate(new Date());
+    const dateValue = (value?: string | null) => {
+      if (!value) return Number.POSITIVE_INFINITY;
+      const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? `${value}T00:00:00+09:00`
+        : value;
+      const time = new Date(normalized).getTime();
+      return Number.isFinite(time) ? time : Number.POSITIVE_INFINITY;
+    };
+    const formatExamTime = (value?: string | null) => {
+      if (!value) return "시간 확인 중";
+      const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+      const date = new Date(dateOnly ? `${value}T00:00:00+09:00` : value);
+      if (!Number.isFinite(date.getTime())) return "시간 확인 중";
+      return new Intl.DateTimeFormat("ko-KR", {
+        timeZone: "Asia/Seoul",
+        month: "long",
+        day: "numeric",
+        weekday: "short",
+        ...(dateOnly
+          ? {}
+          : { hour: "numeric", minute: "2-digit", hour12: true }),
+      }).format(date);
+    };
+
+    const schedules = (portal.examSchedules ?? [])
+      .filter(
+        (schedule) =>
+          String(schedule.end_date || schedule.start_date) >= today,
+      )
+      .map((schedule) => ({
+        schedule,
+        exam: portal.exams.find((exam) => exam.id === schedule.exam_id) ?? null,
+      }))
+      .filter(
+        ({ exam }) =>
+          !exam ||
+          (exam.attempt?.status !== "submitted" &&
+            seoulDate(exam.open_at ?? exam.exam_date) >= today),
+      )
+      .sort(
+        (a, b) =>
+          dateValue(
+            a.exam?.open_at ?? a.exam?.exam_date ?? a.schedule.start_date,
+          ) -
+          dateValue(
+            b.exam?.open_at ?? b.exam?.exam_date ?? b.schedule.start_date,
+          ),
+      );
+    const scheduledExamIds = new Set(
+      schedules.map(({ schedule }) => schedule.exam_id).filter(Boolean),
+    );
+    const legacyExams = portal.exams
+      .filter(
+        (exam) =>
+          exam.attempt?.status !== "submitted" &&
+          seoulDate(exam.open_at ?? exam.exam_date) >= today &&
+          !scheduledExamIds.has(exam.id),
+      )
+      .sort(
+        (a, b) =>
+          dateValue(a.open_at ?? a.exam_date) -
+          dateValue(b.open_at ?? b.exam_date),
+      );
+    const nextSchedule = schedules[0];
+    const nextLegacyExam = legacyExams[0];
+    const nextExam = nextSchedule
+      ? {
+          title: nextSchedule.exam?.title ?? nextSchedule.schedule.cycle_name,
+          when: nextSchedule.exam
+            ? formatExamTime(
+                nextSchedule.exam.open_at ?? nextSchedule.exam.exam_date,
+              )
+            : `${formatExamTime(nextSchedule.schedule.start_date)} ~ ${formatExamTime(nextSchedule.schedule.end_date)}`,
+          state: nextSchedule.exam
+            ? "시험지 배정 완료"
+            : "신청 완료 · 시험 일정 준비 중",
+          linked: Boolean(nextSchedule.exam),
+        }
+      : nextLegacyExam
+        ? {
+            title: nextLegacyExam.title,
+            when: formatExamTime(
+              nextLegacyExam.open_at ?? nextLegacyExam.exam_date,
+            ),
+            state: "시험지 배정 완료",
+            linked: true,
+          }
+        : null;
+
+    const taskMap = new Map<
+      string,
+      {
+        id: string;
+        cycleName: string;
+        endDate: string;
+        stage: string;
+        overdue: boolean;
+        createdAt: string;
+      }
+    >();
+    (portal.sosSessions ?? [])
+      .filter((session) => isSosOpen(session))
+      .forEach((session) => {
+        const cycle = cycleFromSnapshot(session.target_snapshot);
+        const key = `${cycle?.id ?? "uncategorized"}:${session.phase}:${session.cycle_kind ?? "STANDARD"}:${session.round_no}`;
+        const task = {
+          id: session.id,
+          cycleName: cycle?.name ?? "SOS 학습",
+          endDate: cycle?.endDate ?? "",
+          stage: sosStageLabel(session),
+          overdue: Boolean(cycle?.endDate && cycle.endDate < today),
+          createdAt: session.created_at,
+        };
+        const previous = taskMap.get(key);
+        if (!previous || task.createdAt > previous.createdAt) {
+          taskMap.set(key, task);
+        }
+      });
+    const sosTasks = [...taskMap.values()].sort((a, b) => {
+      if (a.overdue !== b.overdue) return a.overdue ? 1 : -1;
+      return String(a.endDate || "9999-12-31").localeCompare(
+        String(b.endDate || "9999-12-31"),
+      );
+    });
+    return {
+      nextExam,
+      currentTasks: sosTasks.filter((task) => !task.overdue),
+      overdueTasks: sosTasks.filter((task) => task.overdue),
+    };
+  }, [portal]);
   const submittedExams = useMemo(
     () =>
       (portal?.exams ?? [])
@@ -3205,6 +3347,102 @@ export default function StudentHome() {
       ) : null}
       {activeSection === "home" ? (
         <>
+          <section
+            className="student-home-priority"
+            aria-label="다가오는 일정과 SOS 학습 할 일"
+          >
+            <article className="student-next-exam-card">
+              <header>
+                <div className="student-priority-icon" aria-hidden="true">
+                  D
+                </div>
+                <div>
+                  <small>NEXT MOCK EXAM</small>
+                  <h2>다음 실전모의고사</h2>
+                </div>
+              </header>
+              {studentHomeOverview?.nextExam ? (
+                <div className="student-next-exam-content">
+                  <span
+                    className={
+                      studentHomeOverview.nextExam.linked
+                        ? "is-linked"
+                        : "is-pending"
+                    }
+                  >
+                    {studentHomeOverview.nextExam.state}
+                  </span>
+                  <strong>{studentHomeOverview.nextExam.when}</strong>
+                  <p>{studentHomeOverview.nextExam.title}</p>
+                </div>
+              ) : (
+                <div className="student-home-empty">
+                  <strong>신청된 실전모의고사가 없습니다.</strong>
+                  <p>신청이 완료되면 다음 시험 일정이 이곳에 표시됩니다.</p>
+                </div>
+              )}
+              <button onClick={() => moveSection("exams")}>
+                시험 일정 보기
+              </button>
+            </article>
+
+            <article className="student-sos-todo-card">
+              <header>
+                <div className="student-priority-icon" aria-hidden="true">
+                  S
+                </div>
+                <div>
+                  <small>SOS TO-DO</small>
+                  <h2>SOS 학습 할 일</h2>
+                </div>
+                <div className="student-sos-counts">
+                  <span>
+                    할 일 <b>{studentHomeOverview?.currentTasks.length ?? 0}</b>
+                  </span>
+                  <span
+                    className={
+                      (studentHomeOverview?.overdueTasks.length ?? 0)
+                        ? "has-overdue"
+                        : ""
+                    }
+                  >
+                    밀린 학습{" "}
+                    <b>{studentHomeOverview?.overdueTasks.length ?? 0}</b>
+                  </span>
+                </div>
+              </header>
+              {(studentHomeOverview?.currentTasks.length ?? 0) +
+                (studentHomeOverview?.overdueTasks.length ?? 0) >
+              0 ? (
+                <div className="student-sos-task-list">
+                  {[
+                    ...(studentHomeOverview?.overdueTasks ?? []),
+                    ...(studentHomeOverview?.currentTasks ?? []),
+                  ]
+                    .slice(0, 3)
+                    .map((task) => (
+                      <div
+                        className={task.overdue ? "is-overdue" : ""}
+                        key={task.id}
+                      >
+                        <span>{task.overdue ? "밀린 학습" : "이번 할 일"}</span>
+                        <p>
+                          <b>{task.cycleName}</b> · {task.stage}
+                        </p>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <div className="student-home-empty student-sos-empty">
+                  <strong>지금 해야 할 SOS 학습이 없습니다.</strong>
+                  <p>새 진단이나 훈련이 배정되면 이곳에 표시됩니다.</p>
+                </div>
+              )}
+              <button onClick={() => moveSection("strategy")}>
+                SOS 공략 바로가기
+              </button>
+            </article>
+          </section>
           {todayTask ? (
             <section className={`student-today-task task-${todayTask.kind}`}>
               <div className="student-task-icon" aria-hidden="true">

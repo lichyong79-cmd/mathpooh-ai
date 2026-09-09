@@ -409,7 +409,7 @@ export async function GET(request: Request) {
   const { data: sosSessions } = await supabase
     .from("sos_training_sessions")
     .select(
-      "id,phase,status,target_snapshot,round_no,correct_count,total_count,decision,created_at",
+      "id,phase,cycle_kind,status,target_snapshot,round_no,correct_count,total_count,decision,created_at",
     )
     .eq("student_id", student.id)
     .in("status", ["ASSIGNED", "IN_PROGRESS", "COMPLETED", "PASSED", "RETRAIN"])
