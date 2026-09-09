@@ -2323,10 +2323,12 @@ export default function StudentHome() {
   // 관리자에서 답안을 수정하거나 강제 제출해도 학생 화면은 종전까지 최초
   // 로그인 데이터만 계속 보여줬다. 시험실 밖에서는 결과를 주기적으로 동기화한다.
   useEffect(() => {
-    if (!portal || activeExam || waitingExam) return;
+    // SOS359: 10문항 훈련 도중 포털 전체를 5초마다 다시 읽으면 모바일에서
+    // 무거운 화면이 재렌더링되며 간헐적으로 훈련 바깥 화면처럼 보일 수 있다.
+    if (!portal || activeExam || waitingExam || activeSection === "strategy") return;
     const timer = window.setInterval(() => void load(), 5000);
     return () => window.clearInterval(timer);
-  }, [portal, activeExam, waitingExam, load]);
+  }, [portal, activeExam, waitingExam, activeSection, load]);
 
   // 학생이 시험실 화면을 열어 둔 동안 관리자가 수동 답안 저장/강제 제출한 경우,
   // 제출 상태를 경량 조회해 자동으로 시험실을 닫고 최신 결과창을 표시한다.

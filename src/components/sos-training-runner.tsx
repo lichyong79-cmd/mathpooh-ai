@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import {useEffect,useMemo,useState} from "react";
+import {useEffect,useMemo,useRef,useState} from "react";
 import SosProblemImage from "./sos-problem-image";
 import SosGeneratedQuestionMathJax from "./sos-generated-question-mathjax";
 
@@ -26,6 +26,10 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
   const [now,setNow]=useState(Date.now());
   const [busy,setBusy]=useState(false);
   const [frozenElapsed,setFrozenElapsed]=useState<number|null>(null);
+  // 문항 저장을 순서대로 백그라운드 처리한다. 종전에는 저장 API가 끝날 때까지
+  // 다음 문항을 가려 약 7초씩 멈췄고, 그 사이 중복 클릭으로 이동이 겹칠 수 있었다.
+  const saveQueueRef=useRef<Promise<void>>(Promise.resolve());
+  const navigationLockRef=useRef(false);
   const item=items[index]??null;
   const itemId=String(item?.id??"");
   const elapsed=frozenElapsed??Math.max(1,Math.floor((now-started)/1000));
@@ -45,6 +49,7 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
 
   useEffect(()=>{const id=window.setInterval(()=>{if(!busy)setNow(Date.now());},1000);return()=>window.clearInterval(id);},[busy]);
   useEffect(()=>{
+    navigationLockRef.current=false;
     setAnswer(String(answers[itemId]??item?.studentAnswer??""));
     setStarted(Date.now());
     setNow(Date.now());
@@ -68,7 +73,21 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
   const homework=String(session?.cycle_kind)==="HOMEWORK";
   const label=homework?"AI 유사문항 3제 굳히기":Number(session?.round_no)===2?"2차 AI 유사훈련":"1차 맞춤훈련";
 
-  async function persistCurrent(requireAnswer=false){
+  function queueSave(itemToSave:any,value:string,sec:number,question:number,unknown=false){
+    const savingItemId=String(itemToSave?.id??"");
+    const operation=saveQueueRef.current.then(async()=>{
+      const saved=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_training_item",sessionId:session.id,itemId:savingItemId,answer:value,responseSeconds:sec,question,unknown})});
+      const savedJson=await saved.json().catch(()=>({}));
+      if(!saved.ok)throw new Error(savedJson.message||`${question}번 문항 저장 실패`);
+    });
+    // 한 요청이 실패해도 뒤 문항 저장은 계속 진행한다. 실패 문구는 즉시 학생에게 보인다.
+    saveQueueRef.current=operation.catch((error)=>{
+      onNotice(error instanceof Error?error.message:`${question}번 문항 저장 실패`);
+    });
+    return operation;
+  }
+
+  function persistCurrent(requireAnswer=false){
     if(!item)return false;
     const value=answer.trim();
     if(!value){
@@ -79,10 +98,8 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
     const nextAnswers={...answers,[itemId]:value};
     const nextSeconds={...seconds,[itemId]:sec};
     setAnswers(nextAnswers);setSeconds(nextSeconds);
-    const saved=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_training_item",sessionId:session.id,itemId,answer:value,responseSeconds:sec,question:index+1})});
-    const savedJson=await saved.json();
-    if(!saved.ok){onNotice(savedJson.message||"문항 저장 실패");return false;}
     onNotice("");
+    void queueSave(item,value,sec,index+1);
     return true;
   }
 
@@ -92,24 +109,21 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
   // 오답 교정 단계에서 이 문항을 다시 다루게 된다.
   const UNKNOWN_ANSWER="모르겠어요";
   async function markUnknown(){
-    if(!item||busy)return;
+    if(!item||busy||navigationLockRef.current)return;
     if(!window.confirm("이 문항을 '모르겠어요'로 표시하고 넘어갈까요?\n\n오답으로 기록되지만, 학습이 끝난 뒤 오답 교정에서 다시 풀어보게 됩니다."))return;
-    setBusy(true);
-    try{
-      const sec=Math.max(1,elapsed);
-      const saved=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_training_item",sessionId:session.id,itemId,answer:UNKNOWN_ANSWER,responseSeconds:sec,question:index+1,unknown:true})});
-      const savedJson=await saved.json();
-      if(!saved.ok){onNotice(savedJson.message||"문항 저장 실패");return;}
-      setAnswers({...answers,[itemId]:UNKNOWN_ANSWER});
-      setSeconds({...seconds,[itemId]:sec});
-      setAnswer(UNKNOWN_ANSWER);
-      onNotice("");
-      if(index<items.length-1)setIndex((v:number)=>v+1);
-    }finally{setBusy(false);}
+    navigationLockRef.current=true;
+    const sec=Math.max(1,elapsed);
+    setAnswers((current)=>({...current,[itemId]:UNKNOWN_ANSWER}));
+    setSeconds((current)=>({...current,[itemId]:sec}));
+    setAnswer(UNKNOWN_ANSWER);
+    onNotice("");
+    void queueSave(item,UNKNOWN_ANSWER,sec,index+1,true);
+    if(index<items.length-1)setIndex((v:number)=>v+1);
+    else navigationLockRef.current=false;
   }
 
   async function moveTo(target:number){
-    if(busy||target<0||target>=items.length||target===index)return;
+    if(busy||navigationLockRef.current||target<0||target>=items.length||target===index)return;
     // 미래 문항 건너뛰기 금지. 답을 저장한 문항과 바로 다음 문항까지만 접근 가능.
     if(target>maxUnlocked){
       onNotice(`${maxUnlocked+1}번 문항의 답을 먼저 입력해 주세요.`);
@@ -123,15 +137,17 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
       const ok=await persistCurrent(false);
       if(!ok)return;
     }
+    navigationLockRef.current=true;
     setIndex(target);
   }
 
   async function next(){
-    if(!item)return;
-    const ok=await persistCurrent(true);
+    if(!item||busy||navigationLockRef.current)return;
+    if(index>=items.length-1){await submitAll();return;}
+    const ok=persistCurrent(true);
     if(!ok)return;
-    if(index<items.length-1){setIndex((v:number)=>v+1);return;}
-    await submitAll();
+    navigationLockRef.current=true;
+    setIndex((v:number)=>v+1);
   }
 
   async function submitAll(){
@@ -153,9 +169,12 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
     setFrozenElapsed(finalElapsed);
     setBusy(true);
     try{
-      const saved=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_training_item",sessionId:session.id,itemId,answer:currentValue,responseSeconds:finalElapsed,question:index+1})});
-      const savedJson=await saved.json();
-      if(!saved.ok)throw new Error(savedJson.message||"마지막 문항 저장 실패");
+      setAnswers(mergedAnswers);
+      setSeconds(finalSeconds);
+      void queueSave(item,currentValue,finalElapsed,index+1);
+      // 마지막 제출에서만 백그라운드 저장 완료를 기다린다. 제출 API도 전체 답안을
+      // 다시 저장하므로 중간 네트워크 오류가 있어도 학생 답은 최종 복구된다.
+      await saveQueueRef.current;
 
       const response=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"submit",sessionId:session.id,answers:mergedAnswers,responseSeconds:finalSeconds})});
       const json=await response.json();
