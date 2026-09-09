@@ -149,16 +149,22 @@ export async function GET(request: Request) {
   const memberships = await supabase.from("learning_cycle_students").select("cycle_id").eq("student_id", student.id).eq("status", "ACTIVE");
   // 배포 직후 마이그레이션 전에도 학생 로그인 자체는 막지 않는다.
   const memberCycleIds: string[] = (memberships.data ?? []).map((x: any) => String(x.cycle_id));
+  let memberExamLinks: any[] = [];
+  let memberCycles: any[] = [];
   if (memberCycleIds.length) {
-    const cycleExams = await supabase.from("learning_cycle_exams").select("exam_id").in("cycle_id", memberCycleIds);
-    for (const row of cycleExams.data ?? []) accessibleExamIds.add(String(row.exam_id));
+    const [cycleExams, cycles] = await Promise.all([
+      supabase.from("learning_cycle_exams").select("cycle_id,exam_id").in("cycle_id", memberCycleIds),
+      supabase.from("learning_cycles").select("id,name,start_date,end_date,status").in("id", memberCycleIds).order("start_date", { ascending: false }),
+    ]);
+    memberExamLinks = cycleExams.data ?? [];
+    memberCycles = cycles.data ?? [];
+    for (const row of memberExamLinks) accessibleExamIds.add(String(row.exam_id));
   }
   const { data: exams, error } = await supabase
     .from("exams")
     .select(
       "id,title,exam_code,exam_date,grade,subject,exam_range,question_count,time_limit,total_score,question_points,objective_count,short_answer_count,test_file_path,solution_file_path,status,student_open,open_at,close_at,paused_at,paused_remaining_seconds,answer_keys,solution_open",
     )
-    .eq("student_open", true)
     .order("exam_date", { ascending: false })
     // 최근 시험과 현재 배정 화면에 충분한 범위만 내려 장기 누적 시 초기 로딩을 보호한다.
     .limit(60);
@@ -205,8 +211,11 @@ export async function GET(request: Request) {
             new Date(exam.open_at).getTime() - 60 * 60 * 1000,
           ).toISOString()
         : null;
-      const downloadAvailable =
-        !downloadAvailableAt || downloadAvailableAt <= now;
+      // 회차에 시험을 연결하면 학생에게 일정 카드는 바로 보이되,
+      // 시험지 파일은 시작 시각이 정해진 뒤 1시간 전부터만 내려준다.
+      const downloadAvailable = Boolean(
+        downloadAvailableAt && downloadAvailableAt <= now,
+      );
       let testUrl = "";
       if (downloadAvailable && exam.test_file_path)
         testUrl =
@@ -287,6 +296,7 @@ export async function GET(request: Request) {
           : "",
         solution_open: solutionAllowed,
         available:
+          Boolean(exam.student_open) &&
           !exam.paused_at &&
           Boolean(exam.close_at) &&
           (!exam.open_at || exam.open_at <= now) &&
@@ -386,6 +396,21 @@ export async function GET(request: Request) {
     };
   });
   const landmark = buildLandmarkSummary(landmarkRecords);
+  const examLinkByCycle = new Map(
+    memberExamLinks.map((row: any) => [String(row.cycle_id), String(row.exam_id)]),
+  );
+  const examById = new Map(examItems.map((exam: any) => [String(exam.id), exam]));
+  const examSchedules = memberCycles.map((cycle: any) => {
+    const examId = examLinkByCycle.get(String(cycle.id)) ?? null;
+    return {
+      cycle_id: String(cycle.id),
+      cycle_name: String(cycle.name ?? "SOS 회차"),
+      start_date: cycle.start_date,
+      end_date: cycle.end_date,
+      exam_id: examId,
+      exam_linked: Boolean(examId && examById.has(examId)),
+    };
+  });
 
   const { data: sosSessions } = await supabase
     .from("sos_training_sessions")
@@ -406,6 +431,7 @@ export async function GET(request: Request) {
         passwordChanged: student.password_changed,
       },
       exams: examItems,
+      examSchedules,
       sosSessions: sosSessions ?? [],
       landmark,
     },

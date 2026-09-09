@@ -95,6 +95,14 @@ type Portal = {
     passwordChanged: boolean;
   };
   exams: Exam[];
+  examSchedules?: Array<{
+    cycle_id: string;
+    cycle_name: string;
+    start_date: string;
+    end_date: string;
+    exam_id: string | null;
+    exam_linked: boolean;
+  }>;
   sosSessions?: Array<{
     id: string;
     phase: "DIAGNOSIS" | "TRAINING";
@@ -3287,11 +3295,29 @@ export default function StudentHome() {
               <i />{" "}
               <div>
                 <small>MATHEMATICS PROGRAM</small>
-                <h2>실전모의고사 응시</h2>
+                <h2>나의 시험일정</h2>
               </div>
             </div>
-            <span>{portal.exams.length}개 시험</span>
+            <span>{portal.exams.length + (portal.examSchedules ?? []).filter((schedule) => !schedule.exam_linked).length}개 일정</span>
           </div>
+          {(portal.examSchedules ?? []).filter((schedule) => !schedule.exam_linked).map((schedule) => (
+            <article key={`cycle-${schedule.cycle_id}`}>
+              <div className="exam-date">
+                <b>{new Date(schedule.start_date).getDate()}</b>
+                <span>{new Date(schedule.start_date).toLocaleDateString("ko-KR", { month: "short" })}</span>
+              </div>
+              <div className="exam-info">
+                <small>신청 완료</small>
+                <h3>{schedule.cycle_name}</h3>
+                <p>{schedule.start_date} · 시험 일정 등록 완료</p>
+              </div>
+              <div className="exam-state">
+                <b>신청 완료</b>
+                <strong>시험지 준비 중</strong>
+                <button disabled>시험지 배정 대기</button>
+              </div>
+            </article>
+          ))}
           {portal.exams.map((exam) => (
             <article key={exam.id}>
               <div className="exam-date">
@@ -3327,7 +3353,7 @@ export default function StudentHome() {
                   </>
                 ) : (
                   <>
-                    <b>{exam.attempt ? "응시 중" : "응시 예정"}</b>
+                    <b>{exam.attempt ? "응시 중" : "시험지 배정 완료"}</b>
                     {exam.download_available &&
                     exam.test_url &&
                     !exam.attempt ? (
@@ -3355,7 +3381,7 @@ export default function StudentHome() {
               </div>
             </article>
           ))}
-          {portal.exams.length === 0 ? (
+          {portal.exams.length === 0 && !(portal.examSchedules ?? []).length ? (
             <div className="student-empty">
               현재 응시할 시험이 없습니다.
             </div>
