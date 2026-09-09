@@ -1018,5 +1018,8 @@
 .student-sos-task-list>div.is-overdue{border-color:#f0d4c4;background:#fff8f3}
 .student-sos-task-list>div.is-overdue span{color:#c04a20}
 .student-sos-empty{padding-top:8px}
+.student-home-grid.is-compact{grid-template-columns:repeat(2,minmax(0,1fr))}
+.student-home-grid.is-compact .student-home-card{min-height:190px}
 @media(max-width:980px){.student-home-priority{grid-template-columns:1fr}.student-home-priority>article{min-height:260px}}
+@media(max-width:980px){.student-home-grid.is-compact{grid-template-columns:1fr}}
 @media(max-width:640px){.student-home-priority{margin:18px 14px 14px}.student-home-priority>article{min-height:0;padding:20px;border-radius:20px}.student-home-priority header{align-items:flex-start;flex-wrap:wrap}.student-home-priority header h2{font-size:20px}.student-sos-counts{width:100%;margin-left:58px}.student-next-exam-content>strong{font-size:21px}.student-home-priority>article>button{width:100%}.student-sos-task-list>div{grid-template-columns:64px minmax(0,1fr)}}

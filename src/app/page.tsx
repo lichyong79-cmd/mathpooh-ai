@@ -2938,6 +2938,16 @@ export default function StudentHome() {
       overdueTasks: sosTasks.filter((task) => task.overdue),
     };
   }, [portal]);
+  const openSosFromHome = () => {
+    const assignedTasks =
+      (studentHomeOverview?.currentTasks.length ?? 0) +
+      (studentHomeOverview?.overdueTasks.length ?? 0);
+    if (todayTask?.kind === "diagnosis" && assignedTasks === 0) {
+      window.alert("관리자가 아직 진단 문항을 결정하지 않았어요.");
+      return;
+    }
+    moveSection("strategy");
+  };
   const submittedExams = useMemo(
     () =>
       (portal?.exams ?? [])
@@ -3382,7 +3392,7 @@ export default function StudentHome() {
                 </div>
               )}
               <button onClick={() => moveSection("exams")}>
-                시험 일정 보기
+                실전모의고사 보기
               </button>
             </article>
 
@@ -3438,31 +3448,12 @@ export default function StudentHome() {
                   <p>새 진단이나 훈련이 배정되면 이곳에 표시됩니다.</p>
                 </div>
               )}
-              <button onClick={() => moveSection("strategy")}>
-                SOS 공략 바로가기
+              <button onClick={openSosFromHome}>
+                SOS 학습 보기
               </button>
             </article>
           </section>
-          {todayTask ? (
-            <section className={`student-today-task task-${todayTask.kind}`}>
-              <div className="student-task-icon" aria-hidden="true">
-                {todayTask.kind === "exam"
-                  ? "01"
-                  : todayTask.kind === "diagnosis"
-                    ? "02"
-                    : "03"}
-              </div>
-              <div className="student-task-copy">
-                <small>{todayTask.eyebrow}</small>
-                <h2>{todayTask.title}</h2>
-                <p>{todayTask.description}</p>
-              </div>
-              <button onClick={() => moveSection(todayTask.section)}>
-                {todayTask.action}
-              </button>
-            </section>
-          ) : null}
-          <section className="student-home-grid">
+          <section className="student-home-grid is-compact">
             <article className="student-home-card recent-score-card">
               <div>
                 <small>RECENT SCORE</small>
@@ -3478,7 +3469,7 @@ export default function StudentHome() {
                     평균 {scoreAverage}점 · 최고 {bestScore}점
                   </p>
                   <button onClick={() => moveSection("scores")}>
-                    성적표 확인
+                    성적분석 보기
                   </button>
                 </>
               ) : (
@@ -3486,7 +3477,7 @@ export default function StudentHome() {
                   <strong>-</strong>
                   <p>첫 시험을 완료하면 성적이 표시됩니다.</p>
                   <button onClick={() => moveSection("exams")}>
-                    시험 확인
+                    실전모의고사 보기
                   </button>
                 </>
               )}
@@ -3494,7 +3485,7 @@ export default function StudentHome() {
             <article className="student-home-card progress-card">
               <div>
                 <small>MY PROGRESS</small>
-                <h3>나의 성장</h3>
+                <h3>학습 현황</h3>
               </div>
               <strong>
                 {submittedExams.length}
@@ -3502,26 +3493,7 @@ export default function StudentHome() {
               </strong>
               <p>완료한 실전모의고사</p>
               <button onClick={() => moveSection("learning")}>
-                성장 리포트
-              </button>
-            </article>
-            <article className="student-home-card strategy-card">
-              <div>
-                <small>NEXT MISSION</small>
-                <h3>다음 공략</h3>
-              </div>
-              <strong>
-                {todayTask?.kind === "exam"
-                  ? "시험"
-                  : todayTask?.kind === "diagnosis"
-                    ? "진단"
-                    : "훈련"}
-              </strong>
-              <p>{todayTask?.title ?? "오늘의 학습을 확인하세요."}</p>
-              <button
-                onClick={() => moveSection(todayTask?.section ?? "strategy")}
-              >
-                바로 시작
+                학습분석 보기
               </button>
             </article>
           </section>
