@@ -390,6 +390,11 @@ export async function PATCH(request: Request) {
   }
 
   const minutes = Math.max(1, Number(currentExam.time_limit ?? 100));
+  if (action === "start" && currentExam.close_at)
+    return NextResponse.json(
+      { message: "이미 시작된 시험입니다. 진행 중에는 시작할 수 없습니다." },
+      { status: 409 },
+    );
   const startedAt =
     action === "start"
       ? new Date()

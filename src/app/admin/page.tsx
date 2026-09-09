@@ -3407,7 +3407,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
                 : "타이머 생성"}
           </button>
           <button
-            className="primary-button exam-start-button"
+            className={`primary-button exam-start-button ${isRunning ? "is-running" : isPaused ? "is-paused" : ""}`}
             onClick={() => void startExamTimer()}
             disabled={
               busy ||
@@ -3416,7 +3416,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
               isRunning || isPaused
             }
           >
-            시험 시작
+            {isRunning ? "시험 진행 중" : isPaused ? "시험 일시정지" : "시험 시작"}
           </button>
           {isRunning ? (
             <button className="secondary-button exam-pause-button" onClick={() => void controlExam("pause")} disabled={busy}>

@@ -63,6 +63,7 @@ type Exam = {
   solution_open?: boolean;
   solution_registered?: boolean;
   available: boolean;
+  waiting_available?: boolean;
   download_available: boolean;
   download_available_at?: string | null;
   open_at?: string | null;
@@ -2304,12 +2305,58 @@ export default function StudentHome() {
     if (!portalResponse.ok)
       return setError(data.message || "학생 정보를 불러오지 못했습니다.");
     setPortal(data);
+    // 관리자 결과수정 중 결과창이 열려 있으면 최신 점수·오답으로 즉시 교체한다.
+    setResultExam((current) =>
+      current
+        ? ((data.exams ?? []).find((exam: Exam) => exam.id === current.id) ?? current)
+        : null,
+    );
     setError("");
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 관리자에서 답안을 수정하거나 강제 제출해도 학생 화면은 종전까지 최초
+  // 로그인 데이터만 계속 보여줬다. 시험실 밖에서는 결과를 주기적으로 동기화한다.
+  useEffect(() => {
+    if (!portal || activeExam || waitingExam) return;
+    const timer = window.setInterval(() => void load(), 5000);
+    return () => window.clearInterval(timer);
+  }, [portal, activeExam, waitingExam, load]);
+
+  // 학생이 시험실 화면을 열어 둔 동안 관리자가 수동 답안 저장/강제 제출한 경우,
+  // 제출 상태를 경량 조회해 자동으로 시험실을 닫고 최신 결과창을 표시한다.
+  useEffect(() => {
+    if (!activeExam || !attempt) return;
+    const syncResult = async () => {
+      const response = await fetch(
+        `/api/student/portal?examStatus=${encodeURIComponent(activeExam.id)}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) return;
+      const statusData = await response.json();
+      if (statusData.attempt?.status !== "submitted") return;
+      const portalResponse = await fetch("/api/student/portal", { cache: "no-store" });
+      if (!portalResponse.ok) return;
+      const latest = await portalResponse.json();
+      const completed = (latest.exams ?? []).find(
+        (exam: Exam) => exam.id === activeExam.id,
+      );
+      if (!completed?.attempt || completed.attempt.status !== "submitted") return;
+      setPortal(latest);
+      setActiveExam(null);
+      setAttempt(null);
+      setAnswers({});
+      setBusy("");
+      setResultExam(completed);
+      setActiveSection("exams");
+    };
+    void syncResult();
+    const timer = window.setInterval(() => void syncResult(), 3000);
+    return () => window.clearInterval(timer);
+  }, [activeExam?.id, attempt?.id]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("matspu-student-section");
@@ -2336,6 +2383,24 @@ export default function StudentHome() {
   const requestStartExam = (exam: Exam) => {
     if (exam.attempt) {
       void startExam(exam);
+      return;
+    }
+    // 시험 시작 5분 전부터는 학생이 미리 대기실에 들어간다.
+    // 동의서는 관리자가 실제로 시작한 순간 자동으로 띄운다.
+    if (!exam.available) {
+      if (!exam.waiting_available) return;
+      void fetch("/api/student/portal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "activity-log",
+          examId: exam.id,
+          eventType: "exam_waiting",
+          detail: "시험 시작 대기실 입장",
+        }),
+        keepalive: true,
+      });
+      setWaitingExam(exam);
       return;
     }
     const consentKey = `mathpooh-exam-consent:${exam.id}`;
@@ -2439,7 +2504,10 @@ export default function StudentHome() {
         if (!current) return;
         setPortal(fullData);
         setWaitingExam(null);
-        void startExam(current);
+        // 대기 중인 학생에게는 관리자가 시작한 뒤 동의 안내가 자동으로 열린다.
+        // 동의 전에는 시험지와 답안 입력 화면을 열지 않는다.
+        setExamConsentChecked(false);
+        setExamConsent(current);
       }
     };
     void check();
@@ -3367,13 +3435,15 @@ export default function StudentHome() {
                       </a>
                     ) : null}
                     <button
-                      disabled={!exam.available || !exam.test_url}
+                      disabled={(!exam.available && !exam.waiting_available) || !exam.test_url}
                       onClick={() => requestStartExam(exam)}
                     >
                       {exam.attempt
                         ? "이어서 풀기"
                         : exam.available
                           ? "시험 시작"
+                          : exam.waiting_available
+                            ? "시험 보러가기"
                           : "응시시간 대기"}
                     </button>
                   </>

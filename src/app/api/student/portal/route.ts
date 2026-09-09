@@ -102,7 +102,7 @@ export async function GET(request: Request) {
   // 이 경량 분기는 해당 시험의 시작/중지 상태만 반환한다.
   const statusExamId = new URL(request.url).searchParams.get("examStatus");
   if (statusExamId) {
-    const [examResult, registrationResult] = await Promise.all([
+    const [examResult, registrationResult, attemptResult] = await Promise.all([
       supabase
         .from("exams")
         .select(
@@ -113,6 +113,12 @@ export async function GET(request: Request) {
       supabase
         .from("exam_registrations")
         .select("status")
+        .eq("student_id", student.id)
+        .eq("exam_id", statusExamId)
+        .maybeSingle(),
+      supabase
+        .from("exam_attempts")
+        .select("id,status,answers,started_at,last_saved_at,submitted_at,score,correct_count,wrong_numbers,unanswered_numbers")
         .eq("student_id", student.id)
         .eq("exam_id", statusExamId)
         .maybeSingle(),
@@ -127,6 +133,7 @@ export async function GET(request: Request) {
       {
         success: true,
         exam: examResult.data,
+        attempt: attemptResult.data ?? null,
         assigned: registrationResult.data?.status === "assigned" || cycleAssigned,
       },
       { headers: { "Cache-Control": "no-store" } },
@@ -216,6 +223,18 @@ export async function GET(request: Request) {
       const downloadAvailable = Boolean(
         downloadAvailableAt && downloadAvailableAt <= now,
       );
+      // 시험 5분 전에는 시험지 배정 학생만 대기실에 먼저 들어올 수 있다.
+      // 실제 응시는 관리자가 start를 눌러 close_at이 생성된 뒤에만 가능하다.
+      const waitingAvailableAt = exam.open_at
+        ? new Date(new Date(exam.open_at).getTime() - 5 * 60 * 1000).toISOString()
+        : null;
+      const waitingAvailable = Boolean(
+        exam.student_open &&
+        !exam.paused_at &&
+        waitingAvailableAt &&
+        waitingAvailableAt <= now &&
+        (!exam.close_at || exam.close_at >= now),
+      );
       let testUrl = "";
       if (downloadAvailable && exam.test_file_path)
         testUrl =
@@ -285,6 +304,7 @@ export async function GET(request: Request) {
         solution_registered: Boolean(exam.solution_file_path),
         download_available: downloadAvailable,
         download_available_at: downloadAvailableAt,
+        waiting_available: waitingAvailable,
         official_answers:
           submitted && Array.isArray(answer_keys)
             ? answer_keys.map(String)
