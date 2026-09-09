@@ -3536,6 +3536,16 @@ function ExamsPage({
   const [analysisPreviewTab, setAnalysisPreviewTab] = useState<
     "question" | "solution"
   >("question");
+  const examsByDate = useMemo(
+    () =>
+      [...exams].sort((a, b) => {
+        const dateOrder = (a.examDate || "9999-12-31").localeCompare(
+          b.examDate || "9999-12-31",
+        );
+        return dateOrder || a.round - b.round || a.title.localeCompare(b.title, "ko");
+      }),
+    [exams],
+  );
 
   // 시험 입력 화면은 임시 작업 화면이므로 새로고침 후 복원하지 않습니다.
   // F5를 누르면 항상 안전한 시험 목록에서 시작합니다.
@@ -4485,7 +4495,7 @@ function ExamsPage({
                 <span>등록 상태</span>
                 <span>관리</span>
               </div>
-              {exams.map((exam) => {
+              {examsByDate.map((exam) => {
                 const progress = registrationProgress(exam);
                 return (
                   <div className="table-row" key={exam.id}>
@@ -4984,19 +4994,24 @@ function ExamsPage({
                       {objective ? "객관식" : "주관식"}
                     </span>
                     {objective ? (
-                      <select
-                        value={form.answers[index] ?? ""}
-                        onChange={(e) => updateAnswer(index, e.target.value)}
-                      >
-                        <option value="">-</option>
-                        <option value="1">①</option>
-                        <option value="2">②</option>
-                        <option value="3">③</option>
-                        <option value="4">④</option>
-                        <option value="5">⑤</option>
-                      </select>
+                      <div className="answer-choice-buttons" aria-label={`${no}번 객관식 정답`}>
+                        {["①", "②", "③", "④", "⑤"].map((label, choiceIndex) => {
+                          const value = String(choiceIndex + 1);
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              className={form.answers[index] === value ? "selected" : ""}
+                              onClick={() => updateAnswer(index, value)}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     ) : (
                       <input
+                        className="answer-short-input"
                         inputMode="numeric"
                         value={form.answers[index] ?? ""}
                         onChange={(e) => updateAnswer(index, e.target.value)}

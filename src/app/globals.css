@@ -481,3 +481,6 @@ body{font-size:16px;line-height:1.5}
 
 /* SOS250 · 공통 장시간 작업 진행 정보 */
 .mathpooh-time-copy{display:flex;justify-content:space-between;gap:12px;margin-top:8px;font-size:12px;font-weight:800;color:#65736a}.mathpooh-current-label{display:block;margin:7px 0 3px;padding:7px 10px;border-radius:8px;background:#eef6f1;color:#216e45;font-size:12px}.mathpooh-loader.is-compact .mathpooh-time-copy{font-size:10px}
+
+/* SOS346 · 빠른정답 값이 접힌 select 안에 숨지 않도록 항상 표시 */
+.answer-key-grid label{grid-template-columns:1fr}.answer-key-grid label>b{text-align:left}.answer-key-grid .answer-type-toggle,.answer-key-grid .answer-choice-buttons,.answer-key-grid .answer-short-input{grid-column:1/-1}.answer-key-grid .answer-choice-buttons{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:3px;width:100%}.answer-key-grid .answer-choice-buttons button{min-width:0;height:34px;padding:0;border:1px solid #d8e1eb;border-radius:7px;background:#f7f9fc;color:#667085;font-size:16px;font-weight:900;cursor:pointer}.answer-key-grid .answer-choice-buttons button.selected{border-color:#2f743f;background:#2f743f;color:#fff;box-shadow:0 0 0 2px rgba(47,116,63,.13)}.answer-key-grid .answer-short-input{width:100%!important;min-width:0;font-size:17px!important;text-align:center}
