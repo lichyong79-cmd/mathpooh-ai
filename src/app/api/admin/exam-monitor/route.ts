@@ -70,7 +70,40 @@ export async function GET(request: Request) {
       { message: registrationError.message },
       { status: 400 },
     );
-  const studentIds = (registrations ?? []).map((item) => item.student_id);
+  // 회차 중심 운영: 시험별 수동 배정뿐 아니라 이 시험이 연결된 회차의
+  // ACTIVE 학생도 진행관리 대상에 포함한다.
+  const cycleLinks = await ctx.supabase
+    .from("learning_cycle_exams")
+    .select("cycle_id")
+    .eq("exam_id", examId);
+  if (cycleLinks.error)
+    return NextResponse.json({ message: cycleLinks.error.message }, { status: 400 });
+  const cycleIds = (cycleLinks.data ?? []).map((item: any) => String(item.cycle_id));
+  const cycleStudents = cycleIds.length
+    ? await ctx.supabase
+        .from("learning_cycle_students")
+        .select("student_id,registered_at")
+        .in("cycle_id", cycleIds)
+        .eq("status", "ACTIVE")
+    : { data: [], error: null };
+  if (cycleStudents.error)
+    return NextResponse.json({ message: cycleStudents.error.message }, { status: 400 });
+  const registrationByStudent = new Map<string, any>();
+  for (const registration of registrations ?? [])
+    registrationByStudent.set(String(registration.student_id), registration);
+  for (const membership of cycleStudents.data ?? []) {
+    const key = String((membership as any).student_id);
+    if (!registrationByStudent.has(key))
+      registrationByStudent.set(key, {
+        student_id: (membership as any).student_id,
+        status: "assigned",
+        requested_at: (membership as any).registered_at,
+        assigned_at: (membership as any).registered_at,
+        source: "cycle",
+      });
+  }
+  const assignedRegistrations = [...registrationByStudent.values()];
+  const studentIds = assignedRegistrations.map((item) => item.student_id);
   const questionMetadata = await loadQuestionMetadata(ctx.supabase, exam.id);
   if (!studentIds.length)
     return NextResponse.json({
@@ -185,7 +218,7 @@ export async function GET(request: Request) {
   const attemptMap = new Map(
     (attempts ?? []).map((attempt) => [attempt.student_id, attempt]),
   );
-  const rows = (registrations ?? [])
+  const rows = assignedRegistrations
     .map((registration) => ({
       registration,
       student: studentMap.get(registration.student_id),
