@@ -949,6 +949,20 @@
   background:#fff;
   color:#285f3a;
 }
+/* SOS361 · 결과보기는 탁한 쑥색 대신 MATHPOOH의 선명한 짙은 녹색 CTA로 표시 */
+.student-portal .student-result-button{
+  border:1px solid #174d2e!important;
+  background:linear-gradient(135deg,#174d2e 0%,#236b40 100%)!important;
+  color:#fff!important;
+  font-weight:900!important;
+  box-shadow:0 7px 16px rgba(23,77,46,.20)!important;
+  transition:transform .16s ease,box-shadow .16s ease,background .16s ease!important;
+}
+.student-portal .student-result-button:hover{
+  background:linear-gradient(135deg,#123f25 0%,#1c5d36 100%)!important;
+  box-shadow:0 10px 22px rgba(23,77,46,.27)!important;
+  transform:translateY(-1px);
+}
 .student-portal .mp-site-footer{
   border-top-color:#e4e7eb;
   background:#f3f4f6;
