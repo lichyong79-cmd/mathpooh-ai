@@ -1,6 +1,7 @@
 "use client";
 import { isSosReview, isSosStarted, isSosOpen } from "@/lib/sos-stage-state";
 import { BUSINESS } from "@/lib/legal";
+import { isObjectiveQuestion } from "@/lib/exam-question-type";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -2878,7 +2879,7 @@ export default function StudentHome() {
             <div className="omr-grid">
               {Array.from({ length: activeExam.question_count }, (_, index) => {
                 const no = index + 1;
-                const objective = no <= activeExam.objective_count;
+                const objective = isObjectiveQuestion(no, activeExam.question_count, activeExam.objective_count);
                 return (
                   <div
                     key={no}

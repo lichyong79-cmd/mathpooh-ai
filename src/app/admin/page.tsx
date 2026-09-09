@@ -30,6 +30,7 @@ import {
   type SourceWorkflowTone,
 } from "@/lib/source-workflow";
 import ProgramBatchesAdmin from "./ProgramBatchesAdmin";
+import { isObjectiveQuestion, questionTypeSummary } from "@/lib/exam-question-type";
 
 type CanonicalSourceAnalysisStatus = {
   success: boolean;
@@ -2365,8 +2366,10 @@ function examFromRow(row: any): PracticeExam {
     questionCount: Number(row.question_count ?? 30),
     timeLimit: Number(row.time_limit ?? 100),
     totalScore: Number(row.total_score ?? 100),
-    objectiveCount: Number(row.objective_count ?? 21),
-    shortAnswerCount: Number(row.short_answer_count ?? 9),
+    // SOS 30문항은 수능형 고정 구성(객관식 총 21, 주관식 총 9)입니다.
+    // 이전 UI 오류로 29/1이 저장된 작성중 시험도 열 때 즉시 정상화합니다.
+    objectiveCount: Number(row.question_count ?? 30) === 30 ? 21 : Number(row.objective_count ?? 21),
+    shortAnswerCount: Number(row.question_count ?? 30) === 30 ? 9 : Number(row.short_answer_count ?? 9),
     status: (row.status ?? "작성중") as ExamStatus,
     testFile: row.test_file_name ?? "",
     solutionFile: row.solution_file_name ?? "",
@@ -3977,16 +3980,6 @@ function ExamsPage({
     });
   };
 
-  const changeAnswerTypeAt = (no: number, makeObjective: boolean) => {
-    const objectiveCount = makeObjective ? no : no - 1;
-    setForm((prev) => ({
-      ...prev,
-      objectiveCount,
-      shortAnswerCount: Math.max(0, prev.questionCount - objectiveCount),
-      answerVerified: false,
-    }));
-  };
-
   const normalizePdfToken = (value: string) =>
     value
       .replace(/[\uE000-\uF8FF]/g, (char) => {
@@ -4111,7 +4104,7 @@ function ExamsPage({
         if (no < 1 || no > form.questionCount || parsed[no - 1]) return;
         const answer = normalizePdfToken(answerToken).replace(/[^0-9-]/g, "");
         if (!/^-?\d+$/.test(answer)) return;
-        if (no <= form.objectiveCount && !/^[1-5]$/.test(answer)) return;
+        if (isObjectiveQuestion(no, form.questionCount, form.objectiveCount) && !/^[1-5]$/.test(answer)) return;
         parsed[no - 1] = answer;
       };
 
@@ -4740,12 +4733,13 @@ function ExamsPage({
                   onChange={(e) => set("totalScore", Number(e.target.value))}
                 />
               </Field>
-              <Field label="객관식 마지막 번호">
+              <Field label="객관식 문항 수">
                 <input
                   type="number"
                   min="0"
                   max={form.questionCount}
                   value={form.objectiveCount}
+                  readOnly={form.questionCount === 30}
                   onChange={(e) => {
                     const objectiveCount = Math.max(0, Math.min(form.questionCount, Number(e.target.value)));
                     setForm((prev) => ({ ...prev, objectiveCount, shortAnswerCount: prev.questionCount - objectiveCount, answerVerified: false }));
@@ -4934,8 +4928,7 @@ function ExamsPage({
                   {form.answers.filter(Boolean).length}/{form.questionCount}개 입력 · 배점합 {form.questionPoints.reduce((sum, v) => sum + Number(v || 0), 0)}/{form.totalScore}점
                 </strong>
                 <span>
-                  {form.objectiveCount ? `1~${form.objectiveCount}번 객관식 · ` : ""}
-                  {form.objectiveCount + 1}~{form.questionCount}번 주관식
+                  {questionTypeSummary(form.questionCount, form.objectiveCount)}
                 </span>
               </div>
               <div>
@@ -4978,25 +4971,18 @@ function ExamsPage({
             <div className="answer-key-grid">
               {Array.from({ length: form.questionCount }, (_, index) => {
                 const no = index + 1;
-                const objective = no <= form.objectiveCount;
+                const objective = isObjectiveQuestion(no, form.questionCount, form.objectiveCount);
                 return (
                   <label
                     key={no}
                     className={!form.answers[index] ? "answer-missing" : ""}
                   >
                     <b>{no}</b>
-                    <button
-                      type="button"
+                    <span
                       className={`answer-type-toggle ${objective ? "objective" : "short"}`}
-                      title={`${no}번을 ${objective ? "주관식" : "객관식"}부터 시작하도록 변경`}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        changeAnswerTypeAt(no, !objective);
-                      }}
                     >
                       {objective ? "객관식" : "주관식"}
-                    </button>
+                    </span>
                     {objective ? (
                       <select
                         value={form.answers[index] ?? ""}

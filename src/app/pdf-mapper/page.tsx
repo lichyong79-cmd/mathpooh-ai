@@ -4,13 +4,14 @@ import { PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
 import { authHeaders, signedStorageUrl } from "@/lib/supabase/rest";
 import MATHPOOHLoader from "../../components/math-pooh-loader";
+import { isObjectiveQuestion } from "@/lib/exam-question-type";
 
 type Rect = { x:number; y:number; w:number; h:number };
 type Region = Rect & { number:number; page:number; answer:string; type:"choice"|"short"; verified:boolean; source:"auto"|"manual" };
 type PdfJs = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 
 function emptyRegions(count:number, objectiveCount=21):Region[]{
-  return Array.from({length:count},(_,i)=>({number:i+1,page:1,x:0,y:0,w:0,h:0,answer:"",type:i<objectiveCount?"choice":"short",verified:false,source:"auto"}));
+  return Array.from({length:count},(_,i)=>({number:i+1,page:1,x:0,y:0,w:0,h:0,answer:"",type:isObjectiveQuestion(i+1,count,objectiveCount)?"choice":"short",verified:false,source:"auto"}));
 }
 
 export default function PdfMapperPage(){
