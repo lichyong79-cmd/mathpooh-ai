@@ -3225,7 +3225,79 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
     window_blur: "창 포커스 이탈",
     window_focus: "창 포커스 복귀",
     exam_room_open: "응시 화면 진입",
+    screen_away: "화면 이탈 의심",
+    exam_reentry: "반복 재진입",
+    focus_away: "다른 창 사용 의심",
   } as Record<string, string>)[eventType] ?? eventType;
+
+  const suspiciousLogsFor = (studentId: string) => {
+    const logs = activityLogs
+      .filter((log) => String(log.student_id) === String(studentId))
+      .sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at)));
+    const suspicious: any[] = [];
+    let pendingHidden: any = null;
+
+    for (const log of logs) {
+      if (log.event_type === "page_hidden") {
+        pendingHidden = log;
+        continue;
+      }
+      if (log.event_type === "page_visible" && pendingHidden) {
+        const matched = String(log.detail ?? "").match(/(\d+)초/);
+        const seconds = matched
+          ? Number(matched[1])
+          : Math.max(0, Math.round((new Date(log.occurred_at).getTime() - new Date(pendingHidden.occurred_at).getTime()) / 1000));
+        if (seconds >= 3)
+          suspicious.push({
+            ...log,
+            id: `away-${pendingHidden.id}-${log.id}`,
+            event_type: "screen_away",
+            detail: `${seconds}초 동안 시험 화면을 벗어났다가 복귀`,
+          });
+        pendingHidden = null;
+      }
+    }
+    if (pendingHidden) {
+      const seconds = Math.max(0, Math.round((Date.now() - new Date(pendingHidden.occurred_at).getTime()) / 1000));
+      if (seconds >= 3)
+        suspicious.push({
+          ...pendingHidden,
+          id: `away-open-${pendingHidden.id}`,
+          event_type: "screen_away",
+          detail: `${seconds}초째 시험 화면 이탈 중`,
+        });
+    }
+
+    const roomEntries = logs.filter((log) => log.event_type === "exam_room_open");
+    if (roomEntries.length >= 2) {
+      const latest = roomEntries[roomEntries.length - 1];
+      suspicious.push({
+        ...latest,
+        id: `reentry-${studentId}`,
+        event_type: "exam_reentry",
+        detail: `응시 화면 ${roomEntries.length}회 진입 · 새로고침 또는 재접속 가능`,
+      });
+    }
+
+    const hiddenTimes = logs
+      .filter((log) => log.event_type === "page_hidden")
+      .map((log) => new Date(log.occurred_at).getTime());
+    const standaloneBlurs = logs.filter((log) => {
+      if (log.event_type !== "window_blur") return false;
+      const at = new Date(log.occurred_at).getTime();
+      return !hiddenTimes.some((hiddenAt) => Math.abs(hiddenAt - at) <= 2500);
+    });
+    if (standaloneBlurs.length) {
+      const latest = standaloneBlurs[standaloneBlurs.length - 1];
+      suspicious.push({
+        ...latest,
+        id: `focus-${studentId}`,
+        event_type: "focus_away",
+        detail: `시험 화면을 둔 채 다른 창으로 ${standaloneBlurs.length}회 이동`,
+      });
+    }
+    return suspicious.sort((a, b) => String(b.occurred_at).localeCompare(String(a.occurred_at)));
+  };
 
   if (mode === "results") return (
     <div className="exam-results-board">
@@ -3412,7 +3484,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
                   String(answer).trim(),
                 ).length
               : 0;
-            const studentLogs = activityLogs.filter((log) => log.student_id === row.student.id);
+            const studentLogs = suspiciousLogsFor(row.student.id);
             const isLogOpen = expandedLogStudentId === row.student.id;
             return (
               <div className="monitor-row-wrap" key={row.student.id}>
@@ -3430,10 +3502,11 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
                   <strong>{answered}개</strong>
                   <span>{formatTime(attempt?.submitted_at)}</span>
                   <button
-                    className={`student-log-button ${isLogOpen ? "open" : ""}`}
+                    className={`student-log-button ${studentLogs.length ? "has-risk" : "clear"} ${isLogOpen ? "open" : ""}`}
+                    disabled={!studentLogs.length}
                     onClick={() => setExpandedLogStudentId(isLogOpen ? null : row.student.id)}
                   >
-                    로그 {studentLogs.length}건 {isLogOpen ? "▲" : "▼"}
+                    {studentLogs.length ? `의심 ${studentLogs.length}건 ${isLogOpen ? "▲" : "▼"}` : "이상 없음"}
                   </button>
                 </div>
                 {isLogOpen ? (
@@ -3444,7 +3517,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
                         <b>{activityLabel(log.event_type)}</b>
                         <span>{log.detail || "-"}</span>
                       </div>
-                    )) : <div className="empty-list">기록된 로그가 없습니다.</div>}
+                    )) : <div className="empty-list">부정행위가 의심되는 기록이 없습니다.</div>}
                   </div>
                 ) : null}
               </div>
