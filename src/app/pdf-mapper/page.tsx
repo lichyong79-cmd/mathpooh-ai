@@ -2,7 +2,7 @@
 
 import { PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
-import { authHeaders, signedStorageUrl } from "@/lib/supabase/rest";
+import { authHeaders } from "@/lib/supabase/rest";
 import MATHPOOHLoader from "../../components/math-pooh-loader";
 import { isObjectiveQuestion } from "@/lib/exam-question-type";
 
@@ -53,7 +53,10 @@ export default function PdfMapperPage(){
         const exam=(await examRes.json())[0];
         if(!exam?.test_file_path) throw new Error("등록된 시험지 PDF가 없습니다.");
         setExamCode(exam.exam_code||"SOS"); setExamPdfName(exam.test_file_name||"시험지.pdf");
-        const url=await signedStorageUrl("exam-files",exam.test_file_path);
+        const signedRes=await fetch(`/api/admin/exam-files?path=${encodeURIComponent(exam.test_file_path)}`,{cache:"no-store"});
+        const signed=await signedRes.json().catch(()=>({}));
+        if(!signedRes.ok||!signed.url) throw new Error(signed.message||"시험지 파일 주소를 만들지 못했습니다.");
+        const url=String(signed.url);
         const pdfRes=await fetch(url,{cache:"no-store"});
         if(!pdfRes.ok) throw new Error("등록 시험지를 불러오지 못했습니다.");
         const bytes=new Uint8Array(await pdfRes.arrayBuffer());

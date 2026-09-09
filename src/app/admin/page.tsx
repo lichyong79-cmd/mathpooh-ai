@@ -3539,10 +3539,10 @@ function ExamsPage({
   const examsByDate = useMemo(
     () =>
       [...exams].sort((a, b) => {
-        const dateOrder = (a.examDate || "9999-12-31").localeCompare(
-          b.examDate || "9999-12-31",
+        const dateOrder = (b.examDate || "0000-00-00").localeCompare(
+          a.examDate || "0000-00-00",
         );
-        return dateOrder || a.round - b.round || a.title.localeCompare(b.title, "ko");
+        return dateOrder || b.round - a.round || a.title.localeCompare(b.title, "ko");
       }),
     [exams],
   );
@@ -4504,7 +4504,6 @@ function ExamsPage({
                       <div>
                         <strong>{exam.title}</strong>
                         <small>{exam.range || "범위 미입력"}</small>
-                        {tab === "list" ? <button className="quick-exam-delete" onClick={() => void remove(exam)}>이 시험 삭제</button> : null}
                       </div>
                     </div>
                     <b data-label="시험코드">{exam.examCode}</b>
