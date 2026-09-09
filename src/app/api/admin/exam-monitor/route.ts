@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { calculateExamScore } from "@/lib/exam-score";
+import { dedupeExamAttempts } from "@/lib/exam-attempt";
 
 async function adminContext() {
   const user = await getSessionUser();
@@ -138,9 +139,13 @@ export async function GET(request: Request) {
       { message: studentError?.message || attemptError?.message },
       { status: 400 },
     );
+  const canonicalAttempts = dedupeExamAttempts(
+    attempts ?? [],
+    (attempt) => String(attempt.student_id),
+  );
   if (exam.close_at && new Date(exam.close_at).getTime() <= Date.now()) {
     await Promise.all(
-      (attempts ?? [])
+      canonicalAttempts
         .filter((attempt) => attempt.status === "in_progress")
         .map(async (attempt) => {
           const answers = attempt.answers ?? {};
@@ -179,15 +184,9 @@ export async function GET(request: Request) {
   const studentMap = new Map(
     (students ?? []).map((student) => [student.id, student]),
   );
-  const attemptMap = new Map<string, any>();
-  for (const attempt of [...(attempts ?? [])].sort((a: any, b: any) => {
-    const aTime = String(a.graded_at ?? a.submitted_at ?? a.last_saved_at ?? a.created_at ?? "");
-    const bTime = String(b.graded_at ?? b.submitted_at ?? b.last_saved_at ?? b.created_at ?? "");
-    return bTime.localeCompare(aTime);
-  })) {
-    const key = String(attempt.student_id);
-    if (!attemptMap.has(key)) attemptMap.set(key, attempt);
-  }
+  const attemptMap = new Map(
+    canonicalAttempts.map((attempt) => [String(attempt.student_id), attempt]),
+  );
   const rows = assignedRegistrations
     .map((registration) => ({
       registration,
@@ -265,11 +264,15 @@ export async function PATCH(request: Request) {
     const endedAt = new Date().toISOString();
     const { data: runningAttempts, error: attemptsError } = await ctx.supabase
       .from("exam_attempts")
-      .select("id,answers")
+      .select("id,student_id,status,answers,started_at,last_saved_at,created_at")
       .eq("exam_id", examId)
       .eq("status", "in_progress");
     if (attemptsError) return NextResponse.json({ message: attemptsError.message }, { status: 400 });
-    await Promise.all((runningAttempts ?? []).map(async (attempt) => {
+    const finalAttempts = dedupeExamAttempts(
+      runningAttempts ?? [],
+      (attempt) => String(attempt.student_id),
+    );
+    await Promise.all(finalAttempts.map(async (attempt) => {
       const graded = gradeAnswers(attempt.answers ?? {});
       await ctx.supabase.from("exam_attempts").update({
         status: "submitted", submitted_at: endedAt, last_saved_at: endedAt,
@@ -283,7 +286,7 @@ export async function PATCH(request: Request) {
       .eq("id", examId)
       .select("id,title,exam_date,time_limit,student_open,open_at,close_at,paused_at,paused_remaining_seconds")
       .single();
-    return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ exam: data, submittedCount: (runningAttempts ?? []).length });
+    return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ exam: data, submittedCount: finalAttempts.length });
   }
 
 

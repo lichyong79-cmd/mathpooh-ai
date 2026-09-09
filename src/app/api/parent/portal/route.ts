@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
+import { dedupeExamAttempts } from "@/lib/exam-attempt";
 
 export const dynamic = "force-dynamic";
 const digits = (v: unknown) => String(v ?? "").replace(/\D/g, "");
@@ -95,7 +96,10 @@ export async function GET() {
       { message: attemptResult.error?.message || sessionResult.error?.message || posterResult.error?.message || registrationResult.error?.message },
       { status: 400 },
     );
-  const attempts = attemptResult.data ?? [];
+  const attempts = dedupeExamAttempts(
+    attemptResult.data ?? [],
+    (attempt) => `${attempt.student_id}:${attempt.exam_id}`,
+  );
   const examIds = [...new Set(attempts.map((x: any) => x.exam_id))];
   const examsResult = examIds.length
     ? await supabase

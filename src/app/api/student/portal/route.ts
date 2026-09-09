@@ -3,6 +3,10 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { calculateExamScore } from "@/lib/exam-score";
 import {
+  dedupeExamAttempts,
+  pickCanonicalAttempt,
+} from "@/lib/exam-attempt";
+import {
   buildLandmarkSummary,
   clampPercentile,
   classifyLandmarkSubject,
@@ -120,11 +124,7 @@ export async function GET(request: Request) {
         .from("exam_attempts")
         .select("id,status,answers,started_at,last_saved_at,submitted_at,graded_at,created_at,score,correct_count,wrong_numbers,unanswered_numbers")
         .eq("student_id", student.id)
-        .eq("exam_id", statusExamId)
-        .order("graded_at", { ascending: false, nullsFirst: false })
-        .order("submitted_at", { ascending: false, nullsFirst: false })
-        .limit(1)
-        .maybeSingle(),
+        .eq("exam_id", statusExamId),
     ]);
     if (examResult.error || !examResult.data)
       return NextResponse.json(
@@ -136,7 +136,7 @@ export async function GET(request: Request) {
       {
         success: true,
         exam: examResult.data,
-        attempt: attemptResult.data ?? null,
+        attempt: pickCanonicalAttempt(attemptResult.data ?? []),
         assigned: registrationResult.data?.status === "assigned" || cycleAssigned,
       },
       { headers: { "Cache-Control": "no-store" } },
@@ -190,17 +190,15 @@ export async function GET(request: Request) {
     : { data: [] };
   // 과거 장애로 같은 학생/시험의 응시행이 둘 이상 생긴 경우에도
   // 관리자가 가장 최근에 확정(graded_at)한 제출 결과 한 건만 사용한다.
-  const attemptMap = new Map<string, any>();
-  for (const attempt of [...(attempts ?? [])].sort((a: any, b: any) => {
-    const aTime = String(a.graded_at ?? a.submitted_at ?? a.last_saved_at ?? a.created_at ?? "");
-    const bTime = String(b.graded_at ?? b.submitted_at ?? b.last_saved_at ?? b.created_at ?? "");
-    return bTime.localeCompare(aTime);
-  })) {
-    const key = String(attempt.exam_id);
-    if (!attemptMap.has(key)) attemptMap.set(key, attempt);
-  }
+  const canonicalAttempts = dedupeExamAttempts(
+    attempts ?? [],
+    (attempt) => String(attempt.exam_id),
+  );
+  const attemptMap = new Map(
+    canonicalAttempts.map((attempt) => [String(attempt.exam_id), attempt]),
+  );
   // SOS309: 제출 시험마다 문항 분석을 따로 읽던 N+1 쿼리를 한 번으로 합친다.
-  const submittedExamIds = (attempts ?? [])
+  const submittedExamIds = canonicalAttempts
     .filter((attempt) => attempt.status === "submitted")
     .map((attempt) => String(attempt.exam_id));
   const metadataResult = submittedExamIds.length
@@ -481,12 +479,12 @@ export async function POST(request: Request) {
   if (action === "activity-log") {
     const eventType = String(body.eventType ?? "activity").slice(0, 60);
     const detail = String(body.detail ?? "").slice(0, 300);
-    const { data: attemptRow } = await supabase
+    const { data: attemptRows } = await supabase
       .from("exam_attempts")
       .select("id")
       .eq("exam_id", examId)
-      .eq("student_id", student.id)
-      .maybeSingle();
+      .eq("student_id", student.id);
+    const attemptRow = pickCanonicalAttempt(attemptRows ?? []);
     const { error } = await supabase.from("exam_activity_logs").insert({
       exam_id: examId,
       student_id: student.id,
@@ -540,12 +538,25 @@ export async function POST(request: Request) {
       { status: 403 },
     );
   }
-  const { data: existing } = await supabase
+  const requestedAttemptId = String(body.attemptId ?? "");
+  const { data: existingRows, error: existingError } = await supabase
     .from("exam_attempts")
     .select("*")
     .eq("exam_id", examId)
-    .eq("student_id", student.id)
-    .maybeSingle();
+    .eq("student_id", student.id);
+  if (existingError)
+    return NextResponse.json({ message: existingError.message }, { status: 400 });
+  const matchingRequested = requestedAttemptId
+    ? (existingRows ?? []).find((row) => String(row.id) === requestedAttemptId)
+    : null;
+  const existing = requestedAttemptId
+    ? matchingRequested ?? null
+    : pickCanonicalAttempt(existingRows ?? []);
+  if (requestedAttemptId && !existing)
+    return NextResponse.json(
+      { message: "현재 시험의 응시 기록이 바뀌었습니다. 시험 화면을 다시 열어 주세요." },
+      { status: 409 },
+    );
   if (action === "start") {
     if (existing?.status === "submitted")
       return NextResponse.json(
@@ -582,9 +593,20 @@ export async function POST(request: Request) {
         "exam_started",
         "시험 응시 시작",
       );
-    return error
-      ? NextResponse.json({ message: error.message }, { status: 400 })
-      : NextResponse.json({ attempt: data });
+    if (error) {
+      // UNIQUE 제약이 적용된 뒤 동시에 시작 요청이 들어오면 기존 행을 돌려준다.
+      if (String((error as any).code ?? "") === "23505") {
+        const { data: racedRows } = await supabase
+          .from("exam_attempts")
+          .select("*")
+          .eq("exam_id", examId)
+          .eq("student_id", student.id);
+        const raced = pickCanonicalAttempt(racedRows ?? []);
+        if (raced) return NextResponse.json({ attempt: raced });
+      }
+      return NextResponse.json({ message: error.message }, { status: 400 });
+    }
+    return NextResponse.json({ attempt: data });
   }
   if (!existing || existing.status !== "in_progress")
     return NextResponse.json(

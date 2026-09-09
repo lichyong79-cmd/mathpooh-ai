@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { buildStudentPerformance } from "@/lib/exam-performance";
+import { dedupeExamAttempts } from "@/lib/exam-attempt";
 
 export async function GET(request: Request) {
   const user = await getSessionUser();
@@ -30,7 +31,11 @@ export async function GET(request: Request) {
     .in("student_id", studentIds)
     .eq("status", "submitted");
   if (attemptError) return NextResponse.json({ message: attemptError.message }, { status: 400 });
-  const examIds = [...new Set((attempts ?? []).map((attempt) => attempt.exam_id))];
+  const canonicalAttempts = dedupeExamAttempts(
+    attempts ?? [],
+    (attempt) => `${attempt.student_id}:${attempt.exam_id}`,
+  );
+  const examIds = [...new Set(canonicalAttempts.map((attempt) => attempt.exam_id))];
   const examsResult = examIds.length
     ? await supabase.from("exams").select("id,title,exam_date,question_count,total_score,question_points,answer_keys,subject,solution_open,solution_file_path").in("id", examIds)
     : { data: [], error: null };
@@ -45,7 +50,7 @@ export async function GET(request: Request) {
       ...student,
       subunitMeters: (subunitMeterResult.data ?? []).filter((row) => String(row.student_id) === String(student.id)),
       performance: buildStudentPerformance(
-        (attempts ?? []).filter((attempt) => String(attempt.student_id) === String(student.id)),
+        canonicalAttempts.filter((attempt) => String(attempt.student_id) === String(student.id)),
         examsResult.data ?? [],
         metadataResult.data ?? [],
       ),

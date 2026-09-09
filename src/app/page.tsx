@@ -2278,6 +2278,8 @@ export default function StudentHome() {
   // 그걸 useEffect 의존성에 그대로 두면 타이머가 매 입력마다 초기화된다.
   // 최신 함수를 ref에 담아 두고 타이머는 ref만 호출한다.
   const saveRef = useRef<(silent?: boolean) => Promise<void>>(async () => {});
+  const startRequestRef = useRef(false);
+  const answerSaveTimerRef = useRef<number | null>(null);
   // 남은 시간은 1초씩 빼지 않고 종료 시각에서 계산한다.
   // 모바일은 화면이 꺼지거나 앱을 전환하면 타이머를 멈추므로, 빼기 방식은 시간이 어긋난다.
   const examEndAtRef = useRef<number>(0);
@@ -2337,6 +2339,22 @@ export default function StudentHome() {
       );
       if (!response.ok) return;
       const statusData = await response.json();
+      const serverExam = statusData.exam;
+      if (serverExam) {
+        const paused = Boolean(serverExam.paused_at);
+        setExamPaused(paused);
+        setActiveExam((current) =>
+          current ? { ...current, ...serverExam } : current,
+        );
+        if (paused) {
+          examEndAtRef.current = 0;
+          setRemaining(Number(serverExam.paused_remaining_seconds ?? 0));
+        } else if (serverExam.close_at) {
+          const end = new Date(serverExam.close_at).getTime();
+          examEndAtRef.current = end;
+          setRemaining(Math.max(0, Math.ceil((end - Date.now()) / 1000)));
+        }
+      }
       if (statusData.attempt?.status !== "submitted") return;
       const portalResponse = await fetch("/api/student/portal", { cache: "no-store" });
       if (!portalResponse.ok) return;
@@ -2449,30 +2467,35 @@ export default function StudentHome() {
   };
 
   const startExam = async (exam: Exam) => {
-    if (!exam.available || !exam.test_url) return;
+    if (!exam.available || !exam.test_url || startRequestRef.current) return;
+    startRequestRef.current = true;
     setBusy("시험을 준비하고 있습니다...");
-    const response = await fetch("/api/student/portal", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "start", examId: exam.id }),
-    });
-    const data = await response.json();
-    setBusy("");
-    if (!response.ok)
-      return alert(data.message || "시험을 시작하지 못했습니다.");
-    setActiveExam(exam);
-    setExamPaused(Boolean(exam.paused_at));
-    setAttempt(data.attempt);
-    setAnswers(data.attempt.answers ?? {});
-    const end = exam.close_at
-      ? new Date(exam.close_at).getTime()
-      : new Date(data.attempt.started_at).getTime() + exam.time_limit * 60_000;
-    examEndAtRef.current = exam.paused_at ? 0 : end;
-    setRemaining(
-      exam.paused_at
-        ? Number(exam.paused_remaining_seconds ?? 0)
-        : Math.max(0, Math.ceil((end - Date.now()) / 1000)),
-    );
+    try {
+      const response = await fetch("/api/student/portal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "start", examId: exam.id }),
+      });
+      const data = await response.json();
+      if (!response.ok)
+        return alert(data.message || "시험을 시작하지 못했습니다.");
+      setActiveExam(exam);
+      setExamPaused(Boolean(exam.paused_at));
+      setAttempt(data.attempt);
+      setAnswers(data.attempt.answers ?? {});
+      const end = exam.close_at
+        ? new Date(exam.close_at).getTime()
+        : new Date(data.attempt.started_at).getTime() + exam.time_limit * 60_000;
+      examEndAtRef.current = exam.paused_at ? 0 : end;
+      setRemaining(
+        exam.paused_at
+          ? Number(exam.paused_remaining_seconds ?? 0)
+          : Math.max(0, Math.ceil((end - Date.now()) / 1000)),
+      );
+    } finally {
+      startRequestRef.current = false;
+      setBusy("");
+    }
   };
 
   useEffect(() => {
@@ -2531,11 +2554,18 @@ export default function StudentHome() {
         body: JSON.stringify({
           action: "save",
           examId: activeExam.id,
+          attemptId: attempt.id,
           answers,
         }),
       });
-      setSaveState(response.ok ? "자동 저장됨" : "저장 실패 · 다시 시도");
-      if (!response.ok && !silent) alert("답안 저장에 실패했습니다.");
+      const data = await response.json().catch(() => ({}));
+      setSaveState(
+        response.ok
+          ? "자동 저장됨"
+          : `저장 실패 · ${data.message || "다시 시도"}`,
+      );
+      if (!response.ok && !silent)
+        alert(data.message || "답안 저장에 실패했습니다.");
     },
     [activeExam, answers, attempt, examPaused],
   );
@@ -2607,6 +2637,7 @@ export default function StudentHome() {
         body: JSON.stringify({
           action: "submit",
           examId: activeExam.id,
+          attemptId: attempt.id,
           answers,
         }),
       });
@@ -2800,6 +2831,13 @@ export default function StudentHome() {
     if (examPaused) return;
     setAnswers((prev) => ({ ...prev, [no]: value }));
     setSaveState("저장 대기");
+    if (answerSaveTimerRef.current)
+      window.clearTimeout(answerSaveTimerRef.current);
+    // 입력이 잠깐 멈추면 바로 저장하고, 기존 10초 자동저장은 안전망으로 유지한다.
+    answerSaveTimerRef.current = window.setTimeout(
+      () => void saveRef.current(true),
+      800,
+    );
   };
   const signOut = async () => {
     await createClient().auth.signOut();
@@ -3435,7 +3473,7 @@ export default function StudentHome() {
                       </a>
                     ) : null}
                     <button
-                      disabled={(!exam.available && !exam.waiting_available) || !exam.test_url}
+                      disabled={!!busy || (!exam.available && !exam.waiting_available) || !exam.test_url}
                       onClick={() => requestStartExam(exam)}
                     >
                       {exam.attempt
