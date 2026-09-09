@@ -122,7 +122,7 @@ export async function GET(request: Request) {
     ctx.supabase
       .from("exam_attempts")
       .select(
-        "id,student_id,status,answers,started_at,last_saved_at,submitted_at,score,correct_count,wrong_numbers,unanswered_numbers,score_source,solution_override,mathpooh_comment",
+        "id,student_id,status,answers,started_at,last_saved_at,submitted_at,graded_at,created_at,score,correct_count,wrong_numbers,unanswered_numbers,score_source,solution_override,mathpooh_comment",
       )
       .eq("exam_id", examId)
       .in("student_id", studentIds),
@@ -173,51 +173,21 @@ export async function GET(request: Request) {
         }),
     );
   }
-  // 제출 결과의 유일한 기준은 문항별 답안/정오답이다.
-  // 관리자 결과 화면을 열 때 현재 답안으로 점수를 다시 계산하고, DB의 최종점수도 같은 값으로 맞춘다.
-  await Promise.all(
-    (attempts ?? [])
-      .filter((attempt) => attempt.status === "submitted")
-      .map(async (attempt) => {
-        const graded = calculateExamScore(
-          (attempt.answers ?? {}) as Record<string, unknown>,
-          exam.answer_keys,
-          Number(exam.question_count),
-          Number(exam.total_score ?? 100),
-          exam.question_points,
-        );
-        const changed =
-          Number(attempt.score ?? -1) !== graded.score ||
-          Number(attempt.correct_count ?? -1) !== graded.correct ||
-          JSON.stringify(attempt.wrong_numbers ?? []) !== JSON.stringify(graded.wrong) ||
-          JSON.stringify(attempt.unanswered_numbers ?? []) !== JSON.stringify(graded.unanswered);
-        attempt.score = graded.score;
-        attempt.correct_count = graded.correct;
-        attempt.wrong_numbers = graded.wrong;
-        attempt.unanswered_numbers = graded.unanswered;
-        attempt.score_source = "auto";
-        if (changed) {
-          await ctx.supabase
-            .from("exam_attempts")
-            .update({
-              score: graded.score,
-              correct_count: graded.correct,
-              wrong_numbers: graded.wrong,
-              unanswered_numbers: graded.unanswered,
-              graded_at: new Date().toISOString(),
-              score_source: "auto",
-            })
-            .eq("id", attempt.id);
-        }
-      }),
-  );
+  // 결과 조회는 DB에 확정 저장된 점수/정오답을 그대로 반환한다.
+  // 재채점은 제출, 관리자 결과 저장, 명시적 재분석에서만 수행한다.
 
   const studentMap = new Map(
     (students ?? []).map((student) => [student.id, student]),
   );
-  const attemptMap = new Map(
-    (attempts ?? []).map((attempt) => [attempt.student_id, attempt]),
-  );
+  const attemptMap = new Map<string, any>();
+  for (const attempt of [...(attempts ?? [])].sort((a: any, b: any) => {
+    const aTime = String(a.graded_at ?? a.submitted_at ?? a.last_saved_at ?? a.created_at ?? "");
+    const bTime = String(b.graded_at ?? b.submitted_at ?? b.last_saved_at ?? b.created_at ?? "");
+    return bTime.localeCompare(aTime);
+  })) {
+    const key = String(attempt.student_id);
+    if (!attemptMap.has(key)) attemptMap.set(key, attempt);
+  }
   const rows = assignedRegistrations
     .map((registration) => ({
       registration,

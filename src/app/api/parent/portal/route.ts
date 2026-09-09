@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
-import { calculateExamScore } from "@/lib/exam-score";
 
 export const dynamic = "force-dynamic";
 const digits = (v: unknown) => String(v ?? "").replace(/\D/g, "");
@@ -132,13 +131,6 @@ export async function GET() {
     );
   const examRows = attempts.map((attempt: any) => {
     const exam: any = examMap.get(String(attempt.exam_id)) ?? {};
-    const graded = calculateExamScore(
-      attempt.answers ?? {},
-      exam.answer_keys,
-      Number(exam.question_count ?? 0),
-      Number(exam.total_score ?? 100),
-      exam.question_points,
-    );
     const units = new Map<string, { total: number; correct: number }>();
     const difficulties = new Map<string, { total: number; correct: number }>();
     for (const meta of analysisMap.get(String(attempt.exam_id)) ?? []) {
@@ -177,12 +169,12 @@ export async function GET() {
       examCode: exam.exam_code ?? "",
       examDate: exam.exam_date ?? attempt.submitted_at,
       subject: exam.subject ?? "",
-      score: graded.score,
+      score: Number(attempt.score ?? 0),
       totalScore: Number(exam.total_score ?? 100),
-      correct: graded.correct,
+      correct: Number(attempt.correct_count ?? 0),
       total: Number(exam.question_count ?? 0),
-      wrong: graded.wrong,
-      unanswered: graded.unanswered,
+      wrong: Array.isArray(attempt.wrong_numbers) ? attempt.wrong_numbers : [],
+      unanswered: Array.isArray(attempt.unanswered_numbers) ? attempt.unanswered_numbers : [],
       submittedAt: attempt.submitted_at,
       comment: String(attempt.mathpooh_comment ?? ""),
       units: bars(units),

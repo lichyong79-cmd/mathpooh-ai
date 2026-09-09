@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
-import { calculateExamScore } from "@/lib/exam-score";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -30,34 +29,8 @@ export async function GET() {
     .order("submitted_at", { ascending: false });
   if (error) return NextResponse.json({ message: error.message }, { status: 400 });
 
-  const examIds = [...new Set((attempts ?? []).map((item) => item.exam_id))];
-  const { data: exams } = examIds.length
-    ? await supabase.from("exams").select("id,answer_keys,question_count,total_score,question_points").in("id", examIds)
-    : { data: [] as any[] };
-  const examMap = new Map((exams ?? []).map((exam: any) => [String(exam.id), exam]));
-
-  const finalAttempts = (attempts ?? []).map((attempt: any) => {
-    const exam = examMap.get(String(attempt.exam_id));
-    if (!exam) return attempt;
-    const graded = calculateExamScore(
-      (attempt.answers ?? {}) as Record<string, unknown>,
-      exam.answer_keys,
-      Number(exam.question_count),
-      Number(exam.total_score ?? 100),
-      exam.question_points,
-    );
-    return {
-      ...attempt,
-      score: graded.score,
-      correct_count: graded.correct,
-      wrong_numbers: graded.wrong,
-      unanswered_numbers: graded.unanswered,
-      score_source: "auto",
-    };
-  });
-
   return NextResponse.json(
-    { attempts: finalAttempts },
+    { attempts: attempts ?? [] },
     { headers: { "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate", Pragma: "no-cache", Expires: "0" } },
   );
 }

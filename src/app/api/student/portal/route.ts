@@ -118,9 +118,12 @@ export async function GET(request: Request) {
         .maybeSingle(),
       supabase
         .from("exam_attempts")
-        .select("id,status,answers,started_at,last_saved_at,submitted_at,score,correct_count,wrong_numbers,unanswered_numbers")
+        .select("id,status,answers,started_at,last_saved_at,submitted_at,graded_at,created_at,score,correct_count,wrong_numbers,unanswered_numbers")
         .eq("student_id", student.id)
         .eq("exam_id", statusExamId)
+        .order("graded_at", { ascending: false, nullsFirst: false })
+        .order("submitted_at", { ascending: false, nullsFirst: false })
+        .limit(1)
         .maybeSingle(),
     ]);
     if (examResult.error || !examResult.data)
@@ -185,9 +188,17 @@ export async function GET(request: Request) {
         .eq("student_id", student.id)
         .in("exam_id", ids)
     : { data: [] };
-  const attemptMap = new Map(
-    (attempts ?? []).map((attempt) => [attempt.exam_id, attempt]),
-  );
+  // 과거 장애로 같은 학생/시험의 응시행이 둘 이상 생긴 경우에도
+  // 관리자가 가장 최근에 확정(graded_at)한 제출 결과 한 건만 사용한다.
+  const attemptMap = new Map<string, any>();
+  for (const attempt of [...(attempts ?? [])].sort((a: any, b: any) => {
+    const aTime = String(a.graded_at ?? a.submitted_at ?? a.last_saved_at ?? a.created_at ?? "");
+    const bTime = String(b.graded_at ?? b.submitted_at ?? b.last_saved_at ?? b.created_at ?? "");
+    return bTime.localeCompare(aTime);
+  })) {
+    const key = String(attempt.exam_id);
+    if (!attemptMap.has(key)) attemptMap.set(key, attempt);
+  }
   // SOS309: 제출 시험마다 문항 분석을 따로 읽던 N+1 쿼리를 한 번으로 합친다.
   const submittedExamIds = (attempts ?? [])
     .filter((attempt) => attempt.status === "submitted")
@@ -243,45 +254,10 @@ export async function GET(request: Request) {
               .from("exam-files")
               .createSignedUrl(exam.test_file_path, 60 * 60 * 3)
           ).data?.signedUrl ?? "";
-      let attempt = attemptMap.get(exam.id) ?? null;
+      const attempt = attemptMap.get(exam.id) ?? null;
       const submitted = attempt?.status === "submitted";
-      if (submitted && attempt) {
-        const graded = calculateExamScore(
-          (attempt.answers ?? {}) as Record<string, unknown>,
-          exam.answer_keys,
-          Number(exam.question_count),
-          Number(exam.total_score ?? 100),
-          exam.question_points,
-        );
-        const changed =
-          Number(attempt.score ?? -1) !== graded.score ||
-          Number(attempt.correct_count ?? -1) !== graded.correct ||
-          JSON.stringify(attempt.wrong_numbers ?? []) !==
-            JSON.stringify(graded.wrong) ||
-          JSON.stringify(attempt.unanswered_numbers ?? []) !==
-            JSON.stringify(graded.unanswered);
-        attempt = {
-          ...attempt,
-          score: graded.score,
-          correct_count: graded.correct,
-          wrong_numbers: graded.wrong,
-          unanswered_numbers: graded.unanswered,
-          score_source: "auto",
-        };
-        if (changed) {
-          await supabase
-            .from("exam_attempts")
-            .update({
-              score: graded.score,
-              correct_count: graded.correct,
-              wrong_numbers: graded.wrong,
-              unanswered_numbers: graded.unanswered,
-              graded_at: new Date().toISOString(),
-              score_source: "auto",
-            })
-            .eq("id", attempt.id);
-        }
-      }
+      // 결과 조회는 채점 작업이 아니다. 제출/관리자 수정 시 저장된 결과를 그대로 사용한다.
+      // 여기서 재채점하면 관리자가 확정한 점수가 학생 화면을 여는 순간 덮어써질 수 있다.
       let solutionUrl = "";
       const solutionAllowed =
         submitted &&

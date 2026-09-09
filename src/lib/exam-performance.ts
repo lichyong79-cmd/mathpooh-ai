@@ -1,5 +1,4 @@
 import { difficultyLabel } from "@/lib/difficulty-scale";
-import { calculateExamScore } from "@/lib/exam-score";
 export type PerformanceGroup = {
   label: string;
   total: number;
@@ -119,11 +118,11 @@ export function buildStudentPerformance(
       title: exam.title ?? "시험",
       examDate: exam.exam_date ?? "",
       submittedAt: attempt.submitted_at ?? "",
-      score: calculateExamScore(attempt.answers, exam.answer_keys, questionCount, Number(exam.total_score ?? 100), exam.question_points).score,
-      correct: recomputedCorrect,
+      score: Number(attempt.score ?? 0),
+      correct: Number(attempt.correct_count ?? recomputedCorrect),
       questionCount,
-      wrongNumbers,
-      unansweredNumbers,
+      wrongNumbers: Array.isArray(attempt.wrong_numbers) ? attempt.wrong_numbers : wrongNumbers,
+      unansweredNumbers: Array.isArray(attempt.unanswered_numbers) ? attempt.unanswered_numbers : unansweredNumbers,
       mathpoohComment: String(attempt.mathpooh_comment ?? ""),
       scoreSource: String(attempt.score_source ?? "auto"),
       solutionVisible: attempt.solution_override === true || (attempt.solution_override !== false && exam.solution_open === true),
