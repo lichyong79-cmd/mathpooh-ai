@@ -2438,24 +2438,18 @@ async function uploadExamFile(
   kind: "test" | "solution" | "original",
   file: File,
 ) {
-  const config = getSupabaseConfig();
-  if (!config) throw new Error("Supabase 환경변수가 설정되지 않았습니다.");
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const path = `${examId}/${kind}-${Date.now()}-${safeName}`;
-  const response = await fetch(
-    `${config.url}/storage/v1/object/exam-files/${path}`,
-    {
-      method: "POST",
-      headers: {
-        ...(await authHeaders()),
-        "Content-Type": file.type || "application/octet-stream",
-        "x-upsert": "true",
-      },
-      body: file,
-    },
-  );
-  if (!response.ok) throw new Error(await response.text());
-  return path;
+  const form = new FormData();
+  form.append("examId", examId);
+  form.append("kind", kind);
+  form.append("file", file);
+  const response = await fetch("/api/admin/exam-files", {
+    method: "POST",
+    body: form,
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok)
+    throw new Error(result.message || "시험 파일을 업로드하지 못했습니다.");
+  return String(result.path);
 }
 
 function ExamAssignmentPanel({
@@ -3724,6 +3718,9 @@ function ExamsPage({
     if (!config)
       return alert("Supabase 환경변수가 없습니다. .env.local을 확인해 주세요.");
     setSaving(true);
+    let createdExamId = "";
+    let examRowCommitted = false;
+    const newlyUploadedPaths: string[] = [];
     try {
       let answersForSave = form.answers;
       const solutionSource =
@@ -3748,30 +3745,37 @@ function ExamsPage({
         });
         if (!createResponse.ok) throw new Error(await createResponse.text());
         examId = String((await createResponse.json())[0].id);
+        createdExamId = examId;
       }
       const paths = {
         testFilePath: form.testFilePath,
         solutionFilePath: form.solutionFilePath,
         originalFilePath: form.originalFilePath,
       };
-      if (draftFiles.test)
+      if (draftFiles.test) {
         paths.testFilePath = await uploadExamFile(
           examId,
           "test",
           draftFiles.test,
         );
-      if (draftFiles.solution)
+        newlyUploadedPaths.push(paths.testFilePath);
+      }
+      if (draftFiles.solution) {
         paths.solutionFilePath = await uploadExamFile(
           examId,
           "solution",
           draftFiles.solution,
         );
-      if (draftFiles.original)
+        newlyUploadedPaths.push(paths.solutionFilePath);
+      }
+      if (draftFiles.original) {
         paths.originalFilePath = await uploadExamFile(
           examId,
           "original",
           draftFiles.original,
         );
+        newlyUploadedPaths.push(paths.originalFilePath);
+      }
       const row = examToRow(formForSave, paths);
       const updateResponse = await fetch(
         `${config.url}/rest/v1/exams?id=eq.${examId}`,
@@ -3786,6 +3790,7 @@ function ExamsPage({
         },
       );
       if (!updateResponse.ok) throw new Error(await updateResponse.text());
+      examRowCommitted = true;
       const savedExam = examFromRow((await updateResponse.json())[0]);
       setExams((prev) =>
         editingId
@@ -3817,6 +3822,17 @@ function ExamsPage({
       setTab("list");
     } catch (error) {
       console.error(error);
+      if (!examRowCommitted && newlyUploadedPaths.length)
+        await fetch("/api/admin/exam-files", {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ paths: newlyUploadedPaths }),
+        }).catch(() => null);
+      if (!examRowCommitted && createdExamId)
+        await fetch(`${config.url}/rest/v1/exams?id=eq.${createdExamId}`, {
+          method: "DELETE",
+          headers: { ...(await authHeaders()) },
+        }).catch(() => null);
       alert(
         `시험 저장 실패: ${error instanceof Error ? error.message : "알 수 없는 오류"}`,
       );
