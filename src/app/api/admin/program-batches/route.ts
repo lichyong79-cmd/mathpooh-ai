@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAdminUser } from "@/lib/supabase/auth";
 import { ensureParentAccount } from "@/lib/parent-account";
+import { normalizeSosScope } from "@/lib/sos-program-flow";
 
 const digits = (v: unknown) => String(v ?? "").replace(/\D/g, "");
 const koreaToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -9,6 +10,13 @@ const missing = (m: string) => m.includes("sos_program_") ? "먼저 SOS 프로�
 async function admin() { return await getAdminUser(); }
 
 async function cancelCycleAssignments(s: any, applicationId: string, now: string) {
+  const memberships = await s.from("learning_cycle_students").select("id").eq("application_id", applicationId).eq("status", "ACTIVE");
+  if (memberships.error) return memberships.error.message;
+  const membershipIds = (memberships.data ?? []).map((row: any) => row.id);
+  if (membershipIds.length) {
+    const registrations = await s.from("exam_registrations").update({ status: "cancelled", booking_status: "CANCELLED" }).in("cycle_student_id", membershipIds).neq("status", "refunded");
+    if (registrations.error) return registrations.error.message;
+  }
   const cancelled = await s.from("learning_cycle_students").update({ status: "CANCELLED", updated_at: now }).eq("application_id", applicationId).eq("status", "ACTIVE");
   return cancelled.error?.message ?? "";
 }
@@ -194,7 +202,7 @@ export async function POST(request: Request) {
     }
     try { await ensureParentAccount(s, app.parent_phone); } catch (e) { return NextResponse.json({ message: e instanceof Error ? e.message : "학부모 계정을 만들지 못했습니다." }, { status: 400 }); }
 
-    const links = await s.from("sos_program_batch_cycles").select("cycle_id").eq("batch_id", app.batch_id);
+    const links = await s.from("sos_program_batch_cycles").select("cycle_id,slot_no,learning_cycles(start_date,scheduled_at)").eq("batch_id", app.batch_id).order("slot_no");
     if (links.error) return NextResponse.json({ message: `회차 연결 조회 실패: ${links.error.message}` }, { status: 400 });
     const allCycleIds = (links.data ?? []).map((x: any) => String(x.cycle_id));
     if (allCycleIds.length !== 5) return NextResponse.json({ message: `5회 묶음 연결이 올바르지 않습니다. 현재 ${allCycleIds.length}회 연결되어 있습니다.` }, { status: 400 });
@@ -203,15 +211,49 @@ export async function POST(request: Request) {
     const partial = String(app.application_mode ?? "ALL") === "CYCLES";
     if (partial && !selected.length) return NextResponse.json({ message: "회차별 신청 정보가 비어 있습니다. 신청 내역을 확인해 주세요." }, { status: 400 });
     const cycleIds = partial ? selected : allCycleIds;
+    const selectedSlots = (links.data ?? []).filter((row: any) => cycleIds.includes(String(row.cycle_id)))
+      .sort((a: any, z: any) => String(a.learning_cycles?.start_date ?? "").localeCompare(String(z.learning_cycles?.start_date ?? "")));
+    const scopeCode = normalizeSosScope(app.scope_code);
+
+    const [formalAttempts, formalMemberships] = await Promise.all([
+      s.from("exam_attempts").select("formal_sequence,is_practice").eq("student_id", studentId).eq("status", "submitted"),
+      s.from("learning_cycle_students").select("formal_sequence,is_practice").eq("student_id", studentId).eq("status", "ACTIVE"),
+    ]);
+    if (formalAttempts.error || formalMemberships.error)
+      return NextResponse.json({ message: formalAttempts.error?.message || formalMemberships.error?.message || "공식 참가순번 확인 실패" }, { status: 400 });
+    const existingSequences = [...(formalAttempts.data ?? []), ...(formalMemberships.data ?? [])]
+      .filter((row: any) => !row.is_practice && Number(row.formal_sequence) > 0)
+      .map((row: any) => Number(row.formal_sequence));
+    const firstSequence = Math.max(0, ...existingSequences) + 1;
 
     const enrollment = await s.from("sos_program_enrollments").upsert({ application_id: app.id, batch_id: app.batch_id, student_id: studentId, status: "ACTIVE", enrolled_at: now }, { onConflict: "application_id" });
     if (enrollment.error) return NextResponse.json({ message: `SOS 등록 저장 실패: ${enrollment.error.message}` }, { status: 400 });
 
-    const cycleEnrollment = await s.from("learning_cycle_students").upsert(
-      cycleIds.map((cycleId: string) => ({ application_id: app.id, cycle_id: cycleId, student_id: studentId, source: "SOS_APPLICATION", status: "ACTIVE", registered_at: now, updated_at: now })),
-      { onConflict: "cycle_id,student_id" },
-    );
+    const cycleEnrollmentRows = selectedSlots.map((slot: any, index: number) => ({
+      application_id: app.id, cycle_id: slot.cycle_id, student_id: studentId,
+      source: "SOS_APPLICATION", status: "ACTIVE", registered_at: now, updated_at: now,
+      formal_sequence: firstSequence + index, scope_code: scopeCode, attendance_mode: "ZOOM",
+      scheduled_at: slot.learning_cycles?.scheduled_at || null, booking_status: "SCHEDULED",
+      sos_gate_status: firstSequence + index <= 1 ? "OPEN" : "LOCKED", is_practice: false,
+    }));
+    const cycleEnrollment = await s.from("learning_cycle_students").upsert(cycleEnrollmentRows, { onConflict: "cycle_id,student_id" }).select("id,cycle_id,student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status");
     if (cycleEnrollment.error) return NextResponse.json({ message: `학생-회차 연결 실패: ${missing(cycleEnrollment.error.message)}` }, { status: 400 });
+
+    // 일정에 해당 순번·범위 시험지가 이미 연결돼 있으면 학생에게 즉시 정확한 한 장만 배정합니다.
+    for (const membership of cycleEnrollment.data ?? []) {
+      const examLink = await s.from("learning_cycle_exams").select("exam_id")
+        .eq("cycle_id", membership.cycle_id).eq("formal_sequence", membership.formal_sequence)
+        .eq("scope_code", membership.scope_code).maybeSingle();
+      if (examLink.error) return NextResponse.json({ message: `시험지 연결 확인 실패: ${missing(examLink.error.message)}` }, { status: 400 });
+      if (!examLink.data) continue;
+      const examRegistration = await s.from("exam_registrations").upsert({
+        exam_id: examLink.data.exam_id, student_id: studentId, cycle_student_id: membership.id,
+        formal_sequence: membership.formal_sequence, scope_code: membership.scope_code,
+        attendance_mode: membership.attendance_mode, scheduled_at: membership.scheduled_at,
+        booking_status: membership.booking_status, status: "assigned", assigned_at: now,
+      }, { onConflict: "exam_id,student_id" });
+      if (examRegistration.error) return NextResponse.json({ message: `학생 시험지 배정 실패: ${missing(examRegistration.error.message)}` }, { status: 400 });
+    }
 
     const finalized = await s.from("sos_program_applications")
       .update({ student_id: studentId, status: "ENROLLED", paid_at: now, enrolled_at: now, updated_at: now })
@@ -223,7 +265,7 @@ export async function POST(request: Request) {
       await s.from("sos_program_enrollments").delete().eq("application_id", app.id);
       return NextResponse.json({ message: finalized.error?.message || "신청 상태 마감 처리에 실패했습니다. 다시 확인해 주세요." }, { status: 409 });
     }
-    return NextResponse.json({ success: true, studentId, assignedCycleCount: cycleIds.length });
+    return NextResponse.json({ success: true, studentId, assignedCycleCount: cycleIds.length, firstSequence, scopeCode });
   }
 
   return NextResponse.json({ message: "지원하지 않는 작업입니다." }, { status: 400 });

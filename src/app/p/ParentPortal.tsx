@@ -160,6 +160,7 @@ export default function ParentPortal() {
     [error, setError] = useState(""),
     [applicationBusy, setApplicationBusy] = useState(""),
     [applicationPaymentMethod, setApplicationPaymentMethod] = useState("BANK_TRANSFER"),
+    [applicationScope, setApplicationScope] = useState("FULL"),
     [cycleSelectionByBatch, setCycleSelectionByBatch] = useState<Record<string, string[]>>({}),
     [childManagerOpen, setChildManagerOpen] = useState(false);
   const load = async () => {
@@ -187,6 +188,7 @@ export default function ParentPortal() {
   const exams: any[] = report?.exams ?? [],
     sessions: any[] = report?.sos ?? [],
     jobs: any[] = report?.generationJobs ?? [],
+    schedules: any[] = report?.schedules ?? [],
     programBatches: any[] = data?.programBatches ?? [],
     programApplications: any[] = data?.programApplications ?? [];
   const latestExam = exams[0],
@@ -194,6 +196,8 @@ export default function ParentPortal() {
     completed = sessions.filter(done).length,
     unfinished = sessions.filter(active),
     incomplete = unfinished.length;
+  const nextSchedule = [...schedules].filter((schedule:any)=>new Date(schedule.scheduled_at ?? schedule.learning_cycles?.scheduled_at ?? schedule.learning_cycles?.start_date ?? 0).getTime() >= Date.now() - 60 * 60 * 1000)
+    .sort((a:any,b:any)=>new Date(a.scheduled_at ?? a.learning_cycles?.scheduled_at ?? 0).getTime()-new Date(b.scheduled_at ?? b.learning_cycles?.scheduled_at ?? 0).getTime())[0] ?? null;
   const examAverage = exams.length
     ? Math.round(
         exams.reduce((a: number, e: any) => a + pct(e), 0) / exams.length,
@@ -307,19 +311,20 @@ export default function ParentPortal() {
     if (!chosen.length) return alert("신청할 회차를 1개 이상 선택해 주세요.");
     const unitPrice = Math.round(Number(batch.price ?? 0) / 5);
     const totalPrice = unitPrice * chosen.length;
-    const chosenLabels = available.filter((c: any) => chosen.includes(String(c.cycle_id ?? c.id))).map((c: any) => `${c.slot_no}회`).join(", ");
-    if (!confirm(`${report?.student.name} 학생으로 ${chosenLabels}를 신청할까요?\n신청금액 ${totalPrice.toLocaleString("ko-KR")}원`)) return;
+    const chosenLabels = available.filter((c: any) => chosen.includes(String(c.cycle_id ?? c.id))).map((c: any) => fmt(c.start_date)).join(", ");
+    const scopeLabel = applicationScope === "ALGEBRA" ? "대수" : applicationScope === "ALGEBRA_CALC1" ? "대수+미적Ⅰ" : "대수+미적Ⅰ+확통";
+    if (!confirm(`${report?.student.name} 학생의 참가일을 ${chosenLabels}로 확정할까요?\n응시범위 ${scopeLabel} · 신청금액 ${totalPrice.toLocaleString("ko-KR")}원`)) return;
     setApplicationBusy(String(batch.id));
     try {
       const r = await fetch("/api/program-applications", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ batchId: batch.id, studentId: selected, parentName: "학부모", parentPhone: data.parentPhone, studentName: report.student.name, studentPhone: report.student.phone, school: report.student.school, grade: report.student.grade, paymentMethod: applicationPaymentMethod, applicationMode, selectedCycleIds: chosen }),
+        body: JSON.stringify({ batchId: batch.id, studentId: selected, parentName: "학부모", parentPhone: data.parentPhone, studentName: report.student.name, studentPhone: report.student.phone, school: report.student.school, grade: report.student.grade, paymentMethod: applicationPaymentMethod, applicationMode, selectedCycleIds: chosen, scopeCode: applicationScope }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || "신청을 처리하지 못했습니다.");
       await load();
-      alert(`${chosen.length}개 회차 신청이 접수되었습니다. 결제 방법: ${applicationPaymentMethod === "CARD" ? "카드결제" : "계좌이체(현금영수증)"}. 결제 확인 후 선택한 회차만 등록됩니다.`);
+      alert(`${chosen.length}회 참가 신청이 접수되었습니다. 결제 확인 후 선택한 날짜가 확정되고 예약됩니다.`);
     } catch (e) {
       alert(e instanceof Error ? e.message : "신청을 처리하지 못했습니다.");
     } finally {
@@ -545,6 +550,10 @@ export default function ParentPortal() {
 
           {tab === "home" && (
             <>
+              <section className="hero" style={{background:"linear-gradient(135deg,#edf6ee,#fff)"}}>
+                <div><small>다음 실전모의고사</small><h2>{nextSchedule ? `${Number(nextSchedule.formal_sequence)}회차 · ${nextSchedule.scope_label}` : "예약된 다음 시험이 없습니다."}</h2><p>{nextSchedule ? `${new Date(nextSchedule.scheduled_at ?? nextSchedule.learning_cycles?.scheduled_at).toLocaleString("ko-KR",{timeZone:"Asia/Seoul",month:"long",day:"numeric",weekday:"short",hour:"numeric",minute:"2-digit"})} · 줌 응시` : "SOS 참가권 신청에서 다음 참가일을 선택해 주세요."}</p></div>
+                {nextSchedule?<b className={nextSchedule.sos_gate_status==="LOCKED"?"warn":"good"}>{nextSchedule.exam_linked ? nextSchedule.sos_gate_status==="LOCKED"?"이전 SOS 통과 대기":"시험지 배정 완료" : "시험지 배정 전"}</b>:null}
+              </section>
               <section className="hero">
                 <div>
                   <small>이번 학습 안내</small>
@@ -766,11 +775,17 @@ export default function ParentPortal() {
               </section>
               <section className="card application-card">
                 <Title en="APPLICATION" ko="신청 가능한 SOS 프로그램" />
-                <p className="application-help">남은 회차 전체 또는 필요한 회차만 선택해 신청할 수 있습니다. 지난 날짜의 회차는 자동으로 종료되어 선택할 수 없고, 결제 확인 전에는 신청 취소도 가능합니다.</p>
+                <p className="application-help">참가할 날짜와 횟수를 선택합니다. 학생의 시험지는 달력 회차가 아니라 실제 공식 참가순번에 맞춰 자동 배정됩니다.</p>
                 <div className="application-payment">
                   <b>결제 방법</b>
                   <label className={applicationPaymentMethod === "CARD" ? "on" : ""}><input type="radio" checked={applicationPaymentMethod === "CARD"} onChange={() => setApplicationPaymentMethod("CARD")} /> 카드결제</label>
                   <label className={applicationPaymentMethod === "BANK_TRANSFER" ? "on" : ""}><input type="radio" checked={applicationPaymentMethod === "BANK_TRANSFER"} onChange={() => setApplicationPaymentMethod("BANK_TRANSFER")} /> 계좌이체(현금영수증)</label>
+                </div>
+                <div className="application-payment">
+                  <b>응시 범위</b>
+                  <label className={applicationScope === "ALGEBRA" ? "on" : ""}><input type="radio" checked={applicationScope === "ALGEBRA"} onChange={() => setApplicationScope("ALGEBRA")} /> 대수</label>
+                  <label className={applicationScope === "ALGEBRA_CALC1" ? "on" : ""}><input type="radio" checked={applicationScope === "ALGEBRA_CALC1"} onChange={() => setApplicationScope("ALGEBRA_CALC1")} /> 대수+미적Ⅰ</label>
+                  <label className={applicationScope === "FULL" ? "on" : ""}><input type="radio" checked={applicationScope === "FULL"} onChange={() => setApplicationScope("FULL")} /> 대수+미적Ⅰ+확통</label>
                 </div>
                 <div className="application-list">
                   {programBatches.map((batch: any) => {
@@ -782,11 +797,11 @@ export default function ParentPortal() {
                     const toggleCycle = (cycleId: string) => setCycleSelectionByBatch((prev) => ({ ...prev, [String(batch.id)]: (prev[String(batch.id)] ?? []).includes(cycleId) ? (prev[String(batch.id)] ?? []).filter((id) => id !== cycleId) : [...(prev[String(batch.id)] ?? []), cycleId] }));
                     return (
                     <article key={batch.id} className="application-program">
-                      <div className="application-program-head"><div><small>MATHPOOH SOS</small><b>{batch.title}</b><span>1회 {unitPrice.toLocaleString("ko-KR")}원 · 남은 회차 {available.length}개</span></div>{applied ? <strong className={applied.status === "ENROLLED" ? "assigned" : "requested"}>{applied.status === "ENROLLED" ? "등록 완료" : applied.status === "PAID" ? "결제 확인" : "신청 접수"}</strong> : null}</div>
+                      <div className="application-program-head"><div><small>MATHPOOH SOS</small><b>{batch.title}</b><span>1회 {unitPrice.toLocaleString("ko-KR")}원 · 선택 가능한 참가일 {available.length}개</span></div>{applied ? <strong className={applied.status === "ENROLLED" ? "assigned" : "requested"}>{applied.status === "ENROLLED" ? "일정 확정" : applied.status === "PAID" ? "결제 확인" : "신청 접수"}</strong> : null}</div>
                       <div className="application-cycle-grid">
-                        {(batch.cycles ?? []).map((c: any) => { const cycleId = String(c.cycle_id ?? c.id); const checked = selectedCycles.includes(cycleId); return <label key={cycleId} className={`${c.is_closed ? "closed" : ""} ${checked ? "picked" : ""}`}><input type="checkbox" disabled={c.is_closed || !!applied} checked={checked} onChange={() => toggleCycle(cycleId)} /><b>{c.slot_no}회</b><span>{fmt(c.start_date)}</span>{c.is_closed ? <em>종료</em> : <em>신청 가능</em>}</label>; })}
+                        {(batch.cycles ?? []).map((c: any) => { const cycleId = String(c.cycle_id ?? c.id); const checked = selectedCycles.includes(cycleId); return <label key={cycleId} className={`${c.is_closed ? "closed" : ""} ${checked ? "picked" : ""}`}><input type="checkbox" disabled={c.is_closed || !!applied} checked={checked} onChange={() => toggleCycle(cycleId)} /><b>{fmt(c.start_date)}</b><span>수요일 밤 11시</span>{c.is_closed ? <em>마감</em> : <em>줌 참가 예약</em>}</label>; })}
                       </div>
-                      {!applied ? <div className="application-buttons"><button className="request all" disabled={applicationBusy === String(batch.id) || !available.length} onClick={() => void changeApplication(batch, "ALL")}>{applicationBusy === String(batch.id) ? "처리 중…" : `${available.length === 5 ? "5회 전체 신청" : `남은 ${available.length}회 전체 신청`} · ${(unitPrice * available.length).toLocaleString("ko-KR")}원`}</button><button className="request selected" disabled={applicationBusy === String(batch.id) || !selectedCycles.length} onClick={() => void changeApplication(batch, "CYCLES")}>{selectedCycles.length ? `선택 ${selectedCycles.length}회 신청 · ${selectedPrice.toLocaleString("ko-KR")}원` : "회차를 선택해 주세요"}</button></div> : <div className="application-applied-detail"><span>{Array.isArray(applied.selected_cycle_ids) && applied.selected_cycle_ids.length ? `신청 회차 ${applied.selected_cycle_ids.length}개 · ${Number(applied.charged_price ?? 0).toLocaleString("ko-KR")}원` : "전체 회차 신청"}</span>{applied.status === "REQUESTED" ? <button disabled={applicationBusy === `cancel-${applied.id}`} onClick={() => void cancelProgramApplication(applied)}>{applicationBusy === `cancel-${applied.id}` ? "취소 처리 중…" : "신청 취소"}</button> : <small>결제 확인 또는 등록 완료 후 변경은 관리자에게 문의해 주세요.</small>}</div>}
+                      {!applied ? <div className="application-buttons"><button className="request all" disabled={applicationBusy === String(batch.id) || !available.length} onClick={() => void changeApplication(batch, "ALL")}>{applicationBusy === String(batch.id) ? "처리 중…" : `${available.length === 5 ? "5회 참가 신청" : `남은 ${available.length}회 참가 신청`} · ${(unitPrice * available.length).toLocaleString("ko-KR")}원`}</button><button className="request selected" disabled={applicationBusy === String(batch.id) || !selectedCycles.length} onClick={() => void changeApplication(batch, "CYCLES")}>{selectedCycles.length ? `선택한 날짜 ${selectedCycles.length}회 · ${selectedPrice.toLocaleString("ko-KR")}원` : "참가일을 선택해 주세요"}</button></div> : <div className="application-applied-detail"><span>{Array.isArray(applied.selected_cycle_ids) && applied.selected_cycle_ids.length ? `예약 참가일 ${applied.selected_cycle_ids.length}개 · ${Number(applied.charged_price ?? 0).toLocaleString("ko-KR")}원` : "전체 참가일 신청"}</span>{applied.status === "REQUESTED" ? <button disabled={applicationBusy === `cancel-${applied.id}`} onClick={() => void cancelProgramApplication(applied)}>{applicationBusy === `cancel-${applied.id}` ? "취소 처리 중…" : "신청 취소"}</button> : <small>결제 확인 또는 일정 확정 후 변경은 관리자에게 문의해 주세요.</small>}</div>}
                     </article>
                   )})}
                   {!programBatches.length ? <div className="apply-empty">현재 신청 가능한 프로그램이 없습니다.</div> : null}

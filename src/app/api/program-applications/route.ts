@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
+import { normalizeSosScope } from "@/lib/sos-program-flow";
 
 export const dynamic = "force-dynamic";
 const digits = (v: unknown) => String(v ?? "").replace(/\D/g, "");
@@ -74,6 +75,7 @@ export async function POST(request: Request) {
   const grade = String(body.grade ?? "고1").trim();
   const paymentMethod = String(body.paymentMethod ?? "").toUpperCase();
   const applicationMode = String(body.applicationMode ?? "ALL").toUpperCase() === "CYCLES" ? "CYCLES" : "ALL";
+  const scopeCode = normalizeSosScope(body.scopeCode);
 
   if (!batchId || !parentName || parentPhone.length < 10 || !studentName || !school || studentPhone.length < 10)
     return NextResponse.json({ message: "학부모·학생 정보와 학생 전화번호를 빠짐없이 입력해 주세요." }, { status: 400 });
@@ -130,6 +132,8 @@ export async function POST(request: Request) {
     payment_method: paymentMethod,
     application_mode: applicationMode,
     selected_cycle_ids: selectedCycleIds,
+    purchased_count: selectedCycleIds.length,
+    scope_code: scopeCode,
     charged_price: chargedPrice,
     status: "REQUESTED",
     source: "PARENT",
@@ -139,8 +143,8 @@ export async function POST(request: Request) {
     updated_at: now,
   };
   const saved = existingApplication.data
-    ? await supabase.from("sos_program_applications").update(payload).eq("id", existingApplication.data.id).in("status", ["CANCELLED", "REFUNDED"]).select("id,status,payment_method,application_mode,selected_cycle_ids,charged_price").single()
-    : await supabase.from("sos_program_applications").insert(payload).select("id,status,payment_method,application_mode,selected_cycle_ids,charged_price").single();
+    ? await supabase.from("sos_program_applications").update(payload).eq("id", existingApplication.data.id).in("status", ["CANCELLED", "REFUNDED"]).select("id,status,payment_method,application_mode,selected_cycle_ids,purchased_count,scope_code,charged_price").single()
+    : await supabase.from("sos_program_applications").insert(payload).select("id,status,payment_method,application_mode,selected_cycle_ids,purchased_count,scope_code,charged_price").single();
 
   return saved.error ? NextResponse.json({ message: missing(saved.error.message) }, { status: 400 }) : NextResponse.json({ success: true, application: saved.data });
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { dedupeExamAttempts } from "@/lib/exam-attempt";
+import { sosScopeLabel } from "@/lib/sos-program-flow";
 
 export const dynamic = "force-dynamic";
 const digits = (v: unknown) => String(v ?? "").replace(/\D/g, "");
@@ -53,11 +54,11 @@ export async function GET() {
       posters: [],
     });
 
-  const [attemptResult, sessionResult, jobResult, posterResult, registrationResult] = await Promise.all([
+  const [attemptResult, sessionResult, jobResult, posterResult, registrationResult, scheduleResult] = await Promise.all([
     supabase
       .from("exam_attempts")
       .select(
-        "id,exam_id,student_id,status,score,correct_count,answers,wrong_numbers,unanswered_numbers,submitted_at,created_at,mathpooh_comment",
+        "id,exam_id,student_id,status,score,correct_count,answers,wrong_numbers,unanswered_numbers,submitted_at,created_at,mathpooh_comment,formal_sequence,is_practice",
       )
       .in("student_id", ids)
       .eq("status", "submitted")
@@ -87,13 +88,16 @@ export async function GET() {
       .order("created_at", { ascending: false }),
     supabase
       .from("exam_registrations")
-      .select("student_id,status,exam_id,requested_at,assigned_at")
+      .select("student_id,status,exam_id,cycle_student_id,requested_at,assigned_at,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status,exams(id,title,exam_code)")
       .in("student_id", ids)
       .in("status", ["requested", "assigned"]),
+    supabase.from("learning_cycle_students")
+      .select("id,student_id,cycle_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status,sos_gate_status,learning_cycles(id,name,start_date,end_date,scheduled_at)")
+      .in("student_id", ids).eq("status", "ACTIVE").order("scheduled_at", { ascending: true, nullsFirst: false }),
   ]);
-  if (attemptResult.error || sessionResult.error || posterResult.error || registrationResult.error)
+  if (attemptResult.error || sessionResult.error || posterResult.error || registrationResult.error || scheduleResult.error)
     return NextResponse.json(
-      { message: attemptResult.error?.message || sessionResult.error?.message || posterResult.error?.message || registrationResult.error?.message },
+      { message: attemptResult.error?.message || sessionResult.error?.message || posterResult.error?.message || registrationResult.error?.message || scheduleResult.error?.message },
       { status: 400 },
     );
   const attempts = dedupeExamAttempts(
@@ -189,6 +193,15 @@ export async function GET() {
     const registrations = (registrationResult.data ?? []).filter(
       (x: any) => String(x.student_id) === String(child.id),
     );
+    const completedSequence = attempts
+      .filter((attempt: any) => String(attempt.student_id) === String(child.id) && attempt.is_practice !== true)
+      .reduce((max: number, attempt: any) => Math.max(max, Number(attempt.formal_sequence) || 0), 0);
+    const childSchedules = (scheduleResult.data ?? [])
+      .filter((schedule: any) =>
+        String(schedule.student_id) === String(child.id) &&
+        !["CANCELLED", "NO_SHOW", "COMPLETED"].includes(String(schedule.booking_status)))
+      .sort((a: any, b: any) => new Date(a.scheduled_at ?? 0).getTime() - new Date(b.scheduled_at ?? 0).getTime())
+      .map((schedule: any, index: number) => ({ ...schedule, formal_sequence: completedSequence + index + 1 }));
     const assignmentStatus = registrations.some((x: any) => String(x.status) === "assigned")
       ? "ASSIGNED"
       : registrations.some((x: any) => String(x.status) === "requested")
@@ -213,6 +226,22 @@ export async function GET() {
     generationJobs: (jobResult.data ?? [])
       .filter((x: any) => String(x.student_id) === String(child.id))
       .slice(0, 5),
+    schedules: childSchedules
+      .map((schedule: any) => {
+        const exact = registrations.find((registration: any) =>
+          String(registration.cycle_student_id ?? "") === String(schedule.id)) ??
+          registrations.find((registration: any) =>
+            Number(registration.formal_sequence) === Number(schedule.formal_sequence) &&
+            String(registration.scope_code ?? "FULL") === String(schedule.scope_code ?? "FULL") &&
+            String(registration.scheduled_at ?? "") === String(schedule.scheduled_at ?? ""));
+        const exactExam = Array.isArray(exact?.exams) ? exact.exams[0] : exact?.exams;
+        return {
+          ...schedule,
+          scope_label: sosScopeLabel(schedule.scope_code),
+          exam_title: exactExam?.title ?? "시험지 배정 전",
+          exam_linked: Boolean(exact?.exam_id),
+        };
+      }),
     };
   });
   const posters = await Promise.all(
@@ -231,8 +260,8 @@ export async function GET() {
   );
   const [programBatchResult, programLinkResult, parentApplicationResult] = await Promise.all([
     supabase.from("sos_program_batches").select("id,title,price,application_start,application_end,capacity,memo,is_published,created_at").eq("is_published", true).order("created_at", { ascending: false }),
-    supabase.from("sos_program_batch_cycles").select("batch_id,cycle_id,slot_no,learning_cycles(id,name,start_date,end_date,status)").order("slot_no"),
-    supabase.from("sos_program_applications").select("id,batch_id,student_id,student_name,status,payment_method,application_mode,selected_cycle_ids,charged_price,requested_at,paid_at,enrolled_at").eq("parent_phone", phone).order("requested_at", { ascending: false }),
+    supabase.from("sos_program_batch_cycles").select("batch_id,cycle_id,slot_no,learning_cycles(id,name,start_date,end_date,scheduled_at,status)").order("slot_no"),
+    supabase.from("sos_program_applications").select("id,batch_id,student_id,student_name,status,payment_method,application_mode,selected_cycle_ids,purchased_count,scope_code,charged_price,requested_at,paid_at,enrolled_at").eq("parent_phone", phone).order("requested_at", { ascending: false }),
   ]);
   const programMissing = programBatchResult.error?.message?.includes("sos_program_");
   const nowIso = new Date().toISOString();

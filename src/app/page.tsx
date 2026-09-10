@@ -68,6 +68,10 @@ type Exam = {
   download_available: boolean;
   download_available_at?: string | null;
   open_at?: string | null;
+  scheduled_at?: string | null;
+  booking_status?: string | null;
+  formal_sequence?: number | null;
+  scope_label?: string | null;
   close_at?: string | null;
   paused_at?: string | null;
   paused_remaining_seconds?: number | null;
@@ -102,6 +106,13 @@ type Portal = {
     cycle_name: string;
     start_date: string;
     end_date: string;
+    scheduled_at?: string | null;
+    attendance_mode?: "ZOOM" | "SELF";
+    booking_status?: string;
+    formal_sequence?: number;
+    scope_code?: string;
+    scope_label?: string;
+    sos_gate_open?: boolean;
     exam_id: string | null;
     exam_linked: boolean;
   }>;
@@ -2515,7 +2526,7 @@ export default function StudentHome() {
       const data = await response.json();
       const status = data.exam;
       if (
-        data.assigned &&
+        data.ready &&
         status?.close_at &&
         !status.paused_at &&
         new Date(status.close_at).getTime() > Date.now()
@@ -2875,12 +2886,12 @@ export default function StudentHome() {
     const nextLegacyExam = legacyExams[0];
     const nextExam = nextSchedule
       ? {
-          title: nextSchedule.exam?.title ?? nextSchedule.schedule.cycle_name,
-          when: nextSchedule.exam
-            ? formatExamTime(
-                nextSchedule.exam.open_at ?? nextSchedule.exam.exam_date,
-              )
-            : `${formatExamTime(nextSchedule.schedule.start_date)} ~ ${formatExamTime(nextSchedule.schedule.end_date)}`,
+          title: `${Number(nextSchedule.schedule.formal_sequence)}회차 · ${nextSchedule.schedule.scope_label || "전체범위"}`,
+          when: formatExamTime(
+            nextSchedule.schedule.scheduled_at ??
+              nextSchedule.exam?.open_at ??
+              nextSchedule.schedule.start_date,
+          ),
           state: nextSchedule.exam
             ? "시험지 배정 완료"
             : "신청 완료 · 시험 일정 준비 중",
@@ -3639,21 +3650,21 @@ export default function StudentHome() {
           {portal.exams.map((exam) => (
             <article key={exam.id}>
               <div className="exam-date">
-                <b>{new Date(exam.exam_date).getDate()}</b>
+                <b>{new Date(exam.scheduled_at ?? exam.exam_date).getDate()}</b>
                 <span>
-                  {new Date(exam.exam_date).toLocaleDateString("ko-KR", {
+                  {new Date(exam.scheduled_at ?? exam.exam_date).toLocaleDateString("ko-KR", {
                     month: "short",
                   })}
                 </span>
               </div>
               <div className="exam-info">
-                <small>{exam.exam_code}</small>
+                <small>{exam.formal_sequence ? `${exam.formal_sequence}회차 · ${exam.scope_label}` : exam.exam_code}</small>
                 <h3>{exam.title}</h3>
                 <p>
                   {exam.subject} · {exam.question_count}문항 · {exam.time_limit}
                   분
-                  {exam.open_at
-                    ? ` · ${new Date(exam.open_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 시작`
+                  {exam.scheduled_at ?? exam.open_at
+                    ? ` · ${new Date(exam.scheduled_at ?? exam.open_at!).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 시작`
                     : ""}
                 </p>
               </div>

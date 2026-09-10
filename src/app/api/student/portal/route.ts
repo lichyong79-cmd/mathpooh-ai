@@ -16,6 +16,7 @@ import {
   type LandmarkBasis,
   type LandmarkRecord,
 } from "@/lib/landmark";
+import { isSosCyclePassed, sosScopeLabel } from "@/lib/sos-program-flow";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -116,7 +117,7 @@ export async function GET(request: Request) {
         .maybeSingle(),
       supabase
         .from("exam_registrations")
-        .select("status")
+        .select("status,booking_status,scheduled_at")
         .eq("student_id", student.id)
         .eq("exam_id", statusExamId)
         .maybeSingle(),
@@ -131,44 +132,41 @@ export async function GET(request: Request) {
         { message: examResult.error?.message || "시험을 찾지 못했습니다." },
         { status: 404 },
       );
-    const cycleAssigned = registrationResult.data?.status === "assigned" ? false : await hasCycleAccess(supabase, String(student.id), statusExamId);
     return NextResponse.json(
       {
         success: true,
         exam: examResult.data,
         attempt: pickCanonicalAttempt(attemptResult.data ?? []),
-        assigned: registrationResult.data?.status === "assigned" || cycleAssigned,
+        assigned: registrationResult.data?.status === "assigned",
+        ready: registrationResult.data?.status === "assigned" &&
+          registrationResult.data?.booking_status === "IN_PROGRESS",
       },
       { headers: { "Cache-Control": "no-store" } },
     );
   }
   const { data: registrations, error: registrationError } = await supabase
     .from("exam_registrations")
-    .select("exam_id,status")
+    .select("id,exam_id,status,cycle_student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status")
     .eq("student_id", student.id);
   if (registrationError)
     return NextResponse.json(
       { message: registrationError.message },
       { status: 400 },
     );
-  const accessibleExamIds = new Set<string>(
-    (registrations ?? [])
-      .filter((item) => item.status === "assigned")
-      .map((item) => String(item.exam_id)),
-  );
-  const memberships = await supabase.from("learning_cycle_students").select("cycle_id").eq("student_id", student.id).eq("status", "ACTIVE");
+  const memberships = await supabase.from("learning_cycle_students")
+    .select("id,cycle_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status,sos_gate_status,sos_passed_at,is_practice")
+    .eq("student_id", student.id).eq("status", "ACTIVE");
   // 배포 직후 마이그레이션 전에도 학생 로그인 자체는 막지 않는다.
   const memberCycleIds: string[] = (memberships.data ?? []).map((x: any) => String(x.cycle_id));
   let memberExamLinks: any[] = [];
   let memberCycles: any[] = [];
   if (memberCycleIds.length) {
     const [cycleExams, cycles] = await Promise.all([
-      supabase.from("learning_cycle_exams").select("cycle_id,exam_id").in("cycle_id", memberCycleIds),
-      supabase.from("learning_cycles").select("id,name,start_date,end_date,status").in("id", memberCycleIds).order("start_date", { ascending: false }),
+      supabase.from("learning_cycle_exams").select("cycle_id,exam_id,formal_sequence,scope_code").in("cycle_id", memberCycleIds),
+      supabase.from("learning_cycles").select("id,name,start_date,end_date,status,scheduled_at,attendance_mode").in("id", memberCycleIds).order("scheduled_at", { ascending: false, nullsFirst: false }),
     ]);
     memberExamLinks = cycleExams.data ?? [];
     memberCycles = cycles.data ?? [];
-    for (const row of memberExamLinks) accessibleExamIds.add(String(row.exam_id));
   }
   const { data: exams, error } = await supabase
     .from("exams")
@@ -177,7 +175,7 @@ export async function GET(request: Request) {
     )
     .order("exam_date", { ascending: false })
     // 최근 시험과 현재 배정 화면에 충분한 범위만 내려 장기 누적 시 초기 로딩을 보호한다.
-    .limit(60);
+    .limit(200);
   if (error)
     return NextResponse.json({ message: error.message }, { status: 400 });
   const ids = (exams ?? []).map((exam) => exam.id);
@@ -197,6 +195,26 @@ export async function GET(request: Request) {
   const attemptMap = new Map(
     canonicalAttempts.map((attempt) => [String(attempt.exam_id), attempt]),
   );
+  const completedFormalSequence = canonicalAttempts
+    .filter((attempt: any) => attempt.status === "submitted" && attempt.is_practice !== true)
+    .reduce((max: number, attempt: any) => Math.max(max, Number(attempt.formal_sequence) || 0), 0);
+  const pendingMemberships = (memberships.data ?? [])
+    .filter((membership: any) => !["COMPLETED", "CANCELLED", "NO_SHOW"].includes(String(membership.booking_status)))
+    .sort((a: any, b: any) => new Date(a.scheduled_at ?? 0).getTime() - new Date(b.scheduled_at ?? 0).getTime());
+  const resolvedSequenceByMembership = new Map(
+    pendingMemberships.map((membership: any, index: number) => [String(membership.id), completedFormalSequence + index + 1]),
+  );
+  const validRegistrations = (registrations ?? []).filter((registration: any) => {
+    if (registration.status !== "assigned") return false;
+    if (!registration.cycle_student_id) return true;
+    const membership = (memberships.data ?? []).find((row: any) => String(row.id) === String(registration.cycle_student_id));
+    if (!membership || membership.booking_status === "COMPLETED") return true;
+    const resolved = resolvedSequenceByMembership.get(String(membership.id));
+    return Number(registration.formal_sequence) === Number(resolved) &&
+      String(registration.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL");
+  });
+  const validAccessibleExamIds = new Set(validRegistrations.map((registration: any) => String(registration.exam_id)));
+  const registrationMap = new Map(validRegistrations.map((registration: any) => [String(registration.exam_id), registration]));
   // SOS309: 제출 시험마다 문항 분석을 따로 읽던 N+1 쿼리를 한 번으로 합친다.
   const submittedExamIds = canonicalAttempts
     .filter((attempt) => attempt.status === "submitted")
@@ -219,12 +237,14 @@ export async function GET(request: Request) {
     (exams ?? [])
       .filter(
         (exam) =>
-          accessibleExamIds.has(String(exam.id)) || attemptMap.has(exam.id),
+          validAccessibleExamIds.has(String(exam.id)) || attemptMap.has(exam.id),
       )
       .map(async (exam) => {
-      const downloadAvailableAt = exam.open_at
+      const exactRegistration = registrationMap.get(String(exam.id));
+      const scheduledAt = exactRegistration?.scheduled_at ?? exam.open_at;
+      const downloadAvailableAt = scheduledAt
         ? new Date(
-            new Date(exam.open_at).getTime() - 60 * 60 * 1000,
+            new Date(scheduledAt).getTime() - 60 * 60 * 1000,
           ).toISOString()
         : null;
       // 회차에 시험을 연결하면 학생에게 일정 카드는 바로 보이되,
@@ -234,8 +254,8 @@ export async function GET(request: Request) {
       );
       // 시험 5분 전에는 시험지 배정 학생만 대기실에 먼저 들어올 수 있다.
       // 실제 응시는 관리자가 start를 눌러 close_at이 생성된 뒤에만 가능하다.
-      const waitingAvailableAt = exam.open_at
-        ? new Date(new Date(exam.open_at).getTime() - 5 * 60 * 1000).toISOString()
+      const waitingAvailableAt = scheduledAt
+        ? new Date(new Date(scheduledAt).getTime() - 5 * 60 * 1000).toISOString()
         : null;
       const waitingAvailable = Boolean(
         exam.student_open &&
@@ -273,6 +293,10 @@ export async function GET(request: Request) {
         : [];
       return {
         ...safeExam,
+        scheduled_at: scheduledAt,
+        booking_status: exactRegistration?.booking_status ?? null,
+        formal_sequence: exactRegistration?.formal_sequence ?? null,
+        scope_label: exactRegistration ? sosScopeLabel(exactRegistration.scope_code) : null,
         test_url: testUrl,
         solution_url: solutionUrl,
         solution_registered: Boolean(exam.solution_file_path),
@@ -291,6 +315,7 @@ export async function GET(request: Request) {
         solution_open: solutionAllowed,
         available:
           Boolean(exam.student_open) &&
+          exactRegistration?.booking_status === "IN_PROGRESS" &&
           !exam.paused_at &&
           Boolean(exam.close_at) &&
           (!exam.open_at || exam.open_at <= now) &&
@@ -389,32 +414,46 @@ export async function GET(request: Request) {
       participants: peers.length,
     };
   });
+  const { data: sosSessions } = await supabase
+    .from("sos_training_sessions")
+    .select("id,phase,cycle_kind,status,target_snapshot,round_no,correct_count,total_count,decision,created_at")
+    .eq("student_id", student.id)
+    .in("status", ["ASSIGNED", "IN_PROGRESS", "COMPLETED", "PASSED", "RETRAIN"])
+    .order("created_at", { ascending: false })
+    .limit(80);
   const landmark = buildLandmarkSummary(landmarkRecords);
-  const examLinkByCycle = new Map(
-    memberExamLinks.map((row: any) => [String(row.cycle_id), String(row.exam_id)]),
-  );
   const examById = new Map(examItems.map((exam: any) => [String(exam.id), exam]));
+  const sessionsForGate = sosSessions ?? [];
+  const membershipByCycle = new Map((memberships.data ?? []).map((row: any) => [String(row.cycle_id), row]));
   const examSchedules = memberCycles.map((cycle: any) => {
-    const examId = examLinkByCycle.get(String(cycle.id)) ?? null;
+    const membership: any = membershipByCycle.get(String(cycle.id)) ?? {};
+    const resolvedSequence = resolvedSequenceByMembership.get(String(membership.id)) ?? Number(membership.formal_sequence ?? 0);
+    const link = memberExamLinks.find((row: any) =>
+      String(row.cycle_id) === String(cycle.id) &&
+      Number(row.formal_sequence) === Number(resolvedSequence) &&
+      String(row.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL"));
+    const examId = link ? String(link.exam_id) : null;
+    const previous = Number(resolvedSequence) <= 1
+      ? null
+      : (memberships.data ?? []).find((row: any) => Number(row.formal_sequence) === Number(resolvedSequence) - 1);
+    const previousPassed = !previous || previous.sos_gate_status === "PASSED" || previous.sos_gate_status === "OVERRIDE" ||
+      isSosCyclePassed(sessionsForGate, String(previous.cycle_id));
     return {
       cycle_id: String(cycle.id),
-      cycle_name: String(cycle.name ?? "SOS 회차"),
+      cycle_name: String(cycle.name ?? "SOS 응시 일정"),
       start_date: cycle.start_date,
       end_date: cycle.end_date,
+      scheduled_at: membership.scheduled_at ?? cycle.scheduled_at,
+      attendance_mode: membership.attendance_mode ?? cycle.attendance_mode ?? "ZOOM",
+      booking_status: membership.booking_status ?? "SCHEDULED",
+      formal_sequence: Number(resolvedSequence),
+      scope_code: String(membership.scope_code ?? "FULL"),
+      scope_label: sosScopeLabel(membership.scope_code),
+      sos_gate_open: previousPassed,
       exam_id: examId,
       exam_linked: Boolean(examId && examById.has(examId)),
     };
   });
-
-  const { data: sosSessions } = await supabase
-    .from("sos_training_sessions")
-    .select(
-      "id,phase,cycle_kind,status,target_snapshot,round_no,correct_count,total_count,decision,created_at",
-    )
-    .eq("student_id", student.id)
-    .in("status", ["ASSIGNED", "IN_PROGRESS", "COMPLETED", "PASSED", "RETRAIN"])
-    .order("created_at", { ascending: false })
-    .limit(20);
   return NextResponse.json(
     {
       student: {
@@ -504,16 +543,36 @@ export async function POST(request: Request) {
     );
   const { data: registration } = await supabase
     .from("exam_registrations")
-    .select("id,status")
+    .select("id,status,cycle_student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status")
     .eq("exam_id", examId)
     .eq("student_id", student.id)
     .maybeSingle();
-  const cycleAssigned = registration?.status === "assigned" ? false : await hasCycleAccess(supabase, String(student.id), examId);
-  if ((!registration || registration.status !== "assigned") && !cycleAssigned)
+  if (!registration || registration.status !== "assigned")
     return NextResponse.json(
-      { message: "이 회차에 등록된 학생만 응시할 수 있습니다." },
+      { message: "이 일정에 해당 시험지를 배정받은 학생만 응시할 수 있습니다." },
       { status: 403 },
     );
+  if (["CANCELLED", "NO_SHOW", "COMPLETED"].includes(String(registration.booking_status ?? "")) && action === "start")
+    return NextResponse.json({ message: "현재 참가 상태에서는 시험을 시작할 수 없습니다." }, { status: 403 });
+  if (action === "start" && registration.booking_status !== "IN_PROGRESS")
+    return NextResponse.json({ message: "관리자가 시험을 시작할 때까지 대기해 주세요." }, { status: 423 });
+  if (action === "start" && registration.cycle_student_id && Number(registration.formal_sequence) > 1) {
+    const currentMembership = await supabase.from("learning_cycle_students").select("id,sos_gate_status,formal_sequence")
+      .eq("id", registration.cycle_student_id).maybeSingle();
+    if (currentMembership.data?.sos_gate_status === "LOCKED") {
+      const previous = await supabase.from("learning_cycle_students").select("id,cycle_id,sos_gate_status")
+        .eq("student_id", student.id).eq("formal_sequence", Number(registration.formal_sequence) - 1).eq("status", "ACTIVE").maybeSingle();
+      const sessions = await supabase.from("sos_training_sessions").select("status,decision,target_snapshot,phase,round_no,cycle_kind")
+        .eq("student_id", student.id).limit(120);
+      const passed = previous.data && (previous.data.sos_gate_status === "PASSED" || previous.data.sos_gate_status === "OVERRIDE" || isSosCyclePassed(sessions.data ?? [], String(previous.data.cycle_id)));
+      if (!passed)
+        return NextResponse.json({ message: `${Number(registration.formal_sequence) - 1}회차 SOS 학습을 통과해야 다음 시험을 볼 수 있습니다.` }, { status: 423 });
+      const openedAt = new Date().toISOString();
+      const previousId = String(previous.data?.id ?? "");
+      if (previousId) await supabase.from("learning_cycle_students").update({ sos_gate_status: "PASSED", sos_passed_at: openedAt, updated_at: openedAt }).eq("id", previousId);
+      await supabase.from("learning_cycle_students").update({ sos_gate_status: "OPEN", updated_at: openedAt }).eq("id", registration.cycle_student_id);
+    }
+  }
   const { data: exam } = await supabase
     .from("exams")
     .select("*")
@@ -579,6 +638,9 @@ export async function POST(request: Request) {
       .insert({
         exam_id: examId,
         student_id: student.id,
+        formal_sequence: registration.formal_sequence,
+        scope_code: registration.scope_code,
+        is_practice: false,
         started_at: new Date().toISOString(),
         last_saved_at: new Date().toISOString(),
       })
@@ -689,7 +751,15 @@ export async function POST(request: Request) {
         score_source: "auto",
       })
       .eq("id", existing.id);
-    if (!error)
+    if (!error) {
+      if (registration.cycle_student_id) {
+        await supabase.from("learning_cycle_students").update({
+          booking_status: "COMPLETED", updated_at: submittedAt,
+        }).eq("id", registration.cycle_student_id);
+      }
+      await supabase.from("exam_registrations").update({
+        booking_status: "COMPLETED",
+      }).eq("id", registration.id);
       await writeActivityLog(
         supabase,
         examId,
@@ -698,6 +768,7 @@ export async function POST(request: Request) {
         "exam_submitted",
         `제출 완료 · ${score}점`,
       );
+    }
     return error
       ? NextResponse.json({ message: error.message }, { status: 400 })
       : NextResponse.json({ success: true, score, correct, wrong, unanswered });

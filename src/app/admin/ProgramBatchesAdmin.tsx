@@ -74,22 +74,22 @@ export default function ProgramBatchesAdmin() {
 
   return <section className="pb-admin">
     <div className="pb-title">
-      <div><small>MATHPOOH SOS APPLICATION FLOW</small><h2>SOS 신청 관리</h2><p>기존 회차와 응시·성적·학습 기록은 그대로 유지하고, 회차 관리의 운영 회차를 골라 모집만 연결합니다.</p></div>
+      <div><small>MATHPOOH SOS APPLICATION FLOW</small><h2>참가권 신청·결제</h2><p>학부모가 선택한 회차는 시험 내용이 아니라 줌 참가 날짜로 확정됩니다. 시험지는 학생의 공식 참가순번과 범위에 맞춰 배정됩니다.</p></div>
       <button onClick={() => window.open("/p?tab=apply", "_blank")}>학부모 신청 화면 보기 ↗</button>
     </div>
 
     <div className="flowbar">
-      <button onClick={() => { location.href = "/admin?menu=cycles"; }}><b>1</b><span>회차 관리</span><small>운영 회차·시험 연결</small></button>
-      <i>→</i><div className="active"><b>2</b><span>모집 구성</span><small>기존 회차 5개 선택</small></div>
+      <button onClick={() => { location.href = "/admin?menu=cycles"; }}><b>1</b><span>응시 일정</span><small>줌 참가일·시험지 연결</small></button>
+      <i>→</i><div className="active"><b>2</b><span>참가권 구성</span><small>예약 가능 날짜 구성</small></div>
       <i>→</i><div><b>3</b><span>신청 열기</span><small>학부모 화면 공개</small></div>
-      <i>→</i><div><b>4</b><span>신청 접수</span><small>전체/회차별 신청</small></div>
-      <i>→</i><div><b>5</b><span>결제 확인</span><small>선택 회차 자동배정</small></div>
+      <i>→</i><div><b>4</b><span>참가일 선택</span><small>횟수·날짜·범위 확정</small></div>
+      <i>→</i><div><b>5</b><span>결제 확인</span><small>공식순번 자동배정</small></div>
     </div>
 
-    <article className="notice"><b>기존 회차 보존 원칙</b><span>`00_1회차` 같은 과거 회차는 삭제하거나 새로 만들지 않습니다. 회차 관리에 그대로 두고, 아래 모집 구성에서 필요한 회차만 선택합니다.</span></article>
+    <article className="notice"><b>기존 기록 보존</b><span>과거 시험·성적·진행 중인 SOS는 그대로 유지됩니다. 기존 신청 회차는 학생이 참가하겠다고 선택한 날짜로 전환됩니다.</span></article>
 
     <article className="pb-create">
-      <div><small className="step">STEP 2 · 모집 구성</small><h3>새 SOS 모집 만들기</h3><p>회차 관리에서 이미 만든 운영 회차 중 5개를 고릅니다. 여기서는 회차 자체를 만들지 않습니다.</p><label>모집명<input value={title} onChange={e => setTitle(e.target.value)} /></label><label>5회 전체 이용료<input type="number" value={price} onChange={e => setPrice(Number(e.target.value))} /></label><small>회차별 신청 금액은 전체 이용료 ÷ 5로 자동 계산됩니다.</small><button className="primary" onClick={() => void create()} disabled={busy === "create"}>선택한 5회로 모집 만들기</button></div>
+      <div><small className="step">STEP 2 · 참가권 구성</small><h3>새 SOS 참가권 만들기</h3><p>학부모에게 보여줄 줌 참가 가능 날짜 5개를 고릅니다.</p><label>참가권명<input value={title} onChange={e => setTitle(e.target.value)} /></label><label>5회 전체 이용료<input type="number" value={price} onChange={e => setPrice(Number(e.target.value))} /></label><small>선택 횟수에 따라 1회 금액이 자동 합산됩니다.</small><button className="primary" onClick={() => void create()} disabled={busy === "create"}>선택한 날짜로 참가권 만들기</button></div>
       <div><div className="picker-head"><b>현재/예정 회차</b><span>{selected.length}/5 선택</span></div>{cyclePicker(selected, setSelected, true)}</div>
     </article>
 
@@ -106,8 +106,8 @@ export default function ProgramBatchesAdmin() {
       const linked = students.find((s: any) => String(s.id) === String(a.student_id));
       const selectedIds = Array.isArray(a.selected_cycle_ids) ? a.selected_cycle_ids.map(String) : [];
       const cycleText = String(a.application_mode ?? "ALL") === "CYCLES" && selectedIds.length
-        ? (batch?.cycles ?? []).filter((c: any) => selectedIds.includes(String(c.cycle_id))).map((c: any) => `${c.slot_no}회`).join(", ")
-        : "전체 회차";
+        ? (batch?.cycles ?? []).filter((c: any) => selectedIds.includes(String(c.cycle_id))).map((c: any) => day(c.start_date)).join(", ")
+        : "전체 참가일";
       const isCancelled = ["CANCELLED", "REFUNDED"].includes(String(a.status));
       const cancelLabel = a.status === "ENROLLED" ? "등록 취소" : a.status === "PAID" ? "결제 취소" : "신청 취소";
       return <div key={a.id} className={isCancelled ? "cancelled" : ""}><span><small>{status[a.status] ?? a.status}</small><b>{a.student_name} · {a.school} {a.grade}</b><em>{a.parent_name} 학부모 · {batch?.title ?? "SOS 모집"} · {cycleText} · {won(Number(a.charged_price ?? batch?.price ?? 0))}원 · {paymentLabel(a.payment_method)}</em></span><span className="pb-link">
