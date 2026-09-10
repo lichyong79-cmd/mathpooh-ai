@@ -28,7 +28,7 @@ export async function GET(request: Request) {
       if(ids.length){
         const [attempts,registrations,sessions,history]=await Promise.all([
           s.from("exam_attempts").select("id,student_id,exam_id,status,formal_sequence,is_practice").in("student_id",ids),
-          s.from("exam_registrations").select("id,student_id,exam_id,cycle_student_id,status,formal_sequence,scope_code").in("cycle_student_id",(members.data??[]).map(x=>x.id)).eq("status","assigned"),
+          s.from("exam_registrations").select("id,student_id,exam_id,cycle_student_id,status,formal_sequence,scope_code").in("student_id",ids),
           s.from("sos_training_sessions").select("student_id,status,decision,cycle_kind,target_snapshot").in("student_id",ids),
           s.from("learning_cycle_students").select("student_id,cycle_id,formal_sequence,is_practice").in("student_id",ids),
         ]);
@@ -36,11 +36,21 @@ export async function GET(request: Request) {
         rows=(members.data??[]).map(m=>{
           const own=(attempts.data??[]).filter(a=>a.student_id===m.student_id);
           const completed=Math.max(0,...own.filter(a=>a.status==="submitted"&&!a.is_practice).map(a=>Number(a.formal_sequence)||0));
-          const registration=(registrations.data??[]).find(r=>r.cycle_student_id===m.id);
-          const previous=(history.data??[]).filter(h=>h.student_id===m.student_id&&Number(h.formal_sequence)===completed&&!h.is_practice);
-          const passed=completed===0||previous.some(h=>isSosCyclePassed((sessions.data??[]).filter(t=>t.student_id===m.student_id),h.cycle_id));
-          const exam=(exams.data??[]).find(e=>e.id===registration?.exam_id);
-          return {...m,completed_sequence:completed,next_sequence:completed+1,sos_passed:passed,registration,exam,locked:!!registration&&own.some(a=>a.exam_id===registration.exam_id&&["submitted","in_progress"].includes(a.status))};
+          const cycle=(cycles.data??[]).find(c=>c.id===cycleId)!;
+          const past=String(cycle.start_date)<new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+          // Legacy attempts predate cycle_student_id. Only associate them with the
+          // selected exam date; never interpret an unrelated completed exam as this slot.
+          const exact=(registrations.data??[]).find(r=>r.cycle_student_id===m.id&&r.status!=="cancelled");
+          const candidates=own.filter(a=>!a.is_practice&&["submitted","in_progress"].includes(a.status)&&
+            (exact ? a.exam_id===exact.exam_id : (exams.data??[]).some(e=>e.id===a.exam_id&&String(e.exam_date).slice(0,10)===String(cycle.start_date).slice(0,10)&&!isArchivedPracticeExam(e))));
+          const uniqueExams=new Set(candidates.map(a=>a.exam_id));
+          const attempt=uniqueExams.size===1?(candidates.find(a=>a.status==="submitted")??candidates[0]):undefined;
+          const exam=(exams.data??[]).find(e=>e.id===(exact?.exam_id??attempt?.exam_id));
+          const registration=exact??(attempt?{exam_id:attempt.exam_id,formal_sequence:attempt.formal_sequence,scope_code:m.scope_code,status:"historical"}:null);
+          const sequence=Number(registration?.formal_sequence)||completed+1;
+          const previous=(history.data??[]).filter(h=>h.student_id===m.student_id&&Number(h.formal_sequence)===sequence-1&&!h.is_practice);
+          const passed=sequence<=1||previous.some(h=>isSosCyclePassed((sessions.data??[]).filter(t=>t.student_id===m.student_id),h.cycle_id));
+          return {...m,completed_sequence:completed,next_sequence:completed+1,sos_passed:passed,registration,exam,attempt_status:attempt?.status??null,past,locked:past||!!attempt};
         });
       }
     }
@@ -65,6 +75,10 @@ export async function POST(request: Request){
     const member=await s.from("learning_cycle_students").select("*").eq("id",String(b.membershipId)).eq("status","ACTIVE").single();
     if(member.error)throw member.error;
     const m=member.data;
+    const slot=await s.from("learning_cycles").select("start_date").eq("id",m.cycle_id).single();
+    if(slot.error)throw slot.error;
+    if(String(slot.data.start_date)<new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()))throw new Error("지난 참가 일정에는 새 시험지를 배정할 수 없습니다.");
+
     if(["COMPLETED","IN_PROGRESS","CANCELLED","NO_SHOW"].includes(m.booking_status))throw new Error("이미 진행되었거나 취소된 참가 일정은 배정을 변경할 수 없습니다.");
     const [catalog,current,attempts]=await Promise.all([
       s.from("sos_exam_catalog").select("exam_id").eq("formal_sequence",sequence).eq("scope_code",scope).single(),
