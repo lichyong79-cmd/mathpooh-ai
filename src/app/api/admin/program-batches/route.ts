@@ -43,7 +43,9 @@ export async function GET() {
         .sort((a: any, z: any) => a.slot_no - z.slot_no)
         .map((x: any) => ({ ...x, ...(cycles.data ?? []).find((c: any) => String(c.id) === String(x.cycle_id)) })),
     })),
-    cycles: (cycles.data ?? []).filter((c:any)=>!isArchivedPracticeCycle(c)), applications: applications.data ?? [], enrollments: enrollments.data ?? [], students: students.data ?? [],
+    cycles: (cycles.data ?? []).filter((c:any)=>!isArchivedPracticeCycle(c)),
+    recentCycles: (cycles.data ?? []).filter((c:any)=>!isArchivedPracticeCycle(c)).slice(0, 10),
+    applications: applications.data ?? [], enrollments: enrollments.data ?? [], students: students.data ?? [],
   }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -98,6 +100,83 @@ export async function POST(request: Request) {
     const ins = await s.from("sos_program_batch_cycles").insert(checked.rows.map((x: any, i: number) => ({ batch_id: batchId, cycle_id: x.id, slot_no: i + 1 })));
     if (ins.error) return NextResponse.json({ message: ins.error.message }, { status: 400 });
     return NextResponse.json({ success: true });
+  }
+
+  if (action === "update-application-cycles") {
+    const applicationId = String(b.applicationId ?? "");
+    const requestedIds = [...new Set<string>((Array.isArray(b.cycleIds) ? b.cycleIds : []).map(String))];
+    const appResult = await s.from("sos_program_applications").select("*").eq("id", applicationId).maybeSingle();
+    const app: any = appResult.data;
+    if (appResult.error || !app) return NextResponse.json({ message: "신청서를 찾지 못했습니다." }, { status: 404 });
+    if (["CANCELLED", "REFUNDED"].includes(String(app.status)))
+      return NextResponse.json({ message: "취소·환불된 신청은 참가일을 변경할 수 없습니다." }, { status: 409 });
+
+    const originalIds = Array.isArray(app.selected_cycle_ids) && app.selected_cycle_ids.length
+      ? app.selected_cycle_ids.map(String)
+      : (await s.from("sos_program_batch_cycles").select("cycle_id").eq("batch_id", app.batch_id).order("slot_no")).data?.map((x: any) => String(x.cycle_id)) ?? [];
+    const purchasedCount = Math.max(1, Number(app.purchased_count) || originalIds.length || 5);
+    if (requestedIds.length !== purchasedCount)
+      return NextResponse.json({ message: `결제된 ${purchasedCount}회와 동일하게 참가일 ${purchasedCount}개를 선택해 주세요.` }, { status: 400 });
+
+    const recent = await s.from("learning_cycles").select("id,name,start_date,scheduled_at")
+      .order("start_date", { ascending: false }).limit(50);
+    if (recent.error) return NextResponse.json({ message: recent.error.message }, { status: 400 });
+    const allowed = (recent.data ?? []).filter((c: any) => !isArchivedPracticeCycle(c)).slice(0, 10);
+    if (requestedIds.some((id) => !allowed.some((c: any) => String(c.id) === id)))
+      return NextResponse.json({ message: "최근 10회 참가 일정 안에서만 변경할 수 있습니다." }, { status: 400 });
+
+    const selectedCycles = allowed.filter((c: any) => requestedIds.includes(String(c.id)))
+      .sort((a: any, z: any) => String(a.start_date).localeCompare(String(z.start_date)));
+    const studentId = String(app.student_id ?? b.studentId ?? "");
+    if (String(app.status) === "ENROLLED" && studentId) {
+      const [members, attempts] = await Promise.all([
+        s.from("learning_cycle_students").select("id,cycle_id,booking_status,formal_sequence,scope_code,status")
+          .eq("application_id", applicationId),
+        s.from("exam_attempts").select("cycle_student_id,status,formal_sequence,is_practice")
+          .eq("student_id", studentId).in("status", ["in_progress", "submitted"]),
+      ]);
+      if (members.error || attempts.error) return NextResponse.json({ message: members.error?.message || attempts.error?.message }, { status: 400 });
+      const attemptMemberIds = new Set((attempts.data ?? []).map((x: any) => String(x.cycle_student_id ?? "")).filter(Boolean));
+      const protectedRemoved = (members.data ?? []).filter((m: any) => !requestedIds.includes(String(m.cycle_id)) &&
+        (["IN_PROGRESS", "COMPLETED"].includes(String(m.booking_status)) || attemptMemberIds.has(String(m.id))));
+      if (protectedRemoved.length)
+        return NextResponse.json({ message: "이미 응시 중이거나 완료한 날짜는 변경할 수 없습니다. 다른 예정 날짜만 교체해 주세요." }, { status: 409 });
+      const removable = (members.data ?? []).filter((m: any) => !requestedIds.includes(String(m.cycle_id)) &&
+        !["IN_PROGRESS", "COMPLETED"].includes(String(m.booking_status)) && !attemptMemberIds.has(String(m.id)));
+      const removableIds = removable.map((m: any) => String(m.id));
+      if (removableIds.length) {
+        const cancelledRegs = await s.from("exam_registrations").update({ status: "cancelled", booking_status: "CANCELLED" })
+          .in("cycle_student_id", removableIds).neq("status", "refunded");
+        if (cancelledRegs.error) return NextResponse.json({ message: cancelledRegs.error.message }, { status: 400 });
+        const cancelledMembers = await s.from("learning_cycle_students").update({ status: "CANCELLED", booking_status: "CANCELLED", updated_at: now })
+          .in("id", removableIds);
+        if (cancelledMembers.error) return NextResponse.json({ message: cancelledMembers.error.message }, { status: 400 });
+      }
+
+      const completedSequence = Math.max(0, ...(attempts.data ?? []).filter((x: any) => x.status === "submitted" && !x.is_practice)
+        .map((x: any) => Number(x.formal_sequence) || 0));
+      const scopeCode = normalizeSosScope(app.scope_code);
+      for (let index = 0; index < selectedCycles.length; index += 1) {
+        const cycle: any = selectedCycles[index];
+        const existing: any = (members.data ?? []).find((m: any) => String(m.cycle_id) === String(cycle.id));
+        if (existing && (["IN_PROGRESS", "COMPLETED"].includes(String(existing.booking_status)) || attemptMemberIds.has(String(existing.id)))) continue;
+        const saved = await s.from("learning_cycle_students").upsert({
+          application_id: applicationId, cycle_id: cycle.id, student_id: studentId,
+          source: "SOS_APPLICATION", status: "ACTIVE", registered_at: now, updated_at: now,
+          formal_sequence: completedSequence + index + 1, scope_code: scopeCode, attendance_mode: "ZOOM",
+          scheduled_at: cycle.scheduled_at || null, booking_status: "SCHEDULED",
+          sos_gate_status: completedSequence + index + 1 <= 1 ? "OPEN" : "LOCKED", is_practice: false,
+        }, { onConflict: "cycle_id,student_id" });
+        if (saved.error) return NextResponse.json({ message: `학생 일정 변경 실패: ${missing(saved.error.message)}` }, { status: 400 });
+      }
+    }
+
+    const updated = await s.from("sos_program_applications").update({
+      application_mode: "CYCLES", selected_cycle_ids: requestedIds, purchased_count: purchasedCount, updated_at: now,
+    }).eq("id", applicationId);
+    return updated.error
+      ? NextResponse.json({ message: updated.error.message }, { status: 400 })
+      : NextResponse.json({ success: true, selectedCycleIds: requestedIds });
   }
 
   if (action === "delete-batch") {
@@ -208,12 +287,14 @@ export async function POST(request: Request) {
     const allCycleIds = (links.data ?? []).map((x: any) => String(x.cycle_id));
     if (allCycleIds.length !== 5) return NextResponse.json({ message: `5회 묶음 연결이 올바르지 않습니다. 현재 ${allCycleIds.length}회 연결되어 있습니다.` }, { status: 400 });
 
-    const selected = Array.isArray(app.selected_cycle_ids) ? app.selected_cycle_ids.map(String).filter((id: string) => allCycleIds.includes(id)) : [];
+    const selected = Array.isArray(app.selected_cycle_ids) ? app.selected_cycle_ids.map(String) : [];
     const partial = String(app.application_mode ?? "ALL") === "CYCLES";
     if (partial && !selected.length) return NextResponse.json({ message: "회차별 신청 정보가 비어 있습니다. 신청 내역을 확인해 주세요." }, { status: 400 });
     const cycleIds = partial ? selected : allCycleIds;
-    const selectedSlots = (links.data ?? []).filter((row: any) => cycleIds.includes(String(row.cycle_id)))
-      .sort((a: any, z: any) => String(a.learning_cycles?.start_date ?? "").localeCompare(String(z.learning_cycles?.start_date ?? "")));
+    const selectedCycleResult = await s.from("learning_cycles").select("id,start_date,scheduled_at").in("id", cycleIds).order("start_date");
+    if (selectedCycleResult.error || (selectedCycleResult.data ?? []).length !== cycleIds.length)
+      return NextResponse.json({ message: selectedCycleResult.error?.message || "선택한 참가 일정을 확인해 주세요." }, { status: 400 });
+    const selectedSlots = (selectedCycleResult.data ?? []).map((cycle: any) => ({ cycle_id: cycle.id, learning_cycles: cycle }));
     const scopeCode = normalizeSosScope(app.scope_code);
 
     const [formalAttempts, formalMemberships] = await Promise.all([
