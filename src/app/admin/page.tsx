@@ -30,6 +30,7 @@ import {
   type SourceWorkflowTone,
 } from "@/lib/source-workflow";
 import ProgramBatchesAdmin from "./ProgramBatchesAdmin";
+import WeeklyAssignments from "./WeeklyAssignments";
 import { isObjectiveQuestion, questionTypeSummary } from "@/lib/exam-question-type";
 
 type CanonicalSourceAnalysisStatus = {
@@ -165,13 +166,13 @@ const menus: MenuItem[] = [
   { id: "dashboard", label: "대시보드", icon: "⌂" },
   { id: "posters", label: "포스터 관리", icon: "▧" },
   { id: "students", label: "학생정보 관리", icon: "♙" },
-  { id: "applications", label: "일정별 참가자·시험순번", icon: "✓" },
+  { id: "applications", label: "회차별 시험배정", icon: "✓" },
   { id: "program-applications", label: "참가권 신청·결제", icon: "⑤" },
   { id: "cycles", label: "응시 일정·시험지 연결", icon: "◉" },
   { id: "exam-list", label: "시험지 목록", icon: "▤" },
   { id: "exam-input", label: "시험지 입력", icon: "+" },
   { id: "exam-analysis", label: "AI 분석", icon: "✦" },
-  { id: "exam-assignment", label: "기존 시험배정", icon: "↗" },
+  { id: "exam-assignment", label: "A/B/C 시험지 등록", icon: "↗" },
   { id: "exam-progress", label: "실전모의고사 진행", icon: "▶" },
   { id: "problem-sources", label: "문제등록", icon: "▦" },
   { id: "problem-analysis", label: "AI 분석", icon: "✦" },
@@ -522,15 +523,19 @@ const [collapsed, setCollapsed] = useState(false);
             <LearningCyclesPage />
           ) : active === "program-applications" ? (
             <ProgramBatchesAdmin />
-          ) : active === "students" || active === "applications" ? (
+          ) : active === "applications" ? (
+            <WeeklyAssignments key="weekly" />
+          ) : active === "exam-assignment" ? (
+            <WeeklyAssignments key="catalog" initialTab="catalog" />
+          ) : active === "students" ? (
             <StudentsPage key={active}
-              initialTab={active === "applications" ? "registration" : "students"}
+              initialTab="students"
               students={students}
               setStudents={setStudents}
             />
           ) : ["exam-list", "exam-input", "exam-analysis", "exam-assignment", "exam-progress", "exam-results"].includes(active) ? (
             <ExamsPage key={active}
-              initialTab={active === "exam-input" ? "input" : active === "exam-analysis" ? "analysis" : active === "exam-assignment" ? "assignment" : active === "exam-progress" ? "monitor" : active === "exam-results" ? "monitor-results" : "list"}
+              initialTab={active === "exam-input" ? "input" : active === "exam-analysis" ? "analysis" : active === "exam-progress" ? "monitor" : active === "exam-results" ? "monitor-results" : "list"}
               exams={practiceExams}
               setExams={setPracticeExams}
               examFiles={examFiles}
