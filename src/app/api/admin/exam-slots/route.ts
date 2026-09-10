@@ -1,3 +1,4 @@
+import { priorLearningPassed } from "@/lib/exam-flow";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAdminUser } from "@/lib/supabase/auth";
@@ -29,7 +30,7 @@ async function slotRows(supabase: any, cycleId: string) {
           .select("student_id,formal_sequence,scope_code,is_practice,status")
           .in("student_id", studentIds).eq("status", "submitted"),
         supabase.from("learning_cycle_students")
-          .select("id,student_id,cycle_id,formal_sequence,scope_code,sos_gate_status,is_practice")
+          .select("id,student_id,cycle_id,formal_sequence,scope_code,sos_gate_status,is_practice,booking_status")
           .in("student_id", studentIds).eq("status", "ACTIVE"),
         supabase.from("sos_training_sessions")
           .select("student_id,status,decision,cycle_kind,target_snapshot")
@@ -57,9 +58,7 @@ async function slotRows(supabase: any, cycleId: string) {
         Number(item.formal_sequence) === formalSequence - 1 && item.is_practice !== true);
       const studentSessions = (sessions.data ?? []).filter((session: any) =>
         String(session.student_id) === String(membership.student_id));
-      const gateOpen = formalSequence <= 1 || membership.sos_gate_status === "OVERRIDE" ||
-        previous?.sos_gate_status === "PASSED" || previous?.sos_gate_status === "OVERRIDE" ||
-        (previous && isSosCyclePassed(studentSessions, String(previous.cycle_id)));
+      const gateOpen = priorLearningPassed((allMemberships.data ?? []).filter((m:any)=>String(m.student_id)===String(membership.student_id)), studentSessions, membership);
       const link = (links.data ?? []).find((item: any) =>
         item.exam_id === registration?.exam_id && Number(item.formal_sequence) === formalSequence &&
         String(item.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL"));
@@ -105,7 +104,7 @@ export async function POST(request: Request) {
         const exam=eligible.find((r:any)=>String(r.exam_id)===examId)?.exam;
         const start=new Date(slot.cycle.scheduled_at);
         if(!Number.isFinite(start.getTime()))throw new Error("예정시각을 먼저 저장해 주세요.");
-        const r=await supabase.from("exams").update({student_open:true,open_at:start.toISOString(),close_at:new Date(start.getTime()+Number(exam?.time_limit??100)*60000).toISOString()}).eq("id",examId);
+        const r=await supabase.from("exams").update({timer_cycle_id:cycleId,student_open:true,open_at:start.toISOString(),close_at:new Date(start.getTime()+Number(exam?.time_limit??100)*60000).toISOString()}).eq("id",examId);
         if(r.error)throw r.error;
       }
       return NextResponse.json({success:true});
@@ -119,7 +118,7 @@ export async function POST(request: Request) {
       for (const [examId, exam] of examMap) {
         const minutes = Math.max(1, Number(exam?.time_limit ?? 100));
         const update = await supabase.from("exams").update({
-          student_open: true, open_at: startedAt.toISOString(),
+          timer_cycle_id: cycleId, student_open: true, open_at: startedAt.toISOString(),
           close_at: new Date(startedAt.getTime() + minutes * 60_000).toISOString(),
           paused_at: null, paused_remaining_seconds: null,
         }).eq("id", examId);

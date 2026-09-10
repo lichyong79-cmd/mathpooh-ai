@@ -1,4 +1,5 @@
 import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
+import { nextExamSequence, priorLearningPassed } from "@/lib/exam-flow";
 import { NextResponse } from "next/server";
 import { getAdminUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -30,7 +31,7 @@ export async function GET(request: Request) {
           s.from("exam_attempts").select("id,student_id,exam_id,status,formal_sequence,scope_code,is_practice").in("student_id",ids),
           s.from("exam_registrations").select("id,student_id,exam_id,cycle_student_id,status,formal_sequence,scope_code").in("student_id",ids),
           s.from("sos_training_sessions").select("student_id,status,decision,cycle_kind,target_snapshot").in("student_id",ids),
-          s.from("learning_cycle_students").select("student_id,cycle_id,formal_sequence,scope_code,is_practice").in("student_id",ids),
+          s.from("learning_cycle_students").select("id,student_id,cycle_id,formal_sequence,scope_code,is_practice,booking_status").in("student_id",ids),
         ]);
         if(attempts.error||registrations.error||sessions.error||history.error)throw attempts.error||registrations.error||sessions.error||history.error;
         rows=(members.data??[]).map(m=>{
@@ -50,8 +51,9 @@ export async function GET(request: Request) {
           const registration=exact??(attempt?{exam_id:attempt.exam_id,formal_sequence:attempt.formal_sequence,scope_code:m.scope_code,status:"historical"}:null);
           const sequence=Number(registration?.formal_sequence)||completed+1;
           const previous=(history.data??[]).filter(h=>h.student_id===m.student_id&&String(h.scope_code??"FULL")===scope&&Number(h.formal_sequence)===sequence-1&&!h.is_practice);
-          const passed=sequence<=1||previous.some(h=>isSosCyclePassed((sessions.data??[]).filter(t=>t.student_id===m.student_id),h.cycle_id));
-          return {...m,completed_sequence:completed,next_sequence:completed+1,sos_passed:passed,registration,exam,attempt_status:attempt?.status??null,past,locked:past||!!attempt};
+          const passed=priorLearningPassed((history.data??[]).filter(h=>h.student_id===m.student_id),(sessions.data??[]).filter(t=>t.student_id===m.student_id),m);
+          const nextByScope=Object.fromEntries(SOS_SCOPE_CODES.map(code=>[code,nextExamSequence((attempts.data??[]).filter(a=>a.student_id===m.student_id),code)]));
+          return {...m,next_by_scope:nextByScope,completed_sequence:completed,next_sequence:completed+1,sos_passed:passed,registration,exam,attempt_status:attempt?.status??null,past,locked:past||!!attempt};
         });
       }
     }

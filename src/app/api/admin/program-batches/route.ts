@@ -24,14 +24,15 @@ const nextSequencesByScope = (rows: any[]) => {
 async function admin() { return await getAdminUser(); }
 
 async function cancelCycleAssignments(s: any, applicationId: string, now: string) {
-  const memberships = await s.from("learning_cycle_students").select("id").eq("application_id", applicationId).eq("status", "ACTIVE");
+  const memberships = await s.from("learning_cycle_students").select("id,booking_status").eq("application_id", applicationId).eq("status", "ACTIVE");
   if (memberships.error) return memberships.error.message;
-  const membershipIds = (memberships.data ?? []).map((row: any) => row.id);
+  if ((memberships.data ?? []).some((row:any)=>row.booking_status==="IN_PROGRESS")) return "응시 중인 신청은 취소할 수 없습니다.";
+  const membershipIds = (memberships.data ?? []).filter((row:any)=>row.booking_status!=="COMPLETED").map((row: any) => row.id);
   if (membershipIds.length) {
     const registrations = await s.from("exam_registrations").update({ status: "cancelled", booking_status: "CANCELLED" }).in("cycle_student_id", membershipIds).neq("status", "refunded");
     if (registrations.error) return registrations.error.message;
   }
-  const cancelled = await s.from("learning_cycle_students").update({ status: "CANCELLED", updated_at: now }).eq("application_id", applicationId).eq("status", "ACTIVE");
+  const cancelled = await s.from("learning_cycle_students").update({ status: "CANCELLED", updated_at: now }).eq("application_id", applicationId).eq("status", "ACTIVE").neq("booking_status","COMPLETED");
   return cancelled.error?.message ?? "";
 }
 
@@ -141,67 +142,12 @@ export async function POST(request: Request) {
     const selectedCycles = allowed.filter((c: any) => requestedIds.includes(String(c.id)))
       .sort((a: any, z: any) => String(a.start_date).localeCompare(String(z.start_date)));
     const selectedScopes = cycleScopeMap(app, requestedIds, b.cycleScopes);
-    const studentId = String(app.student_id ?? b.studentId ?? "");
-    if (String(app.status) === "ENROLLED" && studentId) {
-      const [members, attempts, allMemberships] = await Promise.all([
-        s.from("learning_cycle_students").select("id,cycle_id,booking_status,formal_sequence,scope_code,status")
-          .eq("application_id", applicationId),
-        s.from("exam_attempts").select("cycle_student_id,status,formal_sequence,scope_code,is_practice")
-          .eq("student_id", studentId).in("status", ["in_progress", "submitted"]),
-        s.from("learning_cycle_students").select("id,application_id,formal_sequence,scope_code,is_practice,status")
-          .eq("student_id", studentId).eq("status", "ACTIVE"),
-      ]);
-      if (members.error || attempts.error || allMemberships.error) return NextResponse.json({ message: members.error?.message || attempts.error?.message || allMemberships.error?.message }, { status: 400 });
-      const attemptMemberIds = new Set((attempts.data ?? []).map((x: any) => String(x.cycle_student_id ?? "")).filter(Boolean));
-      const protectedRemoved = (members.data ?? []).filter((m: any) => !requestedIds.includes(String(m.cycle_id)) &&
-        (["IN_PROGRESS", "COMPLETED"].includes(String(m.booking_status)) || attemptMemberIds.has(String(m.id))));
-      if (protectedRemoved.length)
-        return NextResponse.json({ message: "이미 응시 중이거나 완료한 날짜는 변경할 수 없습니다. 다른 예정 날짜만 교체해 주세요." }, { status: 409 });
-      const removable = (members.data ?? []).filter((m: any) => !requestedIds.includes(String(m.cycle_id)) &&
-        !["IN_PROGRESS", "COMPLETED"].includes(String(m.booking_status)) && !attemptMemberIds.has(String(m.id)));
-      const removableIds = removable.map((m: any) => String(m.id));
-      if (removableIds.length) {
-        const cancelledRegs = await s.from("exam_registrations").update({ status: "cancelled", booking_status: "CANCELLED" })
-          .in("cycle_student_id", removableIds).neq("status", "refunded");
-        if (cancelledRegs.error) return NextResponse.json({ message: cancelledRegs.error.message }, { status: 400 });
-        const cancelledMembers = await s.from("learning_cycle_students").update({ status: "CANCELLED", booking_status: "CANCELLED", updated_at: now })
-          .in("id", removableIds);
-        if (cancelledMembers.error) return NextResponse.json({ message: cancelledMembers.error.message }, { status: 400 });
-      }
-
-      const protectedIds = new Set((members.data ?? []).filter((m:any)=>["IN_PROGRESS","COMPLETED"].includes(String(m.booking_status)) || attemptMemberIds.has(String(m.id))).map((m:any)=>String(m.id)));
-      const historyRows = [
-        ...(attempts.data ?? []).filter((x:any)=>x.status === "submitted"),
-        ...(allMemberships.data ?? []).filter((x:any)=>String(x.application_id)!==applicationId || protectedIds.has(String(x.id))),
-      ];
-      const nextByScope: Record<string,number> = nextSequencesByScope(historyRows) as Record<string,number>;
-      for (let index = 0; index < selectedCycles.length; index += 1) {
-        const cycle: any = selectedCycles[index];
-        const existing: any = (members.data ?? []).find((m: any) => String(m.cycle_id) === String(cycle.id));
-        if (existing && (["IN_PROGRESS", "COMPLETED"].includes(String(existing.booking_status)) || attemptMemberIds.has(String(existing.id)))) continue;
-        const scopeCode = selectedScopes[String(cycle.id)];
-        const formalSequence = nextByScope[scopeCode]++;
-        if (existing && (Number(existing.formal_sequence)!==formalSequence || normalizeSosScope(existing.scope_code)!==scopeCode)) {
-          const cancelled = await s.from("exam_registrations").update({status:"cancelled",booking_status:"CANCELLED"}).eq("cycle_student_id",existing.id).eq("status","assigned");
-          if (cancelled.error) return NextResponse.json({message:cancelled.error.message},{status:400});
-        }
-        const saved = await s.from("learning_cycle_students").upsert({
-          application_id: applicationId, cycle_id: cycle.id, student_id: studentId,
-          source: "SOS_APPLICATION", status: "ACTIVE", registered_at: now, updated_at: now,
-          formal_sequence: formalSequence, scope_code: scopeCode, attendance_mode: "ZOOM",
-          scheduled_at: cycle.scheduled_at || null, booking_status: "SCHEDULED",
-          sos_gate_status: formalSequence <= 1 ? "OPEN" : "LOCKED", is_practice: false,
-        }, { onConflict: "cycle_id,student_id" });
-        if (saved.error) return NextResponse.json({ message: `학생 일정 변경 실패: ${missing(saved.error.message)}` }, { status: 400 });
-      }
-    }
-
-    const updated = await s.from("sos_program_applications").update({
-      application_mode: "CYCLES", selected_cycle_ids: requestedIds, selected_cycle_scopes: selectedScopes, purchased_count: purchasedCount, updated_at: now,
-    }).eq("id", applicationId);
-    return updated.error
-      ? NextResponse.json({ message: updated.error.message }, { status: 400 })
-      : NextResponse.json({ success: true, selectedCycleIds: requestedIds });
+    const result = await s.rpc("sos373_change_application", {
+      p_application: applicationId, p_ids: requestedIds, p_scopes: selectedScopes,
+    });
+    return result.error
+      ? NextResponse.json({message: result.error.message},{status:400})
+      : NextResponse.json({success:true,selectedCycleIds:requestedIds});
   }
 
   if (action === "delete-batch") {
@@ -328,14 +274,11 @@ export async function POST(request: Request) {
     ]);
     if (formalAttempts.error || formalMemberships.error)
       return NextResponse.json({ message: formalAttempts.error?.message || formalMemberships.error?.message || "공식 참가순번 확인 실패" }, { status: 400 });
-    const nextByScope = nextSequencesByScope([...(formalAttempts.data ?? []), ...(formalMemberships.data ?? [])]) as Record<string,number>;
-
-    const enrollment = await s.from("sos_program_enrollments").upsert({ application_id: app.id, batch_id: app.batch_id, student_id: studentId, status: "ACTIVE", enrolled_at: now }, { onConflict: "application_id" });
-    if (enrollment.error) return NextResponse.json({ message: `SOS 등록 저장 실패: ${enrollment.error.message}` }, { status: 400 });
+    const nextByScope = nextSequencesByScope(formalAttempts.data ?? []) as Record<string,number>;
 
     const cycleEnrollmentRows = selectedSlots.map((slot: any) => {
       const scopeCode = selectedScopes[String(slot.cycle_id)];
-      const formalSequence = nextByScope[scopeCode]++;
+      const formalSequence = nextByScope[scopeCode];
       return {
         application_id: app.id, cycle_id: slot.cycle_id, student_id: studentId,
         source: "SOS_APPLICATION", status: "ACTIVE", registered_at: now, updated_at: now,
@@ -344,21 +287,8 @@ export async function POST(request: Request) {
         sos_gate_status: formalSequence <= 1 ? "OPEN" : "LOCKED", is_practice: false,
       };
     });
-    const cycleEnrollment = await s.from("learning_cycle_students").upsert(cycleEnrollmentRows, { onConflict: "cycle_id,student_id" }).select("id,cycle_id,student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status");
-    if (cycleEnrollment.error) return NextResponse.json({ message: `학생-회차 연결 실패: ${missing(cycleEnrollment.error.message)}` }, { status: 400 });
-
-    // 입금확인은 참가 등록까지만 처리합니다. 시험지는 배정 화면에서 지정합니다.
-
-    const finalized = await s.from("sos_program_applications")
-      .update({ student_id: studentId, status: "ENROLLED", paid_at: now, enrolled_at: now, updated_at: now })
-      .eq("id", app.id)
-      .in("status", ["REQUESTED", "PAID"])
-      .select("id,status")
-      .maybeSingle();
-    if (finalized.error || !finalized.data) {
-      await s.from("sos_program_enrollments").delete().eq("application_id", app.id);
-      return NextResponse.json({ message: finalized.error?.message || "신청 상태 마감 처리에 실패했습니다. 다시 확인해 주세요." }, { status: 409 });
-    }
+    const enrolled = await s.rpc("sos373_enroll",{p_application:app.id,p_student:studentId,p_rows:cycleEnrollmentRows});
+    if(enrolled.error) return NextResponse.json({message:enrolled.error.message},{status:400});
     return NextResponse.json({ success: true, studentId, assignedCycleCount: cycleIds.length,
       assignments: cycleEnrollmentRows.map((row:any)=>({cycleId:row.cycle_id,formalSequence:row.formal_sequence,scopeCode:row.scope_code})) });
   }

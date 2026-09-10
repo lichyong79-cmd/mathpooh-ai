@@ -143,7 +143,7 @@ export async function GET(request: Request) {
     attempts ?? [],
     (attempt) => String(attempt.student_id),
   );
-  if (exam.close_at && new Date(exam.close_at).getTime() <= Date.now()) {
+  if (exam.close_at && new Date(exam.close_at).getTime() + 5000 <= Date.now()) {
     await Promise.all(
       canonicalAttempts
         .filter((attempt) => attempt.status === "in_progress")
@@ -157,7 +157,7 @@ export async function GET(request: Request) {
             exam.question_points,
           );
           const { score, correct, wrong, unanswered } = graded;
-          await ctx.supabase
+          const finalized = await ctx.supabase
             .from("exam_attempts")
             .update({
               status: "submitted",
@@ -170,7 +170,8 @@ export async function GET(request: Request) {
               graded_at: exam.close_at,
             })
             .eq("id", attempt.id)
-            .eq("status", "in_progress");
+            .eq("status", "in_progress").eq("last_saved_at", attempt.last_saved_at).select("id").maybeSingle();
+          if (finalized.error || !finalized.data) return;
           attempt.status = "submitted";
           attempt.submitted_at = exam.close_at;
           attempt.score = score;
@@ -272,14 +273,15 @@ export async function PATCH(request: Request) {
       runningAttempts ?? [],
       (attempt) => String(attempt.student_id),
     );
-    await Promise.all(finalAttempts.map(async (attempt) => {
+    const finalizedRows = await Promise.all(finalAttempts.map(async (attempt) => {
       const graded = gradeAnswers(attempt.answers ?? {});
-      await ctx.supabase.from("exam_attempts").update({
+      return await ctx.supabase.from("exam_attempts").update({
         status: "submitted", submitted_at: endedAt, last_saved_at: endedAt,
         score: graded.score, correct_count: graded.correct, wrong_numbers: graded.wrong,
         unanswered_numbers: graded.unanswered, graded_at: endedAt,
-      }).eq("id", attempt.id).eq("status", "in_progress");
+      }).eq("id", attempt.id).eq("status", "in_progress").eq("last_saved_at", attempt.last_saved_at).select("id").maybeSingle();
     }));
+    if (finalizedRows.some(r=>r.error || !r.data)) return NextResponse.json({message:"일부 답안이 저장 중입니다. 최신 저장 후 강제종료를 다시 눌러 주세요."},{status:409});
     const { data, error } = await ctx.supabase
       .from("exams")
       .update({ close_at: endedAt, paused_at: null, paused_remaining_seconds: null })

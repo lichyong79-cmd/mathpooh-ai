@@ -21,7 +21,7 @@ async function nextSequence(s: any, studentId: string, scopeCode: string) {
     s.from("learning_cycle_students").select("formal_sequence,scope_code,is_practice,status").eq("student_id", studentId).eq("status", "ACTIVE"),
   ]);
   if (attempts.error || bookings.error) throw attempts.error || bookings.error;
-  const used = [...(attempts.data ?? []), ...(bookings.data ?? [])]
+  const used = [...(attempts.data ?? [])]
     .filter((row: any) => !row.is_practice && Number(row.formal_sequence) > 0 && normalizeSosScope(row.scope_code) === scopeCode)
     .map((row: any) => Number(row.formal_sequence));
   return Math.max(0, ...used) + 1;

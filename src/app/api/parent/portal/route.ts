@@ -1,4 +1,5 @@
 import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
+import { nextExamSequence } from "@/lib/exam-flow";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -207,7 +208,7 @@ export async function GET() {
     const runningByScope=new Map(completedByScope);
     const childSchedules=pendingSchedules.map((schedule:any)=>{
       const scope=String(schedule.scope_code??"FULL");
-      const formalSequence=(runningByScope.get(scope)??0)+1;
+      const formalSequence=nextExamSequence(attempts.filter((a:any)=>String(a.student_id)===String(child.id)),scope);
       runningByScope.set(scope,formalSequence);
       return {...schedule,formal_sequence:formalSequence};
     });

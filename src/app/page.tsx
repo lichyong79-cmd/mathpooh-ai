@@ -2292,6 +2292,8 @@ export default function StudentHome() {
   // 최신 함수를 ref에 담아 두고 타이머는 ref만 호출한다.
   const saveRef = useRef<(silent?: boolean) => Promise<void>>(async () => {});
   const startRequestRef = useRef(false);
+  const answerWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const submittingRef = useRef(false);
   const answerSaveTimerRef = useRef<number | null>(null);
   // 남은 시간은 1초씩 빼지 않고 종료 시각에서 계산한다.
   // 모바일은 화면이 꺼지거나 앱을 전환하면 타이머를 멈추므로, 빼기 방식은 시간이 어긋난다.
@@ -2559,10 +2561,16 @@ export default function StudentHome() {
         !activeExam ||
         !attempt ||
         attempt.status !== "in_progress" ||
-        examPaused
+        examPaused || submittingRef.current
       )
         return;
       setSaveState("저장 중...");
+      const previousWrite = answerWriteRef.current;
+      let releaseWrite!: () => void;
+      answerWriteRef.current = new Promise<void>(resolve => { releaseWrite = resolve; });
+      await previousWrite;
+      if (submittingRef.current) { releaseWrite(); return; }
+      try {
       const response = await fetch("/api/student/portal", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -2581,6 +2589,9 @@ export default function StudentHome() {
       );
       if (!response.ok && !silent)
         alert(data.message || "답안 저장에 실패했습니다.");
+      } catch {
+        setSaveState("저장 실패 · 연결 복구 후 다시 저장해 주세요");
+      } finally { releaseWrite(); }
     },
     [activeExam, answers, attempt, examPaused],
   );
@@ -2631,7 +2642,7 @@ export default function StudentHome() {
 
   const submit = useCallback(
     async (forced = false) => {
-      if (!activeExam || !attempt || busy) return;
+      if (!activeExam || !attempt || busy || submittingRef.current) return;
       const missing = Array.from(
         { length: activeExam.question_count },
         (_, index) => index + 1,
@@ -2646,6 +2657,9 @@ export default function StudentHome() {
       )
         return;
       setBusy("답안을 제출하고 채점 중입니다...");
+      submittingRef.current = true;
+      await answerWriteRef.current;
+      try {
       const response = await fetch("/api/student/portal", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -2663,6 +2677,12 @@ export default function StudentHome() {
       setActiveExam(null);
       setAttempt(null);
       await load();
+      } catch {
+        alert("제출 연결에 실패했습니다. 화면을 닫지 말고 다시 제출해 주세요.");
+      } finally {
+        submittingRef.current = false;
+        setBusy("");
+      }
     },
     [activeExam, answers, attempt, busy, load],
   );

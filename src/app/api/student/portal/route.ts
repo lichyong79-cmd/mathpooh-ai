@@ -1,4 +1,5 @@
 import { isArchivedPracticeExam, isArchivedPracticeCycle, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
+import { nextExamSequence, priorLearningPassed, bookingExam } from "@/lib/exam-flow";
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -118,7 +119,7 @@ export async function GET(request: Request) {
         .maybeSingle(),
       supabase
         .from("exam_registrations")
-        .select("status,booking_status,scheduled_at")
+        .select("status,booking_status,scheduled_at,cycle_student_id,clock_initialized,clock_open_at,clock_close_at,clock_paused_at,clock_remaining_seconds")
         .eq("student_id", student.id)
         .eq("exam_id", statusExamId)
         .maybeSingle(),
@@ -136,7 +137,7 @@ export async function GET(request: Request) {
     return NextResponse.json(
       {
         success: true,
-        exam: examResult.data,
+        exam: bookingExam(examResult.data,registrationResult.data),
         attempt: pickCanonicalAttempt(attemptResult.data ?? []),
         assigned: registrationResult.data?.status === "assigned",
         ready: registrationResult.data?.status === "assigned" &&
@@ -147,7 +148,7 @@ export async function GET(request: Request) {
   }
   const { data: registrations, error: registrationError } = await supabase
     .from("exam_registrations")
-    .select("id,exam_id,status,cycle_student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status")
+    .select("id,exam_id,status,cycle_student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status,clock_initialized,clock_open_at,clock_close_at,clock_paused_at,clock_remaining_seconds")
     .eq("student_id", student.id);
   if (registrationError)
     return NextResponse.json(
@@ -208,7 +209,7 @@ export async function GET(request: Request) {
   const resolvedSequenceByMembership = new Map<string,number>();
   pendingMemberships.forEach((membership:any)=>{
     const scope=String(membership.scope_code??"FULL");
-    const sequence=(runningByScope.get(scope)??0)+1;
+    const sequence=nextExamSequence(canonicalAttempts, scope);
     runningByScope.set(scope,sequence);
     resolvedSequenceByMembership.set(String(membership.id),sequence);
   });
@@ -249,6 +250,7 @@ export async function GET(request: Request) {
       )
       .map(async (exam) => {
       const exactRegistration = registrationMap.get(String(exam.id));
+      exam = bookingExam(exam,exactRegistration);
       const scheduledAt = exactRegistration?.scheduled_at ?? exam.open_at;
       const downloadAvailableAt = scheduledAt
         ? new Date(
@@ -451,8 +453,7 @@ export async function GET(request: Request) {
       : (memberships.data ?? []).find((row: any) =>
           Number(row.formal_sequence) === Number(resolvedSequence) - 1 &&
           String(row.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL"));
-    const previousPassed = !previous || previous.sos_gate_status === "PASSED" || previous.sos_gate_status === "OVERRIDE" ||
-      isSosCyclePassed(sessionsForGate, String(previous.cycle_id));
+    const previousPassed = priorLearningPassed(memberships.data ?? [], sessionsForGate, membership);
     return {
       cycle_id: String(cycle.id),
       cycle_name: String(cycle.name ?? "SOS 응시 일정"),
@@ -558,7 +559,7 @@ export async function POST(request: Request) {
     );
   const { data: registration } = await supabase
     .from("exam_registrations")
-    .select("id,status,cycle_student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status")
+    .select("id,status,cycle_student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status,clock_initialized,clock_open_at,clock_close_at,clock_paused_at,clock_remaining_seconds")
     .eq("exam_id", examId)
     .eq("student_id", student.id)
     .maybeSingle();
@@ -571,30 +572,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "현재 참가 상태에서는 시험을 시작할 수 없습니다." }, { status: 403 });
   if (action === "start" && registration.booking_status !== "IN_PROGRESS")
     return NextResponse.json({ message: "관리자가 시험을 시작할 때까지 대기해 주세요." }, { status: 423 });
-  if (action === "start" && registration.cycle_student_id && Number(registration.formal_sequence) > 1) {
+  if (action === "start" && registration.cycle_student_id) {
     const currentMembership = await supabase.from("learning_cycle_students").select("id,sos_gate_status,formal_sequence,scope_code")
       .eq("id", registration.cycle_student_id).maybeSingle();
-    if (currentMembership.data?.sos_gate_status === "LOCKED") {
-      const previous = await supabase.from("learning_cycle_students").select("id,cycle_id,sos_gate_status")
-        .eq("student_id", student.id).eq("formal_sequence", Number(registration.formal_sequence) - 1)
-        .eq("scope_code", String(registration.scope_code ?? currentMembership.data?.scope_code ?? "FULL")).eq("status", "ACTIVE").maybeSingle();
-      const sessions = await supabase.from("sos_training_sessions").select("status,decision,target_snapshot,phase,round_no,cycle_kind")
-        .eq("student_id", student.id).limit(120);
-      const passed = previous.data && (previous.data.sos_gate_status === "PASSED" || previous.data.sos_gate_status === "OVERRIDE" || isSosCyclePassed(sessions.data ?? [], String(previous.data.cycle_id)));
-      if (!passed)
-        return NextResponse.json({ message: `${Number(registration.formal_sequence) - 1}회차 SOS 학습을 통과해야 다음 시험을 볼 수 있습니다.` }, { status: 423 });
-      const openedAt = new Date().toISOString();
-      const previousId = String(previous.data?.id ?? "");
-      if (previousId) await supabase.from("learning_cycle_students").update({ sos_gate_status: "PASSED", sos_passed_at: openedAt, updated_at: openedAt }).eq("id", previousId);
-      await supabase.from("learning_cycle_students").update({ sos_gate_status: "OPEN", updated_at: openedAt }).eq("id", registration.cycle_student_id);
-    }
+    const [allBookings, allLearning] = await Promise.all([
+      supabase.from("learning_cycle_students").select("id,cycle_id,booking_status,is_practice").eq("student_id",student.id),
+      supabase.from("sos_training_sessions").select("status,decision,target_snapshot,cycle_kind").eq("student_id",student.id),
+    ]);
+    if (allBookings.error || allLearning.error) return NextResponse.json({message:"이전 학습 상태를 확인하지 못했습니다."},{status:503});
+    if (!priorLearningPassed(allBookings.data ?? [], allLearning.data ?? [], currentMembership.data ?? {}))
+      return NextResponse.json({message:"이전 시험의 SOS 학습을 완료해야 다음 시험을 시작할 수 있습니다."},{status:423});
+
   }
-  const { data: exam } = await supabase
+  const { data: sourceExam } = await supabase
     .from("exams")
     .select("*")
     .eq("id", examId)
     .eq("student_open", true)
     .maybeSingle();
+  const exam = sourceExam ? bookingExam(sourceExam,registration) : null;
   if (!exam)
     return NextResponse.json(
       { message: "응시 가능한 시험이 아닙니다." },
@@ -713,17 +709,19 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     const savedAt = new Date().toISOString();
-    const { error } = await supabase
+    const { error, data: savedRow } = await supabase
       .from("exam_attempts")
       .update({
         answers,
         answer_changes: changes,
         last_saved_at: savedAt,
       })
-      .eq("id", existing.id);
+      .eq("id", existing.id).eq("status", "in_progress")
+      .eq("last_saved_at", existing.last_saved_at).select("id").maybeSingle();
     const answerChanged = Object.keys(answers).some(
       (key) => String(previous[key] ?? "") !== String(answers[key] ?? ""),
     );
+    if (!error && !savedRow) return NextResponse.json({message:"다른 저장 또는 제출이 먼저 완료되었습니다. 최신 답안을 다시 저장해 주세요."},{status:409});
     if (!error && answerChanged) {
       const answeredCount = Object.values(answers).filter((value) =>
         String(value ?? "").trim(),
@@ -751,7 +749,7 @@ export async function POST(request: Request) {
     );
     const { score, correct, wrong, unanswered } = graded;
     const submittedAt = new Date().toISOString();
-    const { error } = await supabase
+    const { error, data: submittedRow } = await supabase
       .from("exam_attempts")
       .update({
         status: "submitted",
@@ -766,7 +764,8 @@ export async function POST(request: Request) {
         graded_at: submittedAt,
         score_source: "auto",
       })
-      .eq("id", existing.id);
+      .eq("id", existing.id).eq("status", "in_progress").select("id").maybeSingle();
+    if (!error && !submittedRow) return NextResponse.json({message:"이미 제출 처리되었습니다. 결과를 다시 확인해 주세요."},{status:409});
     if (!error) {
       if (registration.cycle_student_id) {
         await supabase.from("learning_cycle_students").update({
