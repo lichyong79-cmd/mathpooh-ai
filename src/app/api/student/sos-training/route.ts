@@ -1,3 +1,4 @@
+import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -196,7 +197,7 @@ export async function GET(request: Request) {
   }
 
   const sessions = await Promise.all(
-    rawSessions.map(async (session: any) => {
+    rawSessions.filter((session:any)=>!isArchivedPracticeSession(rootOf(session))).map(async (session: any) => {
       const items = await Promise.all(
         (session.sos_training_items ?? [])
           .sort((a: any, b: any) => Number(a.item_order) - Number(b.item_order))

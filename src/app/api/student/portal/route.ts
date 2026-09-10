@@ -1,4 +1,4 @@
-import { isArchivedPracticeExam } from "@/lib/archived-practice-exams";
+import { isArchivedPracticeExam, isArchivedPracticeCycle, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -167,7 +167,7 @@ export async function GET(request: Request) {
       supabase.from("learning_cycles").select("id,name,start_date,end_date,status,scheduled_at,attendance_mode").in("id", memberCycleIds).order("scheduled_at", { ascending: false, nullsFirst: false }),
     ]);
     memberExamLinks = cycleExams.data ?? [];
-    memberCycles = cycles.data ?? [];
+    memberCycles = (cycles.data ?? []).filter((c:any)=>!isArchivedPracticeCycle(c));
   }
   const { data: exams, error } = await supabase
     .from("exams")
@@ -471,7 +471,7 @@ export async function GET(request: Request) {
       },
       exams: examItems,
       examSchedules,
-      sosSessions: sosSessions ?? [],
+      sosSessions: (sosSessions ?? []).filter((s:any)=>!isArchivedPracticeSession(s)),
       landmark,
     },
     {

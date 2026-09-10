@@ -1,3 +1,4 @@
+import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAdminUser } from "@/lib/supabase/auth";
@@ -38,11 +39,11 @@ export async function GET() {
     batches: (batches.data ?? []).map((b: any) => ({
       ...b,
       cycles: (links.data ?? [])
-        .filter((x: any) => String(x.batch_id) === String(b.id))
+        .filter((x: any) => String(x.batch_id) === String(b.id) && !isArchivedPracticeCycle((cycles.data??[]).find((c:any)=>c.id===x.cycle_id)??{}))
         .sort((a: any, z: any) => a.slot_no - z.slot_no)
         .map((x: any) => ({ ...x, ...(cycles.data ?? []).find((c: any) => String(c.id) === String(x.cycle_id)) })),
     })),
-    cycles: cycles.data ?? [], applications: applications.data ?? [], enrollments: enrollments.data ?? [], students: students.data ?? [],
+    cycles: (cycles.data ?? []).filter((c:any)=>!isArchivedPracticeCycle(c)), applications: applications.data ?? [], enrollments: enrollments.data ?? [], students: students.data ?? [],
   }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -239,21 +240,7 @@ export async function POST(request: Request) {
     const cycleEnrollment = await s.from("learning_cycle_students").upsert(cycleEnrollmentRows, { onConflict: "cycle_id,student_id" }).select("id,cycle_id,student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status");
     if (cycleEnrollment.error) return NextResponse.json({ message: `학생-회차 연결 실패: ${missing(cycleEnrollment.error.message)}` }, { status: 400 });
 
-    // 일정에 해당 순번·범위 시험지가 이미 연결돼 있으면 학생에게 즉시 정확한 한 장만 배정합니다.
-    for (const membership of cycleEnrollment.data ?? []) {
-      const examLink = await s.from("learning_cycle_exams").select("exam_id")
-        .eq("cycle_id", membership.cycle_id).eq("formal_sequence", membership.formal_sequence)
-        .eq("scope_code", membership.scope_code).maybeSingle();
-      if (examLink.error) return NextResponse.json({ message: `시험지 연결 확인 실패: ${missing(examLink.error.message)}` }, { status: 400 });
-      if (!examLink.data) continue;
-      const examRegistration = await s.from("exam_registrations").upsert({
-        exam_id: examLink.data.exam_id, student_id: studentId, cycle_student_id: membership.id,
-        formal_sequence: membership.formal_sequence, scope_code: membership.scope_code,
-        attendance_mode: membership.attendance_mode, scheduled_at: membership.scheduled_at,
-        booking_status: membership.booking_status, status: "assigned", assigned_at: now,
-      }, { onConflict: "exam_id,student_id" });
-      if (examRegistration.error) return NextResponse.json({ message: `학생 시험지 배정 실패: ${missing(examRegistration.error.message)}` }, { status: 400 });
-    }
+    // 입금확인은 참가 등록까지만 처리합니다. 시험지는 배정 화면에서 지정합니다.
 
     const finalized = await s.from("sos_program_applications")
       .update({ student_id: studentId, status: "ENROLLED", paid_at: now, enrolled_at: now, updated_at: now })

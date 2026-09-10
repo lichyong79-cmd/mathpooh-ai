@@ -4,12 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 const won = (v: number) => new Intl.NumberFormat("ko-KR").format(v ?? 0);
 const day = (v: string) => v ? new Date(`${v}T00:00:00`).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric", weekday: "short" }) : "-";
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const status: Record<string, string> = { REQUESTED: "신청 접수", PAID: "결제 확인", ENROLLED: "등록 완료", CANCELLED: "신청 취소", REFUNDED: "환불" };
+const status: Record<string, string> = { REQUESTED: "신청 접수", PAID: "입금확인", ENROLLED: "등록 완료", CANCELLED: "신청 취소", REFUNDED: "환불" };
 const paymentLabel = (v: string) => v === "CARD" ? "카드결제" : v === "BANK_TRANSFER" ? "계좌이체(현금영수증)" : "결제방법 미지정";
 const activeApplication = (a: any) => ["REQUESTED", "PAID", "ENROLLED"].includes(String(a.status));
 const isPastCycle = (c: any) => String(c?.start_date ?? "").slice(0, 10) < today();
 
-export default function ProgramBatchesAdmin() {
+export default function ProgramBatchesAdmin({mode="payments"}:{mode?:"setup"|"payments"}) {
   const [data, setData] = useState<any>(null);
   const [title, setTitle] = useState("SOS 5회 프로그램");
   const [price, setPrice] = useState(350000);
@@ -74,20 +74,11 @@ export default function ProgramBatchesAdmin() {
 
   return <section className="pb-admin">
     <div className="pb-title">
-      <div><small>MATHPOOH SOS APPLICATION FLOW</small><h2>참가권 신청·결제</h2><p>학부모가 선택한 회차는 시험 내용이 아니라 줌 참가 날짜로 확정됩니다. 시험지는 학생의 공식 참가순번과 범위에 맞춰 배정됩니다.</p></div>
+      <div><small>MATHPOOH SOS APPLICATION FLOW</small><h2>{mode==="setup"?"5회 모집 구성":"신청·입금 관리"}</h2><p>학부모가 선택한 회차는 시험 내용이 아니라 줌 참가 날짜로 확정됩니다. 시험지는 학생의 공식 참가순번과 범위에 맞춰 배정됩니다.</p></div>
       <button onClick={() => window.open("/p?tab=apply", "_blank")}>학부모 신청 화면 보기 ↗</button>
     </div>
 
-    <div className="flowbar">
-      <button onClick={() => { location.href = "/admin?menu=cycles"; }}><b>1</b><span>응시 일정</span><small>줌 참가일·시험지 연결</small></button>
-      <i>→</i><div className="active"><b>2</b><span>참가권 구성</span><small>예약 가능 날짜 구성</small></div>
-      <i>→</i><div><b>3</b><span>신청 열기</span><small>학부모 화면 공개</small></div>
-      <i>→</i><div><b>4</b><span>참가일 선택</span><small>횟수·날짜·범위 확정</small></div>
-      <i>→</i><div><b>5</b><span>결제 확인</span><small>공식순번 자동배정</small></div>
-    </div>
-
-    <article className="notice"><b>기존 기록 보존</b><span>과거 시험·성적·진행 중인 SOS는 그대로 유지됩니다. 기존 신청 회차는 학생이 참가하겠다고 선택한 날짜로 전환됩니다.</span></article>
-
+    {mode==="setup"&&<>
     <article className="pb-create">
       <div><small className="step">STEP 2 · 참가권 구성</small><h3>새 SOS 참가권 만들기</h3><p>학부모에게 보여줄 줌 참가 가능 날짜 5개를 고릅니다.</p><label>참가권명<input value={title} onChange={e => setTitle(e.target.value)} /></label><label>5회 전체 이용료<input type="number" value={price} onChange={e => setPrice(Number(e.target.value))} /></label><small>선택 횟수에 따라 1회 금액이 자동 합산됩니다.</small><button className="primary" onClick={() => void create()} disabled={busy === "create"}>선택한 날짜로 참가권 만들기</button></div>
       <div><div className="picker-head"><b>현재/예정 회차</b><span>{selected.length}/5 선택</span></div>{cyclePicker(selected, setSelected, true)}</div>
@@ -101,7 +92,8 @@ export default function ProgramBatchesAdmin() {
       </article>;
     })}</section>
 
-    <article className="pb-apps"><div className="apps-title"><div><small className="step">STEP 4~5 · 신청 처리</small><h3>학부모 신청 내역</h3></div><span>신청 접수 → 결제 확인 → 선택 회차 자동배정</span></div>{apps.map((a: any) => {
+    </>}
+    {mode==="payments"&&<article className="pb-apps"><div className="apps-title"><div><small className="step">STEP 4~5 · 신청 처리</small><h3>학부모 신청 내역</h3></div><span>신청 접수 → 입금확인 → 시험지 배정에서 배정</span></div>{apps.map((a: any) => {
       const batch = batches.find((b: any) => String(b.id) === String(a.batch_id));
       const linked = students.find((s: any) => String(s.id) === String(a.student_id));
       const selectedIds = Array.isArray(a.selected_cycle_ids) ? a.selected_cycle_ids.map(String) : [];
@@ -111,11 +103,11 @@ export default function ProgramBatchesAdmin() {
       const isCancelled = ["CANCELLED", "REFUNDED"].includes(String(a.status));
       const cancelLabel = a.status === "ENROLLED" ? "등록 취소" : a.status === "PAID" ? "결제 취소" : "신청 취소";
       return <div key={a.id} className={isCancelled ? "cancelled" : ""}><span><small>{status[a.status] ?? a.status}</small><b>{a.student_name} · {a.school} {a.grade}</b><em>{a.parent_name} 학부모 · {batch?.title ?? "SOS 모집"} · {cycleText} · {won(Number(a.charged_price ?? batch?.price ?? 0))}원 · {paymentLabel(a.payment_method)}</em></span><span className="pb-link">
-        {a.status === "REQUESTED" ? <>{linked ? <strong className="linked">자녀 계정 연결됨</strong> : <strong className="warning">자녀 연결 확인 필요</strong>}<button className="paid" disabled={!linked || busy === `enroll${a.id}`} onClick={() => { if (!linked) return alert("학부모가 먼저 자녀 계정을 연결해야 합니다."); if (confirm(`${paymentLabel(a.payment_method)} 결제를 확인하고 ${cycleText}에 자동 배정할까요?`)) void call({ action: "enroll", applicationId: a.id, studentId: linked.id }); }}>{a.payment_method === "CARD" ? "카드결제 확인·등록" : "이체확인·등록"}</button></> : <b>{linked ? `${linked.name} · ${status[a.status] ?? a.status}` : status[a.status]}</b>}
+        {a.status === "REQUESTED" ? <>{linked ? <strong className="linked">자녀 계정 연결됨</strong> : <strong className="warning">자녀 연결 확인 필요</strong>}<button className="paid" disabled={!linked || busy === `enroll${a.id}`} onClick={() => { if (!linked) return alert("학부모가 먼저 자녀 계정을 연결해야 합니다."); if (confirm(`${paymentLabel(a.payment_method)} 결제를 확인하고 ${cycleText}에 참가 등록할까요? 시험지는 시험지 배정에서 지정합니다.`)) void call({ action: "enroll", applicationId: a.id, studentId: linked.id }); }}>{a.payment_method === "CARD" ? "결제확인" : "입금확인"}</button></> : <b>{linked ? `${linked.name} · ${status[a.status] ?? a.status}` : status[a.status]}</b>}
         {!isCancelled ? <button disabled={busy === `cancel${a.id}`} onClick={() => { if (confirm(`${cancelLabel} 처리할까요?\n원본 회차와 이미 발생한 응시·성적·학습 기록은 유지됩니다.`)) void call({ action: "cancel", applicationId: a.id }); }}>{cancelLabel}</button> : null}
         <button className="danger" disabled={busy === `delete-application${a.id}`} onClick={() => { if (confirm(`${a.student_name} 학생의 이 신청 내역을 완전히 삭제할까요?\n원본 회차와 이미 발생한 응시·성적·학습 기록은 삭제되지 않습니다.`)) void call({ action: "delete-application", applicationId: a.id }); }}>신청 삭제</button>
       </span></div>;
-    })}{!apps.length ? <p>접수된 신청이 없습니다.</p> : null}</article>
+    })}{!apps.length ? <p>접수된 신청이 없습니다.</p> : null}</article>}
 
     <style jsx>{`.pb-admin{display:grid;gap:17px}.pb-title{display:flex;justify-content:space-between;align-items:end;gap:20px}.pb-title small,.step{color:#2f6937;font-weight:900}.pb-title h2{margin:6px 0}.pb-title p{margin:0;color:#718078}.pb-title button,.pb-batches button{height:40px;border:1px solid #cddbd0;border-radius:9px;background:#fff;font-weight:800}.flowbar{display:flex;align-items:stretch;gap:8px;padding:14px;background:#fff;border:1px solid #dbe5dd;border-radius:15px}.flowbar>div,.flowbar>button{flex:1;display:grid;grid-template-columns:30px 1fr;column-gap:8px;align-items:center;text-align:left;padding:11px;border:1px solid #e0e8e2;border-radius:10px;background:#f8faf8}.flowbar>button{cursor:pointer}.flowbar b{grid-row:1/3;width:28px;height:28px;display:grid;place-items:center;border-radius:50%;background:#e7f1e9;color:#2f6937}.flowbar span{font-weight:900}.flowbar small{color:#758079}.flowbar i{align-self:center;color:#95a49a}.flowbar .active{border-color:#7da985;background:#f0f7f1}.notice{display:flex;gap:12px;align-items:center;padding:13px 16px;background:#fff9e9;border:1px solid #ead9a9;border-radius:12px}.notice b{color:#8a6514}.notice span{color:#796e50;font-size:12px}.pb-create{display:grid;grid-template-columns:300px 1fr;gap:20px;padding:20px;background:#fff;border:1px solid #dbe5dd;border-radius:15px}.pb-create h3{margin:5px 0}.pb-create p,.pb-edit p{color:#718078;font-size:12px}.pb-create>div:first-child{display:grid;gap:10px}.pb-create label{display:grid;gap:5px;font-size:12px;font-weight:800}.pb-create input{height:40px;border:1px solid #d5dfd7;border-radius:8px;padding:0 9px}.primary,.paid{border:0!important;background:#2f6937!important;color:#fff!important}.danger{color:#9c2c2c!important;border-color:#e7caca!important}.picker-head{display:flex;justify-content:space-between;margin-bottom:8px}.picker-head span{color:#2f6937;font-weight:900}.pb-cycles{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;max-height:310px;overflow:auto}.pb-cycles label{position:relative;padding:11px;border:1px solid #dfe6e1;border-radius:9px}.pb-cycles label.on{border-color:#2f6937;background:#f0f7f1}.pb-cycles span,.pb-cycles b,.pb-cycles em{display:block;margin-left:24px}.pb-cycles span{font-size:11px;color:#718078}.pb-cycles em{font-style:normal;font-size:10px;color:#397248;margin-top:3px}.past-cycles{margin-top:10px;border-top:1px solid #edf1ee;padding-top:9px}.past-cycles summary{cursor:pointer;color:#718078;font-size:12px;font-weight:800}.pb-cycles.old{margin-top:8px;max-height:220px}.pb-cycles.old em{color:#8b8b8b}.pb-batches{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}.pb-batches>article,.pb-apps{padding:18px;background:#fff;border:1px solid #dbe5dd;border-radius:15px}.pb-batches header{display:flex;justify-content:space-between;gap:12px}.pb-batches h3{margin:4px 0}.pb-batches p{margin:0;color:#718078}.pb-batches header small.live{color:#2f6937;font-weight:900}.pb-batches header small.closed{color:#8a8f8b;font-weight:900}.pb-head-buttons{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}.pb-five{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-top:14px}.pb-five span{padding:8px;background:#f4f8f5;border-radius:8px;font-size:10px}.pb-five span.past{background:#f3f3f3;opacity:.7}.pb-five b,.pb-five small,.pb-five em{display:block}.pb-five small{color:#758079;margin-top:3px}.pb-five em{font-style:normal;color:#2f6937;font-weight:900;margin-top:4px}.pb-five .past em{color:#888}.pb-edit{margin-top:14px;padding-top:12px;border-top:1px solid #e9efeb}.save-edit{height:42px;margin-top:10px;border-radius:8px}.apps-title{display:flex;justify-content:space-between;align-items:end}.apps-title h3{margin:5px 0}.apps-title>span{color:#718078;font-size:12px}.pb-apps>div:not(.apps-title){display:flex;justify-content:space-between;align-items:center;padding:13px 0;border-top:1px solid #edf0ee}.pb-apps>div.cancelled{opacity:.55}.pb-apps span>*{display:block}.pb-apps small{color:#a56817;font-weight:900}.pb-apps em{font-style:normal;color:#718078;font-size:11px;margin-top:4px}.pb-link{display:flex!important;flex-direction:row;gap:6px;align-items:center}.pb-link button{height:38px;border:1px solid #d7dfd9;border-radius:8px;background:#fff;font-weight:800}.pb-link .linked{color:#2f6937;font-size:11px}.pb-link .warning{color:#a56817;font-size:11px}@media(max-width:1100px){.pb-batches{grid-template-columns:1fr}.flowbar{overflow:auto}.flowbar>div,.flowbar>button{min-width:160px}.flowbar i{display:none}}@media(max-width:900px){.pb-create{grid-template-columns:1fr}.pb-apps>div:not(.apps-title){align-items:flex-start;gap:10px;flex-direction:column}.pb-five{grid-template-columns:repeat(2,1fr)}}`}</style>
   </section>;

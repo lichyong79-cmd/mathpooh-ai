@@ -31,6 +31,8 @@ import {
 } from "@/lib/source-workflow";
 import ProgramBatchesAdmin from "./ProgramBatchesAdmin";
 import WeeklyAssignments from "./WeeklyAssignments";
+import ScheduleStart from "./ScheduleStart";
+import ScheduleManagement from "./ScheduleManagement";
 import { isArchivedPracticeExam } from "@/lib/archived-practice-exams";
 import { isObjectiveQuestion, questionTypeSummary } from "@/lib/exam-question-type";
 
@@ -168,13 +170,13 @@ const menus: MenuItem[] = [
   { id: "posters", label: "포스터 관리", icon: "▧" },
   { id: "students", label: "학생정보 관리", icon: "♙" },
   { id: "applications", label: "회차별 시험배정", icon: "✓" },
-  { id: "program-applications", label: "참가권 신청·결제", icon: "⑤" },
-  { id: "cycles", label: "응시 일정·시험지 연결", icon: "◉" },
+  { id: "program-applications", label: "신청·입금 관리", icon: "⑤" },
+  { id: "cycles", label: "모집 일정 관리", icon: "◉" },
   { id: "exam-list", label: "시험지 목록", icon: "▤" },
   { id: "exam-input", label: "시험지 입력", icon: "+" },
   { id: "exam-analysis", label: "AI 분석", icon: "✦" },
   { id: "exam-assignment", label: "A/B/C 시험지 등록", icon: "↗" },
-  { id: "exam-progress", label: "실전모의고사 진행", icon: "▶" },
+  { id: "exam-progress", label: "시험 진행", icon: "▶" },
   { id: "problem-sources", label: "문제등록", icon: "▦" },
   { id: "problem-analysis", label: "AI 분석", icon: "✦" },
   { id: "ai-generated-bank", label: "AI 생성 문제은행", icon: "✦" },
@@ -189,9 +191,8 @@ const menus: MenuItem[] = [
 
 const menuGroups: MenuGroup[] = [
   { label: "기본 관리", items: menus.filter((item) => ["dashboard", "posters", "students"].includes(item.id)) },
-  { label: "SOS 신청·응시 일정", icon: "◉", items: [menus.find((item) => item.id === "cycles")!, menus.find((item) => item.id === "program-applications")!, menus.find((item) => item.id === "applications")!] },
+  { label: "SOS 시험 운영", icon: "◉", items: [menus.find((item) => item.id === "cycles")!, menus.find((item) => item.id === "program-applications")!, menus.find((item) => item.id === "applications")!, menus.find((item) => item.id === "exam-progress")!] },
   { label: "시험지 운영", icon: "▤", items: menus.filter((item) => ["exam-list", "exam-input", "exam-analysis", "exam-assignment"].includes(item.id)) },
-  { label: "시험 운영", items: menus.filter((item) => item.id === "exam-progress") },
   { label: "문제은행 관리", icon: "▦", items: menus.filter((item) => ["problem-sources", "problem-analysis"].includes(item.id)) },
   { label: "SOS 운영", items: menus.filter((item) => ["ai-generated-bank", "sos-bank", "sos-difficulty", "sos-learning"].includes(item.id)) },
   { label: "분석", items: menus.filter((item) => ["exam-results", "student-results", "learning-analysis"].includes(item.id)) },
@@ -409,7 +410,7 @@ const [collapsed, setCollapsed] = useState(false);
         );
         if (!response.ok) throw new Error(await response.text());
         const rows = await response.json();
-        setPracticeExams(rows.map(examFromRow));
+        setPracticeExams(rows.filter((row: any) => !isArchivedPracticeExam(row)).map(examFromRow));
       } catch (error) {
         console.error("Supabase 시험 목록 불러오기 실패", error);
       }
@@ -1880,39 +1881,7 @@ function buildSosSourceCandidates(student: any, sessions: any[] = []): SosTarget
 }
 
 
-function LearningCyclesPage(){
-  const [data,setData]=useState<any>({cycles:[],exams:[]});
-  const [loading,setLoading]=useState(true);const [busy,setBusy]=useState("");
-  const [selectedId,setSelectedId]=useState("");
-  const [name,setName]=useState("");const [startDate,setStartDate]=useState("");const [endDate,setEndDate]=useState("");
-  const [editName,setEditName]=useState("");const [editStartDate,setEditStartDate]=useState("");const [editEndDate,setEditEndDate]=useState("");
-  const [assignSequence,setAssignSequence]=useState(1);const [assignScope,setAssignScope]=useState("FULL");
-  const load=useCallback(async()=>{setLoading(true);try{const r=await fetch("/api/admin/learning-cycles",{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message||"회차 조회 실패");setData(j);setSelectedId((v)=>v&&j.cycles?.some((c:any)=>String(c.id)===v)?v:String(j.cycles?.[0]?.id??""));}catch(e){alert(e instanceof Error?e.message:"회차 조회 실패");}finally{setLoading(false);}},[]);
-  useEffect(()=>{void load();},[load]);
-  const selected=(data.cycles??[]).find((c:any)=>String(c.id)===selectedId)??data.cycles?.[0]??null;
-  useEffect(()=>{if(selected){setEditName(String(selected.name??""));setEditStartDate(String(selected.start_date??"").slice(0,10));setEditEndDate(String(selected.end_date??"").slice(0,10));}},[selected?.id,selected?.name,selected?.start_date,selected?.end_date]);
-  const create=async()=>{if(!name.trim()||!startDate||!endDate)return alert("회차명과 기간을 입력해 주세요.");setBusy("create");try{const r=await fetch("/api/admin/learning-cycles",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"create",name:name.trim(),startDate,endDate})});const j=await r.json();if(!r.ok)throw new Error(j.message||"회차 생성 실패");setName("");setStartDate("");setEndDate("");await load();setSelectedId(String(j.cycle?.id??""));}catch(e){alert(e instanceof Error?e.message:"회차 생성 실패");}finally{setBusy("");}};
-  const updateCycle=async()=>{if(!selected)return;if(!editName.trim()||!editStartDate||!editEndDate)return alert("회차명과 기간을 입력해 주세요.");setBusy("update-cycle");try{const r=await fetch("/api/admin/learning-cycles",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"update",id:selected.id,name:editName.trim(),startDate:editStartDate,endDate:editEndDate})});const j=await r.json();if(!r.ok)throw new Error(j.message||"회차 수정 실패");await load();alert("회차를 수정했습니다.");}catch(e){alert(e instanceof Error?e.message:"회차 수정 실패");}finally{setBusy("");}};
-  const deleteCycle=async()=>{if(!selected)return;if(!confirm(`'${selected.name}' 회차를 삭제할까요?\n시험이나 5회 프로그램에 연결되어 있으면 삭제되지 않습니다.`))return;setBusy("delete-cycle");try{const r=await fetch("/api/admin/learning-cycles",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"delete",id:selected.id})});const j=await r.json();if(!r.ok)throw new Error(j.message||"회차 삭제 실패");setSelectedId("");await load();}catch(e){alert(e instanceof Error?e.message:"회차 삭제 실패");}finally{setBusy("");}};
-  const assign=async(exam:any)=>{if(!selected)return;setBusy(String(exam.id));try{const r=await fetch("/api/admin/learning-cycles",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"assign-exam",cycleId:selected.id,examId:exam.id,formalSequence:assignSequence,scopeCode:assignScope})});const j=await r.json();if(!r.ok)throw new Error(j.message||"시험지 연결 실패");await load();alert(`${assignSequence}회차 시험지를 연결하고 참가자 ${Number(j.assignedCount??0)}명에게 자동 배정했습니다.`);}catch(e){alert(e instanceof Error?e.message:"시험지 연결 실패");}finally{setBusy("");}};
-  const unassign=async(exam:any)=>{if(!confirm(`${exam.title}을 ${selected?.name??"응시 일정"}에서 빼시겠습니까?\n시험 응시/성적 데이터는 삭제되지 않습니다.`))return;setBusy(String(exam.id));try{const r=await fetch("/api/admin/learning-cycles",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"unassign-exam",cycleId:selected.id,examId:exam.id})});const j=await r.json();if(!r.ok)throw new Error(j.message||"시험지 연결 해제 실패");await load();}catch(e){alert(e instanceof Error?e.message:"시험지 연결 해제 실패");}finally{setBusy("");}};
-  const dateLabel=(c:any)=>c?`${new Date(c.start_date+"T00:00:00").toLocaleDateString("ko-KR")} ~ ${new Date(c.end_date+"T00:00:00").toLocaleDateString("ko-KR")}`:"";
-  const startSchedule=async()=>{if(!selected)return;if(!confirm(`${selected.name} 참가자들의 시험을 지금 함께 시작할까요?\n학생마다 배정된 공식순번·범위 시험지가 각각 열립니다.`))return;setBusy("start-schedule");try{const r=await fetch("/api/admin/exam-slots",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"start",cycleId:selected.id})});const j=await r.json();if(!r.ok)throw new Error(j.message||"일정 시험 시작 실패");alert(`${j.started}명 · 서로 다른 시험지 ${j.examCount}개를 시작했습니다.${j.blocked?.length?`\n미시작 ${j.blocked.length}명은 시험지 연결 또는 이전 SOS를 확인해 주세요.`:""}`);}catch(e){alert(e instanceof Error?e.message:"일정 시험 시작 실패");}finally{setBusy("");}};
-  return <>
-    <section className="page-title-row"><div><h2>응시 일정·시험지 연결</h2><p>줌 참가 날짜를 만들고, 그날 필요한 학생별 공식순번·범위 시험지를 함께 연결합니다.</p></div><button className="secondary-button" onClick={()=>void load()}>새로고침</button></section>
-    {selected?<section className="panel" style={{padding:14,marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,background:"#f0f7f1",borderColor:"#bfd8c4"}}><div><b style={{display:"block",fontSize:17}}>이 일정의 시험을 한 번에 시작</b><span style={{fontSize:12,color:"#65756a"}}>같은 줌에 모여도 학생별 공식순번과 범위에 맞는 서로 다른 시험지가 열립니다.</span></div><button className="primary-button" style={{minWidth:190,height:52,fontSize:16}} disabled={!!busy} onClick={()=>void startSchedule()}>{busy==="start-schedule"?"시작 처리 중…":"전체 시험 시작"}</button></section>:null}
-    {selected?<section className="panel" style={{padding:14,marginBottom:14,display:"flex",alignItems:"end",gap:10,flexWrap:"wrap"}}><label style={{display:"grid",gap:5,fontSize:12,fontWeight:900}}>연결할 공식 시험순번<input type="number" min={1} value={assignSequence} onChange={e=>setAssignSequence(Math.max(1,Number(e.target.value)||1))} style={{height:40,width:150,border:"1px solid #d4ddd6",borderRadius:8,padding:"0 10px"}}/></label><label style={{display:"grid",gap:5,fontSize:12,fontWeight:900}}>연결할 시험범위<select value={assignScope} onChange={e=>setAssignScope(e.target.value)} style={{height:40,minWidth:210,border:"1px solid #d4ddd6",borderRadius:8,padding:"0 10px"}}><option value="ALGEBRA">대수</option><option value="ALGEBRA_CALC1">대수+미적Ⅰ</option><option value="FULL">대수+미적Ⅰ+확통</option></select></label><span style={{paddingBottom:10,fontSize:12,color:"#6e7b72"}}>아래 시험지의 ‘일정에 연결’을 누르면 이 조건으로 저장됩니다.</span></section>:null}
-    <section className="panel" style={{padding:18,marginBottom:16}}><div style={{display:"grid",gridTemplateColumns:"1fr 180px 180px 110px",gap:9,alignItems:"end"}}><label style={{display:"grid",gap:5,fontWeight:900,fontSize:12}}>회차명<input value={name} onChange={e=>setName(e.target.value)} placeholder="예: 0회차 / 1회차 / ㄱ회차" style={{minHeight:42,border:"1px solid #d0d5dd",borderRadius:9,padding:"0 10px"}}/></label><label style={{display:"grid",gap:5,fontWeight:900,fontSize:12}}>시작일<input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={{minHeight:42,border:"1px solid #d0d5dd",borderRadius:9,padding:"0 8px"}}/></label><label style={{display:"grid",gap:5,fontWeight:900,fontSize:12}}>종료일<input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} style={{minHeight:42,border:"1px solid #d0d5dd",borderRadius:9,padding:"0 8px"}}/></label><button className="primary-button" disabled={!!busy} onClick={()=>void create()}>{busy==="create"?"생성중":"＋ 회차 생성"}</button></div></section>
-    {loading?<MATHPOOHLoader title="회차 정보 불러오는 중" detail="실전모의고사와 기존 응시 데이터를 확인하고 있습니다." kind="loading" audience="admin"/>:<div style={{display:"grid",gridTemplateColumns:"280px minmax(0,1fr)",gap:14}}>
-      <section className="panel" style={{padding:10,alignSelf:"start"}}><h3 style={{margin:"6px 8px 10px"}}>운영 회차</h3>{(data.cycles??[]).map((c:any)=><button key={c.id} onClick={()=>setSelectedId(String(c.id))} style={{display:"block",width:"100%",textAlign:"left",padding:12,marginBottom:6,border:String(c.id)===String(selected?.id)?"2px solid #2d7d4f":"1px solid #dfe6e1",borderRadius:11,background:String(c.id)===String(selected?.id)?"#eef8f2":"#fff",cursor:"pointer"}}><b style={{display:"block",fontSize:16}}>{c.name}</b><span style={{display:"block",fontSize:11,color:"#667085",marginTop:4}}>{dateLabel(c)}</span><small style={{display:"block",marginTop:4,color:"#247249",fontWeight:900}}>모의고사 {c.exams?.length??0}개</small></button>)}{!(data.cycles??[]).length?<p style={{padding:15,color:"#667085"}}>먼저 첫 회차를 생성하세요.</p>:null}</section>
-      <section className="panel" style={{padding:18}}>{selected?<><div style={{display:"grid",gap:12,marginBottom:14}}><div><small style={{fontWeight:900,color:"#247249"}}>현재 작업 회차</small><h3 style={{margin:"4px 0",fontSize:24}}>{selected.name}</h3><p style={{margin:0,color:"#667085"}}>{dateLabel(selected)} · 회차명/날짜를 수정하거나 사용하지 않는 회차를 삭제할 수 있습니다.</p></div><div style={{display:"grid",gridTemplateColumns:"1fr 170px 170px auto auto",gap:8,alignItems:"end",padding:12,border:"1px solid #dfe7e2",borderRadius:11,background:"#f8fbf9"}}><label style={{display:"grid",gap:5,fontSize:11,fontWeight:900}}>회차명<input value={editName} onChange={e=>setEditName(e.target.value)} style={{height:38,border:"1px solid #d0d8d3",borderRadius:8,padding:"0 9px"}}/></label><label style={{display:"grid",gap:5,fontSize:11,fontWeight:900}}>시작일<input type="date" value={editStartDate} onChange={e=>setEditStartDate(e.target.value)} style={{height:38,border:"1px solid #d0d8d3",borderRadius:8,padding:"0 7px"}}/></label><label style={{display:"grid",gap:5,fontSize:11,fontWeight:900}}>종료일<input type="date" value={editEndDate} onChange={e=>setEditEndDate(e.target.value)} style={{height:38,border:"1px solid #d0d8d3",borderRadius:8,padding:"0 7px"}}/></label><button className="primary-button" disabled={!!busy} onClick={()=>void updateCycle()}>수정 저장</button><button className="secondary-button" disabled={!!busy} style={{color:"#a33131",borderColor:"#e5c8c8"}} onClick={()=>void deleteCycle()}>회차 삭제</button></div></div>
-        <h4 style={{margin:"18px 0 8px"}}>이 회차에 배치된 실전모의고사</h4><div style={{display:"grid",gap:7}}>{(selected.exams??[]).map((e:any)=><div key={e.id} style={{display:"grid",gridTemplateColumns:"1fr auto auto",gap:10,alignItems:"center",padding:11,border:"1px solid #dce6df",borderRadius:10,background:"#f8fbf9"}}><div><b>{e.round?`${e.round}회 · `:""}{e.title}</b><small style={{display:"block",color:"#667085",marginTop:3}}>{e.exam_date} · 응시완료 {e.submittedCount}명</small></div><span style={{fontSize:11,fontWeight:900,color:e.submittedCount?"#176d42":"#667085"}}>{e.submittedCount?"기존 응시 포함":"미응시"}</span><button className="secondary-button" disabled={busy===String(e.id)} onClick={()=>void unassign(e)}>빼기</button></div>)}{!(selected.exams??[]).length?<div style={{padding:18,border:"1px dashed #cbd7cf",borderRadius:10,color:"#667085"}}>아직 배치된 시험이 없습니다. 아래 기존 시험 목록에서 추가하세요.</div>:null}</div>
-        <h4 style={{margin:"22px 0 8px"}}>기존 실전모의고사 배치</h4><p style={{margin:"0 0 10px",fontSize:12,color:"#667085"}}>이미 학생들이 응시한 모의고사도 배치할 수 있습니다. 점수·답안·분석 결과는 그대로 유지되고 회차 연결만 생깁니다.</p><div style={{display:"grid",gap:7,maxHeight:470,overflow:"auto"}}>{(data.exams??[]).map((e:any)=><div key={e.id} style={{display:"grid",gridTemplateColumns:"1fr 150px 110px",gap:10,alignItems:"center",padding:10,border:"1px solid #e3e8e5",borderRadius:10,opacity:String(e.cycleId)===String(selected.id)?.58:1}}><div><b>{e.round?`${e.round}회 · `:""}{e.title}</b><small style={{display:"block",color:"#667085",marginTop:3}}>{e.exam_date} · 응시완료 {e.submittedCount}명{e.cycleName?` · 현재 ${e.cycleName}`:" · 회차 미지정"}</small></div><span style={{fontSize:11,fontWeight:900,color:e.submittedCount?"#176d42":"#667085"}}>{e.submittedCount?"응시 데이터 있음":"응시 전"}</span><button className={String(e.cycleId)===String(selected.id)?"secondary-button":"primary-button"} disabled={busy===String(e.id)||String(e.cycleId)===String(selected.id)} onClick={()=>void assign(e)}>{String(e.cycleId)===String(selected.id)?"배치됨":e.cycleId?"이 회차로 이동":"회차에 배치"}</button></div>)}</div>
-      </>:<div style={{padding:30,textAlign:"center",color:"#667085"}}>회차를 생성하거나 선택해 주세요.</div>}</section>
-    </div>}
-    <style jsx>{`@media(max-width:900px){.panel>div[style*="grid-template-columns: 1fr 180px"]{grid-template-columns:1fr!important}}.unlink-parent{margin-top:7px;border:1px solid #e6cccc;background:#fff7f7;color:#a04141;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer}.unlink-parent:hover{background:#fdeeee}.unlink-hint{display:block;margin-top:7px;font-size:11.5px;color:#8b968f}`}</style>
-  </>;
-}
+function LearningCyclesPage(){ return <><ScheduleManagement/><ProgramBatchesAdmin mode="setup"/></>; }
 
 function RecommendPage() {
   const [rows, setRows] = useState<any[]>([]);
@@ -4543,6 +4512,7 @@ function ExamsPage({
           }
         }
       `}</style>
+      {tab === "monitor" ? <ScheduleStart/> : null}
       {tab !== "monitor-results" ? <>
       <section className="page-title-row">
         <div>
@@ -4553,11 +4523,11 @@ function ExamsPage({
           ＋ 실전모의고사 입력
         </button> : null}
       </section>
-      <div className="student-tabs">
+      <div className="student-tabs" style={{display:tab === "monitor" ? "none" : undefined}}>
         <button className={tab === "list" ? "active" : ""} onClick={() => setTab("list")}>시험 목록</button>
         <button className={tab === "analysis" ? "active" : ""} onClick={() => setTab("analysis")}>AI 문항분석</button>
-        <button className={tab === "assignment" ? "active" : ""} onClick={() => setTab("assignment")}>학생 시험배정</button>
-        <button className={tab === "monitor" ? "active" : ""} onClick={() => setTab("monitor")}>시험 진행관리</button>
+        
+        
         <button className={tab === "input" ? "active" : ""} onClick={() => { if (tab !== "input") startNew(); }}>{editingId ? "시험 수정" : "실전모의고사 입력"}</button>
       </div>
       </> : null}

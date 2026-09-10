@@ -9,7 +9,7 @@ async function context() {
 }
 
 async function slotRows(supabase: any, cycleId: string) {
-  const [cycle, memberships, links] = await Promise.all([
+  const [cycle, memberships, links, registrations] = await Promise.all([
     supabase.from("learning_cycles").select("id,name,scheduled_at,attendance_mode").eq("id", cycleId).maybeSingle(),
     supabase.from("learning_cycle_students")
       .select("id,student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status,sos_gate_status,students(id,name,school,grade)")
@@ -17,8 +17,9 @@ async function slotRows(supabase: any, cycleId: string) {
     supabase.from("learning_cycle_exams")
       .select("exam_id,formal_sequence,scope_code,exams(id,title,time_limit,student_open,open_at,close_at,paused_at)")
       .eq("cycle_id", cycleId),
+    supabase.from("exam_registrations").select("student_id,cycle_student_id,exam_id,formal_sequence,scope_code").eq("status","assigned"),
   ]);
-  const error = cycle.error || memberships.error || links.error;
+  const error = cycle.error || memberships.error || links.error || registrations.error;
   if (error) throw error;
   if (!cycle.data) throw new Error("응시 일정을 찾지 못했습니다.");
   const studentIds = (memberships.data ?? []).map((row: any) => String(row.student_id));
@@ -47,7 +48,8 @@ async function slotRows(supabase: any, cycleId: string) {
         attempt.is_practice !== true && Number(attempt.formal_sequence) > 0);
       const lastCompletedSequence = completed.reduce(
         (max: number, attempt: any) => Math.max(max, Number(attempt.formal_sequence) || 0), 0);
-      const formalSequence = lastCompletedSequence + 1;
+      const registration = (registrations.data ?? []).find((r:any)=>r.cycle_student_id===membership.id);
+      const formalSequence = registration?.formal_sequence ?? lastCompletedSequence + 1;
       const previous = formalSequence <= 1 ? null : (allMemberships.data ?? []).find((item: any) =>
         String(item.student_id) === String(membership.student_id) &&
         Number(item.formal_sequence) === formalSequence - 1 && item.is_practice !== true);
@@ -57,7 +59,7 @@ async function slotRows(supabase: any, cycleId: string) {
         previous?.sos_gate_status === "PASSED" || previous?.sos_gate_status === "OVERRIDE" ||
         (previous && isSosCyclePassed(studentSessions, String(previous.cycle_id)));
       const link = (links.data ?? []).find((item: any) =>
-        Number(item.formal_sequence) === formalSequence &&
+        item.exam_id === registration?.exam_id && Number(item.formal_sequence) === formalSequence &&
         String(item.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL"));
       return {
         ...membership,
@@ -93,7 +95,21 @@ export async function POST(request: Request) {
       row.exam_id && !["CANCELLED", "NO_SHOW", "COMPLETED"].includes(String(row.booking_status)) &&
       row.sos_gate_open);
     const blocked = slot.rows.filter((row: any) => !eligible.includes(row));
+    if (slot.rows.some((row:any)=>row.booking_status==="IN_PROGRESS")) return NextResponse.json({message:"이미 시작한 일정입니다. 진행 화면에서 일시정지·재개를 사용해 주세요."},{status:409});
+    if (action === "prepare") {
+      if(!eligible.length) return NextResponse.json({message:"배정된 응시 가능 학생이 없습니다."},{status:409});
+      const examIds = [...new Set(eligible.map((r:any)=>String(r.exam_id)))];
+      for(const examId of examIds){
+        const exam=eligible.find((r:any)=>String(r.exam_id)===examId)?.exam;
+        const start=new Date(slot.cycle.scheduled_at);
+        if(!Number.isFinite(start.getTime()))throw new Error("예정시각을 먼저 저장해 주세요.");
+        const r=await supabase.from("exams").update({student_open:true,open_at:start.toISOString(),close_at:new Date(start.getTime()+Number(exam?.time_limit??100)*60000).toISOString()}).eq("id",examId);
+        if(r.error)throw r.error;
+      }
+      return NextResponse.json({success:true});
+    }
     if (action === "start") {
+      if(eligible.some((r:any)=>!r.exam?.open_at||!r.exam?.close_at))return NextResponse.json({message:"먼저 타이머를 생성해 주세요."},{status:409});
       if (!eligible.length) return NextResponse.json({ message: "응시 가능한 참가자가 없습니다. 시험지 연결과 SOS 통과 상태를 확인해 주세요." }, { status: 409 });
       const startedAt = new Date();
       const examMap = new Map<string, any>();

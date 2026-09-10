@@ -5,3 +5,12 @@ export function isArchivedPracticeExam(exam: { title?: string | null; exam_date?
   return practiceDates.has(String(exam.exam_date ?? exam.examDate ?? "").slice(0,10)) &&
     /SOS.*0(?:\([123]\))?회차/i.test(String(exam.title ?? "").replace(/\s/g,""));
 }
+
+export function isArchivedPracticeCycle(cycle: { name?: string | null }) {
+  return /^00(?:_[1-4])?회차$/.test(String(cycle.name ?? "").replace(/\s/g, ""));
+}
+export function isArchivedPracticeSession(session: any) {
+  const snapshot = session?.target_snapshot ?? {};
+  return isArchivedPracticeCycle({name:snapshot.learningCycleName ?? snapshot.cycleName}) ||
+    /SOS.*0(?:\([123]\))?회차/i.test(String(snapshot.sourceExamTitle ?? "").replace(/\s/g,""));
+}

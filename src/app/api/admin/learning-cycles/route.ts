@@ -1,3 +1,4 @@
+import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -58,12 +59,12 @@ export async function GET() {
     if ((attempt as any).status === "submitted") count.submitted += 1;
     counts.set(key, count);
   }
-  const baseExams = (exams.data ?? []).map((exam: any) => ({
+  const baseExams = (exams.data ?? []).filter((e:any)=>!isArchivedPracticeExam(e)).map((exam: any) => ({
     ...exam, submittedCount: counts.get(String(exam.id))?.submitted ?? 0,
     attemptCount: counts.get(String(exam.id))?.total ?? 0,
     links: (links.data ?? []).filter((link: any) => String(link.exam_id) === String(exam.id)),
   }));
-  const cycleRows = (cycles.data ?? []).map((cycle: any) => ({
+  const cycleRows = (cycles.data ?? []).filter((c:any)=>!isArchivedPracticeCycle(c)).map((cycle: any) => ({
     ...cycle,
     exams: (links.data ?? []).filter((link: any) => String(link.cycle_id) === String(cycle.id))
       .map((link: any) => ({

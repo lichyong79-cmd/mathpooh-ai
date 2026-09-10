@@ -1,3 +1,4 @@
+import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import {NextResponse} from "next/server";
 import {createClient} from "@/lib/supabase/server";
 import {getSessionUser} from "@/lib/supabase/auth";
@@ -41,14 +42,14 @@ export async function GET(){
   fetchAllPages((f,t)=>ctx.supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,target_snapshot,weakness_snapshot,cycle_kind,round_no,correct_count,total_count,baseline_meter,goal_meter,training_meter,review_meter,created_at,updated_at,sos_training_items(id,student_answer,is_correct,answered_at,revealed_at,review_answered_at)").order("created_at",{ascending:false}).range(f,t)),
   fetchAllPages((f,t)=>ctx.supabase.from("learning_cycles").select("id,name,start_date,end_date,status").order("start_date",{ascending:false}).range(f,t))
  ]);
- const cycleRows:any[]=cycles??[];const raw:any[]=sessions??[];const studentMap=new Map((students??[]).map((x:any)=>[String(x.id),x]));
+ const cycleRows:any[]=(cycles??[]).filter((c:any)=>!isArchivedPracticeCycle(c));const raw:any[]=sessions??[];const studentMap=new Map((students??[]).map((x:any)=>[String(x.id),x]));
  // SOS265: 진행 화면과 동일한 규칙으로, 실제 진행 흔적이 없는 중복 미응시 세션만 조회에서 제외한다.
  const duplicateIds=new Set<string>();const duplicateGroups=new Map<string,any[]>();
  for(const session of raw){if(!session.parent_session_id)continue;const key=[session.student_id,session.parent_session_id,session.phase,session.round_no,session.cycle_kind??"STANDARD"].map(String).join("|");const group=duplicateGroups.get(key)??[];group.push(session);duplicateGroups.set(key,group);}
  for(const group of duplicateGroups.values()){if(group.length<2)continue;group.sort((a:any,b:any)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime());const hasProgress=(x:any)=>String(x.status)!=="ASSIGNED"||(x.sos_training_items??[]).some((i:any)=>String(i.student_answer??"").trim()||i.answered_at||i.revealed_at||i.review_answered_at);const progressed=group.filter(hasProgress);const keep=progressed.length?progressed[0]:group[0];for(const x of group){if(String(x.id)!==String(keep.id)&&!hasProgress(x))duplicateIds.add(String(x.id));}}
  const filteredSessions:any[]=raw.filter((x:any)=>!duplicateIds.has(String(x.id)));const map=new Map(filteredSessions.map(x=>[String(x.id),x]));
  const rootOf=(s:any)=>{let cur=s;const seen=new Set<string>();while(cur?.parent_session_id&&!seen.has(String(cur.id))){seen.add(String(cur.id));const p=map.get(String(cur.parent_session_id));if(!p)break;cur=p;}return cur??s;};
- const groups=new Map<string,any>();for(const s of filteredSessions){const root:any=rootOf(s);const key=String(root.id);let g=groups.get(key);if(!g){const cycle=cycleFromSnapshot(root.target_snapshot);g={rootId:key,student:studentMap.get(String(root.student_id))??null,cycle,sourceExamTitle:String(root.target_snapshot?.sourceExamTitle??""),sourceExamId:root.target_snapshot?.sourceExamId??null,subject:String(root.target_snapshot?.subject??root.target_snapshot?.sourceSubject??""),subunit:String(root.target_snapshot?.subunit??root.target_snapshot?.sourceUnit??""),createdAt:root.created_at,sessions:[]};groups.set(key,g);}g.sessions.push(s);}
+ const groups=new Map<string,any>();for(const s of filteredSessions){const root:any=rootOf(s);if(isArchivedPracticeSession(root))continue;const key=String(root.id);let g=groups.get(key);if(!g){const cycle=cycleFromSnapshot(root.target_snapshot);g={rootId:key,student:studentMap.get(String(root.student_id))??null,cycle,sourceExamTitle:String(root.target_snapshot?.sourceExamTitle??""),sourceExamId:root.target_snapshot?.sourceExamId??null,subject:String(root.target_snapshot?.subject??root.target_snapshot?.sourceSubject??""),subunit:String(root.target_snapshot?.subunit??root.target_snapshot?.sourceUnit??""),createdAt:root.created_at,sessions:[]};groups.set(key,g);}g.sessions.push(s);}
  const today=new Date().toISOString().slice(0,10);
  const result=[...groups.values()].map((g:any)=>{
   const ordered=g.sessions.slice().sort((a:any,b:any)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime());

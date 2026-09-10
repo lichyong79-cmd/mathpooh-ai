@@ -1,3 +1,4 @@
+import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import { NextResponse } from "next/server";
 import { getAdminUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -20,7 +21,7 @@ export async function GET(request: Request) {
     ]);
     if(catalog.error||exams.error||cycles.error) throw catalog.error||exams.error||cycles.error;
     let rows: any[]=[];
-    if(cycleId){
+    if(cycleId && (cycles.data??[]).some(c=>c.id===cycleId&&!isArchivedPracticeCycle(c))){
       const members=await s.from("learning_cycle_students").select("*,students(id,name,school,grade)").eq("cycle_id",cycleId).eq("status","ACTIVE");
       if(members.error)throw members.error;
       const ids=(members.data??[]).map(x=>x.student_id);
@@ -43,7 +44,7 @@ export async function GET(request: Request) {
         });
       }
     }
-    return NextResponse.json({catalog:catalog.data,exams:exams.data,cycles:cycles.data,rows},{headers:{"Cache-Control":"no-store"}});
+    return NextResponse.json({catalog:catalog.data,exams:(exams.data??[]).filter(e=>!isArchivedPracticeExam(e)),cycles:(cycles.data??[]).filter(c=>!isArchivedPracticeCycle(c)),rows},{headers:{"Cache-Control":"no-store"}});
   }catch(e){return fail(e);}
 }
 export async function POST(request: Request){
@@ -75,6 +76,9 @@ export async function POST(request: Request){
     const nextSequence=Math.max(0,...(attempts.data??[]).filter(a=>a.status==="submitted"&&!a.is_practice).map(a=>Number(a.formal_sequence)||0))+1;
     if(sequence!==nextSequence)throw new Error(`현재 실제 응시기록 기준 다음 시험은 ${nextSequence}회입니다. 이전 시험 완료 후 다음 순번을 배정해 주세요.`);
     if((attempts.data??[]).some(a=>a.exam_id===catalog.data.exam_id||(current.data??[]).some(r=>r.exam_id===a.exam_id)))throw new Error("응시기록이 있는 시험지는 재배정할 수 없습니다.");
+    const duplicate=await s.from("exam_registrations").select("cycle_student_id").eq("student_id",m.student_id).eq("exam_id",catalog.data.exam_id).eq("status","assigned").maybeSingle();
+    if(duplicate.error)throw duplicate.error;
+    if(duplicate.data?.cycle_student_id && duplicate.data.cycle_student_id!==m.id)throw new Error("이 시험지는 다른 참가 일정에 이미 배정되어 있습니다. 기존 배정을 먼저 확인해 주세요.");
     const now=new Date().toISOString();
     const link=await s.from("learning_cycle_exams").upsert({cycle_id:m.cycle_id,exam_id:catalog.data.exam_id,formal_sequence:sequence,scope_code:scope,linked_at:now},{onConflict:"cycle_id,exam_id"});
     if(link.error)throw link.error;

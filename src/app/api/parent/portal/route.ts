@@ -1,3 +1,4 @@
+import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -137,7 +138,7 @@ export async function GET() {
         row.detailed_topic ||
         "미분류",
     );
-  const examRows = attempts.map((attempt: any) => {
+  const examRows = attempts.filter((a:any)=>!isArchivedPracticeExam(examMap.get(String(a.exam_id))??{})).map((attempt: any) => {
     const exam: any = examMap.get(String(attempt.exam_id)) ?? {};
     const units = new Map<string, { total: number; correct: number }>();
     const difficulties = new Map<string, { total: number; correct: number }>();
@@ -269,7 +270,7 @@ export async function GET() {
   const programBatches = programMissing ? [] : (programBatchResult.data ?? []).map((batch: any) => ({
     ...batch,
     cycles: (programLinkResult.data ?? [])
-      .filter((x: any) => String(x.batch_id) === String(batch.id))
+      .filter((x: any) => String(x.batch_id) === String(batch.id) && !isArchivedPracticeCycle(x.learning_cycles??{}))
       .map((x: any) => ({ cycle_id: x.cycle_id, slot_no: x.slot_no, ...(x.learning_cycles ?? {}), is_closed: String(x.learning_cycles?.start_date ?? "").slice(0, 10) < todayKorea })),
   })).filter((batch: any) => {
     if (batch.application_start && batch.application_start > nowIso) return false;
