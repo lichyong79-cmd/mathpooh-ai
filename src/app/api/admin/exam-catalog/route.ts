@@ -67,6 +67,17 @@ export async function POST(request: Request){
     const b=await request.json();
     const sequence=Number(b.formalSequence),scope=String(b.scopeCode);
     if(!Number.isInteger(sequence)||sequence<1||!(SOS_SCOPE_CODES as readonly string[]).includes(scope))throw new Error("시험순번과 A/B/C 범위를 확인해 주세요.");
+    if(b.action==="register-paper"){
+      const exam=await s.from("exams").select("id,answer_verified,cover_verified,region_verified,test_file_path,question_count,answer_keys,question_points,total_score").eq("id",String(b.examId)).single();
+      if(exam.error)throw exam.error;
+      const e=exam.data;
+      if(!e.test_file_path||!e.answer_verified||!e.cover_verified||!e.region_verified||!Array.isArray(e.answer_keys)||e.answer_keys.filter((v:unknown)=>String(v??'').trim()).length!==e.question_count||!Array.isArray(e.question_points)||e.question_points.reduce((sum:number,v:unknown)=>sum+Number(v||0),0)!==e.total_score)throw new Error("파일·정답·배점·표지·문항영역 검수를 완료해 주세요.");
+      const existing=await s.from("sos_exam_catalog").select("exam_id").eq("formal_sequence",sequence).eq("scope_code",scope).maybeSingle();
+      if(existing.error)throw existing.error;
+      if(existing.data&&existing.data.exam_id!==e.id)throw new Error("이 종류·순번에는 다른 시험지가 등록되어 있습니다. A/B/C 시험지 목록을 확인해 주세요.");
+      if(!existing.data){const result=await s.from("sos_exam_catalog").insert({exam_id:e.id,scope_code:scope,formal_sequence:sequence});if(result.error)throw result.error;}
+      return NextResponse.json({success:true});
+    }
     if(b.action==="catalog"){
       const exam=await s.from("exams").select("id").eq("id",String(b.examId)).single();
       if(exam.error)throw exam.error;

@@ -27,6 +27,10 @@ export default function PdfMapperPage(){
   const [preview,setPreview]=useState("");
   const [loading,setLoading]=useState(true);
   const [saving,setSaving]=useState(false);
+  const [savedSnapshot,setSavedSnapshot]=useState("");
+  const [saveNote,setSaveNote]=useState("");
+  const dirty=!!savedSnapshot&&JSON.stringify(regions)!==savedSnapshot;
+  useEffect(()=>{const warn=(e:BeforeUnloadEvent)=>{if(dirty){e.preventDefault();e.returnValue="";}};window.addEventListener("beforeunload",warn);return()=>window.removeEventListener("beforeunload",warn);},[dirty]);
   const canvasRef=useRef<HTMLCanvasElement>(null);
   const overlayRef=useRef<HTMLDivElement>(null);
   const startRef=useRef<{x:number;y:number}|null>(null);
@@ -69,9 +73,12 @@ export default function PdfMapperPage(){
         const regRes=await fetch(`${config.url}/rest/v1/question_regions?exam_id=eq.${encodeURIComponent(id)}&select=*&order=question_no.asc`,{headers:h,cache:"no-store"});
         const saved=regRes.ok?await regRes.json():[];
         if(saved.length){
-          setRegions(saved.map((r:any)=>({number:r.question_no,page:r.page_no,x:Number(r.x),y:Number(r.y),w:Number(r.width),h:Number(r.height),answer:r.answer||"",type:r.question_type||"choice",verified:Boolean(r.verified),source:r.source||"manual"})));
+          const restored=saved.map((r:any)=>({number:r.question_no,page:r.page_no,x:Number(r.x),y:Number(r.y),w:Number(r.width),h:Number(r.height),answer:r.answer||"",type:r.question_type||"choice",verified:Boolean(r.verified),source:r.source||"manual"}));
+          setRegions(restored);setSavedSnapshot(JSON.stringify(restored));
+          setPage(restored.find((r:any)=>r.number===activeNo)?.page||1);
         }else{
           const initial=emptyRegions(exam.question_count||30,exam.objective_count||21);
+          setSavedSnapshot(JSON.stringify(initial));
           setRegions(auto ? await detectQuestionRegions(doc, initial) : initial);
         }
       }catch(e){console.error(e);alert(e instanceof Error?e.message:"불러오기 실패");}
@@ -152,35 +159,37 @@ export default function PdfMapperPage(){
   }
 
   function returnToRegistration(){
-    // PDF Mapper는 실전모의고사 등록/수정 화면에서 열리므로
-    // 브라우저 history를 이용하면 입력 중이던 시험 폼 상태까지 그대로 복원된다.
-    // 직접 진입한 경우에는 실전모의고사 입력 메뉴로 안전하게 이동한다.
-    if(window.history.length > 1){
-      window.history.back();
-      return;
-    }
-    window.location.href = "/admin?menu=exam-input";
+    if(dirty&&!window.confirm("저장하지 않은 변경사항이 있습니다. 저장하지 않고 돌아갈까요?"))return;
+    window.location.href="/admin?menu=exam-input&exam="+encodeURIComponent(examId);
   }
+  function confirmAndNext(){
+    if(!current||current.w<=0||current.h<=0)return alert("영역을 먼저 지정해 주세요.");
+    patch({verified:true});
+    const target=[...regions.slice(active),...regions.slice(0,active-1)].find(r=>!r.verified);
+    if(target)setActive(target.number);else setSaveNote("모든 문항을 확인했습니다. 저장 후 등록화면으로 돌아가세요.");
+  }
+  async function saveAndReturn(){if(await save())window.location.href="/admin?menu=exam-input&exam="+encodeURIComponent(examId);}
 
   async function save(){
     const config=getSupabaseConfig(); if(!config||!examId)return alert("Supabase 연결을 확인해 주세요.");
     setSaving(true);
     try{
       const h={...(await authHeaders()),"Content-Type":"application/json"};
-      await fetch(`${config.url}/rest/v1/question_regions?exam_id=eq.${encodeURIComponent(examId)}`,{method:"DELETE",headers:h});
+      // 기존 영역을 지우지 않고 한 요청으로 저장합니다.
       const body=regions.map(r=>({exam_id:examId,question_no:r.number,page_no:r.page,x:r.x,y:r.y,width:r.w,height:r.h,question_type:r.type,answer:r.answer,verified:r.verified,source:r.source}));
-      const res=await fetch(`${config.url}/rest/v1/question_regions`,{method:"POST",headers:{...h,Prefer:"return=minimal"},body:JSON.stringify(body)});
+      const res=await fetch(`${config.url}/rest/v1/question_regions?on_conflict=exam_id,question_no`,{method:"POST",headers:{...h,Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(body)});
       if(!res.ok)throw new Error(await res.text());
-      alert("문항 영역을 Supabase에 저장했습니다.");
+      setSavedSnapshot(JSON.stringify(regions));setSaveNote("문항 영역 저장 완료");
+      return true;
     }catch(e){alert(`저장 실패: ${e instanceof Error?e.message:"알 수 없는 오류"}`)}finally{setSaving(false)}
   }
 
   return <main className="mapper-shell">
-    <header className="mapper-header"><div><span>SOS PDF MAPPER</span><h1>문항 영역 검수</h1><p>자동 초안을 확인하고 틀린 문항만 다시 드래그하세요.</p></div><div className="header-actions"><button onClick={goNextNeedsCheck}>다음 확인 필요</button><button className="primary" onClick={save} disabled={saving}>{saving?"저장 중...":"DB에 저장"}</button><button onClick={returnToRegistration} disabled={saving}>등록화면으로 돌아가기</button></div></header>
-    <section className="meta-card"><b>{examCode}</b><span>{examPdfName||"시험지 불러오는 중"}</span><span>영역 {completed}/{regions.length}</span><span>검수 {verified}/{regions.length}</span></section>
+    <header className="mapper-header"><div><span>SOS PDF MAPPER</span><h1>문항 영역 검수</h1><p>자동 초안을 확인하고 틀린 문항만 다시 드래그하세요.</p></div><div className="header-actions"><button onClick={goNextNeedsCheck}>다음 미검수 문항</button><button className="primary" onClick={()=>void save()} disabled={saving||loading}>{saving?"저장 중...":"중간 저장"}</button><button onClick={saveAndReturn} disabled={saving||loading}>저장하고 등록 계속</button><button onClick={returnToRegistration} disabled={saving}>돌아가기</button></div></header>
+    <section className="meta-card"><b>{examCode}</b><span>{examPdfName||"시험지 불러오는 중"}</span><span>영역 {completed}/{regions.length}</span><span>검수 {verified}/{regions.length} · {dirty?"저장 필요":saveNote||"저장된 상태"}</span></section>
     <div className="mapper-grid">
-      <aside className="side-card"><div className="side-title"><h2>문항 번호</h2><b>{completed}/{regions.length}</b></div><div className="number-grid">{regions.map(r=><button key={r.number} className={`${active===r.number?"active":""} ${r.w>0?"done":""} ${r.verified?"verified":""}`} onClick={()=>setActive(r.number)}>{r.number}</button>)}</div>{current&&<div className="answer-editor"><h3>{active}번</h3><p>{current.source==="auto"?"자동 초안":"수동 보정"} · {current.verified?"검수 완료":"확인 필요"}</p><button className="verify" onClick={()=>patch({verified:!current.verified})}>{current.verified?"검수 취소":"이 영역 맞음"}</button><button className="clear" onClick={()=>patch({x:0,y:0,w:0,h:0,verified:false,source:"manual"})}>영역 다시 지정</button></div>}</aside>
-      <section className="viewer-card"><div className="viewer-toolbar"><button disabled={page<=1} onClick={()=>setPage(p=>p-1)}>이전</button><b>{pageCount?`${page}/${pageCount} 페이지`:"PDF 로딩"}</b><button disabled={!pageCount||page>=pageCount} onClick={()=>setPage(p=>p+1)}>다음</button><span>{active}번 확인 중</span></div><div className="canvas-wrap">{loading&&<MATHPOOHLoader title="시험지 불러오는 중" detail="PDF와 문항 좌표를 준비하고 있습니다." kind="exam" audience="admin"/>}<canvas ref={canvasRef}/>{pdfDoc&&<div ref={overlayRef} className="overlay" onPointerDown={down} onPointerMove={move} onPointerUp={up}>{pageRegions.map(r=><button key={r.number} className={`region ${r.number===active?"active":""} ${r.verified?"verified":""}`} style={{left:`${r.x}%`,top:`${r.y}%`,width:`${r.w}%`,height:`${r.h}%`}} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();setActive(r.number)}}>{r.number}</button>)}{draft&&<div className="region draft" style={{left:`${draft.x}%`,top:`${draft.y}%`,width:`${draft.w}%`,height:`${draft.h}%`}}/>}</div>}</div></section>
+      <aside className="side-card"><div className="side-title"><h2>문항 번호</h2><b>{completed}/{regions.length}</b></div><div className="number-grid">{regions.map(r=><button key={r.number} className={`${active===r.number?"active":""} ${r.w>0?"done":""} ${r.verified?"verified":""}`} onClick={()=>setActive(r.number)}>{r.number}</button>)}</div>{current&&<div className="answer-editor"><h3>{active}번</h3><p>{current.source==="auto"?"자동 초안":"수동 보정"} · {current.verified?"검수 완료":"확인 필요"}</p><button className="verify" disabled={current.w<=0||current.h<=0} onClick={confirmAndNext}>확인하고 다음 미검수</button><button className="verify" disabled={current.w<=0||current.h<=0} onClick={()=>patch({verified:!current.verified})}>{current.verified?"검수 취소":"이 영역 맞음"}</button><button className="clear" onClick={()=>patch({x:0,y:0,w:0,h:0,verified:false,source:"manual"})}>현재 영역 지우기</button></div>}</aside>
+      <section className="viewer-card"><div className="viewer-toolbar"><button disabled={page<=1} onClick={()=>setPage(p=>p-1)}>이전 페이지</button><b>{pageCount?`${page}/${pageCount} 페이지`:"PDF 로딩"}</b><button disabled={!pageCount||page>=pageCount} onClick={()=>setPage(p=>p+1)}>다음 페이지</button><span>{active}번 확인 중</span></div><div className="canvas-wrap">{loading&&<MATHPOOHLoader title="시험지 불러오는 중" detail="PDF와 문항 좌표를 준비하고 있습니다." kind="exam" audience="admin"/>}<canvas ref={canvasRef}/>{pdfDoc&&<div ref={overlayRef} className="overlay" onPointerDown={down} onPointerMove={move} onPointerUp={up}>{pageRegions.map(r=><button key={r.number} className={`region ${r.number===active?"active":""} ${r.verified?"verified":""}`} style={{left:`${r.x}%`,top:`${r.y}%`,width:`${r.w}%`,height:`${r.h}%`}} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();setActive(r.number)}}>{r.number}</button>)}{draft&&<div className="region draft" style={{left:`${draft.x}%`,top:`${draft.y}%`,width:`${draft.w}%`,height:`${draft.h}%`}}/>}</div>}</div></section>
       <aside className="preview-card"><h2>{active}번 미리보기</h2><p>번호를 누르면 해당 영역을 바로 확인합니다.</p><div className="preview-area">{preview?<img src={preview} alt="문항 미리보기"/>:<span>영역이 아직 없습니다.</span>}</div></aside>
     </div>
     <style jsx>{`*{box-sizing:border-box}.mapper-shell{min-height:100vh;background:#f4f6f9;padding:24px;font-family:Arial,"Pretendard",sans-serif}.mapper-header{max-width:1700px;margin:auto auto 16px;display:flex;justify-content:space-between;align-items:center;gap:18px}.mapper-header h1{margin:4px 0;font-size:30px}.mapper-header p{margin:0;color:#737b8c}.mapper-header span{font-size:12px;font-weight:900;color:#2f6937}.header-actions{display:flex;gap:8px}.header-actions button{height:44px;padding:0 18px;border:1px solid #d7dce7;border-radius:10px;background:#fff;font-weight:800}.header-actions .primary{background:#2f6937;color:#fff;border-color:#2f6937}.meta-card,.side-card,.viewer-card,.preview-card{background:#fff;border:1px solid #dfe4ee;border-radius:15px}.meta-card{max-width:1700px;margin:0 auto 16px;padding:16px 20px;display:grid;grid-template-columns:1fr 2fr 1fr 1fr;gap:14px}.mapper-grid{max-width:1700px;margin:auto;display:grid;grid-template-columns:250px minmax(0,1fr) 320px;gap:16px;align-items:start}.side-card,.preview-card{padding:16px;position:sticky;top:12px}.side-title{display:flex;justify-content:space-between}.number-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-top:14px}.number-grid button{height:38px;border:1px solid #dce1eb;border-radius:8px;background:#fff;font-weight:900}.number-grid button.done{background:#fff7e9}.number-grid button.verified{background:#eef8f4;border-color:#b9e2d2}.number-grid button.active{background:#2f6937;color:#fff}.answer-editor{border-top:1px solid #e9ecf2;margin-top:16px;padding-top:14px}.answer-editor p{color:#7b8496}.verify,.clear{width:100%;height:40px;border-radius:8px;font-weight:800;margin-top:8px}.verify{border:1px solid #b8dfcf;background:#eef8f4;color:#258664}.clear{border:1px solid #f0c7c7;background:#fff6f6;color:#b44}.viewer-card{overflow:hidden}.viewer-toolbar{height:54px;padding:0 14px;border-bottom:1px solid #e7eaf0;display:flex;align-items:center;gap:10px}.viewer-toolbar span{margin-left:auto;color:#2f6937;font-weight:900}.viewer-toolbar button{padding:7px 12px;border:1px solid #d8dde8;background:#fff;border-radius:8px}.canvas-wrap{position:relative;width:min(100%,1100px);margin:14px auto;background:#fff}.canvas-wrap canvas{display:block;width:100%;height:auto}.overlay{position:absolute;inset:0;cursor:crosshair;touch-action:none}.region{position:absolute;border:2px solid #e0a22f;background:rgba(255,190,65,.12);font-weight:900;text-align:left}.region.active{border-color:#e34d4d;background:rgba(227,77,77,.12)}.region.verified{border-color:#2c9a73;background:rgba(44,154,115,.1)}.region.draft{pointer-events:none;border-style:dashed}.empty{height:500px;display:grid;place-items:center;color:#7c8494}.preview-card h2{margin-top:0}.preview-card p{color:#7b8496}.preview-area{min-height:260px;border:1px dashed #ccd3df;border-radius:10px;display:grid;place-items:center;overflow:auto;background:#fafbfc}.preview-area img{max-width:100%}@media(max-width:1250px){.mapper-grid{grid-template-columns:220px minmax(0,1fr)}.preview-card{grid-column:1/-1;position:static}.meta-card{grid-template-columns:1fr 2fr}}@media(max-width:760px){.mapper-shell{padding:10px}.mapper-header{align-items:flex-start;flex-direction:column}.header-actions{width:100%}.header-actions button{flex:1}.meta-card,.mapper-grid{grid-template-columns:1fr}.side-card,.preview-card{position:static}.number-grid{grid-template-columns:repeat(6,1fr)}.viewer-toolbar span{display:none}}`}</style>

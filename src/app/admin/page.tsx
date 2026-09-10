@@ -15,6 +15,7 @@ import { getSupabaseConfig } from "@/lib/supabase";
 import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
 import { authHeaders } from "@/lib/supabase/rest";
 import AccountBox from "../AccountBox";
+import { examCoverHtml } from "@/lib/exam-cover";
 import "../exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
@@ -3781,7 +3782,25 @@ function ExamsPage({
     value: Omit<PracticeExam, "id">[K],
   ) => setForm((prev) => ({ ...prev, [key]: value }));
 
+  const [paperKind,setPaperKind]=useState("");
+  const [catalogRows,setCatalogRows]=useState<any[]>([]);
+  const [catalogReady,setCatalogReady]=useState(false);
+  useEffect(()=>{fetch("/api/admin/exam-catalog",{cache:"no-store"}).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.message);setCatalogRows(data.catalog??[]);setCatalogReady(true);}).catch(()=>setCatalogReady(false));},[]);
+  const choosePaperKind=(kind:string)=>{
+    setPaperKind(kind);if(!kind)return;
+    const used=exams.filter(x=>!isArchivedPracticeExam(x)&&new RegExp("^SOS_"+kind+"_","i").test(x.examCode||x.title));
+    const scope=kind==="A"?"ALGEBRA":kind==="B"?"ALGEBRA_CALC1":"FULL";
+    const next=1+Math.max(0,...catalogRows.filter(x=>x.scope_code===scope).map(x=>Number(x.formal_sequence)||0),...used.map(x=>Number(x.examCode.match(/_([0-9]+)$/)?.[1])||x.round));
+    setForm(p=>({...p,round:next,title:`SOS_${kind}_실전모의고사_${next}`,examCode:`SOS_${kind}_${String(next).padStart(2,"0")}`,grade:"전체",subject:kind==="A"?"대수":kind==="B"?"대수+미적1":"대수+미적1+확통",range:""}));
+  };
+  useEffect(()=>{
+    const id=new URLSearchParams(window.location.search).get("exam");
+    if(!id||editingId===id)return;
+    const exam=exams.find(x=>x.id===id);
+    if(exam){const {id:savedId,...rest}=exam;setEditingId(savedId);setForm(rest);setDraftFiles({});setTab("input");}
+  },[exams,editingId]);
   const startNew = () => {
+    const url=new URL(window.location.href);url.searchParams.delete("exam");window.history.replaceState(null,"",url);setPaperKind("");
     setEditingId(null);
     setDraftFiles({});
     setRegionDrafts({});
@@ -3791,7 +3810,8 @@ function ExamsPage({
   const editExam = (exam: PracticeExam) => {
     const { id, ...rest } = exam;
     setEditingId(id);
-    setDraftFiles(examFiles[id] ?? {});
+    setDraftFiles({});
+    const url=new URL(window.location.href);url.searchParams.set("exam",id);window.history.replaceState(null,"",url);
     setForm(rest);
     setRegionDrafts({});
     setTab("input");
@@ -3802,10 +3822,9 @@ function ExamsPage({
     if (
       !form.title.trim() ||
       !form.examCode.trim() ||
-      !form.examDate ||
-      !form.startAt
+      !form.examDate
     )
-      return alert("시험명, 시험코드, 시험 시작 일시를 입력해 주세요.");
+      return alert("시험지 종류와 시험명을 확인해 주세요.");
     if (form.objectiveCount + form.shortAnswerCount !== form.questionCount)
       return alert(
         "객관식과 단답형 문항 수의 합이 전체 문항 수와 같아야 합니다.",
@@ -3907,11 +3926,10 @@ function ExamsPage({
       alert(
         `시험 자료를 저장했습니다. 정답 ${savedExam.answers.filter(Boolean).length}/${savedExam.questionCount}개가 입력되었습니다.${reanalysisNote}`,
       );
-      setEditingId(null);
-      setDraftFiles({});
-      setRegionDrafts({});
-      setForm(makeEmptyExam());
-      setTab("list");
+      setEditingId(savedExam.id);setDraftFiles({});
+      const {id:savedId,...rest}=savedExam;setForm(rest);
+      const url=new URL(window.location.href);url.searchParams.set("exam",savedId);window.history.replaceState(null,"",url);
+      setTab("input");
     } catch (error) {
       console.error(error);
       if (!examRowCommitted && newlyUploadedPaths.length)
@@ -4207,13 +4225,22 @@ function ExamsPage({
       // 정답으로 잘못 연결할 수 있으므로 애매한 칸은 빈칸으로 남기는 편이 안전하다.
 
       const found = parsed.filter(Boolean).length;
-      if (found === form.questionCount) return parsed;
+      if (found === form.questionCount) return existing.map((answer,index)=>answer||parsed[index]);
 
       // 완전 추출이 아니면 사용자가 이미 입력한 답을 지우지 않고, 추출된 칸만 병합합니다.
       return existing.map((answer, index) => answer || parsed[index]);
     }
 
-    throw new Error("QUICK_ANSWER_PAGE_NOT_FOUND");
+    const parsed=Array(form.questionCount).fill("");
+    for(let n=1;n<=pdf.numPages;n++){
+      const content=await (await pdf.getPage(n)).getTextContent();
+      const text=(content.items as any[]).map(x=>String(x.str??"")).join(" ");
+      for(const match of text.matchAll(/(?:^|\\s)([0-9]{1,2})[.．)]\\s*(?:정답|답)\\s*[:：]?\\s*([①②③④⑤]|-?[0-9]+)(?=\\s|$)/g)){
+        const no=Number(match[1]),answer=normalizePdfToken(match[2]);
+        if(no>=1&&no<=form.questionCount&&(!isObjectiveQuestion(no,form.questionCount,form.objectiveCount)||/^[1-5]$/.test(answer)))parsed[no-1]=answer;
+      }
+    }
+    return existing.map((answer,i)=>answer||parsed[i]);
   };
 
   const extractAnswersFromSolution = async () => {
@@ -4268,12 +4295,7 @@ function ExamsPage({
     );
   };
 
-  const printCover = () => {
-    printHtmlSafely(
-      `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(form.title)}</title><style>@page{size:A4;margin:0}*{box-sizing:border-box}body{font-family:Arial,'Noto Sans KR',sans-serif;margin:0;color:#285c31}.page{width:210mm;min-height:297mm;padding:22mm}.brand{text-align:center;font-weight:900;font-size:34px}.sub{text-align:center;font-size:14px;color:#667085}.line{height:3px;background:#2f6937;margin:24px 0}.title{text-align:center;font-size:28px;font-weight:900;margin:24px 0 34px}.info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #cfd5e6}.info div{padding:14px 16px;border-right:1px solid #cfd5e6;border-bottom:1px solid #cfd5e6}.value{font-size:18px;font-weight:800;margin-top:5px}.student{margin-top:34px;border:1px solid #cfd5e6;padding:22px;line-height:3;font-size:18px}.notice{margin-top:34px;background:#f5f7fb;padding:20px 24px;line-height:1.9}</style></head><body><section class="page"><div class="brand">SOS</div><div class="sub">Score Optimization System · MATHPOOH</div><div class="line"></div><div class="title">${escapeHtml(form.title)}</div><div class="info"><div>대상<div class="value">${escapeHtml(form.grade)}</div></div><div>과목<div class="value">${escapeHtml(form.subject)}</div></div><div>시험일<div class="value">${escapeHtml(form.examDate)}</div></div><div>시험시간<div class="value">${form.timeLimit}분</div></div><div>문항수<div class="value">${form.questionCount}문항</div></div><div>총점<div class="value">${form.totalScore}점</div></div></div><div class="student">학생명 _______________________________<br>학교 _________________________________<br>반 ____________ 번호 ____________</div><div class="notice"><strong>응시 안내</strong><br>1. 감독자의 시작 안내 전까지 시험지를 넘기지 마세요.<br>2. 제한시간을 지키고 답안을 빠짐없이 작성하세요.<br>3. 시험 종료 후 시험지와 답안을 모두 제출하세요.</div></section></body></html>`,
-      `${form.examCode} 표지`,
-    );
-  };
+  const printCover = () => printHtmlSafely(examCoverHtml(form), `${form.title} 표지`);
 
   const createRegionDrafts = () => {
     if (!editingId)
@@ -4301,7 +4323,7 @@ function ExamsPage({
       {
         label: "등록 파일",
         complete: Boolean(
-          exam.testFilePath && exam.solutionFilePath && exam.originalFilePath,
+          exam.testFilePath,
         ),
       },
       {
@@ -4366,6 +4388,13 @@ function ExamsPage({
       );
     }
     try {
+      if(status==="등록완료"){
+        const kind=exam.examCode.match(/^SOS_([ABC])_/i)?.[1]?.toUpperCase();
+        if(kind){
+          const response=await fetch("/api/admin/exam-catalog",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"register-paper",examId:exam.id,formalSequence:exam.round,scopeCode:kind==="A"?"ALGEBRA":kind==="B"?"ALGEBRA_CALC1":"FULL"})});
+          const data=await response.json();if(!response.ok)throw new Error(data.message||"시험지 목록 등록 실패");
+        }
+      }
       await patchExamFields(exam.id, { status });
     } catch (error) {
       alert(
@@ -4425,7 +4454,20 @@ function ExamsPage({
           ? "cover_verified"
           : "region_verified";
     try {
-      await patchExamFields(editingId, { [column]: true });
+      if(kind==="answer"&&form.questionPoints.reduce((sum,v)=>sum+Number(v||0),0)!==form.totalScore)return alert("배점 합계를 총점과 맞춰 주세요.");
+      if(kind==="region"){
+        const config=getSupabaseConfig();if(!config)throw new Error("연결을 확인해 주세요.");
+        const response=await fetch(`${config.url}/rest/v1/question_regions?exam_id=eq.${editingId}&select=width,height,verified`,{headers:await authHeaders(),cache:"no-store"});
+        if(!response.ok)throw new Error("문항 영역 조회 실패");
+        const rows=await response.json();
+        if(rows.length!==form.questionCount||rows.some((x:any)=>!x.verified||Number(x.width)<=0||Number(x.height)<=0))return alert("자르기 화면에서 모든 문항을 확인하고 저장해 주세요.");
+      }
+      const answersChanged=kind==="answer"&&JSON.stringify(exams.find(x=>x.id===editingId)?.answers)!==JSON.stringify(form.answers);
+      await patchExamFields(editingId, { [column]: true, ...(kind==="answer"?{answer_keys:form.answers,question_points:form.questionPoints}:{}) });
+      if(answersChanged){
+        const response=await fetch("/api/admin/exam-reanalyze",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({examId:editingId})});
+        if(!response.ok)throw new Error("정답은 저장했으나 기존 제출 결과 갱신에 실패했습니다. 결과 재분석을 실행해 주세요.");
+      }
       alert(
         kind === "answer"
           ? "정답 검수 완료로 표시했습니다."
@@ -4698,6 +4740,7 @@ function ExamsPage({
         <ExamMonitorPanel exams={exams} mode={tab === "monitor-results" ? "results" : "progress"} />
       ) : (
         <form className="exam-input-layout" onSubmit={save}>
+          <nav className="registration-steps">{["기본정보","파일 업로드","문항 구성","정답·배점","표지","문항 자르기"].map((label,i)=><button type="button" key={label} onClick={()=>document.querySelectorAll(".exam-input-layout > section")[i]?.scrollIntoView({behavior:"smooth",block:"start"})}>{i+1}. {label}</button>)}</nav>
           <section className="panel exam-form-panel">
             <div className="form-section-title">
               <div>
@@ -4712,158 +4755,15 @@ function ExamsPage({
               </div>
             </div>
             <div className="form-grid exam-form-grid">
-              <Field label="시험 회차 *">
-                <input
-                  type="number"
-                  min="1"
-                  value={form.round}
-                  onChange={(e) => set("round", Number(e.target.value))}
-                />
-              </Field>
-              <Field label="시험 시작 일시 *">
-                <input
-                  type="datetime-local"
-                  value={form.startAt}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setForm((prev) => ({
-                      ...prev,
-                      startAt: value,
-                      examDate: value.slice(0, 10),
-                    }));
-                  }}
-                />
-              </Field>
-              <label className="field full">
-                <span>시험명 *</span>
-                <input
-                  value={form.title}
-                  onChange={(e) => set("title", e.target.value)}
-                />
-              </label>
-              <Field label="시험코드 *">
-                <input
-                  value={form.examCode}
-                  onChange={(e) => set("examCode", e.target.value)}
-                />
-              </Field>
-              <div className="field status-readonly">
-                <span>등록 상태</span>
-                <strong>{form.status}</strong>
-                <small>등록 상태는 시험 목록에서만 변경합니다.</small>
-              </div>
-              <Field label="대상 학년">
-                <select
-                  value={form.grade}
-                  onChange={(e) => set("grade", e.target.value)}
-                >
-                  <option>중3</option>
-                  <option>고1</option>
-                  <option>고2</option>
-                  <option>고3</option>
-                  <option>전체</option>
-                </select>
-              </Field>
-              <Field label="과목">
-                <input
-                  value={form.subject}
-                  onChange={(e) => set("subject", e.target.value)}
-                />
-              </Field>
-              <label className="field full">
-                <span>시험 범위</span>
-                <input
-                  value={form.range}
-                  onChange={(e) => set("range", e.target.value)}
-                />
-              </label>
+              {!editingId&&<Field label="시험지 종류 *"><select value={paperKind} disabled={!catalogReady} onChange={e=>choosePaperKind(e.target.value)}><option value="">{catalogReady?"종류 선택":"목록 확인 중… (실패 시 새로고침)"}</option><option value="A">A · 대수</option><option value="B">B · 대수+미적1</option><option value="C">C · 대수+미적1+확통</option></select></Field>}
+              <label className="field full"><span>시험지 이름 *</span><input value={form.title} onChange={e=>setForm(p=>({...p,title:e.target.value,coverVerified:false}))}/><small>종류별 다음 순번이 자동 입력됩니다. 응시 날짜는 일정 관리에서 설정합니다.</small></label>
+              <div className="field"><span>등록 상태</span><strong>{form.status} · {form.round}번 시험지</strong></div>
             </div>
           </section>
           <section className="panel exam-form-panel">
             <div className="form-section-title">
               <div>
                 <span>02</span>
-                <div>
-                  <h3>문항 구성</h3>
-                </div>
-              </div>
-            </div>
-            <div className="form-grid exam-form-grid numbers">
-              <Field label="전체 문항 수">
-                <input
-                  type="number"
-                  min="1"
-                  value={form.questionCount}
-                  onChange={(e) => {
-                    const count = Number(e.target.value);
-                    setForm((prev) => ({
-                      ...prev,
-                      questionCount: count,
-                      objectiveCount: Math.min(prev.objectiveCount, count),
-                      shortAnswerCount: Math.max(0, count - Math.min(prev.objectiveCount, count)),
-                      answers: Array.from(
-                        { length: count },
-                        (_, i) => prev.answers[i] ?? "",
-                      ),
-                      questionPoints: Array.from(
-                        { length: count },
-                        (_, i) => prev.questionPoints[i] ?? 0,
-                      ),
-                    }));
-                  }}
-                />
-              </Field>
-              <Field label="총점">
-                <input
-                  type="number"
-                  min="1"
-                  value={form.totalScore}
-                  onChange={(e) => set("totalScore", Number(e.target.value))}
-                />
-              </Field>
-              <Field label="객관식 문항 수">
-                <input
-                  type="number"
-                  min="0"
-                  max={form.questionCount}
-                  value={form.objectiveCount}
-                  readOnly={form.questionCount === 30}
-                  onChange={(e) => {
-                    const objectiveCount = Math.max(0, Math.min(form.questionCount, Number(e.target.value)));
-                    setForm((prev) => ({ ...prev, objectiveCount, shortAnswerCount: prev.questionCount - objectiveCount, answerVerified: false }));
-                  }}
-                />
-              </Field>
-              <Field label="단답형 문항 (자동)">
-                <input
-                  type="number"
-                  value={form.shortAnswerCount}
-                  readOnly
-                />
-              </Field>
-              <Field label="시험 시간(분)">
-                <input
-                  type="number"
-                  min="1"
-                  value={form.timeLimit}
-                  onChange={(e) => set("timeLimit", Number(e.target.value))}
-                />
-              </Field>
-              <div
-                className={`question-check ${form.objectiveCount + form.shortAnswerCount === form.questionCount ? "ok" : "warning"}`}
-              >
-                <span>문항 합계</span>
-                <strong>
-                  {form.objectiveCount + form.shortAnswerCount} /{" "}
-                  {form.questionCount}
-                </strong>
-              </div>
-            </div>
-          </section>
-          <section className="panel exam-form-panel">
-            <div className="form-section-title">
-              <div>
-                <span>03</span>
                 <div>
                   <h3>시험 자료 3종 등록</h3>
                   <p>
@@ -4981,8 +4881,7 @@ function ExamsPage({
                 {saving ? "파일 저장 중..." : "시험 자료 한 번에 저장"}
               </button>
               <span>
-                선택한 한글·시험지·해설지를 한 번에 저장하고 해설지 정답도
-                자동으로 읽습니다.
+                파일 저장 후 이 화면에서 정답·표지·문항 검수를 이어갑니다. 정답은 별도로 입력합니다.
               </span>
             </div>
             <div className="file-standard-note">
@@ -5000,12 +4899,92 @@ function ExamsPage({
           <section className="panel exam-form-panel">
             <div className="form-section-title">
               <div>
+                <span>03</span>
+                <div>
+                  <h3>문항 구성</h3>
+                </div>
+              </div>
+            </div>
+            <div className="form-grid exam-form-grid numbers">
+              <Field label="전체 문항 수">
+                <input
+                  type="number"
+                  min="1"
+                  value={form.questionCount}
+                  onChange={(e) => {
+                    const count = Number(e.target.value);
+                    setForm((prev) => ({
+                      ...prev,
+                      questionCount: count,
+                      objectiveCount: Math.min(prev.objectiveCount, count),
+                      shortAnswerCount: Math.max(0, count - Math.min(prev.objectiveCount, count)),
+                      answers: Array.from(
+                        { length: count },
+                        (_, i) => prev.answers[i] ?? "",
+                      ),
+                      questionPoints: Array.from(
+                        { length: count },
+                        (_, i) => prev.questionPoints[i] ?? 0,
+                      ),
+                    }));
+                  }}
+                />
+              </Field>
+              <Field label="총점">
+                <input
+                  type="number"
+                  min="1"
+                  value={form.totalScore}
+                  onChange={(e) => set("totalScore", Number(e.target.value))}
+                />
+              </Field>
+              <Field label="객관식 문항 수">
+                <input
+                  type="number"
+                  min="0"
+                  max={form.questionCount}
+                  value={form.objectiveCount}
+                  readOnly={form.questionCount === 30}
+                  onChange={(e) => {
+                    const objectiveCount = Math.max(0, Math.min(form.questionCount, Number(e.target.value)));
+                    setForm((prev) => ({ ...prev, objectiveCount, shortAnswerCount: prev.questionCount - objectiveCount, answerVerified: false }));
+                  }}
+                />
+              </Field>
+              <Field label="단답형 문항 (자동)">
+                <input
+                  type="number"
+                  value={form.shortAnswerCount}
+                  readOnly
+                />
+              </Field>
+              <Field label="시험 시간(분)">
+                <input
+                  type="number"
+                  min="1"
+                  value={form.timeLimit}
+                  onChange={(e) => set("timeLimit", Number(e.target.value))}
+                />
+              </Field>
+              <div
+                className={`question-check ${form.objectiveCount + form.shortAnswerCount === form.questionCount ? "ok" : "warning"}`}
+              >
+                <span>문항 합계</span>
+                <strong>
+                  {form.objectiveCount + form.shortAnswerCount} /{" "}
+                  {form.questionCount}
+                </strong>
+              </div>
+            </div>
+          </section>
+          <section className="panel exam-form-panel">
+            <div className="form-section-title">
+              <div>
                 <span>04</span>
                 <div>
-                  <h3>빠른 정답 자동 추출</h3>
+                  <h3>정답·배점 입력 및 검수</h3>
                   <p>
-                    해설지 마지막 페이지의 ‘빠른정답’을 읽어 1~30번 답을 자동
-                    입력합니다. AI 인식값은 임시값이므로 원본과 반드시 대조해 주세요.
+                    빠른답안은 선택입니다. 없으면 직접 입력하거나 해설에서 명시된 정답을 읽습니다. 인식값은 반드시 검수해 주세요.
                   </p>
                 </div>
               </div>
@@ -5026,7 +5005,7 @@ function ExamsPage({
                   onClick={extractAnswersFromSolution}
                   disabled={!hasPdf("solution")}
                 >
-                  마지막 빠른정답 읽기
+                  해설에서 정답 읽기 (선택)
                 </button>
                 <button
                   type="button"
@@ -5132,32 +5111,7 @@ function ExamsPage({
               </div>
             </div>
             <div className="cover-builder">
-              <article className="exam-cover-preview">
-                <div className="cover-logo">SOS</div>
-                <small>Score Optimization System · MATHPOOH</small>
-                <div className="cover-rule" />
-                <h2>{form.title || "시험명을 입력해 주세요"}</h2>
-                <div className="cover-info-grid">
-                  <span>대상</span>
-                  <b>{form.grade}</b>
-                  <span>과목</span>
-                  <b>{form.subject || "-"}</b>
-                  <span>시험일</span>
-                  <b>{form.examDate || "-"}</b>
-                  <span>시험시간</span>
-                  <b>{form.timeLimit}분</b>
-                  <span>문항수</span>
-                  <b>{form.questionCount}문항</b>
-                  <span>총점</span>
-                  <b>{form.totalScore}점</b>
-                </div>
-                <div className="cover-student-lines">
-                  학생명 ____________________
-                  <br />
-                  학교 ______________________
-                  <br />반 ________ 번호 ________
-                </div>
-              </article>
+              <iframe title="SOS 시험 표지 미리보기" srcDoc={examCoverHtml(form)} style={{width:"100%",height:620,border:"1px solid #d7e1da",borderRadius:12}} />
               <div className="cover-actions">
                 <button
                   type="button"
@@ -5280,6 +5234,7 @@ function ExamsPage({
               )}
             </div>
           </section>
+          {editingId&&<section className="panel exam-form-panel"><h3>분석 및 등록 마무리</h3><p>저장된 문항으로 분석하고 결과를 확인합니다. 검수가 끝나면 등록완료를 누르세요.</p><div className="header-actions"><button type="button" className="secondary-button" disabled={!!analyzingExamId} onClick={()=>{const exam=exams.find(x=>x.id===editingId);if(exam)void analyzeExam(exam);}}>{analyzingExamId?"분석 중…":"문항 분석"}</button><button type="button" className="secondary-button" onClick={()=>{const exam=exams.find(x=>x.id===editingId);if(exam)void openAnalysisReview(exam);}}>분석 결과 검수</button><button type="button" className="primary-button" onClick={()=>{const exam=exams.find(x=>x.id===editingId);if(exam)void changeStatusFromList(exam,"등록완료");}}>등록완료</button><button type="button" className="secondary-button" onClick={startNew}>다음 시험지 등록</button></div></section>}
           <div className="exam-form-actions">
             <button
               type="button"
