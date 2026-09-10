@@ -1,3 +1,4 @@
+import { isArchivedPracticeExam } from "@/lib/archived-practice-exams";
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -30,10 +31,14 @@ export async function GET() {
     .order("submitted_at", { ascending: false });
   if (error) return NextResponse.json({ message: error.message }, { status: 400 });
 
+  const examIds = [...new Set((attempts ?? []).map(a => String(a.exam_id)))];
+  const exams = examIds.length ? await supabase.from("exams").select("id,title,exam_date").in("id",examIds) : {data:[],error:null};
+  if (exams.error) return NextResponse.json({message:exams.error.message},{status:400});
+  const hidden = new Set((exams.data ?? []).filter(isArchivedPracticeExam).map(e=>String(e.id)));
   return NextResponse.json(
     {
       attempts: dedupeExamAttempts(
-        attempts ?? [],
+        (attempts ?? []).filter(a=>!hidden.has(String(a.exam_id))),
         (attempt) => String(attempt.exam_id),
       ),
     },

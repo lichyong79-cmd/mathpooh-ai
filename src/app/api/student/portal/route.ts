@@ -1,3 +1,4 @@
+import { isArchivedPracticeExam } from "@/lib/archived-practice-exams";
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -237,7 +238,7 @@ export async function GET(request: Request) {
     (exams ?? [])
       .filter(
         (exam) =>
-          validAccessibleExamIds.has(String(exam.id)) || attemptMap.has(exam.id),
+          !isArchivedPracticeExam(exam) && (validAccessibleExamIds.has(String(exam.id)) || attemptMap.has(exam.id)),
       )
       .map(async (exam) => {
       const exactRegistration = registrationMap.get(String(exam.id));
@@ -425,7 +426,12 @@ export async function GET(request: Request) {
   const examById = new Map(examItems.map((exam: any) => [String(exam.id), exam]));
   const sessionsForGate = sosSessions ?? [];
   const membershipByCycle = new Map((memberships.data ?? []).map((row: any) => [String(row.cycle_id), row]));
-  const examSchedules = memberCycles.map((cycle: any) => {
+  const archivedExamIds = new Set((exams ?? []).filter(isArchivedPracticeExam).map(exam => String(exam.id)));
+  const examSchedules = memberCycles.filter((cycle: any) => {
+    const links = memberExamLinks.filter((link: any) => String(link.cycle_id) === String(cycle.id));
+    const membership: any = membershipByCycle.get(String(cycle.id));
+    return !membership?.is_practice && !(links.length && links.every((link: any) => archivedExamIds.has(String(link.exam_id))));
+  }).map((cycle: any) => {
     const membership: any = membershipByCycle.get(String(cycle.id)) ?? {};
     const resolvedSequence = resolvedSequenceByMembership.get(String(membership.id)) ?? Number(membership.formal_sequence ?? 0);
     const link = memberExamLinks.find((row: any) =>

@@ -31,6 +31,7 @@ import {
 } from "@/lib/source-workflow";
 import ProgramBatchesAdmin from "./ProgramBatchesAdmin";
 import WeeklyAssignments from "./WeeklyAssignments";
+import { isArchivedPracticeExam } from "@/lib/archived-practice-exams";
 import { isObjectiveQuestion, questionTypeSummary } from "@/lib/exam-question-type";
 
 type CanonicalSourceAnalysisStatus = {
@@ -4722,7 +4723,7 @@ function ExamsPage({
           </section>
         </>
       ) : tab === "assignment" ? (
-        <ExamAssignmentPanel exams={exams} students={students} />
+        <ExamAssignmentPanel exams={exams.filter(exam => !isArchivedPracticeExam(exam))} students={students} />
       ) : tab === "monitor" || tab === "monitor-results" ? (
         <ExamMonitorPanel exams={exams} mode={tab === "monitor-results" ? "results" : "progress"} />
       ) : (
