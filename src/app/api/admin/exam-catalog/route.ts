@@ -27,14 +27,15 @@ export async function GET(request: Request) {
       const ids=(members.data??[]).map(x=>x.student_id);
       if(ids.length){
         const [attempts,registrations,sessions,history]=await Promise.all([
-          s.from("exam_attempts").select("id,student_id,exam_id,status,formal_sequence,is_practice").in("student_id",ids),
+          s.from("exam_attempts").select("id,student_id,exam_id,status,formal_sequence,scope_code,is_practice").in("student_id",ids),
           s.from("exam_registrations").select("id,student_id,exam_id,cycle_student_id,status,formal_sequence,scope_code").in("student_id",ids),
           s.from("sos_training_sessions").select("student_id,status,decision,cycle_kind,target_snapshot").in("student_id",ids),
-          s.from("learning_cycle_students").select("student_id,cycle_id,formal_sequence,is_practice").in("student_id",ids),
+          s.from("learning_cycle_students").select("student_id,cycle_id,formal_sequence,scope_code,is_practice").in("student_id",ids),
         ]);
         if(attempts.error||registrations.error||sessions.error||history.error)throw attempts.error||registrations.error||sessions.error||history.error;
         rows=(members.data??[]).map(m=>{
-          const own=(attempts.data??[]).filter(a=>a.student_id===m.student_id);
+          const scope=String(m.scope_code??"FULL");
+          const own=(attempts.data??[]).filter(a=>a.student_id===m.student_id&&String(a.scope_code??"FULL")===scope);
           const completed=Math.max(0,...own.filter(a=>a.status==="submitted"&&!a.is_practice).map(a=>Number(a.formal_sequence)||0));
           const cycle=(cycles.data??[]).find(c=>c.id===cycleId)!;
           const past=String(cycle.start_date)<new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
@@ -48,7 +49,7 @@ export async function GET(request: Request) {
           const exam=(exams.data??[]).find(e=>e.id===(exact?.exam_id??attempt?.exam_id));
           const registration=exact??(attempt?{exam_id:attempt.exam_id,formal_sequence:attempt.formal_sequence,scope_code:m.scope_code,status:"historical"}:null);
           const sequence=Number(registration?.formal_sequence)||completed+1;
-          const previous=(history.data??[]).filter(h=>h.student_id===m.student_id&&Number(h.formal_sequence)===sequence-1&&!h.is_practice);
+          const previous=(history.data??[]).filter(h=>h.student_id===m.student_id&&String(h.scope_code??"FULL")===scope&&Number(h.formal_sequence)===sequence-1&&!h.is_practice);
           const passed=sequence<=1||previous.some(h=>isSosCyclePassed((sessions.data??[]).filter(t=>t.student_id===m.student_id),h.cycle_id));
           return {...m,completed_sequence:completed,next_sequence:completed+1,sos_passed:passed,registration,exam,attempt_status:attempt?.status??null,past,locked:past||!!attempt};
         });
@@ -83,11 +84,11 @@ export async function POST(request: Request){
     const [catalog,current,attempts]=await Promise.all([
       s.from("sos_exam_catalog").select("exam_id").eq("formal_sequence",sequence).eq("scope_code",scope).single(),
       s.from("exam_registrations").select("exam_id").eq("cycle_student_id",m.id).eq("status","assigned"),
-      s.from("exam_attempts").select("exam_id,status,formal_sequence,is_practice").eq("student_id",m.student_id).in("status",["in_progress","submitted"]),
+      s.from("exam_attempts").select("exam_id,status,formal_sequence,scope_code,is_practice").eq("student_id",m.student_id).in("status",["in_progress","submitted"]),
     ]);
     if(catalog.error)throw new Error("해당 A/B/C 시험순번에 시험지를 먼저 등록해 주세요.");
     if(current.error||attempts.error)throw current.error||attempts.error;
-    const nextSequence=Math.max(0,...(attempts.data??[]).filter(a=>a.status==="submitted"&&!a.is_practice).map(a=>Number(a.formal_sequence)||0))+1;
+    const nextSequence=Math.max(0,...(attempts.data??[]).filter(a=>a.status==="submitted"&&!a.is_practice&&String(a.scope_code??"FULL")===scope).map(a=>Number(a.formal_sequence)||0))+1;
     if(sequence!==nextSequence)throw new Error(`현재 실제 응시기록 기준 다음 시험은 ${nextSequence}회입니다. 이전 시험 완료 후 다음 순번을 배정해 주세요.`);
     if((attempts.data??[]).some(a=>a.exam_id===catalog.data.exam_id||(current.data??[]).some(r=>r.exam_id===a.exam_id)))throw new Error("응시기록이 있는 시험지는 재배정할 수 없습니다.");
     const duplicate=await s.from("exam_registrations").select("cycle_student_id").eq("student_id",m.student_id).eq("exam_id",catalog.data.exam_id).eq("status","assigned").maybeSingle();

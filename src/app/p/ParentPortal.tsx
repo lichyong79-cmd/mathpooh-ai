@@ -160,8 +160,8 @@ export default function ParentPortal() {
     [error, setError] = useState(""),
     [applicationBusy, setApplicationBusy] = useState(""),
     [applicationPaymentMethod, setApplicationPaymentMethod] = useState("BANK_TRANSFER"),
-    [applicationScope, setApplicationScope] = useState("FULL"),
     [cycleSelectionByBatch, setCycleSelectionByBatch] = useState<Record<string, string[]>>({}),
+    [cycleScopeById, setCycleScopeById] = useState<Record<string, string>>({}),
     [childManagerOpen, setChildManagerOpen] = useState(false);
   const load = async () => {
     setLoading(true);
@@ -311,15 +311,19 @@ export default function ParentPortal() {
     if (!chosen.length) return alert("신청할 회차를 1개 이상 선택해 주세요.");
     const unitPrice = Math.round(Number(batch.price ?? 0) / 5);
     const totalPrice = unitPrice * chosen.length;
-    const chosenLabels = available.filter((c: any) => chosen.includes(String(c.cycle_id ?? c.id))).map((c: any) => fmt(c.start_date)).join(", ");
-    const scopeLabel = applicationScope === "ALGEBRA" ? "대수" : applicationScope === "ALGEBRA_CALC1" ? "대수+미적Ⅰ" : "대수+미적Ⅰ+확통";
-    if (!confirm(`${report?.student.name} 학생의 참가일을 ${chosenLabels}로 확정할까요?\n응시범위 ${scopeLabel} · 신청금액 ${totalPrice.toLocaleString("ko-KR")}원`)) return;
+    const selectedCycleScopes = Object.fromEntries(chosen.map((id: string) => [id, cycleScopeById[id] ?? "FULL"]));
+    const chosenSummary = available.filter((c: any) => chosen.includes(String(c.cycle_id ?? c.id))).map((c: any) => {
+      const id = String(c.cycle_id ?? c.id);
+      const letter = selectedCycleScopes[id] === "ALGEBRA" ? "A" : selectedCycleScopes[id] === "ALGEBRA_CALC1" ? "B" : "C";
+      return `${fmt(c.start_date)} ${letter}`;
+    }).join(", ");
+    if (!confirm(`${report?.student.name} 학생의 참가일·범위를 확정할까요?\n${chosenSummary}\n신청금액 ${totalPrice.toLocaleString("ko-KR")}원`)) return;
     setApplicationBusy(String(batch.id));
     try {
       const r = await fetch("/api/program-applications", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ batchId: batch.id, studentId: selected, parentName: "학부모", parentPhone: data.parentPhone, studentName: report.student.name, studentPhone: report.student.phone, school: report.student.school, grade: report.student.grade, paymentMethod: applicationPaymentMethod, applicationMode, selectedCycleIds: chosen, scopeCode: applicationScope }),
+        body: JSON.stringify({ batchId: batch.id, studentId: selected, parentName: "학부모", parentPhone: data.parentPhone, studentName: report.student.name, studentPhone: report.student.phone, school: report.student.school, grade: report.student.grade, paymentMethod: applicationPaymentMethod, applicationMode, selectedCycleIds: chosen, selectedCycleScopes }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || "신청을 처리하지 못했습니다.");
@@ -781,25 +785,23 @@ export default function ParentPortal() {
                   <label className={applicationPaymentMethod === "CARD" ? "on" : ""}><input type="radio" checked={applicationPaymentMethod === "CARD"} onChange={() => setApplicationPaymentMethod("CARD")} /> 카드결제</label>
                   <label className={applicationPaymentMethod === "BANK_TRANSFER" ? "on" : ""}><input type="radio" checked={applicationPaymentMethod === "BANK_TRANSFER"} onChange={() => setApplicationPaymentMethod("BANK_TRANSFER")} /> 계좌이체(현금영수증)</label>
                 </div>
-                <div className="application-payment">
-                  <b>응시 범위</b>
-                  <label className={applicationScope === "ALGEBRA" ? "on" : ""}><input type="radio" checked={applicationScope === "ALGEBRA"} onChange={() => setApplicationScope("ALGEBRA")} /> 대수</label>
-                  <label className={applicationScope === "ALGEBRA_CALC1" ? "on" : ""}><input type="radio" checked={applicationScope === "ALGEBRA_CALC1"} onChange={() => setApplicationScope("ALGEBRA_CALC1")} /> 대수+미적Ⅰ</label>
-                  <label className={applicationScope === "FULL" ? "on" : ""}><input type="radio" checked={applicationScope === "FULL"} onChange={() => setApplicationScope("FULL")} /> 대수+미적Ⅰ+확통</label>
-                </div>
                 <div className="application-list">
                   {programBatches.map((batch: any) => {
                     const applied = programApplications.find((x) => ["REQUESTED", "PAID", "ENROLLED"].includes(String(x.status)) && String(x.batch_id) === String(batch.id) && (String(x.student_id) === selected || x.student_name === report?.student.name));
                     const available = (batch.cycles ?? []).filter((c: any) => !c.is_closed);
                     const selectedCycles = cycleSelectionByBatch[String(batch.id)] ?? [];
+                    const displayedCycles = applied && Array.isArray(applied.selected_cycle_ids) ? applied.selected_cycle_ids.map(String) : selectedCycles;
                     const unitPrice = Math.round(Number(batch.price ?? 0) / 5);
                     const selectedPrice = unitPrice * selectedCycles.length;
-                    const toggleCycle = (cycleId: string) => setCycleSelectionByBatch((prev) => ({ ...prev, [String(batch.id)]: (prev[String(batch.id)] ?? []).includes(cycleId) ? (prev[String(batch.id)] ?? []).filter((id) => id !== cycleId) : [...(prev[String(batch.id)] ?? []), cycleId] }));
+                    const toggleCycle = (cycleId: string) => {
+                      setCycleSelectionByBatch((prev) => ({ ...prev, [String(batch.id)]: (prev[String(batch.id)] ?? []).includes(cycleId) ? (prev[String(batch.id)] ?? []).filter((id) => id !== cycleId) : [...(prev[String(batch.id)] ?? []), cycleId] }));
+                      setCycleScopeById((prev) => prev[cycleId] ? prev : { ...prev, [cycleId]: "FULL" });
+                    };
                     return (
                     <article key={batch.id} className="application-program">
                       <div className="application-program-head"><div><small>MATHPOOH SOS</small><b>{batch.title}</b><span>1회 {unitPrice.toLocaleString("ko-KR")}원 · 선택 가능한 참가일 {available.length}개</span></div>{applied ? <strong className={applied.status === "ENROLLED" ? "assigned" : "requested"}>{applied.status === "ENROLLED" ? "일정 확정" : applied.status === "PAID" ? "결제 확인" : "신청 접수"}</strong> : null}</div>
                       <div className="application-cycle-grid">
-                        {(batch.cycles ?? []).map((c: any) => { const cycleId = String(c.cycle_id ?? c.id); const checked = selectedCycles.includes(cycleId); return <label key={cycleId} className={`${c.is_closed ? "closed" : ""} ${checked ? "picked" : ""}`}><input type="checkbox" disabled={c.is_closed || !!applied} checked={checked} onChange={() => toggleCycle(cycleId)} /><b>{fmt(c.start_date)}</b><span>수요일 밤 11시</span>{c.is_closed ? <em>마감</em> : <em>줌 참가 예약</em>}</label>; })}
+                        {(batch.cycles ?? []).map((c: any) => { const cycleId = String(c.cycle_id ?? c.id); const checked = displayedCycles.includes(cycleId); const appliedScope = applied?.selected_cycle_scopes?.[cycleId] ?? applied?.scope_code ?? "FULL"; return <label key={cycleId} className={`${c.is_closed ? "closed" : ""} ${checked ? "picked" : ""}`}><input type="checkbox" disabled={c.is_closed || !!applied} checked={checked} onChange={() => toggleCycle(cycleId)} /><b>{fmt(c.start_date)}</b><span>수요일 밤 11시</span><select aria-label={`${fmt(c.start_date)} 시험 범위`} disabled={c.is_closed || !!applied || !checked} value={applied ? appliedScope : (cycleScopeById[cycleId] ?? "FULL")} onClick={(e) => e.stopPropagation()} onChange={(e) => { const value=e.target.value; setCycleScopeById((prev)=>({...prev,[cycleId]:value})); if(!checked) toggleCycle(cycleId); }}><option value="ALGEBRA">A · 대수</option><option value="ALGEBRA_CALC1">B · 대수+미적Ⅰ</option><option value="FULL">C · 대수+미적Ⅰ+확통</option></select>{c.is_closed ? <em>마감</em> : checked ? <em>{applied ? "신청 범위" : "선택 완료"}</em> : <em>날짜를 먼저 선택하세요</em>}</label>; })}
                       </div>
                       {!applied ? <div className="application-buttons"><button className="request all" disabled={applicationBusy === String(batch.id) || !available.length} onClick={() => void changeApplication(batch, "ALL")}>{applicationBusy === String(batch.id) ? "처리 중…" : `${available.length === 5 ? "5회 참가 신청" : `남은 ${available.length}회 참가 신청`} · ${(unitPrice * available.length).toLocaleString("ko-KR")}원`}</button><button className="request selected" disabled={applicationBusy === String(batch.id) || !selectedCycles.length} onClick={() => void changeApplication(batch, "CYCLES")}>{selectedCycles.length ? `선택한 날짜 ${selectedCycles.length}회 · ${selectedPrice.toLocaleString("ko-KR")}원` : "참가일을 선택해 주세요"}</button></div> : <div className="application-applied-detail"><span>{Array.isArray(applied.selected_cycle_ids) && applied.selected_cycle_ids.length ? `예약 참가일 ${applied.selected_cycle_ids.length}개 · ${Number(applied.charged_price ?? 0).toLocaleString("ko-KR")}원` : "전체 참가일 신청"}</span>{applied.status === "REQUESTED" ? <button disabled={applicationBusy === `cancel-${applied.id}`} onClick={() => void cancelProgramApplication(applied)}>{applicationBusy === `cancel-${applied.id}` ? "취소 처리 중…" : "신청 취소"}</button> : <small>결제 확인 또는 일정 확정 후 변경은 관리자에게 문의해 주세요.</small>}</div>}
                     </article>
@@ -812,7 +814,7 @@ export default function ParentPortal() {
 
 
       <style jsx>{`
-        .application-program{display:grid!important;gap:14px!important}.application-program-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.application-program-head>div{display:grid;gap:4px}.application-program-head small{color:#397248;font-weight:900}.application-program-head>b{font-size:17px}.application-program-head span{font-size:12px;color:#738078}.application-cycle-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.application-cycle-grid label{position:relative;display:grid;gap:3px;padding:10px;border:1px solid #dfe8e1;border-radius:10px;background:#f8fbf9;cursor:pointer}.application-cycle-grid label.picked{border-color:#2f6937;background:#eef7f0}.application-cycle-grid label.closed{opacity:.58;background:#f3f3f3;cursor:not-allowed}.application-cycle-grid input{position:absolute;right:8px;top:8px}.application-cycle-grid b{font-size:13px}.application-cycle-grid span{font-size:12px}.application-cycle-grid em{font-style:normal;font-size:10px;font-weight:900;color:#2f6937}.application-cycle-grid .closed em{color:#8b8b8b}.application-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px}.application-buttons .request{min-height:44px}.application-buttons .selected{background:#fff!important;color:#2f6937!important;border:1px solid #2f6937!important}.application-buttons button:disabled{opacity:.45;cursor:not-allowed}.application-applied-detail{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border-radius:9px;background:#f5f8f6;color:#66756c;font-size:12px;font-weight:800}.application-applied-detail button{height:34px;padding:0 12px;border:1px solid #dfc4c4;border-radius:8px;background:#fff;color:#9b3333;font-weight:900}.application-applied-detail small{color:#7b817d;font-weight:700}@media(max-width:720px){.application-cycle-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.application-buttons{grid-template-columns:1fr}}
+        .application-program{display:grid!important;gap:14px!important}.application-program-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.application-program-head>div{display:grid;gap:4px}.application-program-head small{color:#397248;font-weight:900}.application-program-head>b{font-size:17px}.application-program-head span{font-size:12px;color:#738078}.application-cycle-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.application-cycle-grid label{position:relative;display:grid;gap:5px;padding:10px;border:1px solid #dfe8e1;border-radius:10px;background:#f8fbf9;cursor:pointer}.application-cycle-grid label.picked{border-color:#2f6937;background:#eef7f0}.application-cycle-grid label.closed{opacity:.58;background:#f3f3f3;cursor:not-allowed}.application-cycle-grid input{position:absolute;right:8px;top:8px}.application-cycle-grid b{font-size:13px}.application-cycle-grid span{font-size:12px}.application-cycle-grid select{width:100%;height:32px;margin-top:3px;padding:0 6px;border:1px solid #cbd9ce;border-radius:7px;background:#fff;color:#244b2e;font-size:11px;font-weight:800}.application-cycle-grid em{font-style:normal;font-size:10px;font-weight:900;color:#2f6937}.application-cycle-grid .closed em{color:#8b8b8b}.application-buttons{display:grid;grid-template-columns:1fr 1fr;gap:8px}.application-buttons .request{min-height:44px}.application-buttons .selected{background:#fff!important;color:#2f6937!important;border:1px solid #2f6937!important}.application-buttons button:disabled{opacity:.45;cursor:not-allowed}.application-applied-detail{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border-radius:9px;background:#f5f8f6;color:#66756c;font-size:12px;font-weight:800}.application-applied-detail button{height:34px;padding:0 12px;border:1px solid #dfc4c4;border-radius:8px;background:#fff;color:#9b3333;font-weight:900}.application-applied-detail small{color:#7b817d;font-weight:700}@media(max-width:720px){.application-cycle-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.application-buttons{grid-template-columns:1fr}}
       `}</style>
           {tab === "scores" && (
             <>

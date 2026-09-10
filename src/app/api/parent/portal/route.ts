@@ -59,7 +59,7 @@ export async function GET() {
     supabase
       .from("exam_attempts")
       .select(
-        "id,exam_id,student_id,status,score,correct_count,answers,wrong_numbers,unanswered_numbers,submitted_at,created_at,mathpooh_comment,formal_sequence,is_practice",
+        "id,exam_id,student_id,status,score,correct_count,answers,wrong_numbers,unanswered_numbers,submitted_at,created_at,mathpooh_comment,formal_sequence,scope_code,is_practice",
       )
       .in("student_id", ids)
       .eq("status", "submitted")
@@ -194,15 +194,23 @@ export async function GET() {
     const registrations = (registrationResult.data ?? []).filter(
       (x: any) => String(x.student_id) === String(child.id),
     );
-    const completedSequence = attempts
-      .filter((attempt: any) => String(attempt.student_id) === String(child.id) && attempt.is_practice !== true)
-      .reduce((max: number, attempt: any) => Math.max(max, Number(attempt.formal_sequence) || 0), 0);
-    const childSchedules = (scheduleResult.data ?? [])
+    const completedByScope = new Map<string,number>();
+    attempts.filter((attempt:any)=>String(attempt.student_id)===String(child.id)&&attempt.is_practice!==true).forEach((attempt:any)=>{
+      const scope=String(attempt.scope_code??"FULL");
+      completedByScope.set(scope,Math.max(completedByScope.get(scope)??0,Number(attempt.formal_sequence)||0));
+    });
+    const pendingSchedules = (scheduleResult.data ?? [])
       .filter((schedule: any) =>
         String(schedule.student_id) === String(child.id) &&
         !["CANCELLED", "NO_SHOW", "COMPLETED"].includes(String(schedule.booking_status)))
-      .sort((a: any, b: any) => new Date(a.scheduled_at ?? 0).getTime() - new Date(b.scheduled_at ?? 0).getTime())
-      .map((schedule: any, index: number) => ({ ...schedule, formal_sequence: completedSequence + index + 1 }));
+      .sort((a: any, b: any) => new Date(a.scheduled_at ?? 0).getTime() - new Date(b.scheduled_at ?? 0).getTime());
+    const runningByScope=new Map(completedByScope);
+    const childSchedules=pendingSchedules.map((schedule:any)=>{
+      const scope=String(schedule.scope_code??"FULL");
+      const formalSequence=(runningByScope.get(scope)??0)+1;
+      runningByScope.set(scope,formalSequence);
+      return {...schedule,formal_sequence:formalSequence};
+    });
     const assignmentStatus = registrations.some((x: any) => String(x.status) === "assigned")
       ? "ASSIGNED"
       : registrations.some((x: any) => String(x.status) === "requested")
@@ -262,7 +270,7 @@ export async function GET() {
   const [programBatchResult, programLinkResult, parentApplicationResult] = await Promise.all([
     supabase.from("sos_program_batches").select("id,title,price,application_start,application_end,capacity,memo,is_published,created_at").eq("is_published", true).order("created_at", { ascending: false }),
     supabase.from("sos_program_batch_cycles").select("batch_id,cycle_id,slot_no,learning_cycles(id,name,start_date,end_date,scheduled_at,status)").order("slot_no"),
-    supabase.from("sos_program_applications").select("id,batch_id,student_id,student_name,status,payment_method,application_mode,selected_cycle_ids,purchased_count,scope_code,charged_price,requested_at,paid_at,enrolled_at").eq("parent_phone", phone).order("requested_at", { ascending: false }),
+    supabase.from("sos_program_applications").select("id,batch_id,student_id,student_name,status,payment_method,application_mode,selected_cycle_ids,selected_cycle_scopes,purchased_count,scope_code,charged_price,requested_at,paid_at,enrolled_at").eq("parent_phone", phone).order("requested_at", { ascending: false }),
   ]);
   const programMissing = programBatchResult.error?.message?.includes("sos_program_");
   const nowIso = new Date().toISOString();

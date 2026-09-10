@@ -26,10 +26,10 @@ async function slotRows(supabase: any, cycleId: string) {
   const [attempts, allMemberships, sessions] = studentIds.length
     ? await Promise.all([
         supabase.from("exam_attempts")
-          .select("student_id,formal_sequence,is_practice,status")
+          .select("student_id,formal_sequence,scope_code,is_practice,status")
           .in("student_id", studentIds).eq("status", "submitted"),
         supabase.from("learning_cycle_students")
-          .select("id,student_id,cycle_id,formal_sequence,sos_gate_status,is_practice")
+          .select("id,student_id,cycle_id,formal_sequence,scope_code,sos_gate_status,is_practice")
           .in("student_id", studentIds).eq("status", "ACTIVE"),
         supabase.from("sos_training_sessions")
           .select("student_id,status,decision,cycle_kind,target_snapshot")
@@ -45,6 +45,7 @@ async function slotRows(supabase: any, cycleId: string) {
       // 앞선 예약에 결석해도 시험지가 건너뛰지 않는다.
       const completed = (attempts.data ?? []).filter((attempt: any) =>
         String(attempt.student_id) === String(membership.student_id) &&
+        String(attempt.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL") &&
         attempt.is_practice !== true && Number(attempt.formal_sequence) > 0);
       const lastCompletedSequence = completed.reduce(
         (max: number, attempt: any) => Math.max(max, Number(attempt.formal_sequence) || 0), 0);
@@ -52,6 +53,7 @@ async function slotRows(supabase: any, cycleId: string) {
       const formalSequence = registration?.formal_sequence ?? lastCompletedSequence + 1;
       const previous = formalSequence <= 1 ? null : (allMemberships.data ?? []).find((item: any) =>
         String(item.student_id) === String(membership.student_id) &&
+        String(item.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL") &&
         Number(item.formal_sequence) === formalSequence - 1 && item.is_practice !== true);
       const studentSessions = (sessions.data ?? []).filter((session: any) =>
         String(session.student_id) === String(membership.student_id));

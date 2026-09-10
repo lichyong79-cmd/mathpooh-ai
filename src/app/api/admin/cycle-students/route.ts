@@ -15,14 +15,14 @@ async function context() {
   return createClient();
 }
 
-async function nextSequence(s: any, studentId: string) {
+async function nextSequence(s: any, studentId: string, scopeCode: string) {
   const [attempts, bookings] = await Promise.all([
-    s.from("exam_attempts").select("formal_sequence,is_practice,status").eq("student_id", studentId).eq("status", "submitted"),
-    s.from("learning_cycle_students").select("formal_sequence,is_practice,status").eq("student_id", studentId).eq("status", "ACTIVE"),
+    s.from("exam_attempts").select("formal_sequence,scope_code,is_practice,status").eq("student_id", studentId).eq("status", "submitted"),
+    s.from("learning_cycle_students").select("formal_sequence,scope_code,is_practice,status").eq("student_id", studentId).eq("status", "ACTIVE"),
   ]);
   if (attempts.error || bookings.error) throw attempts.error || bookings.error;
   const used = [...(attempts.data ?? []), ...(bookings.data ?? [])]
-    .filter((row: any) => !row.is_practice && Number(row.formal_sequence) > 0)
+    .filter((row: any) => !row.is_practice && Number(row.formal_sequence) > 0 && normalizeSosScope(row.scope_code) === scopeCode)
     .map((row: any) => Number(row.formal_sequence));
   return Math.max(0, ...used) + 1;
 }
@@ -53,8 +53,8 @@ async function registerOne(s: any, body: any, source: "ADMIN" | "SOS_APPLICATION
   if (!cycleId || !studentId) throw new Error("응시 일정과 학생을 선택해 주세요.");
   const cycle = await s.from("learning_cycles").select("scheduled_at,attendance_mode").eq("id", cycleId).maybeSingle();
   if (cycle.error || !cycle.data) throw cycle.error ?? new Error("응시 일정을 찾지 못했습니다.");
-  const formalSequence = Number(body.formalSequence) > 0 ? Number(body.formalSequence) : await nextSequence(s, studentId);
   const scopeCode = normalizeSosScope(body.scopeCode);
+  const formalSequence = Number(body.formalSequence) > 0 ? Number(body.formalSequence) : await nextSequence(s, studentId, scopeCode);
   const now = new Date().toISOString();
   const saved = await s.from("learning_cycle_students").upsert({
     cycle_id: cycleId, student_id: studentId, application_id: body.applicationId || null, source,

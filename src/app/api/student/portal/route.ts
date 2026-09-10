@@ -196,15 +196,22 @@ export async function GET(request: Request) {
   const attemptMap = new Map(
     canonicalAttempts.map((attempt) => [String(attempt.exam_id), attempt]),
   );
-  const completedFormalSequence = canonicalAttempts
-    .filter((attempt: any) => attempt.status === "submitted" && attempt.is_practice !== true)
-    .reduce((max: number, attempt: any) => Math.max(max, Number(attempt.formal_sequence) || 0), 0);
+  const completedByScope = new Map<string,number>();
+  canonicalAttempts.filter((attempt:any)=>attempt.status === "submitted" && attempt.is_practice !== true).forEach((attempt:any)=>{
+    const scope=String(attempt.scope_code??"FULL");
+    completedByScope.set(scope,Math.max(completedByScope.get(scope)??0,Number(attempt.formal_sequence)||0));
+  });
   const pendingMemberships = (memberships.data ?? [])
     .filter((membership: any) => !["COMPLETED", "CANCELLED", "NO_SHOW"].includes(String(membership.booking_status)))
     .sort((a: any, b: any) => new Date(a.scheduled_at ?? 0).getTime() - new Date(b.scheduled_at ?? 0).getTime());
-  const resolvedSequenceByMembership = new Map(
-    pendingMemberships.map((membership: any, index: number) => [String(membership.id), completedFormalSequence + index + 1]),
-  );
+  const runningByScope = new Map(completedByScope);
+  const resolvedSequenceByMembership = new Map<string,number>();
+  pendingMemberships.forEach((membership:any)=>{
+    const scope=String(membership.scope_code??"FULL");
+    const sequence=(runningByScope.get(scope)??0)+1;
+    runningByScope.set(scope,sequence);
+    resolvedSequenceByMembership.set(String(membership.id),sequence);
+  });
   const validRegistrations = (registrations ?? []).filter((registration: any) => {
     if (registration.status !== "assigned") return false;
     if (!registration.cycle_student_id) return true;
@@ -441,7 +448,9 @@ export async function GET(request: Request) {
     const examId = link ? String(link.exam_id) : null;
     const previous = Number(resolvedSequence) <= 1
       ? null
-      : (memberships.data ?? []).find((row: any) => Number(row.formal_sequence) === Number(resolvedSequence) - 1);
+      : (memberships.data ?? []).find((row: any) =>
+          Number(row.formal_sequence) === Number(resolvedSequence) - 1 &&
+          String(row.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL"));
     const previousPassed = !previous || previous.sos_gate_status === "PASSED" || previous.sos_gate_status === "OVERRIDE" ||
       isSosCyclePassed(sessionsForGate, String(previous.cycle_id));
     return {
@@ -563,11 +572,12 @@ export async function POST(request: Request) {
   if (action === "start" && registration.booking_status !== "IN_PROGRESS")
     return NextResponse.json({ message: "관리자가 시험을 시작할 때까지 대기해 주세요." }, { status: 423 });
   if (action === "start" && registration.cycle_student_id && Number(registration.formal_sequence) > 1) {
-    const currentMembership = await supabase.from("learning_cycle_students").select("id,sos_gate_status,formal_sequence")
+    const currentMembership = await supabase.from("learning_cycle_students").select("id,sos_gate_status,formal_sequence,scope_code")
       .eq("id", registration.cycle_student_id).maybeSingle();
     if (currentMembership.data?.sos_gate_status === "LOCKED") {
       const previous = await supabase.from("learning_cycle_students").select("id,cycle_id,sos_gate_status")
-        .eq("student_id", student.id).eq("formal_sequence", Number(registration.formal_sequence) - 1).eq("status", "ACTIVE").maybeSingle();
+        .eq("student_id", student.id).eq("formal_sequence", Number(registration.formal_sequence) - 1)
+        .eq("scope_code", String(registration.scope_code ?? currentMembership.data?.scope_code ?? "FULL")).eq("status", "ACTIVE").maybeSingle();
       const sessions = await supabase.from("sos_training_sessions").select("status,decision,target_snapshot,phase,round_no,cycle_kind")
         .eq("student_id", student.id).limit(120);
       const passed = previous.data && (previous.data.sos_gate_status === "PASSED" || previous.data.sos_gate_status === "OVERRIDE" || isSosCyclePassed(sessions.data ?? [], String(previous.data.cycle_id)));

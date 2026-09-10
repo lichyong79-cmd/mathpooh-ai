@@ -106,6 +106,8 @@ export async function POST(request: Request) {
 
   const unitPrice = Math.round(Number(batch.data.price ?? 0) / 5);
   const chargedPrice = unitPrice * selectedCycleIds.length;
+  const submittedScopes = body.selectedCycleScopes && typeof body.selectedCycleScopes === "object" ? body.selectedCycleScopes : {};
+  const selectedCycleScopes = Object.fromEntries(selectedCycleIds.map((cycleId) => [cycleId, normalizeSosScope(submittedScopes[cycleId] ?? scopeCode)]));
 
   const existingApplication = await supabase.from("sos_program_applications").select("id,status").eq("batch_id", batchId).eq("parent_phone", parentPhone).eq("student_name", studentName).maybeSingle();
   if (existingApplication.error) return NextResponse.json({ message: missing(existingApplication.error.message) }, { status: 400 });
@@ -132,6 +134,7 @@ export async function POST(request: Request) {
     payment_method: paymentMethod,
     application_mode: applicationMode,
     selected_cycle_ids: selectedCycleIds,
+    selected_cycle_scopes: selectedCycleScopes,
     purchased_count: selectedCycleIds.length,
     scope_code: scopeCode,
     charged_price: chargedPrice,
@@ -143,8 +146,8 @@ export async function POST(request: Request) {
     updated_at: now,
   };
   const saved = existingApplication.data
-    ? await supabase.from("sos_program_applications").update(payload).eq("id", existingApplication.data.id).in("status", ["CANCELLED", "REFUNDED"]).select("id,status,payment_method,application_mode,selected_cycle_ids,purchased_count,scope_code,charged_price").single()
-    : await supabase.from("sos_program_applications").insert(payload).select("id,status,payment_method,application_mode,selected_cycle_ids,purchased_count,scope_code,charged_price").single();
+    ? await supabase.from("sos_program_applications").update(payload).eq("id", existingApplication.data.id).in("status", ["CANCELLED", "REFUNDED"]).select("id,status,payment_method,application_mode,selected_cycle_ids,selected_cycle_scopes,purchased_count,scope_code,charged_price").single()
+    : await supabase.from("sos_program_applications").insert(payload).select("id,status,payment_method,application_mode,selected_cycle_ids,selected_cycle_scopes,purchased_count,scope_code,charged_price").single();
 
   return saved.error ? NextResponse.json({ message: missing(saved.error.message) }, { status: 400 }) : NextResponse.json({ success: true, application: saved.data });
 }
