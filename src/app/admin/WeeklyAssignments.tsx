@@ -3,22 +3,21 @@ import { useCallback, useEffect, useState } from "react";
 import { isArchivedPracticeExam } from "@/lib/archived-practice-exams";
 const scopes=[{code:"ALGEBRA",letter:"A",label:"대수"},{code:"ALGEBRA_CALC1",letter:"B",label:"대수+미적1"},{code:"FULL",letter:"C",label:"대수+미적1+확통"}];
 const title=(n:number,s:string)=>`SOS_${scopes.find(x=>x.code===s)?.letter??"C"}_실전모의고사_${n}`;
-export default function WeeklyAssignments({initialTab="assign"}:{initialTab?:"assign"|"catalog"}){
-  const [tab,setTab]=useState(initialTab),[data,setData]=useState<any>({cycles:[],catalog:[],exams:[],rows:[]});
+export default function WeeklyAssignments({mode="assign"}:{mode?:"assign"|"catalog"}){
+  const [data,setData]=useState<any>({cycles:[],catalog:[],exams:[],rows:[]});
   const [cycle,setCycle]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(""),[loading,setLoading]=useState(true);
   const [sequence,setSequence]=useState(1),[choices,setChoices]=useState<Record<string,string>>({}),[drafts,setDrafts]=useState<Record<string,{n:number;s:string}>>({});
   const load=useCallback(async()=>{
     setLoading(true);
-    try{const r=await fetch(`/api/admin/exam-catalog${cycle?`?cycleId=${encodeURIComponent(cycle)}`:""}`,{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message);setData(j);if(!cycle&&j.cycles.length){const today=new Date().toISOString().slice(0,10);setCycle((j.cycles.filter((c:any)=>c.start_date>=today).sort((a:any,b:any)=>a.start_date.localeCompare(b.start_date))[0]??j.cycles[0]).id);}setError("");setDrafts({});}catch(e){setError(e instanceof Error?e.message:"조회 실패");}finally{setLoading(false);}
-  },[cycle]);
+    try{const r=await fetch(`/api/admin/exam-catalog${cycle?`?cycleId=${encodeURIComponent(cycle)}`:""}`,{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message);setData(j);if(mode==="assign"&&!cycle&&j.cycles.length){const today=new Date().toISOString().slice(0,10);setCycle((j.cycles.filter((c:any)=>c.start_date>=today).sort((a:any,b:any)=>a.start_date.localeCompare(b.start_date))[0]??j.cycles[0]).id);}setError("");setDrafts({});}catch(e){setError(e instanceof Error?e.message:"조회 실패");}finally{setLoading(false);}
+  },[cycle,mode]);
   useEffect(()=>{void load();},[load]);
   async function save(key:string,body:any){setBusy(key);setError("");try{const r=await fetch("/api/admin/exam-catalog",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.message);await load();}catch(e){setError(e instanceof Error?e.message:"저장 실패");}finally{setBusy("");}}
   const selected=data.cycles.find((c:any)=>c.id===cycle);
   return <section className="weekly">
-    <header><div><h2>{tab==="assign"?"회차별 시험배정":"A/B/C 시험지 등록"}</h2><p>운영 주차는 참가 일정입니다. 시험지는 학생별 시험순번과 범위에 맞춰 배정합니다.</p></div><span className="time">수요일 밤 11시 · 100분</span></header>
-    <nav><button className={tab==="catalog"?"on":""} onClick={()=>setTab("catalog")}>A/B/C 시험지 등록</button><button className={tab==="assign"?"on":""} onClick={()=>setTab("assign")}>회차별 시험배정</button></nav>
+    <header><div><h2>{mode==="assign"?"회차별 시험배정":"A/B/C 시험지 등록"}</h2><p>{mode==="catalog"?"A/B/C 범위별로 공식 시험순번에 사용할 시험지를 등록합니다.":"선택한 운영 주차의 등록 학생에게 시험순번과 범위에 맞는 시험지를 배정합니다."}</p></div><span className="time">수요일 밤 11시 · 100분</span></header>
     {error&&<p role="alert" className="error">{error}</p>}
-    {tab==="catalog"?<>
+    {mode==="catalog"?<>
       <div className="toolbar"><label>공식 시험순번<input type="number" min={1} value={sequence} onChange={e=>{setSequence(Math.max(1,Number(e.target.value)||1));setChoices({});}}/></label><a href="/admin?menu=exam-input">＋ 새 시험지 파일 등록</a></div>
       <p>먼저 시험지 입력에서 파일·정답을 저장한 뒤, 아래 A/B/C에 해당 시험지를 연결하세요.</p>
       <div className="catalog">{scopes.map(scope=>{const entry=data.catalog.find((c:any)=>c.formal_sequence===sequence&&c.scope_code===scope.code);const exam=data.exams.find((e:any)=>e.id===entry?.exam_id);const value=choices[scope.code]??entry?.exam_id??"";return <article key={scope.code}><div className="scope">{scope.letter}</div><h3>{scope.label}</h3><strong>{title(sequence,scope.code)}</strong><label>등록된 시험지 선택<select value={value} onChange={e=>setChoices({...choices,[scope.code]:e.target.value})}><option value="">시험지를 선택하세요</option>{data.exams.filter((e:any)=>!isArchivedPracticeExam(e)).map((e:any)=><option key={e.id} value={e.id}>{e.title} · {e.exam_date}</option>)}</select></label><p>{exam?`연결됨: ${exam.title}`:"아직 등록된 시험지가 없습니다."}</p><small>{exam?`시험지 PDF ${exam.test_file_path?"있음":"없음"} · 해설 PDF ${exam.solution_file_path?"있음":"없음"} · ${exam.question_count}문항`:""}</small><button disabled={!!busy||!value} onClick={()=>void save(scope.code,{action:"catalog",formalSequence:sequence,scopeCode:scope.code,examId:value})}>{busy===scope.code?"저장 중…":"시험지 연결 저장"}</button></article>})}</div>

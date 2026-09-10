@@ -525,9 +525,9 @@ const [collapsed, setCollapsed] = useState(false);
           ) : active === "program-applications" ? (
             <ProgramBatchesAdmin />
           ) : active === "applications" ? (
-            <WeeklyAssignments key="weekly" />
+            <WeeklyAssignments key="weekly" mode="assign" />
           ) : active === "exam-assignment" ? (
-            <WeeklyAssignments key="catalog" initialTab="catalog" />
+            <WeeklyAssignments key="catalog" mode="catalog" />
           ) : active === "students" ? (
             <StudentsPage key={active}
               initialTab="students"
