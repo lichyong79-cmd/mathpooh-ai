@@ -695,7 +695,7 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
 ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세요.`:""}`;
       const content:any[]=[{type:"input_text",text:prompt}];
       sourceSlots.forEach((slot,index)=>{content.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])content.push({type:"input_image",image_url:sourceImages[index]});else content.push({type:"input_text",text:JSON.stringify(slot.dna)});});
-      const d=await stageAi("문제 생성",prompt,stagedDraftSchema(count),content,singleStepTimeout??110000,"medium");
+      const d=await stageAi("문제 생성",prompt,stagedDraftSchema(count),content,180000,"medium");
       drafts=Array.isArray(d?.problems)?d.problems.map((p:any)=>({...p,answer:String(p.answer)})):[];
       lastError=validateStagedDrafts(drafts,count);
       if(lastError){
@@ -752,7 +752,7 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
     const verifyContent:any[]=[{type:"input_text",text:verifyPrompt}];
     sourceSlots.forEach((slot,index)=>{verifyContent.push({type:"input_text",text:`[검수 sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])verifyContent.push({type:"input_image",image_url:sourceImages[index]});else verifyContent.push({type:"input_text",text:JSON.stringify(slot.dna)});});
     const riskyLog=rendered.some((p:any)=>/\\?log\b|로그/.test(`${p.question??""} ${p.displayLatex??""}`));
-    const v=await stageAi("정답 재검증",verifyPrompt,stagedVerifySchema(count),verifyContent,singleStepTimeout??150000,riskyLog?"high":"medium");
+    const v=await stageAi("정답 재검증",verifyPrompt,stagedVerifySchema(count),verifyContent,150000,riskyLog?"high":"medium");
     checks=Array.isArray(v?.checks)?v.checks:[];
     const verifyErrors=checks.map((c:any,i:number)=>{const claimed=String(rendered[i]?.answer??"").trim(),computed=String(c?.computedAnswer??"").trim();if(Number(c?.index)!==i+1)return `${i+1}번 검수 순서 오류`;if(c?.valid!==true)return `${i+1}번 재풀이 실패(${String(c?.reason??"")})`;if(c?.sourceFaithful!==true)return `${i+1}번 원문 구조 이탈`;if(computed!==claimed)return `${i+1}번 정답 불일치(${claimed}≠${computed})`;return "";}).filter(Boolean);
     if(checks.length===count&&!verifyErrors.length){
