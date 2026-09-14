@@ -1,5 +1,7 @@
 import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
-import {NextResponse} from "next/server";
+import {NextResponse,after} from "next/server";
+import {processJob,resumeGenerationJob} from "@/lib/sos-ai-job-worker";
+export const maxDuration=300;
 import {createClient} from "@/lib/supabase/server";
 import {getSessionUser} from "@/lib/supabase/auth";
 import {cycleFromSnapshot,snapshotWithCycle} from "@/lib/sos-cycle";
@@ -14,7 +16,7 @@ function expectedNextKind(s:any){
  if(!s||!isDone(s))return "";
  const phase=String(s.phase??"");const round=Number(s.round_no??1);const kind=String(s.cycle_kind??"STANDARD");
  if(phase==="DIAGNOSIS"){
-  if(round===1&&String(s.decision)==="PERFECT_DIAGNOSIS_AUTO_NEXT")return "SECOND_DIAGNOSIS";
+  if(round===1&&["PERFECT_DIAGNOSIS_AUTO_NEXT","NO_CLEAR_WEAKNESS"].includes(String(s.decision)))return "SECOND_DIAGNOSIS";
   if(round===2&&String(s.decision)==="NO_WEAKNESS_AFTER_SECOND_DIAGNOSIS")return "";
   return "FIRST_TRAINING";
  }
@@ -39,7 +41,7 @@ export async function GET(){
  const ctx=await admin();if(!ctx)return NextResponse.json({message:"관리자 권한이 필요합니다."},{status:403});
  const [students,sessions,cycles]=await Promise.all([
   fetchAllPages((f,t)=>ctx.supabase.from("students").select("id,name,school,grade,status").order("name").range(f,t)),
-  fetchAllPages((f,t)=>ctx.supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,target_snapshot,weakness_snapshot,cycle_kind,round_no,correct_count,total_count,baseline_meter,goal_meter,training_meter,review_meter,created_at,updated_at,sos_training_items(id,student_answer,is_correct,answered_at,revealed_at,review_answered_at)").order("created_at",{ascending:false}).range(f,t)),
+  fetchAllPages((f,t)=>ctx.supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,decision,target_snapshot,weakness_snapshot,cycle_kind,round_no,correct_count,total_count,baseline_meter,goal_meter,training_meter,review_meter,created_at,updated_at,sos_training_items(id,student_answer,is_correct,answered_at,revealed_at,review_answered_at)").order("created_at",{ascending:false}).range(f,t)),
   fetchAllPages((f,t)=>ctx.supabase.from("learning_cycles").select("id,name,start_date,end_date,status").order("start_date",{ascending:false}).range(f,t))
  ]);
  const cycleRows:any[]=(cycles??[]).filter((c:any)=>!isArchivedPracticeCycle(c));const raw:any[]=sessions??[];const studentMap=new Map((students??[]).map((x:any)=>[String(x.id),x]));
@@ -50,6 +52,9 @@ export async function GET(){
  const filteredSessions:any[]=raw.filter((x:any)=>!duplicateIds.has(String(x.id)));const map=new Map(filteredSessions.map(x=>[String(x.id),x]));
  const rootOf=(s:any)=>{let cur=s;const seen=new Set<string>();while(cur?.parent_session_id&&!seen.has(String(cur.id))){seen.add(String(cur.id));const p=map.get(String(cur.parent_session_id));if(!p)break;cur=p;}return cur??s;};
  const groups=new Map<string,any>();for(const s of filteredSessions){const root:any=rootOf(s);if(isArchivedPracticeSession(root))continue;const key=String(root.id);let g=groups.get(key);if(!g){const cycle=cycleFromSnapshot(root.target_snapshot);g={rootId:key,student:studentMap.get(String(root.student_id))??null,cycle,sourceExamTitle:String(root.target_snapshot?.sourceExamTitle??""),sourceExamId:root.target_snapshot?.sourceExamId??null,subject:String(root.target_snapshot?.subject??root.target_snapshot?.sourceSubject??""),subunit:String(root.target_snapshot?.subunit??root.target_snapshot?.sourceUnit??""),createdAt:root.created_at,sessions:[]};groups.set(key,g);}g.sessions.push(s);}
+ const jobs=await ctx.supabase.from("sos_ai_generation_jobs").select("id,source_training_session_id,generation_kind,status,started_at,stage_message,last_error").in("status",["QUEUED","GENERATING","FAILED"]);
+ if(jobs.error)throw jobs.error;
+ const generationJobs=jobs.data??[];
  const today=new Date().toISOString().slice(0,10);
  const result=[...groups.values()].map((g:any)=>{
   const ordered=g.sessions.slice().sort((a:any,b:any)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime());
@@ -58,11 +63,15 @@ export async function GET(){
   const lastDone=[...ordered].reverse().find((x:any)=>isDone(x))??null;
   const expected=lastDone?expectedNextKind(lastDone):"";
   const expectedExists=expected?ordered.some((x:any)=>stageKind(x)===expected):false;
+  const job=g.sessions.map((s:any)=>generationJobs.find((j:any)=>j.source_training_session_id===s.id&&j.generation_kind===expected)).find(Boolean)??null;
+  const generationActive=job&&["QUEUED","GENERATING"].includes(job.status)&&!(job.status==="GENERATING"&&Date.now()-new Date(job.started_at??0).getTime()>7*60000);
+  const diagnosisActive=lastDone?.decision==="AI_TRAINING_CREATING"&&Date.now()-new Date(lastDone.updated_at??0).getTime()<7*60000;
   const needsRecovery=Boolean(!openSession&&expected&&!expectedExists);
+  const generation=needsRecovery&&(generationActive||diagnosisActive)?{status:job?.status??"GENERATING",message:job?.stage_message||"취약점 분석 및 훈련 문항 선정 중"}:null;
   const past=Boolean(g.cycle?.endDate&&g.cycle.endDate<today);
   const status=openSession||needsRecovery?(past?"BACKLOG":"IN_PROGRESS"):(stages.length>0?"COMPLETED":"WAITING");
   const currentStage=openSession?stages.find((x:any)=>String(x.id)===String(openSession.id)):(needsRecovery?{id:String(lastDone?.id??""),label:`${expectedNextLabel(expected)} 준비 필요`,status:"MISSING_NEXT",correct:Number(lastDone?.correct_count??0),total:Number(lastDone?.total_count??0)}:stages[stages.length-1]??null);
-  return {...g,stages,status,currentStage,needsRecovery,expectedNextKind:expected,expectedNextLabel:needsRecovery?expectedNextLabel(expected):"",recoverySourceId:needsRecovery?String(lastDone?.id??""):""};
+  return {...g,stages,status,currentStage,generation,generationError:needsRecovery?job?.last_error??"": "",needsRecovery,expectedNextKind:expected,expectedNextLabel:needsRecovery?expectedNextLabel(expected):"",recoverySourceId:needsRecovery?String(lastDone?.id??""):""};
  }).sort((a:any,b:any)=>String(b.cycle?.startDate??b.createdAt).localeCompare(String(a.cycle?.startDate??a.createdAt))||String(a.student?.name??"").localeCompare(String(b.student?.name??""),"ko"));
  return NextResponse.json({success:true,cycles:result,learningCycles:cycleRows,summary:{students:new Set(result.map((x:any)=>String(x.student?.id??""))).size,cycles:result.length,active:result.filter((x:any)=>x.status==="IN_PROGRESS").length,backlog:result.filter((x:any)=>x.status==="BACKLOG").length,completed:result.filter((x:any)=>x.status==="COMPLETED").length,unassigned:result.filter((x:any)=>!x.cycle).length}},{headers:{"Cache-Control":"no-store,max-age=0"}});
 }
@@ -76,9 +85,14 @@ export async function POST(request:Request){
   try{
    const kind=expectedNextKind(session);
    if(!kind)return NextResponse.json({success:true,message:"이미 최종 완료 상태입니다."});
-   if(kind==="SECOND_DIAGNOSIS"){const next=await createAutomaticSecondDiagnosis({supabase:ctx.supabase,studentId:String(session.student_id),parentDiagnosis:session});return NextResponse.json({success:true,next,kind});}
+   if(kind==="SECOND_DIAGNOSIS"){const next=await createAutomaticSecondDiagnosis({supabase:ctx.supabase,studentId:String(session.student_id),parentDiagnosis:session});return NextResponse.json({success:next.created||next.existing,next,kind,message:next.created||next.existing?"2차 진단 배정 완료":"관련 2차 진단 후보가 부족합니다. 진단 배정에서 문항을 확인해 주세요."},{status:next.created||next.existing?200:409});}
    if(kind==="FIRST_TRAINING"){const next=await analyzeDiagnosisAndCreateFirstTraining({supabase:ctx.supabase,studentId:String(session.student_id),diagnosisSessionId:String(session.id)});return NextResponse.json({success:true,next,kind});}
-   if(kind==="HOMEWORK"||kind==="SECOND_TRAINING"){const queued=await enqueueAiGeneration({supabase:ctx.supabase,studentId:String(session.student_id),sourceTrainingSessionId:String(session.id),count:kind==="HOMEWORK"?3:10,kind});return NextResponse.json({success:true,queued:true,job:queued.job,kind});}
+   if(kind==="HOMEWORK"||kind==="SECOND_TRAINING"){
+     const queued=await enqueueAiGeneration({supabase:ctx.supabase,studentId:String(session.student_id),sourceTrainingSessionId:String(session.id),count:kind==="HOMEWORK"?3:10,kind});
+     const claim=await resumeGenerationJob(ctx.supabase,String(queued.job.id));
+     if(claim.started)after(async()=>{await processJob(String(queued.job.id),claim.job);});
+     return NextResponse.json({success:true,queued:true,job:queued.job,kind,message:claim.started?"문항 생성을 시작했습니다. 생성한 문항은 보존하며 진행 상황을 자동 갱신합니다.":"기존 생성 작업 상태를 확인했습니다."});
+   }
    return NextResponse.json({message:"복구할 다음 단계를 판단하지 못했습니다."},{status:409});
   }catch(error){return NextResponse.json({message:error instanceof Error?error.message:"다음 단계 복구 실패"},{status:500});}
  }

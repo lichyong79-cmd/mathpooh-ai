@@ -319,11 +319,11 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   // 현재 decision 값을 compare-and-set 조건으로 사용해 레이스를 차단한다. 5분 이상 멈춘 잠금은 복구 요청이 회수할 수 있다.
   const currentDecision=String(diagnosis.decision??"");
   const lockAge=Date.now()-new Date(diagnosis.updated_at??0).getTime();
-  if(currentDecision==="AI_TRAINING_CREATING"&&Number.isFinite(lockAge)&&lockAge<5*60*1000)
+  if(currentDecision==="AI_TRAINING_CREATING"&&Number.isFinite(lockAge)&&lockAge<7*60*1000)
     return {created:false,creating:true,nextStep:"AI_TRAINING_CREATING"};
   let lockQuery=supabase.from("sos_training_sessions")
     .update({decision:"AI_TRAINING_CREATING",updated_at:new Date().toISOString()})
-    .eq("id",diagnosisSessionId).eq("student_id",studentId);
+    .eq("id",diagnosisSessionId).eq("student_id",studentId).eq("updated_at",diagnosis.updated_at);
   lockQuery=currentDecision?lockQuery.eq("decision",currentDecision):lockQuery.is("decision",null);
   const lock=await lockQuery.select("id");
   if(lock.error)throw lock.error;
@@ -334,6 +334,7 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
     return {created:false,creating:true,nextStep:"AI_TRAINING_CREATING"};
   }
 
+  try {
   const target=diagnosis.target_snapshot??{};
   const content:any[]=[{type:"input_text",text:`당신은 MATHPOOH SOS 수학 취약점 진단 엔진입니다.\n아래 3개 진단문항의 문항 DNA, 정오답, 풀이시간, 학생 풀이사진을 함께 보고 이 학생에게 실제로 훈련할 만한 취약점이 있는지 판단하세요.\n\n규칙:\n- 정오답뿐 아니라 난이도별 풀이시간을 반드시 함께 봅니다.\n- weakSignals에는 1·2차 진단 전체에서 오답 또는 기준시간 1.35배 초과 문항이 들어 있습니다.\n- 계산실수와 개념/조건해석/접근전략/시간숙련 부족을 구분합니다.\n- 취약점이 있으면 한 번의 10문항 훈련으로 집중할 수 있게 가장 핵심적인 1개 축으로 표현합니다.\n- weaknessDetected=false라면 이유를 명확히 씁니다.\n- 학생에게 보여줄 weaknessTitle은 짧고 이해하기 쉽게, weaknessDetail은 2문장 이내로 씁니다.\n\n타겟 정보: ${JSON.stringify(target)}\n누적 weakSignals: ${JSON.stringify(weakSignals.map((x:any)=>({round:x.round,order:x.order,wrong:x.wrong,slow:x.slow,severe:x.severe,seconds:x.seconds,expectedSeconds:x.expectedSeconds,limitSeconds:x.limitSeconds,problem:compactDna(x.problem)})))}\n현재 진단 데이터: ${JSON.stringify((diagnosis.sos_training_items??[]).map((item:any)=>({order:item.item_order,answer:item.student_answer,correct:item.is_correct,seconds:item.response_seconds,problem:compactDna(item.problem_bank_questions??{})})))}`}];
   for(const item of diagnosis.sos_training_items??[]){
@@ -413,6 +414,10 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   if(itemResult.error){await supabase.from("sos_training_sessions").delete().eq("id",session.id);await supabase.from("sos_training_sessions").update({decision:"AI_WEAKNESS_ANALYSIS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId).eq("decision","AI_TRAINING_CREATING");throw itemResult.error;}
   await supabase.from("sos_training_sessions").update({decision:"FIRST_TRAINING_ASSIGNED",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId).eq("decision","AI_TRAINING_CREATING");
   return {created:true,weakness,session,baselineMeter:baseline,goalMeter:goal};
+  } catch(error) {
+    await supabase.from("sos_training_sessions").update({decision:"AI_WEAKNESS_ANALYSIS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId).eq("student_id",studentId).eq("decision","AI_TRAINING_CREATING");
+    throw error;
+  }
 }
 
 
