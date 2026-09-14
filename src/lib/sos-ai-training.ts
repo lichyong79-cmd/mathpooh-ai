@@ -559,7 +559,7 @@ async function updateGenerationStage(supabase:any,jobId:string|undefined,stage:s
   if(result.error)throw new Error(`AI 생성 단계 저장 실패: ${result.error.message}`);
 }
 
-const stagedDraftSchema=(count:number)=>({type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","answer","solution","difficulty","meter","topic","reason"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},question:{type:"string"},answer:{type:"string"},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"}}}}}});
+const stagedDraftSchema=(count:number)=>({type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","question","answer","solution","difficulty","meter","topic","reason"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},question:{type:"string"},answer:{type:"integer",minimum:-999,maximum:999},solution:{type:"string"},difficulty:{type:"integer",minimum:1,maximum:8},meter:{type:"number",minimum:1,maximum:8},topic:{type:"string"},reason:{type:"string"}}}}}});
 const stagedRenderSchema=(count:number)=>({type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","displayLatex","renderBlocks"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},displayLatex:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:18,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}}}}}}});
 const stagedVerifySchema=(count:number)=>({type:"object",additionalProperties:false,required:["checks"],properties:{checks:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["index","valid","sourceFaithful","computedAnswer","reason"],properties:{index:{type:"integer",minimum:1,maximum:count},valid:{type:"boolean"},sourceFaithful:{type:"boolean"},computedAnswer:{type:"string"},reason:{type:"string"}}}}}});
 
@@ -655,6 +655,7 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
     const checkpointMatches=(payload:any)=>args.checkpointStart===undefined
       ?payload?.checkpointStart===undefined
       :Number(payload?.checkpointStart??0)===args.checkpointStart;
+    if(checkpointMatches(resume.data?.draft_payload))lastError=String(resume.data?.draft_payload?.validationError??"");
     const savedDrafts=checkpointMatches(resume.data?.draft_payload)&&Array.isArray(resume.data?.draft_payload?.problems)?resume.data.draft_payload.problems:[];
     const savedRendered=checkpointMatches(resume.data?.rendered_payload)&&Array.isArray(resume.data?.rendered_payload?.problems)?resume.data.rendered_payload.problems:[];
     const savedChecks=checkpointMatches(resume.data?.verification_payload)&&Array.isArray(resume.data?.verification_payload?.checks)?resume.data.verification_payload.checks:[];
@@ -695,9 +696,14 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
       const content:any[]=[{type:"input_text",text:prompt}];
       sourceSlots.forEach((slot,index)=>{content.push({type:"input_text",text:`[sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])content.push({type:"input_image",image_url:sourceImages[index]});else content.push({type:"input_text",text:JSON.stringify(slot.dna)});});
       const d=await stageAi("문제 생성",prompt,stagedDraftSchema(count),content,singleStepTimeout??110000,"medium");
-      drafts=Array.isArray(d?.problems)?d.problems:[];
+      drafts=Array.isArray(d?.problems)?d.problems.map((p:any)=>({...p,answer:String(p.answer)})):[];
       lastError=validateStagedDrafts(drafts,count);
-      if(lastError){drafts=[];continue;}
+      if(lastError){
+        await updateGenerationStage(supabase,jobId,"TEXT_GENERATION",3,total,lastError,{
+          draft_payload:{checkpointStart:args.checkpointStart,problems:[],rejectedProblems:drafts,validationError:lastError},
+        });
+        drafts=[];continue;
+      }
       await updateGenerationStage(supabase,jobId,"TEXT_CREATED",4,total,"텍스트 문항 생성이 완료되었습니다.",{draft_payload:{checkpointStart:args.checkpointStart,sourceSummary,design,problems:drafts}});
     }else{
       await updateGenerationStage(supabase,jobId,"TEXT_CREATED",4,total,"저장된 텍스트 문항부터 작업을 이어갑니다.");
@@ -756,9 +762,10 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 
     lastError=checks.length!==count?`최종 검수 수 ${checks.length}/${count}`:verifyErrors.join(", ");
     // 재풀이가 틀렸다면 수학 내용 자체를 다시 생성한다. 조판만 실패한 경우에는 위에서 조판만 재시도한다.
+    const rejectedProblems=rendered;
     drafts=[];rendered=[];checks=[];
     if(jobId){
-      const reset=await supabase.from("sos_ai_generation_jobs").update({draft_payload:{},rendered_payload:{},verification_payload:{},stage_message:`재풀이 검증 실패 · 텍스트부터 재생성: ${lastError.slice(0,180)}`,updated_at:new Date().toISOString()}).eq("id",jobId);
+      const reset=await supabase.from("sos_ai_generation_jobs").update({draft_payload:{checkpointStart:args.checkpointStart,problems:[],rejectedProblems,validationError:lastError},rendered_payload:{},verification_payload:{},stage_message:`재풀이 검증 실패 · 텍스트부터 재생성: ${lastError.slice(0,180)}`,updated_at:new Date().toISOString()}).eq("id",jobId);
       if(reset.error)throw reset.error;
     }
   }

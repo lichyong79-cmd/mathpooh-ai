@@ -1,7 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { generateSimilarTraining } from "@/lib/sos-ai-training";
+import { enqueueAiGeneration } from "@/lib/sos-ai-generation-queue";
+import { processJob, resumeGenerationJob } from "@/lib/sos-ai-job-worker";
 
 // SOS282: 허용목록으로 통일한다.
 async function auth(){const user=await getSessionUser();return String(user?.user_metadata?.role??"")==="admin"?user:null;}
@@ -58,14 +60,17 @@ export async function POST(request:Request){
   if(action==="requeue"){
     const id=String(body?.id??"");
     if(!id)return NextResponse.json({message:"작업을 확인해 주세요."},{status:400});
-    const r=await supabase.from("sos_ai_generation_jobs").update({
-      status:"QUEUED",attempt_count:0,last_error:null,
-      stage:"QUEUED",stage_index:0,stage_message:"관리자가 다시 대기열에 넣었습니다.",
-      stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString(),
-    }).eq("id",id).select("id").maybeSingle();
+    const r=await supabase.from("sos_ai_generation_jobs").select("id,student_id,source_training_session_id,generation_kind,requested_count").eq("id",id).maybeSingle();
     if(r.error)return NextResponse.json({message:r.error.message},{status:400});
     if(!r.data)return NextResponse.json({message:"해당 작업을 찾지 못했습니다."},{status:404});
-    return NextResponse.json({success:true,requeued:1});
+    try{
+      await enqueueAiGeneration({supabase,studentId:r.data.student_id,sourceTrainingSessionId:r.data.source_training_session_id,kind:r.data.generation_kind,count:r.data.requested_count===3?3:10});
+      const claim=await resumeGenerationJob(supabase,id);
+      if(claim.started)after(async()=>{await processJob(id,claim.job);});
+      return NextResponse.json({success:true,requeued:1,started:claim.started});
+    }catch(error){
+      return NextResponse.json({message:error instanceof Error?error.message:"생성 시작 실패"},{status:400});
+    }
   }
 
   // run_next: 워커와 같은 규칙으로 한 건을 선점해 끝까지 처리한다.
