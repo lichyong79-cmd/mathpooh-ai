@@ -299,7 +299,7 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   const {supabase,studentId,diagnosisSessionId}=args;
   const diagResult=await supabase
     .from("sos_training_sessions")
-    .select("id,student_id,phase,status,round_no,decision,updated_at,target_snapshot,sos_training_items(id,problem_id,item_order,student_answer,is_correct,response_seconds,solution_photo_path,problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path,answer))")
+    .select("id,student_id,phase,status,round_no,decision,updated_at,target_snapshot,weakness_snapshot,sos_training_items(id,problem_id,item_order,student_answer,is_correct,response_seconds,solution_photo_path,problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path,answer))")
     .eq("id",diagnosisSessionId).eq("student_id",studentId).single();
   if(diagResult.error||!diagResult.data) throw new Error(diagResult.error?.message||"진단 결과를 찾을 수 없습니다.");
   const diagnosis:any=diagResult.data;
@@ -336,8 +336,13 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
 
   try {
   const target=diagnosis.target_snapshot??{};
+  // 재시도 때 동일한 진단의 취약점 분석은 재사용하고 문항 선정부터 이어간다.
+  // 입력·사진·이전 진단이 달라지면 분석을 다시 수행한다.
+  const fingerprint=createHash("sha256").update(JSON.stringify({target,items:diagnosis.sos_training_items,history:diagnosisHistory})).digest("hex");
+  const cached=diagnosis.weakness_snapshot;
+  const reuseWeakness=cached?._diagnosisFingerprint===fingerprint&&typeof cached._rawAnalysis?.weaknessDetected==="boolean"&&Array.isArray(cached._rawAnalysis?.focusConcepts);
   const content:any[]=[{type:"input_text",text:`당신은 MATHPOOH SOS 수학 취약점 진단 엔진입니다.\n아래 3개 진단문항의 문항 DNA, 정오답, 풀이시간, 학생 풀이사진을 함께 보고 이 학생에게 실제로 훈련할 만한 취약점이 있는지 판단하세요.\n\n규칙:\n- 정오답뿐 아니라 난이도별 풀이시간을 반드시 함께 봅니다.\n- weakSignals에는 1·2차 진단 전체에서 오답 또는 기준시간 1.35배 초과 문항이 들어 있습니다.\n- 계산실수와 개념/조건해석/접근전략/시간숙련 부족을 구분합니다.\n- 취약점이 있으면 한 번의 10문항 훈련으로 집중할 수 있게 가장 핵심적인 1개 축으로 표현합니다.\n- weaknessDetected=false라면 이유를 명확히 씁니다.\n- 학생에게 보여줄 weaknessTitle은 짧고 이해하기 쉽게, weaknessDetail은 2문장 이내로 씁니다.\n\n타겟 정보: ${JSON.stringify(target)}\n누적 weakSignals: ${JSON.stringify(weakSignals.map((x:any)=>({round:x.round,order:x.order,wrong:x.wrong,slow:x.slow,severe:x.severe,seconds:x.seconds,expectedSeconds:x.expectedSeconds,limitSeconds:x.limitSeconds,problem:compactDna(x.problem)})))}\n현재 진단 데이터: ${JSON.stringify((diagnosis.sos_training_items??[]).map((item:any)=>({order:item.item_order,answer:item.student_answer,correct:item.is_correct,seconds:item.response_seconds,problem:compactDna(item.problem_bank_questions??{})})))}`}];
-  for(const item of diagnosis.sos_training_items??[]){
+  for(const item of reuseWeakness?[]:diagnosis.sos_training_items??[]){
     // SOS295: 학생 풀이사진도 서명 URL 대신 직접 실어 보낸다.
     const photo=await inlineImage(supabase,"sos-solution-photos",item.solution_photo_path);
     if(photo)content.push({type:"input_image",image_url:photo});
@@ -345,9 +350,12 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   const weaknessSchema={type:"object",additionalProperties:false,required:["weaknessDetected","weaknessTitle","weaknessDetail","focusConcepts","evidence","confidence"],properties:{
     weaknessDetected:{type:"boolean"},weaknessTitle:{type:"string"},weaknessDetail:{type:"string"},focusConcepts:{type:"array",maxItems:6,items:{type:"string"}},evidence:{type:"array",maxItems:5,items:{type:"string"}},confidence:{type:"integer",minimum:0,maximum:100}
   }};
-  const weakness=await openAiJson("",weaknessSchema,content);
+  const weakness=reuseWeakness?{...cached._rawAnalysis}:await openAiJson("",weaknessSchema,content,{timeoutMs:90000});
+  weakness._rawAnalysis={...weakness};
+  weakness._diagnosisFingerprint=fingerprint;
 
-  await supabase.from("sos_training_sessions").update({weakness_snapshot:weakness,decision:weakness.weaknessDetected?"AI_TRAINING_CREATING":"NO_CLEAR_WEAKNESS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);
+  const checkpoint=await supabase.from("sos_training_sessions").update({weakness_snapshot:weakness,decision:weakness.weaknessDetected?"AI_TRAINING_CREATING":"NO_CLEAR_WEAKNESS",updated_at:new Date().toISOString()}).eq("id",diagnosisSessionId);
+  if(checkpoint.error)throw checkpoint.error;
   let fallbackSignal:any=null;
   if(!weakness.weaknessDetected){
     if(Number(diagnosis.round_no??1)<2){const second=await createAutomaticSecondDiagnosis({supabase,studentId,parentDiagnosis:diagnosis});return {...second,created:false,weakness,weakSignalCount:weakSignals.length};}
@@ -390,7 +398,7 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   if(pool.length<10)throw new Error(`훈련 후보가 부족합니다. ${pool.length}/10문항`);
 
   const recommendationSchema={type:"object",additionalProperties:false,required:["recommendations"],properties:{recommendations:{type:"array",minItems:10,maxItems:10,items:{type:"object",additionalProperties:false,required:["id","role","reason"],properties:{id:{type:"string"},role:{type:"string"},reason:{type:"string"}}}}}};
-  const rec=await openAiJson(`당신은 MATHPOOH SOS 1차 훈련문항 선정 엔진입니다.\n취약점: ${weakness.weaknessTitle}\n상세: ${weakness.weaknessDetail}\n핵심개념: ${(weakness.focusConcepts??[]).join(", ")}\n학생 바로미터: ${baseline.toFixed(2)} / 목표: ${goal.toFixed(2)}\n후보: ${JSON.stringify(pool.map(compactDna))}\n\n정확히 10문항을 고르세요.\n- 단순 단원명보다 취약 사고과정/DNA를 최우선으로 봅니다.\n- 전체적으로 학생 현재 수준보다 조금 쉽게 시작합니다.\n- 권장 구성: 기초 안정화 3, 핵심 보완 4, 포함 적용 2, 완성 확인 1.\n- 뒤로 갈수록 조금 어려워지게 하되 무리한 고난도는 피합니다.\n- 같은 형태만 반복하지 말고 취약점을 직접 연습하는 문항과 취약점을 포함하는 문항을 섞습니다.\n- 제공된 후보 id만 사용합니다.`,recommendationSchema);
+  const rec=await openAiJson(`당신은 MATHPOOH SOS 1차 훈련문항 선정 엔진입니다.\n취약점: ${weakness.weaknessTitle}\n상세: ${weakness.weaknessDetail}\n핵심개념: ${(weakness.focusConcepts??[]).join(", ")}\n학생 바로미터: ${baseline.toFixed(2)} / 목표: ${goal.toFixed(2)}\n후보: ${JSON.stringify(pool.map(compactDna))}\n\n정확히 10문항을 고르세요.\n- 단순 단원명보다 취약 사고과정/DNA를 최우선으로 봅니다.\n- 전체적으로 학생 현재 수준보다 조금 쉽게 시작합니다.\n- 권장 구성: 기초 안정화 3, 핵심 보완 4, 포함 적용 2, 완성 확인 1.\n- 뒤로 갈수록 조금 어려워지게 하되 무리한 고난도는 피합니다.\n- 같은 형태만 반복하지 말고 취약점을 직접 연습하는 문항과 취약점을 포함하는 문항을 섞습니다.\n- 제공된 후보 id만 사용합니다.`,recommendationSchema,undefined,{timeoutMs:90000,effort:"low"});
   const allowed=new Map<string,any>(pool.map((p:any)=>[String(p.id),p] as [string,any]));
   const seen=new Set<string>();
   const selected=(rec.recommendations??[]).filter((r:any)=>allowed.has(String(r.id))&&!seen.has(String(r.id))&&(seen.add(String(r.id))||true)).slice(0,10);
