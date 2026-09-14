@@ -1,6 +1,6 @@
 import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { processJob } from "@/lib/sos-ai-job-worker";
+import { processJob, resumeGenerationJob } from "@/lib/sos-ai-job-worker";
 
 export const maxDuration=300;
 
@@ -44,6 +44,23 @@ async function run(request:Request){
   const sync=new URL(request.url).searchParams.get("sync")==="1";
 
   const supabase=createClient();
+  // An authenticated worker can hand this one job to a fresh invocation.
+  const requestedId=new URL(request.url).searchParams.get("jobId");
+  if(requestedId){
+    const hops=Number(new URL(request.url).searchParams.get("continuation"));
+    if(!/^[0-9a-f-]{36}$/i.test(requestedId)||!Number.isInteger(hops)||hops<1||hops>12){
+      return NextResponse.json({success:false,message:"invalid continuation"},{status:400});
+    }
+    const row=await supabase.from("sos_ai_generation_jobs").select("status,attempt_count").eq("id",requestedId).single();
+    if(row.error)throw row.error;
+    if(row.data.status!=="QUEUED"||Number(row.data.attempt_count??0)>=MAX_ATTEMPTS){
+      return NextResponse.json({success:true,accepted:0});
+    }
+    const claim=await resumeGenerationJob(supabase,requestedId);
+    if(!claim.started)return NextResponse.json({success:true,accepted:0});
+    after(async()=>{await processJob(requestedId,{...claim.job,continuationHops:hops});});
+    return NextResponse.json({success:true,accepted:1},{status:202});
+  }
   const cols="id,student_id,source_training_session_id,generation_kind,requested_count,status,attempt_count,started_at";
   const staleCutoff=new Date(Date.now()-STALE_MINUTES*60000).toISOString();
 

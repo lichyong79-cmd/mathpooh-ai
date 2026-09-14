@@ -1,6 +1,22 @@
 import { createClient } from "@/lib/supabase/server";
 import { generateSimilarTraining } from "@/lib/sos-ai-training";
 
+// Continue a checkpoint in a fresh invocation with its own execution budget.
+// Bounded chains prevent runaway retries; the existing scheduler is the fallback.
+async function continueSavedJob(jobId:string,hops:number){
+  const host=process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  const secret=process.env.CRON_SECRET;
+  if(process.env.VERCEL_ENV!=="production"||!host||!secret||hops>=12)return;
+  const url=new URL("/api/cron/sos-ai-generation",`https://${host}`);
+  url.searchParams.set("jobId",jobId);
+  url.searchParams.set("continuation",String(hops+1));
+  try{
+    await fetch(url,{method:"POST",headers:{authorization:`Bearer ${secret}`},signal:AbortSignal.timeout(10000)});
+  }catch{
+    // The saved QUEUED job remains available to the scheduled worker.
+  }
+}
+
 export async function processJob(jobId:string,job:any){
   const supabase=createClient();
   try{
@@ -33,13 +49,15 @@ export async function processJob(jobId:string,job:any){
     if(message.startsWith("PARTIAL_BATCH_DONE:")){
       const progress=message.split(":")[1]??"";
       const requeuedAt=new Date().toISOString();
-      await supabase.from("sos_ai_generation_jobs").update({
+      const queued=await supabase.from("sos_ai_generation_jobs").update({
         status:"QUEUED",attempt_count:0,started_at:null,
         stage_message:`${progress}문항 완료 · 다음 실행에서 이어갑니다.`,last_error:null,
         // 완료한 묶음은 대기열 뒤로 보낸다. 7명이 한꺼번에 몰려도 앞의
         // 4명만 계속 선점하지 않고 나머지 학생도 다음 실행에서 생성이 시작된다.
         requested_at:requeuedAt,stage_updated_at:requeuedAt,updated_at:requeuedAt,
       }).eq("id",jobId);
+      if(queued.error)throw queued.error;
+      await continueSavedJob(jobId,Number(job.continuationHops??0));
       return {status:"PARTIAL",resultSessionId:null,message:progress};
     }
 
