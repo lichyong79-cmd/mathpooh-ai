@@ -130,7 +130,7 @@ export default function ProblemBankClient() {
         // SOS305: problem_dna 전문은 문항 하나당 수 KB라, 5,000문항이면 목록을 열 때마다
         // 수십 MB가 오갔다(Supabase egress 초과의 원인 중 하나). 목록에서 실제로 필요한 것은
         // 난이도 판정 부분뿐이므로 그 조각만 받고, 전문은 문항을 선택할 때 따로 받는다.
-        "dna_difficulty:problem_dna->difficulty", "dna_summary:problem_dna->summary",
+        "error_review:problem_dna->errorReview", "dna_difficulty:problem_dna->difficulty", "dna_summary:problem_dna->summary",
       ].join(",");
       // PostgREST는 프로젝트 설정에 따라 한 요청당 최대 1,000행만 반환할 수 있다.
       // 문제은행 전체를 정확히 보여주기 위해 1,000행씩 끝까지 페이지네이션한다.
@@ -149,8 +149,8 @@ export default function ProblemBankClient() {
       }
       const rows = allRows.map((item: any) => {
         // 목록용 축약 DNA. 상세를 열면 전문으로 교체된다.
-        const lite = (item.dna_difficulty || item.dna_summary)
-          ? { difficulty: item.dna_difficulty ?? undefined, summary: item.dna_summary ?? undefined }
+        const lite = (item.dna_difficulty || item.dna_summary || item.error_review)
+          ? { errorReview:item.error_review, difficulty: item.dna_difficulty ?? undefined, summary: item.dna_summary ?? undefined }
           : null;
         return { ...item, problem_dna: lite as any, dna_full: false, difficulty: normalizeDifficultyLegacy(item.difficulty, lite) };
       });
@@ -273,6 +273,7 @@ export default function ProblemBankClient() {
   const filtered = useMemo(() => {
     const tokens = searchTokens(keyword);
     return items.filter((item) => {
+      if((item.problem_dna as any)?.errorReview?.open)return false;
       const dnaText = item.problem_dna ? JSON.stringify(item.problem_dna) : "";
       const haystack = normalizeSearchText([
         item.question_no, `${item.question_no}번`, item.problem_code, item.title, item.grade, item.subject,
@@ -294,7 +295,7 @@ export default function ProblemBankClient() {
   // 우측 상세가 엉뚱한 문항을 계속 보여 "검색이 안 된 것"처럼 보인다.
   // 현재 결과의 첫 문항을 자동 선택해 목록과 상세를 항상 동기화한다.
   useEffect(() => {
-    if (filtered.length === 0) return;
+    if (filtered.length === 0) {setSelectedId("");return;}
     if (!filtered.some((item) => item.id === selectedId)) setSelectedId(filtered[0].id);
   }, [filtered, selectedId]);
 
@@ -366,6 +367,7 @@ export default function ProblemBankClient() {
         },
         body: JSON.stringify({
           ...draft,
+          status:baseDna?.errorReview?.open?"HOLD":draft.status,
           problem_dna: draft.difficulty
             ? {
                 ...baseDna,
@@ -466,6 +468,14 @@ export default function ProblemBankClient() {
     }
   };
 
+  async function reportError(){
+    if(!selected)return;
+    const reason=window.prompt("오류 사유를 입력하세요. 이 문항은 오류 보관함으로 이동하고 새 배정에서 제외됩니다.");
+    if(!reason?.trim())return;
+    setSaving(true);setError("");
+    try{const r=await fetch("/api/admin/problem-errors",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:selected.id,kind:"bank",action:"report",reason})});const d=await r.json();if(!r.ok)throw Error(d.message);setItems(current=>current.filter(p=>p.id!==selected.id));setMessage("오류문항 보관함으로 이동했습니다.");}catch(e){setError((e as Error).message);}finally{setSaving(false);}
+  }
+
   return (
     <AdminPortalShell current="sos-bank">
     <main className="bank-page">
@@ -481,7 +491,7 @@ export default function ProblemBankClient() {
             ← 관리자
           </button>
           <p>MATHPOOH SOS</p>
-          <h1>문제은행</h1>
+          <h1>문제은행</h1><a href="/admin/problem-errors">오류문항 보관함 →</a>
           <span>등록 문항 {items.length}개 · 검색 결과 {filtered.length}개</span>
         </div>
         <button className="refresh-button" type="button" onClick={() => void loadProblems()} disabled={loading}>{loading ? "불러오는 중" : "새로고침"}</button>
@@ -571,7 +581,7 @@ export default function ProblemBankClient() {
                 <label className="wide"><span>문항 요약</span><textarea rows={4} value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label>
                 <label><span>상태</span><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as Draft["status"] })}><option value="ACTIVE">사용</option><option value="HOLD">보류</option><option value="ARCHIVED">보관</option></select></label>
               </div> : <div className="dna-panel">{selected.problem_dna ? <ProblemDnaCard dna={selected.problem_dna} questionNo={selected.question_no} /> : <div className="no-dna">문항 DNA가 없습니다. AI 분석관리에서 재분석해 주세요.</div>}</div>}
-              <div className="edit-actions"><button type="button" className="delete-button" onClick={() => void remove("question")} disabled={deleting || saving}>{deleting ? "삭제 중" : "이 문항 삭제"}</button><button type="button" className="delete-source-button" onClick={() => void remove("source")} disabled={deleting || saving}>시험지 전체 삭제</button><button type="submit" className="save-button" disabled={saving || deleting}>{saving ? "저장 중" : "수정 저장"}</button></div>
+              <div className="edit-actions"><button type="button" onClick={()=>void reportError()} disabled={saving||deleting}>오류문항으로 분리</button><button type="button" className="delete-button" onClick={() => void remove("question")} disabled={deleting || saving}>{deleting ? "삭제 중" : "이 문항 삭제"}</button><button type="button" className="delete-source-button" onClick={() => void remove("source")} disabled={deleting || saving}>시험지 전체 삭제</button><button type="submit" className="save-button" disabled={saving || deleting}>{saving ? "저장 중" : "수정 저장"}</button></div>
             </form>
           </>}
         </section>

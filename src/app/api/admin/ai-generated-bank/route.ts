@@ -23,7 +23,11 @@ export async function PATCH(request:Request){
   if(!await auth())return NextResponse.json({message:"관리자 로그인이 필요합니다."},{status:401});
   const body=await request.json();const id=String(body.id??"");const status=String(body.status??"");
   if(!id||!["READY","DISABLED"].includes(status))return NextResponse.json({message:"요청값을 확인해 주세요."},{status:400});
-  const supabase=createClient();const result=await supabase.from("sos_ai_generated_questions").update({status,updated_at:new Date().toISOString()}).eq("id",id);
+  const supabase=createClient();
+  const current=await supabase.from("sos_ai_generated_questions").select("verification").eq("id",id).single();
+  if(current.error)return NextResponse.json({message:current.error.message},{status:400});
+  if(current.data?.verification?.errorReview?.open)return NextResponse.json({message:"오류문항 보관함에서 검수 후 복원해 주세요."},{status:409});
+  const result=await supabase.from("sos_ai_generated_questions").update({status,updated_at:new Date().toISOString()}).eq("id",id);
   if(result.error)return NextResponse.json({message:result.error.message},{status:400});return NextResponse.json({success:true});
 }
 

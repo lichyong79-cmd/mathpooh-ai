@@ -32,7 +32,7 @@ function database({child=null,items=[],failItems=false}={}){
  let out=await ctx.archiveGeneratedProblems({supabase:db,studentId:'student',sourceSessionId:'source',kind:'HOMEWORK',problems:[p,p,{...p,question:'other'}]});
  assert.equal(out.length,3);assert.equal(db.state.bank.length,2);assert.equal(out[0].aiBankId,out[1].aiBankId);
  db.state.bank[0].status='DISABLED';db.state.bank[0].use_count=7;
- await ctx.archiveGeneratedProblems({supabase:db,studentId:'another',sourceSessionId:'source',kind:'HOMEWORK',problems:[p]});
+ await assert.rejects(ctx.archiveGeneratedProblems({supabase:db,studentId:'another',sourceSessionId:'source',kind:'HOMEWORK',problems:[p]}),/사용 중지/);
  assert.equal(db.state.bank[0].status,'DISABLED');assert.equal(db.state.bank[0].use_count,7);
  const broken=database({failItems:true});const args={supabase:broken,studentId:'student',firstTrainingSessionId:'source',count:3,kind:'HOMEWORK',jobId:'job'};
  await assert.rejects(ctx.generateSimilarTraining(args),/disconnect/);assert.equal(broken.state.child.status,'DRAFT');assert.equal(broken.state.items.length,0);

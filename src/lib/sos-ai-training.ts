@@ -552,9 +552,10 @@ async function archiveGeneratedProblems(args:{supabase:any;studentId:string;sour
   const inserted=await supabase.from("sos_ai_generated_questions").upsert(uniqueRows,{onConflict:"content_hash",ignoreDuplicates:true});
   if(inserted.error)throw new Error(`AI 생성 문제은행 저장 실패: ${inserted.error.message}`);
   // Reuse existing IDs without resetting an administrator's DISABLED state or usage history.
-  const saved=await supabase.from("sos_ai_generated_questions").select("id,content_hash").in("content_hash",uniqueRows.map(row=>row.content_hash));
+  const saved=await supabase.from("sos_ai_generated_questions").select("id,content_hash,status").in("content_hash",uniqueRows.map(row=>row.content_hash));
   if(saved.error)throw new Error(`AI 생성 문제은행 조회 실패: ${saved.error.message}`);
   if(saved.data?.length!==uniqueRows.length)throw new Error("AI 생성 문제은행 연결이 일부 누락되었습니다.");
+  if((saved.data??[]).some((row:any)=>row.status==="DISABLED"))throw new Error("사용 중지·오류 보관 중인 AI 문항이 포함되어 배정을 중단했습니다. 오류문항 보관함에서 검수해 주세요.");
   const idByHash=new Map((saved.data??[]).map((r:any)=>[String(r.content_hash),String(r.id)]));
   return problems.map((p:any)=>{const h=createHash("sha256").update(`${p.sourceProblemId??""}|${kind}|${p.question??""}`).digest("hex");return {...p,aiBankId:idByHash.get(h)??null};});
 }

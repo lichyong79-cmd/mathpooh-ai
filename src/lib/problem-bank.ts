@@ -298,6 +298,14 @@ export async function registerQuestions(
     };
   });
 
+  // Re-analysis must not silently release a quarantined question.
+  const quarantined=await supabase.from("problem_bank_questions").select("question_no,problem_dna").eq("source_file_id",source.id).eq("problem_dna->errorReview->>open","true");
+  if(quarantined.error)throw quarantined.error;
+  for(const row of rows){
+    const previous=(quarantined.data??[]).find((q:any)=>q.question_no===row.question_no);
+    if(previous){row.status="HOLD";row.problem_dna={...(row.problem_dna??{}),errorReview:previous.problem_dna.errorReview} as any;}
+  }
+
   const upsert = await supabase
     .from("problem_bank_questions")
     .upsert(rows, { onConflict: "source_file_id,question_no" })
