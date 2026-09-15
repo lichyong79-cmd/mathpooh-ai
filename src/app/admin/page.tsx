@@ -14,7 +14,7 @@ import {
 import { getSupabaseConfig } from "@/lib/supabase";
 import { createClient as createBrowserSupabase } from "@/lib/supabase/client";
 import { authHeaders } from "@/lib/supabase/rest";
-import AccountBox from "../AccountBox";
+import AdminPortalShell from "@/components/admin-portal-sidebar";
 import { examCoverHtml } from "@/lib/exam-cover";
 import "../exam-updates.css";
 import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
@@ -337,7 +337,7 @@ const emptyStudent: Omit<Student, "id"> = {
 
 export default function Home() {
   const [active, setActive] = useState<AdminMenu>("students");
-const [collapsed, setCollapsed] = useState(false);
+
 
   const moveToMenu = useCallback((menu: AdminMenu, mode: "push" | "replace" = "push") => {
     setActive(menu);
@@ -421,84 +421,8 @@ const [collapsed, setCollapsed] = useState(false);
   const title = menus.find((menu) => menu.id === active)?.label ?? "대시보드";
 
   return (
-    <main className={`admin-app ${collapsed ? "collapsed" : ""}`}>
-      <aside className="sidebar">
-        <div className="brand-row">
-          <div className="brand-symbol"><img src="/mathpooh-logo.png" alt="MATHPOOH" /></div>
-          <div className="brand-copy">
-            <strong><span>MATHPOOH</span><b>SOS</b></strong>
-            <span>SCORE OPTIMIZATION SYSTEM</span>
-          </div>
-          <button
-            className="collapse-button"
-            onClick={() => setCollapsed((v) => !v)}
-            aria-label="사이드바 접기"
-          >
-            ‹
-          </button>
-        </div>
-        <div className="workspace-card">
-          <div className="workspace-logo"><img src="/mathpooh-logo.png" alt="" /></div>
-          <div>
-            <strong>MATHPOOH</strong>
-            <span>관리자 워크스페이스</span>
-          </div>
-          <b>⌄</b>
-        </div>
-        <nav className="side-nav">
-          {menuGroups.map((group) => (
-            <section className={`side-nav-group ${group.items.length > 1 ? "nested" : ""}`} key={group.label}>
-              <p>{group.icon ? <i>{group.icon}</i> : null}{group.label}</p>
-              {group.items.map((menu) => (
-              <button
-                key={menu.id}
-                className={active === menu.id ? "active" : ""}
-                onClick={() => {
-                  if (menu.id === "ai-generated-bank") { window.location.href = "/admin/ai-generated-bank"; return; }
-                  if (menu.id === "sos-bank") {
-                    window.location.href = "/problem-bank";
-                    return;
-                  }
-                  if (menu.id === "sos-difficulty") {
-                    window.location.href = "/problem-bank/difficulty";
-                    return;
-                  }
-                  if (menu.id === "problem-analysis") {
-                    window.localStorage.setItem(
-                      "matspu-admin-menu",
-                      "problem-sources",
-                    );
-                    window.location.href = "/problem-bank/ai-upload";
-                    return;
-                  }
-                  moveToMenu(menu.id);
-                }}
-              >
-                <i>{menu.icon}</i>
-                <span>{menu.label}</span>
-                {menu.badge ? <b>{menu.badge}</b> : null}
-              </button>
-              ))}
-            </section>
-          ))}
-          <p className="system-title">시스템</p>
-          {menus
-            .filter((menu) => menu.id === "settings")
-            .map((menu) => (
-              <button
-                key={menu.id}
-                className={active === menu.id ? "active" : ""}
-                onClick={() => moveToMenu(menu.id)}
-              >
-                <i>{menu.icon}</i>
-                <span>{menu.label}</span>
-              </button>
-            ))}
-        </nav>
-        <AccountBox />
-      </aside>
-
-      <section className="main-area">
+    <AdminPortalShell current={active} onNavigate={(menu) => moveToMenu(menu as AdminMenu)}><main className="admin-app">
+      <section className="main-area" style={{marginLeft:0}}>
         <header className="topbar">
           <div>
             <p>MATHPOOH SOS 관리자</p>
@@ -574,7 +498,7 @@ const [collapsed, setCollapsed] = useState(false);
           )}
         </div>
       </section>
-    </main>
+    </main></AdminPortalShell>
   );
 }
 

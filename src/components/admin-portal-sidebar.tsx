@@ -9,7 +9,7 @@ type CurrentMenu =
   | "exam-list" | "exam-input" | "exam-analysis" | "exam-assignment"
   | "exam-progress" | "problem-sources" | "problem-analysis"
   | "ai-generated-bank" | "sos-bank" | "sos-difficulty" | "sos-learning" | "sos-status" | "exam-results"
-  | "student-results" | "learning-analysis";
+  | "student-results" | "learning-analysis" | "settings";
 
 type Item = { id: CurrentMenu; label: string; icon: string; href?: string };
 
@@ -19,19 +19,17 @@ const groups: { label: string; items: Item[] }[] = [
     { id: "posters", label: "포스터 관리", icon: "▧" },
     { id: "students", label: "학생정보 관리", icon: "♙" },
   ] },
-  { label: "SOS 신청·회차 운영", items: [
-    { id: "cycles", label: "회차 관리", icon: "◉", href: "/admin?menu=cycles" },
-    { id: "program-applications", label: "SOS 모집·신청 관리", icon: "⑤", href: "/admin?menu=program-applications" },
-    { id: "applications", label: "회차별 학생 등록", icon: "✓", href: "/admin?menu=applications" },
+  { label: "SOS 시험 운영", items: [
+    { id: "cycles", label: "모집 일정 관리", icon: "◉", href: "/admin?menu=cycles" },
+    { id: "program-applications", label: "신청·입금 관리", icon: "⑤", href: "/admin?menu=program-applications" },
+    { id: "applications", label: "회차별 시험배정", icon: "✓", href: "/admin?menu=applications" },
+    { id: "exam-progress", label: "시험 진행", icon: "▶" },
   ] },
   { label: "시험지 운영", items: [
     { id: "exam-list", label: "시험지 목록", icon: "▤" },
     { id: "exam-input", label: "시험지 입력", icon: "+" },
     { id: "exam-analysis", label: "AI 분석", icon: "✦" },
-    { id: "exam-assignment", label: "회차·시험지 연결", icon: "↗" },
-  ] },
-  { label: "시험 운영", items: [
-    { id: "exam-progress", label: "실전모의고사 진행", icon: "▶" },
+    { id: "exam-assignment", label: "A/B/C 시험지 등록", icon: "↗" },
   ] },
   { label: "문제은행 관리", items: [
     { id: "problem-sources", label: "문제등록", icon: "▦" },
@@ -49,9 +47,10 @@ const groups: { label: string; items: Item[] }[] = [
     { id: "student-results", label: "학생성적 분석", icon: "↗" },
     { id: "learning-analysis", label: "학생학습 분석", icon: "◫" },
   ] },
+  { label: "시스템", items: [{ id: "settings", label: "환경 설정", icon: "⚙" }] },
 ];
 
-export default function AdminPortalShell({ current, children, defaultCollapsed = false }: { current: CurrentMenu; children: ReactNode; defaultCollapsed?: boolean }) {
+export default function AdminPortalShell({ current, children, defaultCollapsed = false, onNavigate }: { onNavigate?: (menu: CurrentMenu) => void; current: CurrentMenu; children: ReactNode; defaultCollapsed?: boolean }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   useEffect(() => {
@@ -75,7 +74,7 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
     (async () => {
       try {
         const { data } = await createClient().auth.getUser();
-        if (alive) setEmail(data.user?.email?.split("@")[0] ?? "");
+        if (alive) setEmail(data.user?.email ?? "");
       } catch { /* 프록시가 이미 막으므로 무시합니다. */ }
     })();
     return () => { alive = false; };
@@ -114,15 +113,15 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
     <aside className={styles.sidebar}>
       <div className={styles.brand}>
         <img src="/mathpooh-logo.png" alt="MATHPOOH" />
-        <div className={styles.brandCopy}><strong>MATHPOOH SOS</strong><span>SCORE OPTIMIZATION SYSTEM</span></div>
+        <div className={styles.brandCopy}><strong>MATHPOOH <b>SOS</b></strong><span>SCORE OPTIMIZATION SYSTEM</span></div>
         <button className={styles.collapse} type="button" onClick={toggle} aria-label={collapsed ? "메뉴 펼치기" : "메뉴 접기"}>{collapsed ? "›" : "‹"}</button>
         <button className={styles.closeDrawer} type="button" onClick={() => setMobileOpen(false)} aria-label="메뉴 닫기">✕</button>
       </div>
-      <div className={styles.workspace}><b>매</b><div><strong>MATHPOOH</strong><span>관리자 워크스페이스</span></div></div>
+      <div className={styles.workspace}><img src="/mathpooh-logo.png" alt="" /><div><strong>MATHPOOH</strong><span>관리자 워크스페이스</span></div></div>
       <nav className={styles.nav}>
         {groups.map((group) => <section className={`${styles.group} ${group.items.length > 1 ? styles.nested : ""}`} key={group.label}>
           <p className={styles.groupTitle}>{group.label}</p>
-          {group.items.map((item) => <a className={`${styles.item} ${current === item.id ? styles.active : ""}`} href={hrefOf(item)} key={item.id} title={item.label} onClick={() => setMobileOpen(false)}>
+          {group.items.map((item) => <a className={`${styles.item} ${current === item.id ? styles.active : ""}`} href={hrefOf(item)} key={item.id} title={item.label} aria-current={current === item.id ? "page" : undefined} onClick={(event) => { setMobileOpen(false); if(onNavigate && !item.href && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey){event.preventDefault();onNavigate(item.id);} }}>
             <i className={styles.icon}>{item.icon}</i><span className={styles.label}>{item.label}</span>
           </a>)}
         </section>)}
@@ -130,10 +129,9 @@ export default function AdminPortalShell({ current, children, defaultCollapsed =
       {/* SOS282: 로그아웃이 /admin 사이드바에만 있어서, 문제은행·난이도 화면에서는
           주소를 직접 쳐야 했다. 권한 문제로 잠겼을 때 나갈 길이 필요하다. */}
       <div className={styles.footer}>
-        <strong>{email || "MATHPOOH SOS 관리자"}</strong>
-        <span>통합 관리 메뉴</span>
+        <b className={styles.avatar}>{email.slice(0,1).toUpperCase() || "?"}</b><div><strong>{email.split("@")[0] || "MATHPOOH SOS 관리자"}</strong><span>{email}</span></div>
         <button type="button" className={styles.signout} onClick={signOut} disabled={signingOut} title="로그아웃">
-          {signingOut ? "로그아웃 중..." : "⏻ 로그아웃"}
+          {signingOut ? "…" : "⏻"}
         </button>
       </div>
     </aside>
