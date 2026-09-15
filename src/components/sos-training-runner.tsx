@@ -5,6 +5,7 @@ import type React from "react";
 import {useEffect,useMemo,useRef,useState} from "react";
 import SosProblemImage from "./sos-problem-image";
 import SosGeneratedQuestionMathJax from "./sos-generated-question-mathjax";
+import {readTrainingDraft,writeTrainingDraft,clearTrainingDraft} from "@/lib/sos-training-draft";
 
 function fmt(seconds:number){
   const s=Math.max(0,Math.floor(seconds));
@@ -13,16 +14,24 @@ function fmt(seconds:number){
 
 function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;onCompleted:(json:any)=>Promise<void>|void;onNotice:(message:string)=>void}){
   const items:any[]=Array.isArray(session?.items)?session.items:[];
-  const initialAnswers=useMemo(()=>Object.fromEntries(items.map((x:any)=>[String(x.id),String(x.studentAnswer??"")])),[items]);
-  const initialSeconds=useMemo(()=>Object.fromEntries(items.map((x:any)=>[String(x.id),Number(x.responseSeconds??0)||0])),[items]);
+  const [restored]=useState(()=>readTrainingDraft(String(session.id),items.map(x=>String(x.id))));
+  const initialAnswers=useMemo(()=>({...Object.fromEntries(items.map((x:any)=>[String(x.id),String(x.studentAnswer??"")])),...restored?.answers}),[items,restored]);
+  const initialSeconds=useMemo(()=>({...Object.fromEntries(items.map((x:any)=>[String(x.id),Number(x.responseSeconds??0)||0])),...restored?.seconds}),[items,restored]);
   const firstOpen=useMemo(()=>{
     const i=items.findIndex((x:any)=>!String(x.studentAnswer??"").trim());
     return i>=0?i:Math.max(0,items.length-1);
   },[items]);
-  const [index,setIndex]=useState(firstOpen);
+  const [index,setIndex]=useState(restored?.index??firstOpen);
   const [answer,setAnswer]=useState("");
   const [answers,setAnswers]=useState<Record<string,string>>(initialAnswers);
   const [seconds,setSeconds]=useState<Record<string,number>>(initialSeconds);
+  const draftAnswersRef=useRef<Record<string,string>>({...initialAnswers});
+  const draftSecondsRef=useRef<Record<string,number>>({...initialSeconds});
+  function cacheDraft(target:number,id?:string,value?:string,sec?:number){
+    if(id&&value!==undefined)draftAnswersRef.current[id]=value;
+    if(id&&sec!==undefined)draftSecondsRef.current[id]=sec;
+    writeTrainingDraft(String(session.id),{itemIds:items.map(x=>String(x.id)),answers:draftAnswersRef.current,seconds:draftSecondsRef.current,index:target,updatedAt:Date.now()});
+  }
   const [started,setStarted]=useState(Date.now());
   const [now,setNow]=useState(Date.now());
   const [busy,setBusy]=useState(false);
@@ -55,6 +64,7 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
     setStarted(Date.now());
     setNow(Date.now());
     setFrozenElapsed(null);
+    cacheDraft(index);
     // SOS281: 문항을 연 시각을 서버에 남긴다. 풀이시간은 이 시각을 기준으로 서버가 계산한다.
     // 실패해도 학습을 막지 않는다(서버가 기록을 못 찾으면 기존 방식으로 저장된다).
     if(itemId){
@@ -85,7 +95,7 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
     saveQueueRef.current=operation.catch((error)=>{
       onNotice(error instanceof Error?error.message:`${question}번 문항 저장 실패`);
     });
-    return operation;
+    return saveQueueRef.current;
   }
 
   function persistCurrent(requireAnswer=false){
@@ -99,6 +109,7 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
     const nextAnswers={...answers,[itemId]:value};
     const nextSeconds={...seconds,[itemId]:sec};
     setAnswers(nextAnswers);setSeconds(nextSeconds);
+    cacheDraft(index,itemId,value,sec);
     onNotice("");
     void queueSave(item,value,sec,index+1);
     return true;
@@ -117,6 +128,7 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
     setAnswers((current)=>({...current,[itemId]:UNKNOWN_ANSWER}));
     setSeconds((current)=>({...current,[itemId]:sec}));
     setAnswer(UNKNOWN_ANSWER);
+    cacheDraft(index,itemId,UNKNOWN_ANSWER,sec);
     onNotice("");
     void queueSave(item,UNKNOWN_ANSWER,sec,index+1,true);
     if(index<items.length-1)setIndex((v:number)=>v+1);
@@ -180,6 +192,7 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
       const response=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"submit",sessionId:session.id,answers:mergedAnswers,responseSeconds:finalSeconds})});
       const json=await response.json();
       if(!response.ok)throw new Error(json.message||"훈련 제출 실패");
+      clearTrainingDraft(String(session.id));
       await onCompleted(json);
     }catch(e){
       setFrozenElapsed(null);
@@ -231,7 +244,7 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
       </div>
       <div className="sos-answer-lock-box">
         {/* SOS283: 정답은 -999~999 정수인데 모바일에서 문자 키보드가 떴다. */}
-        <label><span>정답</span><input autoFocus disabled={busy} value={answer} inputMode="numeric" enterKeyHint="next" autoComplete="off" onChange={(e:React.ChangeEvent<HTMLInputElement>)=>setAnswer(e.target.value)} placeholder="정답을 입력하세요" onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void next();}}/></label>
+        <label><span>정답</span><input autoFocus disabled={busy} value={answer} inputMode="numeric" enterKeyHint="next" autoComplete="off" onChange={(e:React.ChangeEvent<HTMLInputElement>)=>{setAnswer(e.target.value);cacheDraft(index,itemId,e.target.value,elapsed);}} placeholder="정답을 입력하세요" onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void next();}}/></label>
         <p>{homework?"시간 제한 없이 충분히 풀어도 됩니다. 최초 정답과 오답 교정 과정은 기록되지만 바로미터에는 반영되지 않습니다.":"문항별 풀이시간이 기록되어 바로미터 산정에 함께 반영됩니다."}</p>
         <div className="sos-training-actions">
           <button type="button" className="secondary" disabled={busy||index===0} onClick={()=>void moveTo(index-1)}>← 이전 문항</button>
@@ -244,4 +257,4 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
   </div>;
 }
 
-export default function SosTrainingRunner(props:Parameters<typeof SosTrainingRunnerContent>[0]){return <SosQuestionAvailability sessionId={String(props.session.id)}><SosTrainingRunnerContent {...props}/></SosQuestionAvailability>;}
+export default function SosTrainingRunner(props:Parameters<typeof SosTrainingRunnerContent>[0]){return <SosQuestionAvailability sessionId={String(props.session.id)}><SosTrainingRunnerContent key={String(props.session.id)} {...props}/></SosQuestionAvailability>;}

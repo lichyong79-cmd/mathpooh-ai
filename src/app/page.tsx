@@ -996,9 +996,10 @@ function SosTrainingWorkspace({
   }
   const [selectedCycleId, setSelectedCycleId] = useState("");
   const nextRepairTriedRef = useRef<Set<string>>(new Set());
+  const workspaceLoadedRef = useRef(false);
 
   const load = useCallback(async (preferredActiveId?: string) => {
-    setLoading(true);
+    if (!workspaceLoadedRef.current) setLoading(true);
     try {
       const response = await fetch(
         `/api/student/sos-training${preferredActiveId ? `?sessionId=${encodeURIComponent(preferredActiveId)}` : ""}`,
@@ -1010,6 +1011,7 @@ function SosTrainingWorkspace({
       if (!response.ok || json?.success !== true)
         throw new Error(json?.message || "진단·훈련을 불러오지 못했습니다.");
       setData(json);
+      workspaceLoadedRef.current = true;
       const allSessions = Array.isArray(json.sessions) ? json.sessions : [];
       const open = allSessions.find((x: any) => isSosOpen(x));
       setActiveId((current: string) => {
