@@ -274,12 +274,19 @@ export default function DifficultyManagementPage() {
         "created_at",
       ].join(",");
       const all: Problem[] = [];
-      for (let offset = 0; ; offset += 1000) {
+      let cursor = "";
+      const batchSize = 200;
+      for (;;) {
         const res = await fetch(
-          `${config.url}/rest/v1/problem_bank_questions?select=${fields}&status=eq.ACTIVE&order=created_at.desc&offset=${offset}&limit=1000`,
+          `${config.url}/rest/v1/problem_bank_questions?select=${fields}&status=eq.ACTIVE&order=id.asc&limit=${batchSize}${cursor ? `&id=gt.${encodeURIComponent(cursor)}` : ""}`,
           { headers: { ...(await authHeaders()) }, cache: "no-store" },
         );
-        if (!res.ok) throw new Error(await res.text());
+        if (!res.ok) {
+          const failure = await res.json().catch(() => ({}));
+          throw new Error(failure.code === "57014"
+            ? "문항 조회 시간이 초과됐습니다. 잠시 후 다시 불러와 주세요. 난이도 데이터가 삭제된 것은 아닙니다."
+            : failure.message || "문항을 불러오지 못했습니다.");
+        }
         const rows = (await res.json()) as Problem[];
         all.push(
           ...rows.map((x) => ({
@@ -293,9 +300,10 @@ export default function DifficultyManagementPage() {
               : null),
           })),
         );
-        if (rows.length < 1000) break;
+        if (rows.length < batchSize) break;
+        cursor = String(rows[rows.length - 1].id);
       }
-      setItems(all);
+      setItems(all.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))));
     } catch (e) {
       setError(e instanceof Error ? e.message : "문항을 불러오지 못했습니다.");
     } finally {
@@ -1436,20 +1444,20 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
             {D.map((d, i) => (
               <div key={d}>
                 <b>{difficultyLabel(d)}</b>
-                <strong>{counts[i]}</strong>
+                <strong>{loading || (error && !items.length) ? "—" : counts[i]}</strong>
               </div>
             ))}
             <div className="kpi-warn">
               <b>미분류</b>
-              <strong>{unclassifiedCount}</strong>
+              <strong>{loading || (error && !items.length) ? "—" : unclassifiedCount}</strong>
             </div>
             <div className="kpi-review">
               <b>검토필요</b>
-              <strong>{reviewCount}</strong>
+              <strong>{loading || (error && !items.length) ? "—" : reviewCount}</strong>
             </div>
             <div className="kpi-warn">
               <b>AI 미검증</b>
-              <strong>{notJudgedCount}</strong>
+              <strong>{loading || (error && !items.length) ? "—" : notJudgedCount}</strong>
             </div>
           </div>
 
@@ -2037,6 +2045,7 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
           }
           .difficulty-header {
             display: flex;
+            flex-wrap: wrap;
             justify-content: space-between;
             gap: 20px;
             align-items: flex-start;
@@ -2059,7 +2068,12 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
           .header-buttons {
             display: flex;
             gap: 8px;
+            flex: 0 0 auto;
+            flex-wrap: wrap;
+            max-width: 100%;
           }
+          .difficulty-header > div:first-child { flex: 1 1 600px; min-width: 0; }
+          .header-buttons button { white-space: nowrap; flex-shrink: 0; }
           .header-buttons button,
           .filter-bar button {
             border: 1px solid #d9e1dc;
@@ -2826,6 +2840,7 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
             .difficulty-header {
               flex-direction: column;
             }
+            .difficulty-header > div:first-child { flex: 0 1 auto; }
             .difficulty-kpis {
               grid-template-columns: repeat(2, 1fr);
             }
