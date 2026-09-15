@@ -1,3 +1,4 @@
+import { problemAnswerIssues } from "@/lib/problem-answer-integrity";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PROBLEM_DNA_VERSION, applyOperationalDifficultyPolicy, collectProblemDnaTags, problemDnaEmbeddingText, type ProblemDNA } from "@/lib/problem-dna";
 import { enqueueDifficultyRegrade } from "@/lib/difficulty-regrade-queue";
@@ -178,6 +179,14 @@ export async function registerQuestions(
   questions: AnalysisQuestion[],
 ) {
   if (questions.length === 0) return { registered: 0, embedded: 0, registeredQuestionIds: [] as string[], duplicateQuestionIds: [] as string[], duplicates: [] as Array<{ questionId: string; existingProblemId: string; existingTitle: string }> };
+
+  for (const question of questions) {
+    const result = finalResult(question);
+    const dna = problemDna(result);
+    const official = result.official_solution as { official_answer?: unknown } | undefined;
+    const issues = problemAnswerIssues(question.answer, result.question_type || dna?.basic?.question_format, dna?.answer, official?.official_answer ?? dna?.official_solution?.official_answer);
+    if (issues.length) throw new Error(`${question.question_no}번 정답 검수 필요: ${issues.join(" · ")}`);
+  }
 
   // v172: 추가 AI 호출 없이 이미 저장된 DNA/문항요약/정답을 이용해 동일문항을 걸러낸다.
   // 같은 source_file_id + question_no 재등록은 기존 upsert 갱신으로 허용한다.

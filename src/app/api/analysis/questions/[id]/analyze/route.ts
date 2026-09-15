@@ -1,3 +1,4 @@
+import { normalizeProblemAnswer, problemAnswerIssues } from "@/lib/problem-answer-integrity";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
@@ -79,17 +80,6 @@ function parseJsonObject(text: string): Record<string, any> {
   }
 }
 
-function normalizeAnswer(value: unknown, format: unknown) {
-  const raw = typeof value === "string" ? value.trim() : String(value ?? "").trim();
-  if (!raw) return "";
-  if (format === "objective") {
-    const circled: Record<string, string> = { "①": "1", "②": "2", "③": "3", "④": "4", "⑤": "5" };
-    if (circled[raw]) return circled[raw];
-    const match = raw.match(/(?:정답|답|선지)?\s*[:：]?\s*([1-5])/);
-    return match?.[1] ?? raw;
-  }
-  return raw.replace(/^(?:정답|답)\s*[:：]\s*/i, "");
-}
 
 function cropOnlyReviewResult(value: unknown) {
   if (!value || typeof value !== "object") return {};
@@ -394,11 +384,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
     const confidence = Number(dna.summary?.ai_confidence);
     const normalizedConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
-    const finalAnswer = normalizeAnswer(dna.answer, dna.basic?.question_format) || String(question.answer ?? "").trim();
+    const finalAnswer = normalizeProblemAnswer(dna.answer, dna.basic?.question_format) || String(question.answer ?? "").trim();
+    const answerIssues = problemAnswerIssues(finalAnswer, dna.basic?.question_format, dna.answer, dna.official_solution?.official_answer);
     const missingClassification = missingDnaClassification(dna);
     const classificationMissing = missingClassification.length > 0;
     const reviewReasons = [
       ...validation.errors,
+      ...answerIssues,
       ...(Array.isArray(dna.summary?.review_reasons) ? dna.summary.review_reasons : []),
       ...(!finalAnswer ? ["AI가 정답을 확정하지 못했습니다."] : []),
       ...(normalizedConfidence < 0.82 ? [`AI 신뢰도 ${Math.round(normalizedConfidence * 100)}%로 자동 통과 기준 82% 미만입니다.`] : []),
@@ -409,6 +401,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     ].map((value) => String(value).trim()).filter(Boolean);
     const uniqueReviewReasons = [...new Set(reviewReasons)];
     const readyForRegistration =
+      answerIssues.length === 0 &&
       normalizedConfidence >= 0.82 &&
       Boolean(finalAnswer) &&
       validation.valid &&
