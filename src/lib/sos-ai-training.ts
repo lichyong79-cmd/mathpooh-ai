@@ -545,7 +545,11 @@ async function archiveGeneratedProblems(args:{supabase:any;studentId:string;sour
     first_used_student_id:studentId,use_count:1,updated_at:new Date().toISOString(),
   }));
   if(!rows.length)return problems;
-  const saved=await supabase.from("sos_ai_generated_questions").upsert(rows,{onConflict:"content_hash",ignoreDuplicates:false}).select("id,content_hash");
+  // A batch can contain the same bank key more than once. PostgreSQL rejects
+  // updating one conflict target twice in a single INSERT. Archive each key once;
+  // retain the original training slots and map each back to its shared bank ID.
+  const uniqueRows=Array.from(new Map(rows.map(row=>[row.content_hash,row])).values());
+  const saved=await supabase.from("sos_ai_generated_questions").upsert(uniqueRows,{onConflict:"content_hash",ignoreDuplicates:false}).select("id,content_hash");
   if(saved.error)throw new Error(`AI 생성 문제은행 저장 실패: ${saved.error.message}`);
   const idByHash=new Map((saved.data??[]).map((r:any)=>[String(r.content_hash),String(r.id)]));
   return problems.map((p:any)=>{const h=createHash("sha256").update(`${p.sourceProblemId??""}|${kind}|${p.question??""}`).digest("hex");return {...p,aiBankId:idByHash.get(h)??null};});
