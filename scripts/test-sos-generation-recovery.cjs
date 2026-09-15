@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),{createHash}=require('node:crypto'),ts=require('typescript');
 const source=fs.readFileSync('src/lib/sos-ai-training.ts','utf8');
 const parts=[source.slice(source.indexOf('async function archiveGeneratedProblems('),source.indexOf('async function updateGenerationStage(')),source.slice(source.indexOf('async function completeGeneratedSession('))];
-const ctx={createHash,clampMeter:v=>v,compactDna:()=>({}),inlineImage:async()=>{throw Error('Saved batch must not fetch images');},updateGenerationStage:async()=>{},buildGeneratedProblemsInBatches:async()=>Array.from({length:3},(_,i)=>({question:'question '+i,answer:'1',meter:3,verification:{valid:true}}))};
+const ctx={blockedTrainingSessions:async()=>new Set(),createHash,clampMeter:v=>v,compactDna:()=>({}),inlineImage:async()=>{throw Error('Saved batch must not fetch images');},updateGenerationStage:async()=>{},buildGeneratedProblemsInBatches:async()=>Array.from({length:3},(_,i)=>({question:'question '+i,answer:'1',meter:3,verification:{valid:true}}))};
 vm.createContext(ctx);vm.runInContext(ts.transpile(parts.join('\n').replace('export async function','async function'),{target:ts.ScriptTarget.ES2020}),ctx);
 function database({child=null,items=[],failItems=false}={}){
  const sourceSession={id:'source',student_id:'student',target_snapshot:{},weakness_snapshot:{},sos_training_items:[{item_order:1,problem_bank_questions:{id:'p',question_image_path:'image'}}]};

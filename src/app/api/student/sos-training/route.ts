@@ -1,3 +1,4 @@
+import {blockedTrainingSessions} from "@/lib/problem-quarantine";
 import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -127,6 +128,14 @@ export async function GET(request: Request) {
   if ("error" in ctx) return ctx.error;
   const { supabase, student } = ctx;
   const params = new URL(request.url).searchParams;
+  if(params.get("mode")==="availability"){
+    const id=params.get("sessionId");
+    const row=await supabase.from("sos_training_sessions").select("id,sos_training_items(problem_id,generated_problem)").eq("id",id).eq("student_id",student.id).single();
+    if(row.error)return NextResponse.json({message:"학습을 확인할 수 없습니다."},{status:404});
+    const blocked=await blockedTrainingSessions(supabase,[row.data]);
+    return NextResponse.json({blocked:blocked.size>0},{headers:{"Cache-Control":"no-store"}});
+  }
+
 
   // SOS309: AI 준비 확인은 문항·이미지·과거 기록 전체를 다시 만들지 않는다.
   if (params.get("mode") === "status") {
@@ -171,7 +180,10 @@ export async function GET(request: Request) {
       { status: 400 },
     );
 
-  const rawSessions = result.data ?? [];
+  const availableSessions=result.data??[];
+  const quarantined=await blockedTrainingSessions(supabase,availableSessions);
+  if(focusSessionId&&quarantined.has(focusSessionId))return NextResponse.json({message:"오류 문항이 포함되어 학습을 중단했습니다. 관리자 검수 중입니다."},{status:409});
+  const rawSessions = availableSessions.filter((s:any)=>!quarantined.has(String(s.id)));
   const sessionMap = new Map(rawSessions.map((s: any) => [String(s.id), s]));
   const rootOf = (session: any) => {
     let cur = session;
@@ -412,6 +424,11 @@ export async function POST(request: Request) {
     );
 
   const session: any = sessionResult.data;
+  const assigned=await supabase.from("sos_training_items").select("problem_id,generated_problem").eq("session_id",sessionId);
+  if(assigned.error)return NextResponse.json({message:"문항 사용 상태를 확인하지 못했습니다."},{status:503});
+  const blocked=await blockedTrainingSessions(supabase,[{id:sessionId,sos_training_items:assigned.data}]);
+  if(blocked.size)return NextResponse.json({message:"오류 문항이 포함되어 사용이 중지됐습니다. 관리자 검수 중입니다."},{status:409});
+
 
   if (action === "recover_diagnosis") {
     if (
@@ -896,7 +913,7 @@ export async function POST(request: Request) {
     const found = await supabase
       .from("sos_training_items")
       .select(
-        "id,item_order,generated_problem,problem_bank_questions(id,answer,analysis_question_id)",
+        "id,item_order,generated_problem,problem_bank_questions(id,answer,analysis_question_id,problem_dna)",
       )
       .eq("id", itemId)
       .eq("session_id", sessionId)
@@ -927,7 +944,7 @@ export async function POST(request: Request) {
         .eq("id", bank.analysis_question_id)
         .maybeSingle();
       const path = String(
-        analysis.data?.ai_result?.official_solution_image_path ?? "",
+        bank?.problem_dna?.correctedSolutionImagePath ?? analysis.data?.ai_result?.official_solution_image_path ?? "",
       ).trim();
       if (path) {
         const signed = await supabase.storage

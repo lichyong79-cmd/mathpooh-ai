@@ -1,4 +1,5 @@
 "use client";
+import SosQuestionAvailability from "./sos-question-availability";
 
 import type React from "react";
 import {useEffect,useMemo,useState} from "react";
@@ -9,7 +10,7 @@ function fmt(seconds:number){const s=Math.max(0,Math.floor(seconds));return `${M
 type ReviewedState={answer:string;seconds:number;isCorrect:boolean;completed:boolean;explained?:boolean};
 type Feedback={ok:boolean;attemptNo:number;hint?:string;hintLevel?:number;revealAnswer?:boolean;correctAnswer?:string;solution?:string};
 
-export default function SosTrainingReview({session,onCompleted,onNotice}:{session:any;onCompleted:(json:any)=>Promise<void>|void;onNotice:(message:string)=>void}){
+function SosTrainingReviewContent({session,onCompleted,onNotice}:{session:any;onCompleted:(json:any)=>Promise<void>|void;onNotice:(message:string)=>void}){
   const all:any[]=Array.isArray(session?.items)?session.items:[];
   const wrong=useMemo(()=>all.filter((x:any)=>x.isCorrect===false),[all]);
   const diagnosis=String(session?.phase)==="DIAGNOSIS";
@@ -106,3 +107,5 @@ export default function SosTrainingReview({session,onCompleted,onNotice}:{sessio
     {wrong.length?<div className="sos-report-review-state"><b>오답 과정 {completedCount}/{wrong.length}</b><span>교정완료와 풀이확인을 모두 마치면 {diagnosis?"AI 취약점 분석":String(session?.cycle_kind)==="HOMEWORK"?"SOS 최종 완료":"바로미터 판정"}으로 넘어갑니다.</span><button type="button" disabled={busy||completedCount!==wrong.length} onClick={()=>void finishReview()}>{busy?diagnosis?"AI 분석 준비 중...":String(session?.cycle_kind)==="HOMEWORK"?"완료 처리 중...":"바로미터 계산 중...":diagnosis?"오답 완료 · AI 취약점 분석":String(session?.cycle_kind)==="HOMEWORK"?"오답 완료 · SOS 마무리":"오답 완료 · 결과 확인"}</button></div>:<div className="sos-report-review-state success"><b>전 문항 정답</b><span>오답 대상이 없습니다.</span><button type="button" disabled={busy} onClick={()=>void finishReview()}>{busy?"결과 처리 중...":diagnosis?"진단 결과 확정 · AI 분석":"훈련 결과 확인"}</button></div>}
   </div>;
 }
+
+export default function SosTrainingReview(props:Parameters<typeof SosTrainingReviewContent>[0]){return <SosQuestionAvailability sessionId={String(props.session.id)}><SosTrainingReviewContent {...props}/></SosQuestionAvailability>;}

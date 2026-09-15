@@ -1,3 +1,4 @@
+import {blockedTrainingSessions} from "@/lib/problem-quarantine";
 import { createHash } from "crypto";
 import { clampMeter, meterLabel } from "@/lib/difficulty-meter";
 import { problemSubunit } from "@/lib/subunit-key";
@@ -12,7 +13,7 @@ function outputText(payload:any){
   return parts.join("\n").trim();
 }
 
-async function openAiJson(prompt:string,schema:any,content?:any[],options?:{timeoutMs?:number;effort?:"minimal"|"low"|"medium"|"high"}){
+export async function openAiJson(prompt:string,schema:any,content?:any[],options?:{timeoutMs?:number;effort?:"minimal"|"low"|"medium"|"high"}){
   const apiKey=process.env.OPENAI_API_KEY;
   if(!apiKey) throw new Error("OPENAI_API_KEY가 없습니다.");
   const model=process.env.OPENAI_ANALYSIS_MODEL||process.env.OPENAI_MODEL||"gpt-5-mini";
@@ -802,10 +803,11 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
   const {supabase,studentId,firstTrainingSessionId,count,kind,jobId}=args;
   const deadline=Date.now()+240000;
   const source=await supabase.from("sos_training_sessions")
-    .select("id,student_id,status,decision,updated_at,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,sos_training_items(id,item_order,is_correct,response_seconds,review_is_correct,review_response_seconds,problem_meter_before,problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path,answer))")
+    .select("id,student_id,status,decision,updated_at,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,sos_training_items(id,problem_id,item_order,is_correct,response_seconds,review_is_correct,review_response_seconds,problem_meter_before,problem_bank_questions(id,subject,unit,topic,difficulty,difficulty_meter,question_type,problem_dna,question_image_path,answer))")
     .eq("id",firstTrainingSessionId).eq("student_id",studentId).single();
   if(source.error||!source.data)throw new Error(source.error?.message||"1차 훈련 결과를 찾을 수 없습니다.");
   const s:any=source.data;
+  if((await blockedTrainingSessions(supabase,[s])).size)throw new Error("오류 보관 중인 원문은 AI 변형에 사용할 수 없습니다.");
   const existing=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",kind==="HOMEWORK"?3:2).order("created_at",{ascending:true}).limit(1);
   if(existing.error)throw existing.error;
   if(await completeGeneratedSession(supabase,existing.data?.[0],count)){await updateGenerationStage(supabase,jobId,"READY",8,8,"이미 생성된 학습 세션을 확인했습니다.");return {session:existing.data?.[0],problems:[],existing:true};}

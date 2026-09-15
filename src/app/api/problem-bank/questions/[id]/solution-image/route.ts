@@ -11,8 +11,13 @@ export async function GET(_: NextRequest, context: { params: Promise<{ id: strin
   try {
     const { id } = await context.params;
     const supabase = createClient();
-    const bank = await supabase.from("problem_bank_questions").select("analysis_question_id").eq("id", id).single();
+    const bank = await supabase.from("problem_bank_questions").select("analysis_question_id,problem_dna").eq("id", id).single();
     if (bank.error || !bank.data) throw bank.error ?? new Error("문항을 찾을 수 없습니다.");
+    if(bank.data.problem_dna?.correctedSolutionImagePath){
+      const signed=await supabase.storage.from("question-images").createSignedUrl(bank.data.problem_dna.correctedSolutionImagePath,1800);
+      if(signed.error)throw signed.error;
+      return NextResponse.json({success:true,imageUrl:signed.data.signedUrl});
+    }
     const analysis = await supabase.from("analysis_questions").select("ai_result").eq("id", bank.data.analysis_question_id).single();
     const path = String(analysis.data?.ai_result?.official_solution_image_path ?? "").trim();
     if (analysis.error || !path) return NextResponse.json({ success: false, message: "문항별 공식 해설 이미지가 없습니다." }, { status: 404 });

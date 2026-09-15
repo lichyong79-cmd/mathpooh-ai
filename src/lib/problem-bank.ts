@@ -303,7 +303,7 @@ export async function registerQuestions(
   if(quarantined.error)throw quarantined.error;
   for(const row of rows){
     const previous=(quarantined.data??[]).find((q:any)=>q.question_no===row.question_no);
-    if(previous){row.status="HOLD";row.problem_dna={...(row.problem_dna??{}),errorReview:previous.problem_dna.errorReview} as any;}
+    if(previous){row.status="HOLD";row.problem_dna={...(row.problem_dna??{}),errorReview:previous.problem_dna.errorReview,correctedSolutionImagePath:previous.problem_dna.correctedSolutionImagePath} as any;}
   }
 
   const upsert = await supabase

@@ -1,4 +1,5 @@
 "use client";
+import SosQuestionAvailability from "./sos-question-availability";
 
 import type React from "react";
 import {useEffect,useMemo,useRef,useState} from "react";
@@ -10,7 +11,7 @@ function fmt(seconds:number){
   return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 }
 
-export default function SosTrainingRunner({session,onCompleted,onNotice}:{session:any;onCompleted:(json:any)=>Promise<void>|void;onNotice:(message:string)=>void}){
+function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;onCompleted:(json:any)=>Promise<void>|void;onNotice:(message:string)=>void}){
   const items:any[]=Array.isArray(session?.items)?session.items:[];
   const initialAnswers=useMemo(()=>Object.fromEntries(items.map((x:any)=>[String(x.id),String(x.studentAnswer??"")])),[items]);
   const initialSeconds=useMemo(()=>Object.fromEntries(items.map((x:any)=>[String(x.id),Number(x.responseSeconds??0)||0])),[items]);
@@ -242,3 +243,5 @@ export default function SosTrainingRunner({session,onCompleted,onNotice}:{sessio
     </article>
   </div>;
 }
+
+export default function SosTrainingRunner(props:Parameters<typeof SosTrainingRunnerContent>[0]){return <SosQuestionAvailability sessionId={String(props.session.id)}><SosTrainingRunnerContent {...props}/></SosQuestionAvailability>;}

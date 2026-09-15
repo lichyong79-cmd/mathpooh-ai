@@ -1,3 +1,4 @@
+import {blockedTrainingSessions} from "@/lib/problem-quarantine";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -28,12 +29,13 @@ export async function POST(request:Request){
 
   const itemResult=await supabase
     .from("sos_training_items")
-    .select("id,session_id,answer_locked_at,solution_photo_path,sos_training_sessions!inner(student_id,phase,status)")
+    .select("id,problem_id,generated_problem,session_id,answer_locked_at,solution_photo_path,sos_training_sessions!inner(student_id,phase,status)")
     .eq("id",itemId).eq("session_id",sessionId).single();
   if(itemResult.error||!itemResult.data)return NextResponse.json({message:itemResult.error?.message||"진단 문항을 찾을 수 없습니다."},{status:404});
   const item:any=itemResult.data;
   const parent=Array.isArray(item.sos_training_sessions)?item.sos_training_sessions[0]:item.sos_training_sessions;
   if(String(parent?.student_id)!==String(student.id))return NextResponse.json({message:"본인의 진단 문항만 제출할 수 있습니다."},{status:403});
+  if((await blockedTrainingSessions(supabase,[{id:sessionId,sos_training_items:[item]}])).size)return NextResponse.json({message:"오류 보관 중인 문항은 제출할 수 없습니다."},{status:409});
   if(String(parent?.phase)!=="DIAGNOSIS")return NextResponse.json({message:"풀이사진 제출은 진단 문항에서 사용합니다."},{status:400});
   if(String(parent?.status)!=="IN_PROGRESS")return NextResponse.json({message:"진행 중인 진단이 아닙니다."},{status:409});
   if(!item.answer_locked_at)return NextResponse.json({message:"먼저 답안을 확정해 주세요."},{status:409});

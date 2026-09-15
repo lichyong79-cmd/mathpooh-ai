@@ -1,4 +1,5 @@
 "use client";
+import SosQuestionAvailability from "./sos-question-availability";
 
 import {useEffect,useMemo,useRef,useState} from "react";
 import SosProblemImage from "./sos-problem-image";
@@ -9,7 +10,7 @@ function fmt(seconds:number){
   return `${String(m).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
 }
 
-export default function SosDiagnosisRunner({session,onCompleted,onNotice}:{session:any;onCompleted:(json:any)=>Promise<void>|void;onNotice:(message:string)=>void}){
+function SosDiagnosisRunnerContent({session,onCompleted,onNotice}:{session:any;onCompleted:(json:any)=>Promise<void>|void;onNotice:(message:string)=>void}){
   const items:any[]=Array.isArray(session?.items)?session.items:[];
   const initialRaw:number=items.findIndex((x:any)=>!x.hasSolutionPhoto);
   const initialIndex:number=initialRaw<0?Math.max(0,items.length-1):initialRaw;
@@ -174,3 +175,5 @@ export default function SosDiagnosisRunner({session,onCompleted,onNotice}:{sessi
     </div>:null}
   </div>;
 }
+
+export default function SosDiagnosisRunner(props:Parameters<typeof SosDiagnosisRunnerContent>[0]){return <SosQuestionAvailability sessionId={String(props.session.id)}><SosDiagnosisRunnerContent {...props}/></SosQuestionAvailability>;}

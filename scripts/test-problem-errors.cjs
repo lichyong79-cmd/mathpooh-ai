@@ -1,7 +1,8 @@
 const fs=require('fs'),vm=require('vm'),ts=require('typescript'),assert=require('node:assert/strict');
 let admin={id:'admin'},row={id:'11111111-1111-1111-1111-111111111111',status:'ACTIVE',updated_at:'old',problem_dna:{kept:true}},collision=false;
-const db={from(){let patch;const q={select(){return q},eq(){return q},update(p){patch=p;return q},single:async()=>({data:structuredClone(row)}),maybeSingle:async()=>{if(collision)return {data:null};Object.assign(row,patch);return {data:{id:row.id}};}};return q;}};
-const exportsObj={};const ctx={exports:exportsObj,require:n=>n==='next/server'?{NextResponse:{json:(body,options)=>({body,status:options?.status??200})}}:n.includes('/auth')?{getAdminUser:async()=>admin}:{createClient:()=>db}};
+const trainingItem={id:'item',student_answer:'2',is_correct:false,generated_problem:{question:'old',answer:'1'}};
+const db={from(table){let patch;const q={contains:async()=>({data:[structuredClone(trainingItem)]}),then(a,b){if(table==='sos_training_items')Object.assign(trainingItem,patch);return Promise.resolve({data:null}).then(a,b);},select(){return q},eq(){return q},update(p){patch=p;return q},single:async()=>({data:structuredClone(row)}),maybeSingle:async()=>{if(collision)return {data:null};Object.assign(row,patch);return {data:{id:row.id}};}};return q;}};
+const exportsObj={};const ctx={exports:exportsObj,require:n=>n==='next/server'?{NextResponse:{json:(body,options)=>({body,status:options?.status??200})}}:n.includes('sos-ai-training')?{openAiJson:async()=>({question:'proposed',answer:'3',solution:'reason',changes:'fix',uncertainties:''})}:n.includes('/auth')?{getAdminUser:async()=>admin}:{createClient:()=>db}};
 vm.createContext(ctx);vm.runInContext(ts.transpile(fs.readFileSync('src/app/api/admin/problem-errors/route.ts','utf8'),{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}),ctx);
 const post=b=>exportsObj.POST({json:async()=>({id:row.id,kind:'bank',...b})});
 (async()=>{
@@ -14,8 +15,10 @@ const post=b=>exportsObj.POST({json:async()=>({id:row.id,kind:'bank',...b})});
  row.status='ARCHIVED';await post({action:'report',reason:'image problem'});await post({action:'restore',reviewed:true});assert.equal(row.status,'ARCHIVED');
  row={id:row.id,status:'READY',updated_at:'old',verification:{valid:true}};
  await post({kind:'ai',action:'report',reason:'wrong solution'});assert.equal(row.status,'DISABLED');
+ const proposal=await post({kind:'ai',action:'propose'});assert.equal(proposal.body.proposal.question,'proposed');assert.equal(row.status,'DISABLED');assert.equal(row.question_text,undefined);
  await post({kind:'ai',action:'save',question:'fixed question',answer:'3',solution:'fixed solution'});assert.equal(row.status,'DISABLED');assert.equal(row.display_latex,'fixed question');
- await post({kind:'ai',action:'restore',reviewed:true});assert.equal(row.status,'READY');
+ await post({kind:'ai',action:'restore',reviewed:true});assert.equal(row.status,'READY');assert.equal(trainingItem.generated_problem.question,'fixed question');assert.equal(trainingItem.student_answer,'2');assert.equal(trainingItem.is_correct,false);
+ const stale=await post({kind:'ai',action:'save',answer:'4',expectedUpdatedAt:'stale'});assert.equal(stale.status,409);
  collision=true;assert.equal((await post({action:'report',reason:'conflict'})).status,409);
  console.log('PASS: authorization, mandatory reason/review, quarantine through editing, restore prior status, concurrent edit protection');
 })().catch(e=>{console.error(e);process.exitCode=1});
