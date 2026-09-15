@@ -549,8 +549,12 @@ async function archiveGeneratedProblems(args:{supabase:any;studentId:string;sour
   // updating one conflict target twice in a single INSERT. Archive each key once;
   // retain the original training slots and map each back to its shared bank ID.
   const uniqueRows=Array.from(new Map(rows.map(row=>[row.content_hash,row])).values());
-  const saved=await supabase.from("sos_ai_generated_questions").upsert(uniqueRows,{onConflict:"content_hash",ignoreDuplicates:false}).select("id,content_hash");
-  if(saved.error)throw new Error(`AI 생성 문제은행 저장 실패: ${saved.error.message}`);
+  const inserted=await supabase.from("sos_ai_generated_questions").upsert(uniqueRows,{onConflict:"content_hash",ignoreDuplicates:true});
+  if(inserted.error)throw new Error(`AI 생성 문제은행 저장 실패: ${inserted.error.message}`);
+  // Reuse existing IDs without resetting an administrator's DISABLED state or usage history.
+  const saved=await supabase.from("sos_ai_generated_questions").select("id,content_hash").in("content_hash",uniqueRows.map(row=>row.content_hash));
+  if(saved.error)throw new Error(`AI 생성 문제은행 조회 실패: ${saved.error.message}`);
+  if(saved.data?.length!==uniqueRows.length)throw new Error("AI 생성 문제은행 연결이 일부 누락되었습니다.");
   const idByHash=new Map((saved.data??[]).map((r:any)=>[String(r.content_hash),String(r.id)]));
   return problems.map((p:any)=>{const h=createHash("sha256").update(`${p.sourceProblemId??""}|${kind}|${p.question??""}`).digest("hex");return {...p,aiBankId:idByHash.get(h)??null};});
 }
@@ -600,7 +604,10 @@ async function buildGeneratedProblemsInBatches(args:{supabase:any;jobId?:string;
     if(done.length>=count)return done.slice(0,count);
     // Finish an already saved legacy homework draft without discarding it.
     if(count===3&&!done.length&&saved.data?.draft_payload?.problems?.length===3){
-      return buildStagedGeneratedProblems(args);
+      const legacy=await buildStagedGeneratedProblems(args);
+      const checkpoint=await supabase.from("sos_ai_generation_jobs").update({batch_payload:{problems:legacy,isolated:true},updated_at:new Date().toISOString()}).eq("id",jobId);
+      if(checkpoint.error)throw checkpoint.error;
+      return legacy;
     }
   }
   while(done.length<count){
@@ -776,6 +783,20 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
   throw new Error(`AI 변형문항 파이프라인 검증 실패: ${lastError||"원인 미상"}`);
 }
 
+async function completeGeneratedSession(supabase:any,session:any,count:number){
+  if(!session)return false;
+  const items=await supabase.from("sos_training_items").select("item_order,generated_problem").eq("session_id",session.id);
+  if(items.error)throw items.error;
+  const rows=items.data??[];
+  const complete=rows.length===count&&Array.from({length:count},(_,i)=>i+1).every(order=>rows.some((row:any)=>Number(row.item_order)===order&&row.generated_problem));
+  if(complete&&session.status==="DRAFT"){
+    const published=await supabase.from("sos_training_sessions").update({status:"ASSIGNED",updated_at:new Date().toISOString()}).eq("id",session.id).eq("status","DRAFT");
+    if(published.error)throw published.error;
+    session.status="ASSIGNED";
+  }
+  return complete;
+}
+
 export async function generateSimilarTraining(args:{supabase:any;studentId:string;firstTrainingSessionId:string;count:3|10;kind:"HOMEWORK"|"SECOND_TRAINING";jobId?:string}){
   const {supabase,studentId,firstTrainingSessionId,count,kind,jobId}=args;
   const deadline=Date.now()+240000;
@@ -786,16 +807,19 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
   const s:any=source.data;
   const existing=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",kind==="HOMEWORK"?3:2).order("created_at",{ascending:true}).limit(1);
   if(existing.error)throw existing.error;
-  if((existing.data??[]).length){await updateGenerationStage(supabase,jobId,"READY",8,8,"이미 생성된 학습 세션을 확인했습니다.");return {session:existing.data?.[0],problems:[],existing:true};}
+  if(await completeGeneratedSession(supabase,existing.data?.[0],count)){await updateGenerationStage(supabase,jobId,"READY",8,8,"이미 생성된 학습 세션을 확인했습니다.");return {session:existing.data?.[0],problems:[],existing:true};}
 
   const weakness=s.weakness_snapshot??{};
   const ranked=(s.sos_training_items??[]).slice().sort((a:any,b:any)=>{
     const ap=(a.is_correct===false?100:0)+(a.review_is_correct===false?60:0)+Math.min(60,Number(a.response_seconds??0)/5);
-    const bp=(b.is_correct===false?100:0)+(b.review_is_correct===false?60:0)+Math.min(60,Number(b.response_seconds??0)/5);return bp-ap;
+    const bp=(b.is_correct===false?100:0)+(b.review_is_correct===false?60:0)+Math.min(60,Number(b.response_seconds??0)/5);return bp-ap||Number(a.item_order)-Number(b.item_order);
   }).slice(0,5);
   if(!ranked.length)throw new Error("AI 유사문항의 원문이 되는 1차 훈련 문항을 찾을 수 없습니다.");
   const sourceSlots=Array.from({length:count},(_,index)=>{const item=ranked[index%ranked.length],problem:any=item?.problem_bank_questions??{};return {slot:index+1,trainingOrder:Number(item?.item_order??0)||null,problemId:problem?.id??null,sourceAnswer:String(problem?.answer??""),sourceQuestionType:String(problem?.question_type??""),dna:compactDna(problem),imagePath:String(problem?.question_image_path??"")};});
-  const sourceImages=await Promise.all(sourceSlots.map(async slot=>slot.imagePath?await inlineImage(supabase,"question-images",slot.imagePath):""));
+  const checkpoint=jobId?await supabase.from("sos_ai_generation_jobs").select("batch_payload").eq("id",jobId).single():null;
+  if(checkpoint?.error)throw checkpoint.error;
+  const savedComplete=checkpoint?.data?.batch_payload?.problems?.length===count;
+  const sourceImages=savedComplete?sourceSlots.map(()=>""):await Promise.all(sourceSlots.map(async slot=>slot.imagePath?await inlineImage(supabase,"question-images",slot.imagePath):""));
   const sourceSummary=sourceSlots.map((slot,index)=>({slot:slot.slot,trainingOrder:slot.trainingOrder,problemId:slot.problemId,sourceAnswer:slot.sourceAnswer,sourceQuestionType:slot.sourceQuestionType,sourceAnswerWarning:/^[1-5]$/.test(slot.sourceAnswer)?"객관식 정답번호일 수 있음 · 실제 값을 새로 계산할 것":"",dna:slot.dna,hasOriginalImage:Boolean(sourceImages[index])}));
   const target=s.target_snapshot??{};
   // SOS290: 10문항은 배치로 나눠 생성한다. 3문항은 예전처럼 한 번에 처리된다.
@@ -805,12 +829,15 @@ export async function generateSimilarTraining(args:{supabase:any;studentId:strin
   await updateGenerationStage(supabase,jobId,"BANK_SAVED",8,8,"검증 문항을 AI 생성 문제은행에 저장했습니다.");
 
   const duplicateCheck=await supabase.from("sos_training_sessions").select("id,status,created_at").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",firstTrainingSessionId).eq("cycle_kind",kind).eq("round_no",kind==="HOMEWORK"?3:2).order("created_at",{ascending:true}).limit(1);
-  if(duplicateCheck.error)throw duplicateCheck.error;if((duplicateCheck.data??[]).length)return {session:duplicateCheck.data?.[0],problems:[],existing:true};
-  const session=await supabase.from("sos_training_sessions").insert({student_id:studentId,phase:"TRAINING",status:"ASSIGNED",target_snapshot:{...target,generatedSimilar:true,homework:kind==="HOMEWORK",barometerExcluded:kind==="HOMEWORK",generationPolicy:"STAGED_PIPELINE_V2"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:kind==="HOMEWORK"?3:2,total_count:count,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:kind}).select().single();
+  if(duplicateCheck.error)throw duplicateCheck.error;
+  const existingSession=duplicateCheck.data?.[0];
+  if(await completeGeneratedSession(supabase,existingSession,count))return {session:existingSession,problems:[],existing:true};
+  const session=existingSession?{data:existingSession,error:null}:await supabase.from("sos_training_sessions").insert({student_id:studentId,phase:"TRAINING",status:"DRAFT",target_snapshot:{...target,generatedSimilar:true,homework:kind==="HOMEWORK",barometerExcluded:kind==="HOMEWORK",generationPolicy:"STAGED_PIPELINE_V2"},weakness_snapshot:weakness,parent_session_id:firstTrainingSessionId,round_no:kind==="HOMEWORK"?3:2,total_count:count,baseline_meter:s.baseline_meter,goal_meter:s.goal_meter,cycle_kind:kind}).select().single();
   if(session.error||!session.data)throw new Error(session.error?.message||"AI 유사문항 세션 생성 실패");
   const role=kind==="HOMEWORK"?"AI 유사문항 3제 굳히기 · 바로미터 미반영":"2차 AI 유사훈련";
-  const ins=await supabase.from("sos_training_items").insert(generated.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:role,subunit_key:p.subunitKey})));
-  if(ins.error){await supabase.from("sos_training_sessions").delete().eq("id",session.data.id);throw ins.error;}
+  const ins=await supabase.from("sos_training_items").upsert(generated.map((p:any,index:number)=>({session_id:session.data.id,problem_id:null,generated_problem:p,item_order:index+1,item_role:role,subunit_key:p.subunitKey})),{onConflict:"session_id,item_order",ignoreDuplicates:true});
+  if(ins.error)throw ins.error;
+  if(!await completeGeneratedSession(supabase,session.data,count))throw new Error("AI 학습 배정 문항이 부족합니다. 저장된 문항부터 재시도합니다.");
   await updateGenerationStage(supabase,jobId,"READY",8,8,"학생 학습 배정까지 완료되었습니다.");
   return {session:session.data,problems:generated,pipelineVersion:"V2"};
 }

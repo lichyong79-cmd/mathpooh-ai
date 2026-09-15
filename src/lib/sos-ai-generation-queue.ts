@@ -18,8 +18,9 @@ export async function enqueueAiGeneration(args:{supabase:any;studentId:string;so
         .update({status:"QUEUED",attempt_count:0,started_at:null,completed_at:null,stage:"QUEUED",stage_index:0,stage_total:8,stage_message:"생성 작업을 다시 예약했습니다.",last_error:null,stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString()})
         .eq("id",existing.data.id).eq("status",existing.data.status)
         .select("id,status,generation_kind,requested_count,result_session_id,requested_at,started_at,completed_at,last_error,pipeline_version,stage,stage_index,stage_total,stage_message,stage_updated_at")
-        .single();
-      if(retried.error||!retried.data)throw retried.error??new Error("AI 문항 생성 재예약 실패");
+        .maybeSingle();
+      if(retried.error)throw retried.error;
+      if(!retried.data){const current=await supabase.from("sos_ai_generation_jobs").select("*").eq("id",existing.data.id).single();if(current.error)throw current.error;return {job:current.data,existing:true};}
       return {job:retried.data,existing:true,retried:true};
     }
     return {job:existing.data,existing:true};
@@ -27,6 +28,11 @@ export async function enqueueAiGeneration(args:{supabase:any;studentId:string;so
   const created=await supabase.from("sos_ai_generation_jobs").insert({
     student_id:studentId,source_training_session_id:sourceTrainingSessionId,generation_kind:kind,requested_count:count,status:"QUEUED",pipeline_version:"V2",stage:"QUEUED",stage_index:0,stage_total:8,stage_message:"생성 대기 중"
   }).select("id,status,generation_kind,requested_count,result_session_id,requested_at,started_at,completed_at,last_error,pipeline_version,stage,stage_index,stage_total,stage_message,stage_updated_at").single();
+  if(created.error?.code==="23505"){
+    const winner=await supabase.from("sos_ai_generation_jobs").select("*").eq("source_training_session_id",sourceTrainingSessionId).eq("generation_kind",kind).single();
+    if(winner.error)throw winner.error;
+    return {job:winner.data,existing:true};
+  }
   if(created.error||!created.data)throw created.error??new Error("AI 문항 생성 작업 예약 실패");
   return {job:created.data,existing:false};
 }

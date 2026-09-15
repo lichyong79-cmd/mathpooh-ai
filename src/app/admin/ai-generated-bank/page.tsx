@@ -16,13 +16,13 @@ export default function AiGeneratedBankPage(){
  // 관리자가 직접 한 건씩 돌릴 수 있는 안전판.
  async function runNext(){
   if(running)return;
-  if(!window.confirm("대기 중인 생성 작업 1건을 지금 처리합니다.\n\n최대 5분까지 걸릴 수 있습니다. 이 화면을 닫지 마세요.\n\n진행할까요?"))return;
+  if(!window.confirm("대기 중인 생성 작업 1건을 지금 처리합니다.\n\n화면을 닫아도 백그라운드에서 계속 처리됩니다.\n\n진행할까요?"))return;
   setRunning(true);setNotice("");setError("");
   try{
    const r=await fetch("/api/admin/ai-generated-bank",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"run_next"})});
    const d=await r.json().catch(()=>({}));
    if(!r.ok||d?.success===false)throw new Error(d?.message||"생성에 실패했습니다.");
-   setNotice(d.processed?`생성 완료 (${d.status})`:d.message||"대기 중인 작업이 없습니다.");
+   setNotice(d.message||(d.processed?"생성을 시작했습니다.":"대기 중인 작업이 없습니다."));
    await load();
   }catch(e){setError(e instanceof Error?e.message:"생성에 실패했습니다.");}
   finally{setRunning(false);}
@@ -31,7 +31,7 @@ export default function AiGeneratedBankPage(){
  // SOS291: 3회 시도를 채워 멈춘 작업을 화면에서 되살린다.
  async function reviveStuck(){
   if(running)return;
-  if(!window.confirm("시도 횟수를 다 써서 멈춘 생성 작업을 모두 되살립니다.\n\n진행 중이던 작업도 처음부터 다시 시작됩니다.\n\n진행할까요?"))return;
+  if(!window.confirm("시도 횟수를 다 써서 멈춘 생성 작업을 모두 되살립니다.\n\n저장된 문항부터 이어서 처리하며, 정상 진행 중인 작업은 유지됩니다.\n\n진행할까요?"))return;
   setRunning(true);setNotice("");setError("");
   try{
    const r=await fetch("/api/admin/ai-generated-bank",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"revive_stuck"})});

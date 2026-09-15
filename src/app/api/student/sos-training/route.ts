@@ -1,18 +1,28 @@
 import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { answerMatches, recordTrainingResult } from "@/lib/sos-training-result";
 import {
   analyzeDiagnosisAndCreateFirstTraining,
   createAutomaticSecondDiagnosis,
-  generateSimilarTraining,
   generateReviewHint,
 } from "@/lib/sos-ai-training";
 import { clampMeter } from "@/lib/difficulty-meter";
 import { reviewBonus } from "@/lib/sos-training-policy";
 import { cycleFromSnapshot } from "@/lib/sos-cycle";
-import { enqueueAiGeneration } from "@/lib/sos-ai-generation-queue";
+import { enqueueAiGeneration as enqueueOnly } from "@/lib/sos-ai-generation-queue";
+
+import { processJob, resumeGenerationJob } from "@/lib/sos-ai-job-worker";
+
+async function enqueueAiGeneration(args:Parameters<typeof enqueueOnly>[0]){
+  const queued=await enqueueOnly(args);
+  after(async()=>{
+    const claim=await resumeGenerationJob(args.supabase,String(queued.job.id));
+    if(claim.started)await processJob(String(queued.job.id),claim.job);
+  });
+  return queued;
+}
 
 // SOS319: 이 라우트는 진단 완료 시 AI 취약점 분석과 1차 훈련 생성을 그 자리에서 돌린다.
 // AI를 여러 번 부르고 학생 풀이사진까지 함께 보내는데, maxDuration 선언이 없어

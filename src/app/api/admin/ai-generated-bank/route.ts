@@ -1,12 +1,11 @@
 import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getSessionUser } from "@/lib/supabase/auth";
-import { generateSimilarTraining } from "@/lib/sos-ai-training";
+import { getAdminUser } from "@/lib/supabase/auth";
 import { enqueueAiGeneration } from "@/lib/sos-ai-generation-queue";
 import { processJob, resumeGenerationJob } from "@/lib/sos-ai-job-worker";
 
 // SOS282: 허용목록으로 통일한다.
-async function auth(){const user=await getSessionUser();return String(user?.user_metadata?.role??"")==="admin"?user:null;}
+async function auth(){return getAdminUser();}
 
 export const maxDuration=300;
 export async function GET(){
@@ -47,14 +46,16 @@ export async function POST(request:Request){
   // SOS291: attempt_count가 3에 도달하면 cron도 수동 실행도 그 작업을 영영 선택하지 않는다.
   // GENERATING으로 죽어 있는 작업은 화면에서 손댈 방법이 없어 SQL을 직접 써야 했다.
   if(action==="revive_stuck"){
-    const r=await supabase.from("sos_ai_generation_jobs").update({
-      status:"QUEUED",attempt_count:0,batch_payload:{},
-      stage:"QUEUED",stage_index:0,stage_message:"관리자가 멈춘 작업을 되살렸습니다.",
-      last_error:null,started_at:null,
-      stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString(),
-    }).in("status",["GENERATING","QUEUED","FAILED"]).gte("attempt_count",1).select("id");
-    if(r.error)return NextResponse.json({message:r.error.message},{status:400});
-    return NextResponse.json({success:true,revived:(r.data??[]).length});
+    const cutoff=new Date(Date.now()-7*60000).toISOString();
+    const candidates=await supabase.from("sos_ai_generation_jobs").select("id,student_id,source_training_session_id,generation_kind,requested_count")
+      .or(`status.eq.FAILED,and(status.eq.QUEUED,attempt_count.gte.8),and(status.eq.GENERATING,started_at.lt.${cutoff})`).limit(200);
+    if(candidates.error)return NextResponse.json({message:candidates.error.message},{status:400});
+    let revived=0;
+    for(const row of candidates.data??[]){
+      const result=await enqueueAiGeneration({supabase,studentId:row.student_id,sourceTrainingSessionId:row.source_training_session_id,kind:row.generation_kind,count:row.requested_count===3?3:10});
+      if(result.retried)revived++;
+    }
+    return NextResponse.json({success:true,revived});
   }
 
   if(action==="requeue"){
@@ -73,6 +74,8 @@ export async function POST(request:Request){
     }
   }
 
+  if(action!=="run_next")return NextResponse.json({message:"지원하지 않는 작업입니다."},{status:400});
+
   // run_next: 워커와 같은 규칙으로 한 건을 선점해 끝까지 처리한다.
   const cols="id,student_id,source_training_session_id,generation_kind,requested_count,status,attempt_count";
   const picked=await supabase.from("sos_ai_generation_jobs").select(cols)
@@ -82,48 +85,8 @@ export async function POST(request:Request){
   const job:any=picked.data;
   if(!job)return NextResponse.json({success:true,processed:0,message:"대기 중인 생성 작업이 없습니다."});
 
-  const claimed=await supabase.from("sos_ai_generation_jobs").update({
-    status:"GENERATING",started_at:new Date().toISOString(),updated_at:new Date().toISOString(),
-    attempt_count:Number(job.attempt_count??0)+1,last_error:null,
-  }).eq("id",job.id).in("status",["QUEUED","FAILED"]).select("id").maybeSingle();
-  if(claimed.error)return NextResponse.json({message:claimed.error.message},{status:400});
-  if(!claimed.data)return NextResponse.json({success:true,processed:0,message:"다른 실행이 먼저 처리 중입니다."});
-
-  try{
-    const result:any=await generateSimilarTraining({
-      supabase,
-      studentId:String(job.student_id),
-      firstTrainingSessionId:String(job.source_training_session_id),
-      count:Number(job.requested_count)===3?3:10,
-      kind:String(job.generation_kind)==="HOMEWORK"?"HOMEWORK":"SECOND_TRAINING",
-      jobId:String(job.id),
-    });
-    await supabase.from("sos_ai_generation_jobs").update({
-      status:"READY",stage:"READY",stage_index:8,stage_total:8,
-      stage_message:"학생 학습 배정까지 완료되었습니다.",
-      result_session_id:String(result?.session?.id??"")||null,
-      completed_at:new Date().toISOString(),stage_updated_at:new Date().toISOString(),
-      updated_at:new Date().toISOString(),last_error:null,
-    }).eq("id",job.id);
-    return NextResponse.json({success:true,processed:1,jobId:job.id,status:"READY"});
-  }catch(error){
-    const message=error instanceof Error?error.message:"AI 생성 실패";
-    // SOS297: 묶음 하나를 마친 뒤 또는 격리 모드로 전환한 정상 중간 종료.
-    // 수동 실행에서도 FAILED로 만들지 말고 다음 실행이 이어받도록 QUEUED로 돌린다.
-    if(message.startsWith("PARTIAL_BATCH_DONE:")){
-      const progress=message.split(":")[1]??"";
-      await supabase.from("sos_ai_generation_jobs").update({
-        status:"QUEUED",attempt_count:0,started_at:null,last_error:null,
-        stage_message:`${progress}문항 보존 · 다음 실행에서 이어갑니다.`,
-        stage_updated_at:new Date().toISOString(),updated_at:new Date().toISOString(),
-      }).eq("id",job.id);
-      return NextResponse.json({success:true,processed:1,jobId:job.id,status:"PARTIAL",message:progress});
-    }
-    await supabase.from("sos_ai_generation_jobs").update({
-      status:"FAILED",stage:"FAILED",stage_message:message.slice(0,300),
-      last_error:message.slice(0,1000),stage_updated_at:new Date().toISOString(),
-      updated_at:new Date().toISOString(),
-    }).eq("id",job.id);
-    return NextResponse.json({success:false,processed:1,jobId:job.id,status:"FAILED",message},{status:500});
-  }
+  const claim=await resumeGenerationJob(supabase,String(job.id));
+  if(!claim.started)return NextResponse.json({success:true,processed:0,message:"다른 실행이 먼저 처리 중입니다."});
+  after(async()=>{await processJob(String(job.id),claim.job);});
+  return NextResponse.json({success:true,processed:1,jobId:job.id,status:"GENERATING",message:"생성을 시작했습니다. 화면을 닫아도 계속 처리됩니다."},{status:202});
 }
