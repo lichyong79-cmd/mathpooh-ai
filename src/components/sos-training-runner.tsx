@@ -6,6 +6,7 @@ import {useEffect,useMemo,useRef,useState} from "react";
 import SosProblemImage from "./sos-problem-image";
 import SosGeneratedQuestionMathJax from "./sos-generated-question-mathjax";
 import {readTrainingDraft,writeTrainingDraft,clearTrainingDraft} from "@/lib/sos-training-draft";
+import {reportSosClientEvent} from "@/lib/sos-client-diagnostics";
 
 function fmt(seconds:number){
   const s=Math.max(0,Math.floor(seconds));
@@ -22,6 +23,16 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
     return i>=0?i:Math.max(0,items.length-1);
   },[items]);
   const [index,setIndex]=useState(restored?.index??firstOpen);
+  const currentIndexRef=useRef(index);
+  currentIndexRef.current=index;
+  useEffect(()=>{
+    reportSosClientEvent(String(session.id),'RUNNER_OPEN',{question:currentIndexRef.current+1,restored:Boolean(restored)});
+    const hide=()=>reportSosClientEvent(String(session.id),'PAGE_HIDE',{question:currentIndexRef.current+1});
+    window.addEventListener('pagehide',hide);
+    return()=>{window.removeEventListener('pagehide',hide);reportSosClientEvent(String(session.id),'RUNNER_CLOSE',{question:currentIndexRef.current+1});};
+  // The keyed runner mounts once per training session.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
   const [answer,setAnswer]=useState("");
   const [answers,setAnswers]=useState<Record<string,string>>(initialAnswers);
   const [seconds,setSeconds]=useState<Record<string,number>>(initialSeconds);

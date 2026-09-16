@@ -13,13 +13,13 @@ storage.getItem=()=>{throw Error('storage denied')};assert.equal(readTrainingDra
 let slots=[],cursor=0,effect,interval,response={blocked:false},fail=false,reloads=0;
 const react={useState:initial=>{const i=cursor++;if(!(i in slots))slots[i]=initial;return [slots[i],v=>slots[i]=typeof v==='function'?v(slots[i]):v]},useEffect:fn=>{effect??=fn}};
 const jsx=(type,props)=>({type,props});
-const ctx={exports:{},require:n=>n==='react'?react:{jsx,jsxs:jsx,Fragment:'fragment'},fetch:async()=>{if(fail)throw Error('timeout');return {ok:true,json:async()=>response}},AbortSignal:{timeout:()=>null},setInterval:fn=>{interval=fn;return 1},clearInterval:()=>{},window:{location:{reload:()=>reloads++}}};
+const ctx={exports:{},require:n=>n==='react'?react:n.includes('diagnostics')?{reportSosClientEvent:()=>{}}:{jsx,jsxs:jsx,Fragment:'fragment'},fetch:async()=>{if(fail)throw Error('timeout');return {ok:true,json:async()=>response}},AbortSignal:{timeout:()=>null},setInterval:fn=>{interval=fn;return 1},clearInterval:()=>{},window:{location:{reload:()=>reloads++}}};
 vm.createContext(ctx);vm.runInContext(compile('src/components/sos-question-availability.tsx'),ctx);
 const child={type:'runner',answer:'61'};const render=()=>{cursor=0;return ctx.exports.default({sessionId:'s1',children:child}).props.children};
 const flush=()=>new Promise(r=>setImmediate(r));
 (async()=>{
  render();const cleanup=effect();await flush();let tree=render();assert.equal(tree[1].props.children,child);assert.equal(tree[1].props.hidden,false);
- fail=true;interval();await flush();tree=render();assert.equal(tree[1].props.children,child);assert.equal(tree[1].props.hidden,true);assert.equal(tree[1].props.inert,true);
+ fail=true;interval();await flush();tree=render();assert.equal(tree[1].props.children,child);assert.equal(tree[1].props.hidden,false);assert.equal(tree[1].props.inert,true);
  fail=false;interval();await flush();tree=render();assert.equal(tree[1].props.children,child);assert.equal(tree[1].props.hidden,false);assert.equal(reloads,0);
  response={blocked:true};interval();await flush();tree=render();assert.equal(tree[1].props.hidden,true);assert.equal(tree[1].props.inert,true);
  cleanup();console.log('PASS: failed poll preserves runner identity; recovery resumes; quarantine blocks; drafts survive reload and remain session/item scoped');

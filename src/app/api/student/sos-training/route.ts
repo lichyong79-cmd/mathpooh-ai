@@ -424,6 +424,15 @@ export async function POST(request: Request) {
     );
 
   const session: any = sessionResult.data;
+  if(action==="client_diagnostic"){
+    const events=["RUNNER_OPEN","RUNNER_CLOSE","PAGE_HIDE","CHECK_FAILED","CHECK_RECOVERED"];
+    if(!events.includes(body.event))return NextResponse.json({message:"알 수 없는 이벤트"},{status:400});
+    const saved=await supabase.from("sos_training_activity_logs").insert({
+      session_id:sessionId,student_id:student.id,item_id:null,event_type:"CLIENT_DIAGNOSTIC",
+      detail:{event:body.event,version:String(body.version??"").slice(0,40),question:Math.max(0,Math.min(100,Math.floor(Number(body.question)||0))),restored:body.restored===true},
+    });
+    return NextResponse.json({success:!saved.error},{status:saved.error?503:200});
+  }
   const assigned=await supabase.from("sos_training_items").select("problem_id,generated_problem").eq("session_id",sessionId);
   if(assigned.error)return NextResponse.json({message:"문항 사용 상태를 확인하지 못했습니다."},{status:503});
   const blocked=await blockedTrainingSessions(supabase,[{id:sessionId,sos_training_items:assigned.data}]);

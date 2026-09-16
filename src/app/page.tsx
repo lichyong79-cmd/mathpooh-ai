@@ -2285,6 +2285,7 @@ function SosTrainingWorkspace({
 
 export default function StudentHome() {
   const [portal, setPortal] = useState<Portal | null>(null);
+  const portalReadyRef = useRef(false);
   const [activeExam, setActiveExam] = useState<Exam | null>(null);
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -2315,15 +2316,17 @@ export default function StudentHome() {
   const [examConsentChecked, setExamConsentChecked] = useState(false);
   const [waitingExam, setWaitingExam] = useState<Exam | null>(null);
   const load = useCallback(async () => {
+    try {
     // F5/최초 진입 시 portal이 정오답 기준 최종점수를 반환한다.
     const portalResponse = await fetch("/api/student/portal", {
       cache: "no-store",
     });
-    if (portalResponse.status === 403) return window.location.replace("/admin");
+    if (portalResponse.status === 403 && !portalReadyRef.current) return window.location.replace("/admin");
     const data = await portalResponse.json();
     if (!portalResponse.ok)
       return setError(data.message || "학생 정보를 불러오지 못했습니다.");
     setPortal(data);
+    portalReadyRef.current = true;
     // 관리자 결과수정 중 결과창이 열려 있으면 최신 점수·오답으로 즉시 교체한다.
     setResultExam((current) =>
       current
@@ -2331,6 +2334,9 @@ export default function StudentHome() {
         : null,
     );
     setError("");
+    } catch {
+      setError("연결이 원활하지 않습니다. 현재 화면과 답안은 유지됩니다. 잠시 후 다시 확인해 주세요.");
+    }
   }, []);
 
   useEffect(() => {
@@ -3031,7 +3037,7 @@ export default function StudentHome() {
     window.location.href = "/";
   };
 
-  if (error)
+  if (error && !portal)
     return (
       <main className="student-loading">
         <strong>{error}</strong>
@@ -3228,6 +3234,7 @@ export default function StudentHome() {
     );
   return (
     <main className="student-portal">
+      {error?<div role="status" className="sos-live-notice">{error} 현재 학습은 유지됩니다. <button type="button" onClick={()=>void load()}>연결 다시 확인</button></div>:null}
       {busy ? (
         <MATHPOOHLoader
           title={busy}
