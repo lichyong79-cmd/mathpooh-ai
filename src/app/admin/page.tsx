@@ -3825,7 +3825,9 @@ function ExamsPage({
         );
         newlyUploadedPaths.push(paths.originalFilePath);
       }
-      const row = examToRow(formForSave, paths);
+      // Region verification is saved by the mapper/verification action, not a stale editor snapshot.
+      const { region_verified: ignoredRegionVerification, ...rowFields } = examToRow(formForSave, paths);
+      const row = { ...rowFields, ...(draftFiles.test ? { region_verified: false } : {}) };
       const updateResponse = await fetch(
         `${config.url}/rest/v1/exams?id=eq.${examId}`,
         {

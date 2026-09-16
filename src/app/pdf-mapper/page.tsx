@@ -170,22 +170,34 @@ export default function PdfMapperPage(){
   }
   async function saveAndReturn(){if(await save())window.location.href="/admin?menu=exam-input&exam="+encodeURIComponent(examId);}
 
-  async function save(){
+  async function confirmAllAndSave(){
+    if(regions.some(r=>r.w<=0||r.h<=0))return alert("영역이 없는 문항을 먼저 지정해 주세요.");
+    if(!window.confirm(`${regions.length}문항의 영역을 모두 확인하셨나요? 전체 검수 완료로 저장합니다.`))return;
+    const confirmed=regions.map(r=>({...r,verified:true}));
+    setRegions(confirmed);
+    await save(confirmed);
+  }
+  async function save(items=regions){
     const config=getSupabaseConfig(); if(!config||!examId)return alert("Supabase 연결을 확인해 주세요.");
     setSaving(true);
     try{
       const h={...(await authHeaders()),"Content-Type":"application/json"};
       // 기존 영역을 지우지 않고 한 요청으로 저장합니다.
-      const body=regions.map(r=>({exam_id:examId,question_no:r.number,page_no:r.page,x:r.x,y:r.y,width:r.w,height:r.h,question_type:r.type,answer:r.answer,verified:r.verified,source:r.source}));
+      const body=items.map(r=>({exam_id:examId,question_no:r.number,page_no:r.page,x:r.x,y:r.y,width:r.w,height:r.h,question_type:r.type,answer:r.answer,verified:r.verified,source:r.source}));
       const res=await fetch(`${config.url}/rest/v1/question_regions?on_conflict=exam_id,question_no`,{method:"POST",headers:{...h,Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(body)});
       if(!res.ok)throw new Error(await res.text());
-      setSavedSnapshot(JSON.stringify(regions));setSaveNote("문항 영역 저장 완료");
+      const complete=items.length>0&&items.every(r=>r.verified&&r.w>0&&r.h>0);
+      const examResponse=await fetch(`${config.url}/rest/v1/exams?id=eq.${encodeURIComponent(examId)}`,{method:"PATCH",headers:{...h,Prefer:"return=representation"},body:JSON.stringify({region_verified:complete})});
+      if(!examResponse.ok)throw new Error("영역은 저장했지만 검수 상태 연결에 실패했습니다. 다시 저장해 주세요.");
+      const savedExams=await examResponse.json();
+      if(savedExams.length!==1||savedExams[0].region_verified!==complete)throw new Error("검수 상태 저장을 확인하지 못했습니다. 다시 저장해 주세요.");
+      setSavedSnapshot(JSON.stringify(items));setSaveNote(complete?"전체 검수 완료 · 목록에 반영됨":"영역 저장 완료 · 미검수 문항 확인 필요");
       return true;
     }catch(e){alert(`저장 실패: ${e instanceof Error?e.message:"알 수 없는 오류"}`)}finally{setSaving(false)}
   }
 
   return <main className="mapper-shell">
-    <header className="mapper-header"><div><span>SOS PDF MAPPER</span><h1>문항 영역 검수</h1><p>자동 초안을 확인하고 틀린 문항만 다시 드래그하세요.</p></div><div className="header-actions"><button onClick={goNextNeedsCheck}>다음 미검수 문항</button><button className="primary" onClick={()=>void save()} disabled={saving||loading}>{saving?"저장 중...":"중간 저장"}</button><button onClick={saveAndReturn} disabled={saving||loading}>저장하고 등록 계속</button><button onClick={returnToRegistration} disabled={saving}>돌아가기</button></div></header>
+    <header className="mapper-header"><div><span>SOS PDF MAPPER</span><h1>문항 영역 검수</h1><p>자동 초안을 확인하고 틀린 문항만 다시 드래그하세요.</p></div><div className="header-actions"><button onClick={goNextNeedsCheck}>다음 미검수 문항</button><button className="primary" onClick={()=>void save()} disabled={saving||loading}>{saving?"저장 중...":"중간 저장"}</button><button onClick={()=>void confirmAllAndSave()} disabled={saving||loading||completed!==regions.length}>전체 검수 완료·저장</button><button onClick={saveAndReturn} disabled={saving||loading}>저장하고 등록 계속</button><button onClick={returnToRegistration} disabled={saving}>돌아가기</button></div></header>
     <section className="meta-card"><b>{examCode}</b><span>{examPdfName||"시험지 불러오는 중"}</span><span>영역 {completed}/{regions.length}</span><span>검수 {verified}/{regions.length} · {dirty?"저장 필요":saveNote||"저장된 상태"}</span></section>
     <div className="mapper-grid">
       <aside className="side-card"><div className="side-title"><h2>문항 번호</h2><b>{completed}/{regions.length}</b></div><div className="number-grid">{regions.map(r=><button key={r.number} className={`${active===r.number?"active":""} ${r.w>0?"done":""} ${r.verified?"verified":""}`} onClick={()=>setActive(r.number)}>{r.number}</button>)}</div>{current&&<div className="answer-editor"><h3>{active}번</h3><p>{current.source==="auto"?"자동 초안":"수동 보정"} · {current.verified?"검수 완료":"확인 필요"}</p><button className="verify" disabled={current.w<=0||current.h<=0} onClick={confirmAndNext}>확인하고 다음 미검수</button><button className="verify" disabled={current.w<=0||current.h<=0} onClick={()=>patch({verified:!current.verified})}>{current.verified?"검수 취소":"이 영역 맞음"}</button><button className="clear" onClick={()=>patch({x:0,y:0,w:0,h:0,verified:false,source:"manual"})}>현재 영역 지우기</button></div>}</aside>
