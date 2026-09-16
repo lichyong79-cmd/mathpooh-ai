@@ -3181,7 +3181,7 @@ export default function StudentHome() {
             </div>
             <p className="omr-help">
               답안은 10초마다 자동 저장됩니다. 시험지를 보면서 오른쪽에 답을
-              입력하세요.
+              입력하세요. 음수 답안은 ± 버튼으로 부호를 바꿀 수 있습니다.
             </p>
             <div className="omr-grid">
               {Array.from({ length: activeExam.question_count }, (_, index) => {
@@ -3209,20 +3209,38 @@ export default function StudentHome() {
                         ))}
                       </div>
                     ) : (
+                      <div style={{ display: "flex", gap: 6, minWidth: 0 }}>
+                      <button
+                        type="button"
+                        aria-label={`${no}번 답안 부호 변경`}
+                        title="양수 / 음수 변경"
+                        disabled={examPaused}
+                        onClick={() => {
+                          const value = answers[no] ?? "";
+                          changeAnswer(no, value.startsWith("-") ? value.slice(1) : `-${value}`);
+                        }}
+                        style={{ flex: "0 0 40px", minHeight: 40, border: "1px solid #9bb5a4", borderRadius: 8, background: "#edf5ef", color: "#245936", fontSize: 22 }}
+                      >±</button>
                       <input
+                        type="text"
                         inputMode="numeric"
+                        aria-label={`${no}번 주관식 답안`}
+                        style={{ minWidth: 0, width: "100%" }}
                         value={answers[no] ?? ""}
                         onChange={(event) =>
                           changeAnswer(
                             no,
                             event.target.value
+                              .replace(/[−﹣－–]/g, "-")
                               .replace(/[^0-9-]/g, "")
+                              .replace(/(?!^)-/g, "")
                               .slice(0, 5),
                           )
                         }
                         placeholder="정답"
                         disabled={examPaused}
                       />
+                      </div>
                     )}
                   </div>
                 );
