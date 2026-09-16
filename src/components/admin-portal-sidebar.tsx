@@ -34,12 +34,12 @@ const groups: { label: string; items: Item[] }[] = [
   { label: "문제은행 관리", items: [
     { id: "problem-sources", label: "문제등록", icon: "▦" },
     { id: "problem-analysis", label: "AI 분석", icon: "✦", href: "/problem-bank/ai-upload" },
-  ] },
-  { label: "SOS 운영", items: [
+    { id: "sos-bank", label: "SOS 문제은행", icon: "▣", href: "/problem-bank" },
     { id: "ai-generated-bank", label: "AI 생성 문제은행", icon: "✦", href: "/admin/ai-generated-bank" },
     { id: "problem-errors", label: "오류문항 보관함", icon: "⚑", href: "/admin/problem-errors" },
-    { id: "sos-bank", label: "SOS 문제은행", icon: "▣", href: "/problem-bank" },
     { id: "sos-difficulty", label: "난이도 관리", icon: "◆", href: "/problem-bank/difficulty" },
+  ] },
+  { label: "SOS 학습", items: [
     { id: "sos-learning", label: "SOS 학습운영", icon: "◎" },
     { id: "sos-status", label: "SOS 학습현황", icon: "▤", href: "/admin/sos-status" },
   ] },
