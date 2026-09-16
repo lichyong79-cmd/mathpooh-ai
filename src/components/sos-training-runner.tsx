@@ -46,6 +46,23 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
   const [started,setStarted]=useState(Date.now());
   const [now,setNow]=useState(Date.now());
   const [busy,setBusy]=useState(false);
+  const [saveError,setSaveError]=useState("");
+  const [submitPrompt,setSubmitPrompt]=useState(false);
+  function showSaveError(message:string){setSaveError(message);onNotice(message);}
+  async function postAnswer(payload:Record<string,unknown>,timeoutMs=15000){
+    const controller=new AbortController();
+    const timer=window.setTimeout(()=>controller.abort(),timeoutMs);
+    try{
+      const response=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},signal:controller.signal,body:JSON.stringify(payload)});
+      const json=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(json.message||`답안 저장 실패 (${response.status})`);
+      if(json.success!==true)throw new Error("저장 완료를 확인하지 못했습니다. 답안은 이 기기에 보관되어 있습니다. 다시 눌러 주세요.");
+      return json;
+    }catch(error){
+      if(controller.signal.aborted)throw new Error("서버 응답이 지연되고 있습니다. 입력한 답은 보관되어 있으니 잠시 후 다시 제출해 주세요.");
+      throw error;
+    }finally{window.clearTimeout(timer);}
+  }
   const [frozenElapsed,setFrozenElapsed]=useState<number|null>(null);
   // 문항 저장을 순서대로 백그라운드 처리한다. 종전에는 저장 API가 끝날 때까지
   // 다음 문항을 가려 약 7초씩 멈췄고, 그 사이 중복 클릭으로 이동이 겹칠 수 있었다.
@@ -98,13 +115,12 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
   function queueSave(itemToSave:any,value:string,sec:number,question:number,unknown=false){
     const savingItemId=String(itemToSave?.id??"");
     const operation=saveQueueRef.current.then(async()=>{
-      const saved=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_training_item",sessionId:session.id,itemId:savingItemId,answer:value,responseSeconds:sec,question,unknown})});
-      const savedJson=await saved.json().catch(()=>({}));
-      if(!saved.ok)throw new Error(savedJson.message||`${question}번 문항 저장 실패`);
+      await postAnswer({action:"save_training_item",sessionId:session.id,itemId:savingItemId,answer:value,responseSeconds:sec,question,unknown});
     });
     // 한 요청이 실패해도 뒤 문항 저장은 계속 진행한다. 실패 문구는 즉시 학생에게 보인다.
     saveQueueRef.current=operation.catch((error)=>{
-      onNotice(error instanceof Error?error.message:`${question}번 문항 저장 실패`);
+      showSaveError(error instanceof Error?error.message:`${question}번 문항 저장 실패`);
+      reportSosClientEvent(String(session.id),"ANSWER_SAVE_FAILED",{question});
     });
     return saveQueueRef.current;
   }
@@ -121,7 +137,8 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
     const nextSeconds={...seconds,[itemId]:sec};
     setAnswers(nextAnswers);setSeconds(nextSeconds);
     cacheDraft(index,itemId,value,sec);
-    onNotice("");
+    onNotice("");setSaveError("");
+    reportSosClientEvent(String(session.id),"ANSWER_SAVE_REQUESTED",{question:index+1});
     void queueSave(item,value,sec,index+1);
     return true;
   }
@@ -174,7 +191,7 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
     setIndex((v:number)=>v+1);
   }
 
-  async function submitAll(){
+  async function submitAll(confirmed=false){
     if(!item||busy)return;
     const currentValue=answer.trim();
     if(!currentValue){onNotice("답을 입력해야 훈련을 제출할 수 있습니다.");return;}
@@ -188,7 +205,10 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
       setIndex(first);
       return;
     }
-    if(!window.confirm(`${label} ${items.length}문항을 제출하고 성적표를 확인할까요?`))return;
+    cacheDraft(index,itemId,currentValue,finalElapsed);
+    if(!confirmed){setSubmitPrompt(true);return;}
+    setSubmitPrompt(false);setSaveError("");
+    reportSosClientEvent(String(session.id),"SUBMIT_REQUESTED",{question:index+1});
 
     setFrozenElapsed(finalElapsed);
     setBusy(true);
@@ -200,14 +220,13 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
       // 다시 저장하므로 중간 네트워크 오류가 있어도 학생 답은 최종 복구된다.
       await saveQueueRef.current;
 
-      const response=await fetch("/api/student/sos-training",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"submit",sessionId:session.id,answers:mergedAnswers,responseSeconds:finalSeconds})});
-      const json=await response.json();
-      if(!response.ok)throw new Error(json.message||"훈련 제출 실패");
+      const json=await postAnswer({action:"submit",sessionId:session.id,answers:mergedAnswers,responseSeconds:finalSeconds},45000);
       clearTrainingDraft(String(session.id));
       await onCompleted(json);
     }catch(e){
       setFrozenElapsed(null);
-      onNotice(e instanceof Error?e.message:"훈련 제출 실패");
+      showSaveError(e instanceof Error?e.message:"훈련 제출 실패");
+      reportSosClientEvent(String(session.id),"SUBMIT_FAILED",{question:index+1});
     }finally{setBusy(false);}
   }
 
@@ -257,6 +276,8 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
         {/* SOS283: 정답은 -999~999 정수인데 모바일에서 문자 키보드가 떴다. */}
         <label><span>정답</span><input autoFocus disabled={busy} value={answer} inputMode="numeric" enterKeyHint="next" autoComplete="off" onChange={(e:React.ChangeEvent<HTMLInputElement>)=>{setAnswer(e.target.value);cacheDraft(index,itemId,e.target.value,elapsed);}} placeholder="정답을 입력하세요" onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void next();}}/></label>
         <p>{homework?"시간 제한 없이 충분히 풀어도 됩니다. 최초 정답과 오답 교정 과정은 기록되지만 바로미터에는 반영되지 않습니다.":"문항별 풀이시간이 기록되어 바로미터 산정에 함께 반영됩니다."}</p>
+        {saveError?<p role="alert" style={{color:"#a12626",background:"#fff0ed",padding:12,borderRadius:8}}>{saveError}</p>:null}
+        {submitPrompt?<div role="group" aria-label="답안 제출 확인" style={{background:"#edf7ef",padding:16,borderRadius:10}}><p>{items.length}문항의 답을 제출하고 성적표를 확인할까요?</p><button type="button" disabled={busy} onClick={()=>void submitAll(true)}>제출 확정</button> <button type="button" disabled={busy} onClick={()=>setSubmitPrompt(false)}>계속 풀기</button></div>:null}
         <div className="sos-training-actions">
           <button type="button" className="secondary" disabled={busy||index===0} onClick={()=>void moveTo(index-1)}>← 이전 문항</button>
           <button type="button" disabled={busy||!answer.trim()} onClick={()=>void next()}>{busy?"채점·분석 중...":index===items.length-1?"훈련 제출 · 성적표 보기":"답 저장 · 다음 문항"}</button>

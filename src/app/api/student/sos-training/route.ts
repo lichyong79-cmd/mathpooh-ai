@@ -426,7 +426,7 @@ export async function POST(request: Request) {
   const session: any = sessionResult.data;
   if(session.status==="CANCELLED")return NextResponse.json({message:"취소된 학습입니다. 학습 목록에서 3제 굳히기를 선택해 주세요."},{status:409});
   if(action==="client_diagnostic"){
-    const events=["RUNNER_OPEN","RUNNER_CLOSE","PAGE_HIDE","CHECK_FAILED","CHECK_RECOVERED"];
+    const events=["RUNNER_OPEN","RUNNER_CLOSE","PAGE_HIDE","CHECK_FAILED","CHECK_RECOVERED","ANSWER_SAVE_REQUESTED","ANSWER_SAVE_FAILED","SUBMIT_REQUESTED","SUBMIT_FAILED"];
     if(!events.includes(body.event))return NextResponse.json({message:"알 수 없는 이벤트"},{status:400});
     const saved=await supabase.from("sos_training_activity_logs").insert({
       session_id:sessionId,student_id:student.id,item_id:null,event_type:"CLIENT_DIAGNOSTIC",
