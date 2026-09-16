@@ -424,6 +424,7 @@ export async function POST(request: Request) {
     );
 
   const session: any = sessionResult.data;
+  if(session.status==="CANCELLED")return NextResponse.json({message:"취소된 학습입니다. 학습 목록에서 3제 굳히기를 선택해 주세요."},{status:409});
   if(action==="client_diagnostic"){
     const events=["RUNNER_OPEN","RUNNER_CLOSE","PAGE_HIDE","CHECK_FAILED","CHECK_RECOVERED"];
     if(!events.includes(body.event))return NextResponse.json({message:"알 수 없는 이벤트"},{status:400});

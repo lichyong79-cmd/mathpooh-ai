@@ -2,6 +2,11 @@ export type AiGenerationKind="HOMEWORK"|"SECOND_TRAINING";
 
 export async function enqueueAiGeneration(args:{supabase:any;studentId:string;sourceTrainingSessionId:string;kind:AiGenerationKind;count:3|10}){
   const {supabase,studentId,sourceTrainingSessionId,kind,count}=args;
+  if(kind==="SECOND_TRAINING"){
+    const source=await supabase.from("sos_training_sessions").select("status,decision,round_no").eq("id",sourceTrainingSessionId).eq("student_id",studentId).single();
+    if(source.error)throw source.error;
+    if(source.data.status==="CANCELLED"||(Number(source.data.round_no)===1&&(source.data.status==="PASSED"||source.data.decision==="FIRST_TRAINING_PASSED")))throw new Error("1차 통과 학생은 2차훈련 대신 3제 굳히기를 진행합니다.");
+  }
   const existing=await supabase.from("sos_ai_generation_jobs")
     .select("id,status,attempt_count,generation_kind,requested_count,result_session_id,requested_at,started_at,completed_at,last_error,pipeline_version,stage,stage_index,stage_total,stage_message,stage_updated_at")
     .eq("source_training_session_id",sourceTrainingSessionId).eq("generation_kind",kind).maybeSingle();

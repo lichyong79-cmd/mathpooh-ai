@@ -44,7 +44,7 @@ export async function GET(){
   fetchAllPages((f,t)=>ctx.supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,decision,target_snapshot,weakness_snapshot,cycle_kind,round_no,correct_count,total_count,baseline_meter,goal_meter,training_meter,review_meter,created_at,updated_at,sos_training_items(id,student_answer,is_correct,answered_at,revealed_at,review_answered_at)").order("created_at",{ascending:false}).range(f,t)),
   fetchAllPages((f,t)=>ctx.supabase.from("learning_cycles").select("id,name,start_date,end_date,status").order("start_date",{ascending:false}).range(f,t))
  ]);
- const cycleRows:any[]=(cycles??[]).filter((c:any)=>!isArchivedPracticeCycle(c));const raw:any[]=sessions??[];const studentMap=new Map((students??[]).map((x:any)=>[String(x.id),x]));
+ const cycleRows:any[]=(cycles??[]).filter((c:any)=>!isArchivedPracticeCycle(c));const raw:any[]=(sessions??[]).filter((s:any)=>s.status!=="CANCELLED");const studentMap=new Map((students??[]).map((x:any)=>[String(x.id),x]));
  // SOS265: 진행 화면과 동일한 규칙으로, 실제 진행 흔적이 없는 중복 미응시 세션만 조회에서 제외한다.
  const duplicateIds=new Set<string>();const duplicateGroups=new Map<string,any[]>();
  for(const session of raw){if(!session.parent_session_id)continue;const key=[session.student_id,session.parent_session_id,session.phase,session.round_no,session.cycle_kind??"STANDARD"].map(String).join("|");const group=duplicateGroups.get(key)??[];group.push(session);duplicateGroups.set(key,group);}
