@@ -2722,6 +2722,7 @@ type MonitorAttempt = {
   mathpooh_comment?: string;
 };
 type MonitorRow = {
+  exam?: any;
   student: {
     id: string;
     name: string;
@@ -2924,11 +2925,15 @@ function AdminResultModal({
 }
 
 function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[]; mode?: "progress" | "results" }) {
-  const [examId, setExamId] = useState(exams[0]?.id ?? "");
+  const [examId, setExamId] = useState(mode==="progress"?"ALL":exams[0]?.id ?? "");
   const [selectedSlot,setSelectedSlot]=useState<any>(null);
   const monitorCycleId=mode==="progress"?String(selectedSlot?.cycle?.id??""):"";
   const monitorExams=mode==="progress"?exams.filter(e=>(selectedSlot?.rows??[]).some((r:any)=>r.exam_id===e.id)):exams;
-  const selectSlot=useCallback((slot:any)=>{setSelectedSlot(slot);const ids=(slot?.rows??[]).map((r:any)=>r.exam_id).filter(Boolean);setExamId(current=>ids.includes(current)?current:ids[0]??"");},[]);
+  const selectSlot=useCallback((slot:any)=>{setSelectedSlot(slot);const ids=(slot?.rows??[]).map((r:any)=>r.exam_id).filter(Boolean);setExamId(current=>current==="ALL"||ids.includes(current)?current:"ALL");},[]);
+  const monitorPaperKey=monitorExams.map(e=>e.id).sort().join(",");
+  const monitorRequestKey=`${mode}:${monitorCycleId}:${examId}:${monitorPaperKey}`;
+  const latestMonitorKey=useRef(monitorRequestKey);latestMonitorKey.current=monitorRequestKey;
+  const monitorRequestNo=useRef(0);
   const [rows, setRows] = useState<MonitorRow[]>([]);
   const [examInfo, setExamInfo] = useState<any>(null);
   const [openAt, setOpenAt] = useState("");
@@ -2951,14 +2956,27 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
     async (silent = false) => {
       if (!examId || (mode==="progress"&&!monitorCycleId)) {setRows([]);setExamInfo(null);return;}
       if (!silent) setBusy(true);
-      const response = await fetch(
-        `/api/admin/exam-monitor?examId=${encodeURIComponent(examId)}${monitorCycleId?`&cycleId=${encodeURIComponent(monitorCycleId)}`:""}`,
-        { cache: "no-store" },
-      );
-      const result = await response.json();
-      if (!silent) setBusy(false);
-      if (!response.ok)
-        return alert(result.message || "시험 진행상황을 불러오지 못했습니다.");
+      const requestNo=++monitorRequestNo.current;
+      const requestKey=monitorRequestKey;
+      let result:any;
+      try{
+        const ids=examId==="ALL"?monitorPaperKey.split(",").filter(Boolean):[examId];
+        const results=await Promise.all(ids.map(async paperId=>{
+          const response=await fetch(`/api/admin/exam-monitor?examId=${encodeURIComponent(paperId)}${monitorCycleId?`&cycleId=${encodeURIComponent(monitorCycleId)}`:""}`,{cache:"no-store"});
+          const data=await response.json();
+          if(!response.ok)throw Error(data.message||"시험 진행상황을 불러오지 못했습니다.");
+          return data;
+        }));
+        if(requestNo!==monitorRequestNo.current||latestMonitorKey.current!==requestKey)return;
+        result=examId==="ALL"?{
+          exam:{title:"회차 전체 학생",question_count:0},
+          rows:results.flatMap(data=>(data.rows??[]).map((row:any)=>({...row,exam:data.exam}))).sort((a:any,b:any)=>String(a.student?.name??"").localeCompare(String(b.student?.name??""),"ko")),
+          activity_logs:results.flatMap(data=>data.activity_logs??[]),
+        }:results[0];
+      }catch(error){
+        if(requestNo===monitorRequestNo.current&&latestMonitorKey.current===requestKey)alert(error instanceof Error?error.message:"조회 실패");
+        return;
+      }finally{if(requestNo===monitorRequestNo.current)setBusy(false);}
       setRows(result.rows ?? []);
       setExamInfo(result.exam);
       setActivityLogs(result.activity_logs ?? []);
@@ -2972,11 +2990,12 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
         setOpenAt(toLocalInput(result.exam?.open_at));
       }
     },
-    [examId,monitorCycleId,mode],
+    [examId,monitorCycleId,mode,monitorPaperKey,monitorRequestKey],
   );
 
+  useEffect(() => {setExamId(mode==="progress"?"ALL":exams[0]?.id??"");}, [mode]);
   useEffect(() => {
-    if (mode==="results" && !examId && exams[0]?.id) setExamId(exams[0].id);
+    if (mode==="results" && (!examId||examId==="ALL") && exams[0]?.id) setExamId(exams[0].id);
   }, [examId, exams]);
   useEffect(() => {
     void loadMonitor();
@@ -3215,12 +3234,12 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
       <section className="panel monitor-control">
         <div className="monitor-title">
           <div>
-            <span className="section-kicker">선택 회차의 시험지별 현황 조회</span>
+            <span className="section-kicker">선택 회차의 학생 현황</span>
             <select
               value={examId}
-              onChange={(event) => setExamId(event.target.value)}
+              onChange={(event) => {setRows([]);setExamInfo(null);setActivityLogs([]);setExamId(event.target.value);}}
             >
-              {!monitorExams.length?<option value="">이 회차에 배정된 시험지가 없습니다</option>:null}
+              <option value="ALL">전체 학생 · 모든 시험지</option>
               {monitorExams.map((exam) => (
                 <option key={exam.id} value={exam.id}>
                   {exam.round}회 · {exam.title}
@@ -3236,8 +3255,8 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
             ↻ 새로고침
           </button>
         </div>
-        <p>이 회차 · {examInfo?.title??"시험지 미선택"} · {isPaused?"일시정지":isRunning?`진행 중 · ${timerText}`:"시작 전 또는 종료"}</p>
-        {(isRunning||isPaused)?<button className="danger-button" disabled={busy} onClick={()=>void controlExam("force-end")}>선택 시험지 조기 종료</button>:null}
+        <p>{examId==="ALL"?`회차 전체 · 시험지 ${monitorExams.length}종 · 학생 ${rows.length}명`: `이 회차 · ${examInfo?.title??"시험지 미선택"} · ${isPaused?"일시정지":isRunning?`진행 중 · ${timerText}`:"시작 전 또는 종료"}`}</p>
+        {examId!=="ALL"&&(isRunning||isPaused)?<button className="danger-button" disabled={busy} onClick={()=>void controlExam("force-end")}>선택 시험지 조기 종료</button>:null}
       </section>
       <section className="student-stat-grid monitor-stats">
         <MiniStat
@@ -3268,7 +3287,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
         </div>
         <div className="data-table monitor-list">
           <div className="table-head">
-            <span>학생</span>
+            <span>학생 / 배정 시험지</span>
             <span>학교 / 학년</span>
             <span>상태</span>
             <span>응시 동의</span>
@@ -3297,7 +3316,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
                     <i>{row.student.name.slice(0, 1)}</i>
                     <div>
                       <strong>{row.student.name}</strong>
-                      <small>{row.student.phone}</small>
+                      <small>{row.exam?.title??examInfo?.title??"-"}</small>
                     </div>
                   </div>
                   <span>{row.student.school} · {row.student.grade}</span>
@@ -3329,15 +3348,15 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
           })}
           {rows.length === 0 ? (
             <div className="empty-list">
-              이 시험에 배정 완료된 학생이 없습니다.
+              선택한 회차·시험지에 배정 완료된 학생이 없습니다.
             </div>
           ) : null}
         </div>
       </section>
       {selectedResult?.attempt ? (
         <AdminResultModal
-          examId={examId}
-          exam={examInfo}
+          examId={selectedResult.exam?.id??examId}
+          exam={selectedResult.exam??examInfo}
           row={selectedResult}
           onClose={() => setSelectedResult(null)}
           onSaved={(attempt) => {
