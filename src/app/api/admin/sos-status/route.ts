@@ -5,6 +5,7 @@ export const maxDuration=300;
 import {createClient} from "@/lib/supabase/server";
 import {getSessionUser} from "@/lib/supabase/auth";
 import {cycleFromSnapshot,snapshotWithCycle} from "@/lib/sos-cycle";
+import {reviewProgress} from "@/lib/sos-review-progress";
 import {sosStageLabel} from "@/lib/sos-week";
 import {analyzeDiagnosisAndCreateFirstTraining,createAutomaticSecondDiagnosis} from "@/lib/sos-ai-training";
 import {enqueueAiGeneration} from "@/lib/sos-ai-generation-queue";
@@ -41,7 +42,7 @@ export async function GET(){
  const ctx=await admin();if(!ctx)return NextResponse.json({message:"관리자 권한이 필요합니다."},{status:403});
  const [students,sessions,cycles]=await Promise.all([
   fetchAllPages((f,t)=>ctx.supabase.from("students").select("id,name,school,grade,status").order("name").range(f,t)),
-  fetchAllPages((f,t)=>ctx.supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,decision,target_snapshot,weakness_snapshot,cycle_kind,round_no,correct_count,total_count,baseline_meter,goal_meter,training_meter,review_meter,created_at,updated_at,sos_training_items(id,student_answer,is_correct,answered_at,revealed_at,review_answered_at)").order("created_at",{ascending:false}).range(f,t)),
+  fetchAllPages((f,t)=>ctx.supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,decision,target_snapshot,weakness_snapshot,cycle_kind,round_no,correct_count,total_count,baseline_meter,goal_meter,training_meter,review_meter,created_at,updated_at,sos_training_items(id,student_answer,is_correct,answered_at,revealed_at,review_answered_at,review_is_correct)").order("created_at",{ascending:false}).range(f,t)),
   fetchAllPages((f,t)=>ctx.supabase.from("learning_cycles").select("id,name,start_date,end_date,status").order("start_date",{ascending:false}).range(f,t))
  ]);
  const cycleRows:any[]=(cycles??[]).filter((c:any)=>!isArchivedPracticeCycle(c));const raw:any[]=(sessions??[]).filter((s:any)=>s.status!=="CANCELLED");const studentMap=new Map((students??[]).map((x:any)=>[String(x.id),x]));
@@ -52,13 +53,20 @@ export async function GET(){
  const filteredSessions:any[]=raw.filter((x:any)=>!duplicateIds.has(String(x.id)));const map=new Map(filteredSessions.map(x=>[String(x.id),x]));
  const rootOf=(s:any)=>{let cur=s;const seen=new Set<string>();while(cur?.parent_session_id&&!seen.has(String(cur.id))){seen.add(String(cur.id));const p=map.get(String(cur.parent_session_id));if(!p)break;cur=p;}return cur??s;};
  const groups=new Map<string,any>();for(const s of filteredSessions){const root:any=rootOf(s);if(isArchivedPracticeSession(root))continue;const key=String(root.id);let g=groups.get(key);if(!g){const cycle=cycleFromSnapshot(root.target_snapshot);g={rootId:key,student:studentMap.get(String(root.student_id))??null,cycle,sourceExamTitle:String(root.target_snapshot?.sourceExamTitle??""),sourceExamId:root.target_snapshot?.sourceExamId??null,subject:String(root.target_snapshot?.subject??root.target_snapshot?.sourceSubject??""),subunit:String(root.target_snapshot?.subunit??root.target_snapshot?.sourceUnit??""),createdAt:root.created_at,sessions:[]};groups.set(key,g);}g.sessions.push(s);}
+ const explainedItems=new Set<string>();
+ const reviewSessionIds=[...groups.values()].flatMap((g:any)=>g.sessions).filter((s:any)=>(s.sos_training_items??[]).some((i:any)=>i.is_correct===false)).map((s:any)=>String(s.id));
+ for(let start=0;start<reviewSessionIds.length;start+=200){
+  const ids=reviewSessionIds.slice(start,start+200);
+  const logs=await fetchAllPages((f,t)=>ctx.supabase.from("sos_training_activity_logs").select("id,item_id").in("session_id",ids).eq("event_type","REVIEW_ITEM_EXPLAINED").order("id").range(f,t));
+  for(const log of logs)if(log.item_id)explainedItems.add(String(log.item_id));
+ }
  const jobs=await ctx.supabase.from("sos_ai_generation_jobs").select("id,source_training_session_id,generation_kind,status,started_at,stage_message,last_error").in("status",["QUEUED","GENERATING","FAILED"]);
  if(jobs.error)throw jobs.error;
  const generationJobs=jobs.data??[];
  const today=new Date().toISOString().slice(0,10);
  const result=[...groups.values()].map((g:any)=>{
   const ordered=g.sessions.slice().sort((a:any,b:any)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime());
-  const stages=ordered.map((s:any)=>({id:s.id,label:sosStageLabel(s),phase:s.phase,roundNo:Number(s.round_no??1),cycleKind:s.cycle_kind??"STANDARD",status:s.status,correct:Number(s.correct_count??0),total:Number(s.total_count??0),answered:(s.sos_training_items??[]).filter((i:any)=>String(i.student_answer??"").trim()||i.answered_at).length}));
+  const stages=ordered.map((s:any)=>({id:s.id,label:sosStageLabel(s),phase:s.phase,roundNo:Number(s.round_no??1),cycleKind:s.cycle_kind??"STANDARD",status:s.status,review:reviewProgress(s.sos_training_items??[],explainedItems),correct:Number(s.correct_count??0),total:Number(s.total_count??0),answered:(s.sos_training_items??[]).filter((i:any)=>String(i.student_answer??"").trim()||i.answered_at).length}));
   const openSession=ordered.find((x:any)=>isOpen(x));
   const lastDone=[...ordered].reverse().find((x:any)=>isDone(x))??null;
   const expected=lastDone?expectedNextKind(lastDone):"";
