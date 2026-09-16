@@ -17,7 +17,7 @@ export async function GET(request: Request) {
     const cycleId=new URL(request.url).searchParams.get("cycleId");
     const [catalog,exams,cycles]=await Promise.all([
       s.from("sos_exam_catalog").select("*").order("formal_sequence"),
-      s.from("exams").select("id,title,exam_date,question_count,time_limit,test_file_path,solution_file_path").order("exam_date",{ascending:false}),
+      s.from("exams").select("id,title,exam_code,round,status,exam_date,question_count,time_limit,test_file_path,solution_file_path").order("exam_date",{ascending:false}),
       s.from("learning_cycles").select("id,name,start_date,end_date,scheduled_at").order("start_date",{ascending:false}),
     ]);
     if(catalog.error||exams.error||cycles.error) throw catalog.error||exams.error||cycles.error;
@@ -68,21 +68,9 @@ export async function POST(request: Request){
     const sequence=Number(b.formalSequence),scope=String(b.scopeCode);
     if(!Number.isInteger(sequence)||sequence<1||!(SOS_SCOPE_CODES as readonly string[]).includes(scope))throw new Error("시험순번과 A/B/C 범위를 확인해 주세요.");
     if(b.action==="register-paper"||b.action==="catalog"){
-      const exam=await s.from("exams").select("id,title,exam_code,round,answer_verified,cover_verified,region_verified,test_file_path,question_count,answer_keys,question_points,total_score").eq("id",String(b.examId)).single();
-      if(exam.error)throw exam.error;
-      const e=exam.data;
-      const identity=String(e.exam_code||e.title).match(/^SOS_([ABC])_(?:실전모의고사_)?(\d+)$/i);
-      const expectedScope=identity?({A:"ALGEBRA",B:"ALGEBRA_CALC1",C:"FULL"} as Record<string,string>)[identity[1].toUpperCase()]:null;
-      if(identity&&(expectedScope!==scope||Number(identity[2])!==sequence))throw new Error("선택한 시험지의 A/B/C 종류와 순번이 연결 위치와 다릅니다. 시험지 이름과 공식 시험순번을 확인해 주세요.");
-      const linked=await s.from("sos_exam_catalog").select("formal_sequence,scope_code").eq("exam_id",e.id).maybeSingle();
-      if(linked.error)throw linked.error;
-      if(linked.data&&(linked.data.formal_sequence!==sequence||linked.data.scope_code!==scope))throw new Error(`이 시험지는 이미 ${linked.data.formal_sequence}회에 연결되어 있습니다. 기존 연결을 확인해 주세요.`);
-      if(!e.test_file_path||!e.answer_verified||!e.cover_verified||!e.region_verified||!Array.isArray(e.answer_keys)||e.answer_keys.filter((v:unknown)=>String(v??'').trim()).length!==e.question_count||!Array.isArray(e.question_points)||e.question_points.reduce((sum:number,v:unknown)=>sum+Number(v||0),0)!==e.total_score)throw new Error("파일·정답·배점·표지·문항영역 검수를 완료해 주세요.");
-      const existing=await s.from("sos_exam_catalog").select("exam_id").eq("formal_sequence",sequence).eq("scope_code",scope).maybeSingle();
-      if(existing.error)throw existing.error;
-      if(existing.data&&existing.data.exam_id!==e.id)throw new Error("이 종류·순번에는 다른 시험지가 등록되어 있습니다. A/B/C 시험지 목록을 확인해 주세요.");
-      if(!existing.data){const result=await s.from("sos_exam_catalog").insert({exam_id:e.id,scope_code:scope,formal_sequence:sequence});if(result.error)throw result.error;}
-      return NextResponse.json({success:true});
+      const result=await s.rpc("sos_register_paper",{p_exam_id:String(b.examId),p_sequence:sequence,p_scope:scope});
+      if(result.error)throw result.error;
+      return NextResponse.json({success:true,...result.data});
     }
     if(b.action!=="assign")throw new Error("지원하지 않는 작업입니다.");
     const member=await s.from("learning_cycle_students").select("*").eq("id",String(b.membershipId)).eq("status","ACTIVE").single();

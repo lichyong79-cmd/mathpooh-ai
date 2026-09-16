@@ -4334,6 +4334,9 @@ function ExamsPage({
         if(kind){
           const response=await fetch("/api/admin/exam-catalog",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"register-paper",examId:exam.id,formalSequence:exam.round,scopeCode:kind==="A"?"ALGEBRA":kind==="B"?"ALGEBRA_CALC1":"FULL"})});
           const data=await response.json();if(!response.ok)throw new Error(data.message||"시험지 목록 등록 실패");
+          setExams(prev=>prev.map(item=>item.id===exam.id?{...item,status:"등록완료"}:item));
+          if(editingId===exam.id)setForm(prev=>({...prev,status:"등록완료"}));
+          return;
         }
       }
       await patchExamFields(exam.id, { status });
