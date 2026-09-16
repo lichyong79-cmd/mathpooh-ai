@@ -1,3 +1,4 @@
+import { bookingExam, BOOKING_CLOCK_COLUMNS } from "@/lib/exam-flow";
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
@@ -44,66 +45,37 @@ export async function GET(request: Request) {
   const ctx = await adminContext();
   if (ctx.error) return ctx.error;
   const examId = new URL(request.url).searchParams.get("examId");
+  const cycleId = new URL(request.url).searchParams.get("cycleId")??"";
   if (!examId)
     return NextResponse.json(
       { message: "시험을 선택해 주세요." },
       { status: 400 },
     );
-  const { data: exam, error: examError } = await ctx.supabase
+  const { data: sourceExam, error: examError } = await ctx.supabase
     .from("exams")
     .select(
       "id,title,exam_date,time_limit,student_open,open_at,close_at,paused_at,paused_remaining_seconds,answer_keys,question_count,total_score,question_points,solution_open",
     )
     .eq("id", examId)
     .maybeSingle();
-  if (examError || !exam)
+  if (examError || !sourceExam)
     return NextResponse.json(
       { message: examError?.message || "시험을 찾지 못했습니다." },
       { status: 404 },
     );
-  const { data: registrations, error: registrationError } = await ctx.supabase
-    .from("exam_registrations")
-    .select("student_id,status,requested_at,assigned_at")
-    .eq("exam_id", examId)
-    .eq("status", "assigned");
-  if (registrationError)
-    return NextResponse.json(
-      { message: registrationError.message },
-      { status: 400 },
-    );
-  // 회차 중심 운영: 시험별 수동 배정뿐 아니라 이 시험이 연결된 회차의
-  // ACTIVE 학생도 진행관리 대상에 포함한다.
-  const cycleLinks = await ctx.supabase
-    .from("learning_cycle_exams")
-    .select("cycle_id")
-    .eq("exam_id", examId);
-  if (cycleLinks.error)
-    return NextResponse.json({ message: cycleLinks.error.message }, { status: 400 });
-  const cycleIds = (cycleLinks.data ?? []).map((item: any) => String(item.cycle_id));
-  const cycleStudents = cycleIds.length
-    ? await ctx.supabase
-        .from("learning_cycle_students")
-        .select("student_id,registered_at")
-        .in("cycle_id", cycleIds)
-        .eq("status", "ACTIVE")
-    : { data: [], error: null };
-  if (cycleStudents.error)
-    return NextResponse.json({ message: cycleStudents.error.message }, { status: 400 });
-  const registrationByStudent = new Map<string, any>();
-  for (const registration of registrations ?? [])
-    registrationByStudent.set(String(registration.student_id), registration);
-  for (const membership of cycleStudents.data ?? []) {
-    const key = String((membership as any).student_id);
-    if (!registrationByStudent.has(key))
-      registrationByStudent.set(key, {
-        student_id: (membership as any).student_id,
-        status: "assigned",
-        requested_at: (membership as any).registered_at,
-        assigned_at: (membership as any).registered_at,
-        source: "cycle",
-      });
+  let exam:any=sourceExam;
+  let registrationQuery=ctx.supabase.from("exam_registrations")
+    .select(`student_id,status,requested_at,assigned_at,cycle_student_id,scheduled_at,booking_status,${BOOKING_CLOCK_COLUMNS}${cycleId?",learning_cycle_students!inner(cycle_id)":""}`)
+    .eq("exam_id",examId).eq("status","assigned");
+  if(cycleId)registrationQuery=registrationQuery.eq("learning_cycle_students.cycle_id",cycleId);
+  const {data:registrations,error:registrationError}=await registrationQuery;
+  if(registrationError)return NextResponse.json({message:registrationError.message},{status:400});
+  const assignedRegistrations:any[]=registrations??[];
+  if(cycleId&&assignedRegistrations.length){
+    const current=assignedRegistrations.find(r=>r.booking_status==="IN_PROGRESS")??assignedRegistrations[0];
+    exam={...bookingExam(exam,current),booking_status:current.booking_status};
+    if(!["IN_PROGRESS","COMPLETED"].includes(current.booking_status))exam={...exam,close_at:null,paused_at:null,paused_remaining_seconds:null};
   }
-  const assignedRegistrations = [...registrationByStudent.values()];
   const studentIds = assignedRegistrations.map((item) => item.student_id);
   const questionMetadata = await loadQuestionMetadata(ctx.supabase, exam.id);
   if (!studentIds.length)
@@ -132,6 +104,7 @@ export async function GET(request: Request) {
     .from("exam_activity_logs")
     .select("id,student_id,event_type,detail,occurred_at")
     .eq("exam_id", examId)
+    .in("student_id",studentIds)
     .order("occurred_at", { ascending: false })
     .limit(300);
   if (studentError || attemptError)
@@ -143,11 +116,15 @@ export async function GET(request: Request) {
     attempts ?? [],
     (attempt) => String(attempt.student_id),
   );
-  if (exam.close_at && new Date(exam.close_at).getTime() + 5000 <= Date.now()) {
+  {
     await Promise.all(
       canonicalAttempts
-        .filter((attempt) => attempt.status === "in_progress")
+        .filter((attempt) => {
+          const clock=bookingExam(exam,assignedRegistrations.find(r=>r.student_id===attempt.student_id));
+          return attempt.status==="in_progress"&&!clock.paused_at&&clock.close_at&&Date.parse(clock.close_at)+5000<=Date.now();
+        })
         .map(async (attempt) => {
+          const deadline=bookingExam(exam,assignedRegistrations.find(r=>r.student_id===attempt.student_id)).close_at;
           const answers = attempt.answers ?? {};
           const graded = calculateExamScore(
             answers,
@@ -161,19 +138,19 @@ export async function GET(request: Request) {
             .from("exam_attempts")
             .update({
               status: "submitted",
-              submitted_at: exam.close_at,
-              last_saved_at: exam.close_at,
+              submitted_at: deadline,
+              last_saved_at: deadline,
               score,
               correct_count: correct,
               wrong_numbers: wrong,
               unanswered_numbers: unanswered,
-              graded_at: exam.close_at,
+              graded_at: deadline,
             })
             .eq("id", attempt.id)
             .eq("status", "in_progress").eq("last_saved_at", attempt.last_saved_at).select("id").maybeSingle();
           if (finalized.error || !finalized.data) return;
           attempt.status = "submitted";
-          attempt.submitted_at = exam.close_at;
+          attempt.submitted_at = deadline;
           attempt.score = score;
           attempt.correct_count = correct;
         }),
@@ -223,6 +200,16 @@ export async function PATCH(request: Request) {
       { status: 404 },
     );
   const action = String(body.action ?? "schedule");
+  if(["schedule","start","pause","resume"].includes(action))return NextResponse.json({message:"회차별 시험 진행에서 타이머 생성·시작·일시정지·재개를 해주세요."},{status:409});
+  const cycleId=String(body.cycleId??"");
+  let scopedStudentIds:string[]=[];
+  if(action==="force-end"){
+    if(!cycleId)return NextResponse.json({message:"종료할 운영 회차를 선택해 주세요."},{status:400});
+    const assigned=await ctx.supabase.from("exam_registrations").select("student_id,learning_cycle_students!inner(cycle_id)").eq("exam_id",examId).eq("status","assigned").eq("learning_cycle_students.cycle_id",cycleId);
+    if(assigned.error)return NextResponse.json({message:assigned.error.message},{status:400});
+    scopedStudentIds=(assigned.data??[]).map(r=>String(r.student_id));
+    if(!scopedStudentIds.length)return NextResponse.json({message:"이 회차에 배정된 학생이 없습니다."},{status:409});
+  }
 
   const gradeAnswers = (answers: Record<string, unknown>) =>
     calculateExamScore(
@@ -233,40 +220,13 @@ export async function PATCH(request: Request) {
       currentExam.question_points,
     );
 
-  if (action === "pause") {
-    if (!currentExam.close_at || new Date(currentExam.close_at).getTime() <= Date.now())
-      return NextResponse.json({ message: "진행 중인 시험이 아닙니다." }, { status: 409 });
-    const remaining = Math.max(1, Math.ceil((new Date(currentExam.close_at).getTime() - Date.now()) / 1000));
-    const pausedAt = new Date().toISOString();
-    const { data, error } = await ctx.supabase
-      .from("exams")
-      .update({ paused_at: pausedAt, paused_remaining_seconds: remaining, close_at: null })
-      .eq("id", examId)
-      .select("id,title,exam_date,time_limit,student_open,open_at,close_at,paused_at,paused_remaining_seconds")
-      .single();
-    return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ exam: data });
-  }
-
-  if (action === "resume") {
-    const remaining = Number(currentExam.paused_remaining_seconds ?? 0);
-    if (!currentExam.paused_at || remaining <= 0)
-      return NextResponse.json({ message: "일시정지된 시험이 아닙니다." }, { status: 409 });
-    const closeAt = new Date(Date.now() + remaining * 1000).toISOString();
-    const { data, error } = await ctx.supabase
-      .from("exams")
-      .update({ paused_at: null, paused_remaining_seconds: null, close_at: closeAt })
-      .eq("id", examId)
-      .select("id,title,exam_date,time_limit,student_open,open_at,close_at,paused_at,paused_remaining_seconds")
-      .single();
-    return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ exam: data });
-  }
-
   if (action === "force-end") {
     const endedAt = new Date().toISOString();
     const { data: runningAttempts, error: attemptsError } = await ctx.supabase
       .from("exam_attempts")
       .select("id,student_id,status,answers,started_at,last_saved_at,created_at")
       .eq("exam_id", examId)
+      .in("student_id",scopedStudentIds)
       .eq("status", "in_progress");
     if (attemptsError) return NextResponse.json({ message: attemptsError.message }, { status: 400 });
     const finalAttempts = dedupeExamAttempts(
@@ -282,13 +242,8 @@ export async function PATCH(request: Request) {
       }).eq("id", attempt.id).eq("status", "in_progress").eq("last_saved_at", attempt.last_saved_at).select("id").maybeSingle();
     }));
     if (finalizedRows.some(r=>r.error || !r.data)) return NextResponse.json({message:"일부 답안이 저장 중입니다. 최신 저장 후 강제종료를 다시 눌러 주세요."},{status:409});
-    const { data, error } = await ctx.supabase
-      .from("exams")
-      .update({ close_at: endedAt, paused_at: null, paused_remaining_seconds: null })
-      .eq("id", examId)
-      .select("id,title,exam_date,time_limit,student_open,open_at,close_at,paused_at,paused_remaining_seconds")
-      .single();
-    return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ exam: data, submittedCount: finalAttempts.length });
+    const {error}=await ctx.supabase.from("exam_registrations").update({clock_close_at:endedAt,clock_paused_at:null,clock_remaining_seconds:null}).eq("exam_id",examId).in("student_id",scopedStudentIds).eq("status","assigned");
+    return error?NextResponse.json({message:error.message},{status:400}):NextResponse.json({exam:{...currentExam,close_at:endedAt,paused_at:null,paused_remaining_seconds:null},submittedCount:finalAttempts.length});
   }
 
 
@@ -364,48 +319,5 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ attempt: data });
   }
 
-  const minutes = Math.max(1, Number(currentExam.time_limit ?? 100));
-  if (action === "start" && currentExam.close_at)
-    return NextResponse.json(
-      { message: "이미 시작된 시험입니다. 진행 중에는 시작할 수 없습니다." },
-      { status: 409 },
-    );
-  const startedAt =
-    action === "start"
-      ? new Date()
-      : body.openAt
-        ? new Date(body.openAt)
-        : null;
-  if (!startedAt || Number.isNaN(startedAt.getTime()))
-    return NextResponse.json(
-      { message: "시험 시작 시각을 입력해 주세요." },
-      { status: 400 },
-    );
-  const payload =
-    action === "start"
-      ? {
-          student_open: true,
-          open_at: startedAt.toISOString(),
-          close_at: new Date(
-            startedAt.getTime() + minutes * 60_000,
-          ).toISOString(),
-          paused_at: null,
-          paused_remaining_seconds: null,
-        }
-      : {
-          student_open: Boolean(body.studentOpen),
-          open_at: startedAt.toISOString(),
-          close_at: null,
-          paused_at: null,
-          paused_remaining_seconds: null,
-        };
-  const { data, error } = await ctx.supabase
-    .from("exams")
-    .update(payload)
-    .eq("id", examId)
-    .select("id,title,exam_date,time_limit,student_open,open_at,close_at,paused_at,paused_remaining_seconds")
-    .single();
-  return error
-    ? NextResponse.json({ message: error.message }, { status: 400 })
-    : NextResponse.json({ exam: data });
+  return NextResponse.json({message:"지원하지 않는 작업입니다."},{status:400});
 }

@@ -2,7 +2,7 @@ import { priorLearningPassed } from "@/lib/exam-flow";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAdminUser } from "@/lib/supabase/auth";
-import { isSosCyclePassed } from "@/lib/sos-program-flow";
+import { bookingExam, BOOKING_CLOCK_COLUMNS } from "@/lib/exam-flow";
 
 async function context() {
   if (!await getAdminUser()) return null;
@@ -13,12 +13,12 @@ async function slotRows(supabase: any, cycleId: string) {
   const [cycle, memberships, links, registrations] = await Promise.all([
     supabase.from("learning_cycles").select("id,name,scheduled_at,attendance_mode").eq("id", cycleId).maybeSingle(),
     supabase.from("learning_cycle_students")
-      .select("id,student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status,sos_gate_status,students(id,name,school,grade)")
-      .eq("cycle_id", cycleId).eq("status", "ACTIVE").order("formal_sequence"),
+      .select("id,student_id,formal_sequence,scope_code,attendance_mode,scheduled_at,booking_status,sos_gate_status,students!inner(id,name,school,grade,active,status)")
+      .eq("cycle_id", cycleId).eq("status", "ACTIVE").eq("students.active",true).neq("students.status","퇴원").not("booking_status","in","(CANCELLED,NO_SHOW)").order("formal_sequence"),
     supabase.from("learning_cycle_exams")
       .select("exam_id,formal_sequence,scope_code,exams(id,title,time_limit,student_open,open_at,close_at,paused_at)")
       .eq("cycle_id", cycleId),
-    supabase.from("exam_registrations").select("student_id,cycle_student_id,exam_id,formal_sequence,scope_code").eq("status","assigned"),
+    supabase.from("exam_registrations").select(`id,student_id,cycle_student_id,exam_id,formal_sequence,scope_code,scheduled_at,booking_status,${BOOKING_CLOCK_COLUMNS}`).eq("status","assigned"),
   ]);
   const error = cycle.error || memberships.error || links.error || registrations.error;
   if (error) throw error;
@@ -68,7 +68,9 @@ async function slotRows(supabase: any, cycleId: string) {
         formal_sequence: formalSequence,
         sos_gate_open: gateOpen,
         exam_id: link?.exam_id ?? null,
-        exam: link?.exams ?? null,
+        exam: link?.exams ? bookingExam(link.exams,registration) : null,
+        registration,
+        timer_prepared: Boolean(registration?.clock_initialized && registration?.clock_open_at===cycle.data.scheduled_at),
       };
     }),
   };
@@ -80,7 +82,7 @@ export async function GET(request: Request) {
   const cycleId = new URL(request.url).searchParams.get("cycleId") ?? "";
   if (!cycleId) return NextResponse.json({ message: "응시 일정을 선택해 주세요." }, { status: 400 });
   try { return NextResponse.json(await slotRows(supabase, cycleId), { headers: { "Cache-Control": "no-store" } }); }
-  catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "일정 조회 실패" }, { status: 400 }); }
+  catch (error) { return NextResponse.json({ message: (error as any)?.message || "일정 조회 실패" }, { status: 400 }); }
 }
 
 export async function POST(request: Request) {
@@ -92,65 +94,14 @@ export async function POST(request: Request) {
   if (!cycleId) return NextResponse.json({ message: "응시 일정을 선택해 주세요." }, { status: 400 });
   try {
     const slot = await slotRows(supabase, cycleId);
-    const eligible = slot.rows.filter((row: any) =>
-      row.exam_id && !["CANCELLED", "NO_SHOW", "COMPLETED"].includes(String(row.booking_status)) &&
-      row.sos_gate_open);
-    const blocked = slot.rows.filter((row: any) => !eligible.includes(row));
-    if (slot.rows.some((row:any)=>row.booking_status==="IN_PROGRESS")) return NextResponse.json({message:"이미 시작한 일정입니다. 진행 화면에서 일시정지·재개를 사용해 주세요."},{status:409});
-    if (action === "prepare") {
-      if(!eligible.length) return NextResponse.json({message:"배정된 응시 가능 학생이 없습니다."},{status:409});
-      const examIds = [...new Set(eligible.map((r:any)=>String(r.exam_id)))];
-      for(const examId of examIds){
-        const exam=eligible.find((r:any)=>String(r.exam_id)===examId)?.exam;
-        const start=new Date(slot.cycle.scheduled_at);
-        if(!Number.isFinite(start.getTime()))throw new Error("예정시각을 먼저 저장해 주세요.");
-        const r=await supabase.from("exams").update({timer_cycle_id:cycleId,student_open:true,open_at:start.toISOString(),close_at:new Date(start.getTime()+Number(exam?.time_limit??100)*60000).toISOString()}).eq("id",examId);
-        if(r.error)throw r.error;
-      }
-      return NextResponse.json({success:true});
-    }
-    if (action === "start") {
-      if(eligible.some((r:any)=>!r.exam?.open_at||!r.exam?.close_at))return NextResponse.json({message:"먼저 타이머를 생성해 주세요."},{status:409});
-      if (!eligible.length) return NextResponse.json({ message: "응시 가능한 참가자가 없습니다. 시험지 연결과 SOS 통과 상태를 확인해 주세요." }, { status: 409 });
-      const startedAt = new Date();
-      const examMap = new Map<string, any>();
-      for (const row of eligible) examMap.set(String(row.exam_id), row.exam);
-      for (const [examId, exam] of examMap) {
-        const minutes = Math.max(1, Number(exam?.time_limit ?? 100));
-        const update = await supabase.from("exams").update({
-          timer_cycle_id: cycleId, student_open: true, open_at: startedAt.toISOString(),
-          close_at: new Date(startedAt.getTime() + minutes * 60_000).toISOString(),
-          paused_at: null, paused_remaining_seconds: null,
-        }).eq("id", examId);
-        if (update.error) throw update.error;
-      }
-      const assignedAt = startedAt.toISOString();
-      for (const row of eligible) {
-        const membershipUpdate = await supabase.from("learning_cycle_students").update({
-          formal_sequence: row.formal_sequence,
-          sos_gate_status: Number(row.formal_sequence) <= 1 ? "OPEN" : row.sos_gate_status === "OVERRIDE" ? "OVERRIDE" : "PASSED",
-          booking_status: "IN_PROGRESS", updated_at: assignedAt,
-        }).eq("id", row.id);
-        if (membershipUpdate.error) throw membershipUpdate.error;
-        const staleRegistrations = await supabase.from("exam_registrations").update({
-          status: "cancelled", booking_status: "CANCELLED",
-        }).eq("cycle_student_id", row.id).neq("exam_id", row.exam_id);
-        if (staleRegistrations.error) throw staleRegistrations.error;
-        const registration = await supabase.from("exam_registrations").upsert({
-          exam_id: row.exam_id, student_id: row.student_id, cycle_student_id: row.id,
-          formal_sequence: row.formal_sequence, scope_code: row.scope_code,
-          attendance_mode: row.attendance_mode, scheduled_at: row.scheduled_at,
-          booking_status: "IN_PROGRESS", status: "assigned", assigned_at: assignedAt,
-        }, { onConflict: "exam_id,student_id" });
-        if (registration.error) throw registration.error;
-      }
-      return NextResponse.json({
-        success: true, started: eligible.length, examCount: examMap.size,
-        blocked: blocked.map((row: any) => ({ studentId: row.student_id, name: row.students?.name, reason: row.exam_id ? "이전 SOS 미통과" : "시험지 미연결" })),
-      });
-    }
-    return NextResponse.json({ message: "지원하지 않는 작업입니다." }, { status: 400 });
+    if(!["prepare","start","pause","resume"].includes(action))return NextResponse.json({message:"지원하지 않는 작업입니다."},{status:400});
+    const assigned=slot.rows.filter((r:any)=>r.exam_id&&!["CANCELLED","NO_SHOW","COMPLETED"].includes(String(r.booking_status)));
+    const eligible=assigned.filter((r:any)=>action==="prepare"?true:action==="start"?r.sos_gate_open:action==="pause"?r.booking_status==="IN_PROGRESS"&&!r.exam?.paused_at&&Date.parse(r.exam?.close_at)>Date.now():r.booking_status==="IN_PROGRESS"&&r.exam?.paused_at);
+    if(!eligible.length)return NextResponse.json({message:action==="start"?"시작할 학생이 없습니다. 시험지 배정과 이전 SOS 완료 상태를 확인해 주세요.":"처리할 학생이 없습니다. 회차와 배정 상태를 확인해 주세요."},{status:409});
+    const result=await supabase.rpc("sos_control_cycle_exam",{p_cycle_id:cycleId,p_action:action,p_membership_ids:eligible.map((r:any)=>r.id)});
+    if(result.error)throw result.error;
+    return NextResponse.json({...result.data,started:action==="start"?eligible.length:0,blocked:assigned.filter((r:any)=>!r.sos_gate_open).map((r:any)=>({name:r.students?.name,reason:"이전 SOS 미완료"}))});
   } catch (error) {
-    return NextResponse.json({ message: error instanceof Error ? error.message : "일정 시험 시작 실패" }, { status: 400 });
+    return NextResponse.json({ message: (error as any)?.message || "일정 시험 시작 실패" }, { status: 400 });
   }
 }
