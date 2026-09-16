@@ -2925,10 +2925,12 @@ function AdminResultModal({
 }
 
 function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[]; mode?: "progress" | "results" }) {
-  const [examId, setExamId] = useState(mode==="progress"?"ALL":exams[0]?.id ?? "");
+  const [examId, setExamId] = useState("ALL");
+  const [resultCycles,setResultCycles]=useState<any[]>([]),[resultCycleId,setResultCycleId]=useState("");
+  useEffect(()=>{if(mode!=="results")return;let active=true;fetch("/api/admin/learning-cycles",{cache:"no-store"}).then(async response=>{const data=await response.json();if(!response.ok)throw Error(data.message||"회차 조회 실패");if(!active)return;const cycles=data.cycles??[];setResultCycles(cycles);const today=new Intl.DateTimeFormat("sv-SE",{timeZone:"Asia/Seoul"}).format(new Date());setResultCycleId(current=>current||cycles.find((c:any)=>String(c.start_date)<=today)?.id||cycles[0]?.id||"");}).catch(e=>{if(active)alert(e.message);});return()=>{active=false;};},[mode]);
   const [selectedSlot,setSelectedSlot]=useState<any>(null);
-  const monitorCycleId=mode==="progress"?String(selectedSlot?.cycle?.id??""):"";
-  const monitorExams=mode==="progress"?exams.filter(e=>(selectedSlot?.rows??[]).some((r:any)=>r.exam_id===e.id)):exams;
+  const monitorCycleId=mode==="progress"?String(selectedSlot?.cycle?.id??""):resultCycleId;
+  const monitorExams=mode==="progress"?exams.filter(e=>(selectedSlot?.rows??[]).some((r:any)=>r.exam_id===e.id)):exams.filter(e=>(resultCycles.find(c=>c.id===resultCycleId)?.exams??[]).some((p:any)=>p.id===e.id));
   const selectSlot=useCallback((slot:any)=>{setSelectedSlot(slot);const ids=(slot?.rows??[]).map((r:any)=>r.exam_id).filter(Boolean);setExamId(current=>current==="ALL"||ids.includes(current)?current:"ALL");},[]);
   const monitorPaperKey=monitorExams.map(e=>e.id).sort().join(",");
   const monitorRequestKey=`${mode}:${monitorCycleId}:${examId}:${monitorPaperKey}`;
@@ -2954,7 +2956,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
       : "";
   const loadMonitor = useCallback(
     async (silent = false) => {
-      if (!examId || (mode==="progress"&&!monitorCycleId)) {setRows([]);setExamInfo(null);return;}
+      if (!examId || !monitorCycleId) {setRows([]);setExamInfo(null);return;}
       if (!silent) setBusy(true);
       const requestNo=++monitorRequestNo.current;
       const requestKey=monitorRequestKey;
@@ -2962,7 +2964,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
       try{
         const ids=examId==="ALL"?monitorPaperKey.split(",").filter(Boolean):[examId];
         const results=await Promise.all(ids.map(async paperId=>{
-          const response=await fetch(`/api/admin/exam-monitor?examId=${encodeURIComponent(paperId)}${monitorCycleId?`&cycleId=${encodeURIComponent(monitorCycleId)}`:""}`,{cache:"no-store"});
+          const response=await fetch(`/api/admin/exam-monitor?examId=${encodeURIComponent(paperId)}${monitorCycleId?`&cycleId=${encodeURIComponent(monitorCycleId)}`:""}${mode==="results"?"&mode=results":""}`,{cache:"no-store"});
           const data=await response.json();
           if(!response.ok)throw Error(data.message||"시험 진행상황을 불러오지 못했습니다.");
           return data;
@@ -2972,7 +2974,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
           exam:{title:"회차 전체 학생",question_count:0},
           rows:results.flatMap(data=>(data.rows??[]).map((row:any)=>({...row,exam:data.exam}))).sort((a:any,b:any)=>String(a.student?.name??"").localeCompare(String(b.student?.name??""),"ko")),
           activity_logs:results.flatMap(data=>data.activity_logs??[]),
-        }:results[0];
+        }:{...results[0],rows:(results[0]?.rows??[]).map((row:any)=>({...row,exam:results[0].exam}))};
       }catch(error){
         if(requestNo===monitorRequestNo.current&&latestMonitorKey.current===requestKey)alert(error instanceof Error?error.message:"조회 실패");
         return;
@@ -2993,10 +2995,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
     [examId,monitorCycleId,mode,monitorPaperKey,monitorRequestKey],
   );
 
-  useEffect(() => {setExamId(mode==="progress"?"ALL":exams[0]?.id??"");}, [mode]);
-  useEffect(() => {
-    if (mode==="results" && (!examId||examId==="ALL") && exams[0]?.id) setExamId(exams[0].id);
-  }, [examId, exams]);
+  useEffect(() => {setExamId("ALL");}, [mode]);
   useEffect(() => {
     void loadMonitor();
     const timer = window.setInterval(() => void loadMonitor(true), 15000);
@@ -3029,25 +3028,17 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
     await loadMonitor(true);
   };
 
-  const setGlobalSolution = async (open: boolean) => {
-    if (!examId) return;
-    setBusy(true);
-    const response = await fetch("/api/admin/exam-monitor", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "solution-global", examId, open }),
-    });
-    const result = await response.json();
-    setBusy(false);
-    if (!response.ok) return alert(result.message || "해설 공개 설정에 실패했습니다.");
-    setExamInfo((current: any) => ({ ...current, solution_open: open }));
+  const setGlobalSolution = async (open:boolean)=>{
+    const targets=rows.filter(r=>r.attempt?.status==="submitted");
+    if(!targets.length)return;setBusy(true);
+    try{for(const row of targets){const response=await fetch("/api/admin/exam-monitor",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({action:"solution-student",examId:row.exam?.id??examId,attemptId:row.attempt!.id,override:open})});const data=await response.json();if(!response.ok)throw Error(data.message||"해설 설정 실패");}await loadMonitor(true);}catch(e){alert(e instanceof Error?e.message:"해설 설정 실패");}finally{setBusy(false);}
   };
 
   const setStudentSolution = async (attemptId: string, override: boolean | null) => {
     const response = await fetch("/api/admin/exam-monitor", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "solution-student", examId, attemptId, override }),
+      body: JSON.stringify({ action: "solution-student", examId:rows.find(r=>r.attempt?.id===attemptId)?.exam?.id??examId, attemptId, override }),
     });
     const result = await response.json();
     if (!response.ok) return alert(result.message || "학생별 해설 설정에 실패했습니다.");
@@ -3086,7 +3077,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
   const saveComment = async (attemptId: string, value?: string) => {
     const mathpoohComment = value ?? commentDrafts[attemptId] ?? "";
     setBusy(true);
-    const response = await fetch("/api/admin/exam-monitor", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "update-comment", examId, attemptId, mathpoohComment }) });
+    const response = await fetch("/api/admin/exam-monitor", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "update-comment", examId:rows.find(r=>r.attempt?.id===attemptId)?.exam?.id??examId, attemptId, mathpoohComment }) });
     const result = await response.json();
     setBusy(false);
     if (!response.ok) return alert(result.message || "코멘트를 저장하지 못했습니다.");
@@ -3206,26 +3197,26 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
   if (mode === "results") return (
     <div className="exam-results-board">
       <section className="panel results-board-head">
-        <div><span className="section-kicker">시험 결과 전광판</span><select value={examId} onChange={(event) => setExamId(event.target.value)}>{exams.map((exam) => <option key={exam.id} value={exam.id}>{exam.round}회 · {exam.title}</option>)}</select></div>
-        <div className="solution-publish-actions"><b>전체 해설 {examInfo?.solution_open ? "공개 중" : "비공개"}</b><button className={examInfo?.solution_open ? "secondary-button" : "primary-button"} disabled={busy} onClick={() => void setGlobalSolution(!examInfo?.solution_open)}>{examInfo?.solution_open ? "전체 해설 닫기" : "제출자 전체 해설 공개"}</button></div>
+        <div><span className="section-kicker">시험 결과 · 운영 회차</span><select aria-label="결과 운영 회차" value={resultCycleId} onChange={e=>{setRows([]);setExamInfo(null);setSelectedResult(null);setResultCycleId(e.target.value);setExamId("ALL");}}>{resultCycles.map(c=><option key={c.id} value={c.id}>{c.name} · {c.start_date}</option>)}</select><span className="section-kicker">시험지 필터</span><select aria-label="결과 시험지 필터" value={examId} onChange={e=>{setRows([]);setExamInfo(null);setSelectedResult(null);setExamId(e.target.value);setAccuracyOpen(false);}}><option value="ALL">전체 시험지</option>{monitorExams.map(e=><option key={e.id} value={e.id}>{e.title}</option>)}</select><p>제출 완료 {submittedRows.length}명</p></div>
+        <div className="solution-publish-actions"><button disabled={busy||!submittedRows.length} onClick={()=>void setGlobalSolution(true)}>이 회차 제출자 해설 공개</button><button disabled={busy||!submittedRows.length} onClick={()=>void setGlobalSolution(false)}>이 회차 제출자 해설 닫기</button></div>
       </section>
       <section className="panel results-board-table">
         <div className="results-board-row results-board-header"><span>학생</span><span>총점</span><span>영역별 점수(정답 수)</span><span>오답·미응답 문항</span><span>매쓰푸의 코멘트</span><span>해설</span></div>
         {submittedRows.map((row) => {
-          const attempt = row.attempt!; const area = calculateAreaResult(examInfo, attempt);
-          return <div className="results-board-row" key={row.student.id}>
-            <div className="student-name"><i>{row.student.name.slice(0,1)}</i><div><strong>{row.student.name}</strong><small>{row.student.school} · {row.student.grade}</small></div></div>
+          const attempt = row.attempt!; const area = calculateAreaResult(row.exam??examInfo, attempt);
+          return <div className="results-board-row" key={attempt.id}>
+            <div className="student-name"><i>{row.student.name.slice(0,1)}</i><div><strong>{row.student.name}</strong><small>{row.student.school} · {row.student.grade}</small><small>{row.exam?.title??examInfo?.title}</small></div></div>
             <button className="result-detail-button result-board-score" onClick={() => setSelectedResult(row)}><strong>{attempt.score ?? 0}점</strong><span>결과보기</span></button>
             <div className="area-score-cells"><b>대수 {area.대수.correct}/{area.대수.total}</b><b>미적1 {area.미적1.correct}/{area.미적1.total}</b><b>확통 {area.확통.correct}/{area.확통.total}</b></div>
             <span className="wrong-number-list">{attempt.wrong_numbers?.length ? `오답 ${attempt.wrong_numbers.join(", ")}` : "오답 없음"}{attempt.unanswered_numbers?.length ? <><br/><em>미응답 {attempt.unanswered_numbers.join(", ")}</em></> : null}</span>
             <div className="inline-comment"><textarea rows={2} value={commentDrafts[attempt.id] ?? ""} onChange={(event) => setCommentDrafts((prev) => ({ ...prev, [attempt.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void saveComment(attempt.id, event.currentTarget.value); } }} placeholder="코멘트 입력 후 Enter로 저장 (줄바꿈: Shift+Enter)" title="Enter 저장 · Shift+Enter 줄바꿈"/></div>
-            <button className={`solution-student-button ${(attempt.solution_override ?? examInfo?.solution_open) ? "open" : "closed"}`} onClick={() => void setStudentSolution(attempt.id, (attempt.solution_override ?? examInfo?.solution_open) ? false : true)}>{(attempt.solution_override ?? examInfo?.solution_open) ? "공개" : "비공개"}</button>
+            <button className={`solution-student-button ${(attempt.solution_override ?? row.exam?.solution_open ?? examInfo?.solution_open) ? "open" : "closed"}`} onClick={() => void setStudentSolution(attempt.id, (attempt.solution_override ?? row.exam?.solution_open ?? examInfo?.solution_open) ? false : true)}>{(attempt.solution_override ?? row.exam?.solution_open ?? examInfo?.solution_open) ? "공개" : "비공개"}</button>
           </div>;
         })}
         {!submittedRows.length ? <div className="empty-list">제출 완료된 학생이 없습니다.</div> : null}
       </section>
-      <section className="panel question-accuracy-panel"><button className="small-accuracy-button" onClick={() => setAccuracyOpen((value) => !value)}>문항별 정답률 {accuracyOpen ? "접기" : "보기"}</button>{accuracyOpen ? <div className="question-accuracy-grid">{questionAccuracy.map((item) => <div key={item.no}><b>{item.no}번</b><strong>{item.rate}%</strong><span>{item.correct}/{item.total}명</span></div>)}</div> : null}</section>
-      {selectedResult?.attempt ? <AdminResultModal examId={examId} exam={examInfo} row={selectedResult} onClose={() => setSelectedResult(null)} onSaved={(attempt) => { setRows((prev) => prev.map((item) => item.student.id === selectedResult.student.id ? { ...item, attempt } : item)); setSelectedResult((prev) => prev ? { ...prev, attempt } : prev); }} /> : null}
+      {examId!=="ALL"?<section className="panel question-accuracy-panel"><button className="small-accuracy-button" onClick={() => setAccuracyOpen((value) => !value)}>문항별 정답률 {accuracyOpen ? "접기" : "보기"}</button>{accuracyOpen ? <div className="question-accuracy-grid">{questionAccuracy.map((item) => <div key={item.no}><b>{item.no}번</b><strong>{item.rate}%</strong><span>{item.correct}/{item.total}명</span></div>)}</div> : null}</section>:<p>문항별 정답률은 시험지를 선택하면 확인할 수 있습니다.</p>}
+      {selectedResult?.attempt ? <AdminResultModal examId={selectedResult.exam?.id??examId} exam={selectedResult.exam??examInfo} row={selectedResult} onClose={() => setSelectedResult(null)} onSaved={(attempt) => { setRows((prev) => prev.map((item) => item.student.id === selectedResult.student.id ? { ...item, attempt } : item)); setSelectedResult((prev) => prev ? { ...prev, attempt } : prev); }} /> : null}
     </div>
   );
   return (

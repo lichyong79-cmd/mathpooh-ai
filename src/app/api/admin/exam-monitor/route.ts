@@ -46,6 +46,7 @@ export async function GET(request: Request) {
   if (ctx.error) return ctx.error;
   const examId = new URL(request.url).searchParams.get("examId");
   const cycleId = new URL(request.url).searchParams.get("cycleId")??"";
+  const resultsOnly=new URL(request.url).searchParams.get("mode")==="results"||!cycleId;
   if (!examId)
     return NextResponse.json(
       { message: "시험을 선택해 주세요." },
@@ -70,7 +71,35 @@ export async function GET(request: Request) {
   if(cycleId)registrationQuery=registrationQuery.eq("learning_cycle_students.cycle_id",cycleId);
   const {data:registrations,error:registrationError}=await registrationQuery;
   if(registrationError)return NextResponse.json({message:registrationError.message},{status:400});
-  const assignedRegistrations:any[]=registrations??[];
+  let assignedRegistrations:any[]=registrations??[];
+  // Historical results come from submitted attempts, regardless of current
+  // assignments, withdrawal or movement to the next paper.
+  const resultAttemptIds:string[]=[];
+  if(resultsOnly){
+    let cycleStart="",cycleEnd="";
+    let members:any[]=[];
+    if(cycleId){
+      const [cycle,membership]=await Promise.all([
+        ctx.supabase.from("learning_cycles").select("start_date,end_date").eq("id",cycleId).single(),
+        ctx.supabase.from("learning_cycle_students").select("student_id,formal_sequence,scope_code").eq("cycle_id",cycleId),
+      ]);
+      if(cycle.error||membership.error)return NextResponse.json({message:cycle.error?.message||membership.error?.message},{status:400});
+      cycleStart=new Date(`${cycle.data.start_date}T00:00:00+09:00`).toISOString();
+      cycleEnd=new Date(Date.parse(`${cycle.data.end_date}T00:00:00+09:00`)+86400000).toISOString();
+      members=membership.data??[];
+    }
+    const submittedIds=new Set<string>();
+    for(let from=0;;from+=1000){
+      let query=ctx.supabase.from("exam_attempts").select("id,student_id,formal_sequence,scope_code,started_at").eq("exam_id",examId).eq("status","submitted");
+      if(cycleId)query=query.gte("started_at",cycleStart).lt("started_at",cycleEnd);
+      const submitted=await query.order("id").range(from,from+999);
+      if(submitted.error)return NextResponse.json({message:submitted.error.message},{status:400});
+      for(const attempt of submitted.data??[])if(!cycleId||members.some(m=>m.student_id===attempt.student_id&&(attempt.formal_sequence==null||m.formal_sequence===attempt.formal_sequence)&&(attempt.scope_code==null||m.scope_code===attempt.scope_code))){submittedIds.add(String(attempt.student_id));resultAttemptIds.push(String(attempt.id));}
+      if((submitted.data??[]).length<1000)break;
+    }
+    const registrationMap=new Map(assignedRegistrations.map(r=>[String(r.student_id),r]));
+    assignedRegistrations=[...submittedIds].map(student_id=>registrationMap.get(student_id)??{student_id,status:"submitted",source:"attempt"});
+  }
   if(cycleId&&assignedRegistrations.length){
     const current=assignedRegistrations.find(r=>r.booking_status==="IN_PROGRESS")??assignedRegistrations[0];
     exam={...bookingExam(exam,current),booking_status:current.booking_status};
@@ -98,7 +127,7 @@ export async function GET(request: Request) {
         "id,student_id,status,answers,started_at,last_saved_at,submitted_at,graded_at,created_at,score,correct_count,wrong_numbers,unanswered_numbers,score_source,solution_override,mathpooh_comment",
       )
       .eq("exam_id", examId)
-      .in("student_id", studentIds),
+      .in(resultsOnly?"id":"student_id", resultsOnly?resultAttemptIds:studentIds),
   ]);
   const { data: activityLogs } = await ctx.supabase
     .from("exam_activity_logs")
@@ -116,7 +145,7 @@ export async function GET(request: Request) {
     attempts ?? [],
     (attempt) => String(attempt.student_id),
   );
-  {
+  if(cycleId&&!resultsOnly) {
     await Promise.all(
       canonicalAttempts
         .filter((attempt) => {
