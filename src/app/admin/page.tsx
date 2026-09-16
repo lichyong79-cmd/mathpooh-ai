@@ -9,6 +9,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { getSupabaseConfig } from "@/lib/supabase";
@@ -3706,6 +3707,17 @@ function ExamsPage({
     value: Omit<PracticeExam, "id">[K],
   ) => setForm((prev) => ({ ...prev, [key]: value }));
 
+  const emptyFormSnapshot = useRef(JSON.stringify(form));
+  const leaveExamEditor = () => {
+    if (saving) return;
+    const savedExam = exams.find(exam => exam.id === editingId);
+    const savedForm = savedExam ? (({ id, ...rest }) => rest)(savedExam) : null;
+    const hasChanges = JSON.stringify(form) !== (savedForm ? JSON.stringify(savedForm) : emptyFormSnapshot.current)
+      || Object.keys(draftFiles).length > 0;
+    if (hasChanges && !window.confirm("저장하지 않은 변경사항이 있습니다. 저장하지 않고 시험지 목록으로 나갈까요?")) return;
+    window.location.assign("/admin?menu=exam-list");
+  };
+
   const [paperKind,setPaperKind]=useState("");
   const [catalogRows,setCatalogRows]=useState<any[]>([]);
   const [catalogReady,setCatalogReady]=useState(false);
@@ -3728,7 +3740,9 @@ function ExamsPage({
     setEditingId(null);
     setDraftFiles({});
     setRegionDrafts({});
-    setForm(makeEmptyExam());
+    const emptyForm = makeEmptyExam();
+    emptyFormSnapshot.current = JSON.stringify(emptyForm);
+    setForm(emptyForm);
     setTab("input");
   };
   const editExam = (exam: PracticeExam) => {
@@ -4486,12 +4500,12 @@ function ExamsPage({
           <h2>{tab === "analysis" ? "실전모의고사 AI 문항분석" : "실전 모의고사"}</h2>
           <p>{tab === "analysis" ? "등록된 시험지의 문항을 분석하고 완료 상태를 확인합니다." : "모든 컴퓨터가 Supabase의 동일한 시험정보와 PDF를 사용합니다."}</p>
         </div>
-        {tab !== "analysis" ? <button className="primary-button" onClick={startNew}>
+        {tab === "input" ? <button type="button" className="secondary-button" disabled={saving} onClick={leaveExamEditor}>← 시험지 목록으로</button> : tab !== "analysis" ? <button className="primary-button" onClick={startNew}>
           ＋ 실전모의고사 입력
         </button> : null}
       </section>
       <div className="student-tabs" style={{display:tab === "monitor" ? "none" : undefined}}>
-        <button className={tab === "list" ? "active" : ""} onClick={() => setTab("list")}>시험 목록</button>
+        <button className={tab === "list" ? "active" : ""} onClick={() => tab === "input" ? leaveExamEditor() : setTab("list")}>시험 목록</button>
         <button className={tab === "analysis" ? "active" : ""} onClick={() => setTab("analysis")}>AI 문항분석</button>
         
         
@@ -5164,9 +5178,10 @@ function ExamsPage({
             <button
               type="button"
               className="secondary-button"
-              onClick={() => setTab("list")}
+              disabled={saving}
+              onClick={leaveExamEditor}
             >
-              취소
+              ← 시험지 목록으로
             </button>
             <button className="primary-button" disabled={saving}>
               {saving ? "저장 중..." : editingId ? "수정 저장" : "시험 등록"}
