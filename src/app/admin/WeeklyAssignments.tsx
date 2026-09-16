@@ -10,16 +10,26 @@ const title=(n:number,s:string)=>`SOS_${scopes.find(x=>x.code===s)?.letter??"C"}
 export default function WeeklyAssignments({mode="assign"}:{mode?:"assign"|"catalog"}){
   const [data,setData]=useState<any>({cycles:[],catalog:[],exams:[],rows:[]});
   const [cycle,setCycle]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(""),[loading,setLoading]=useState(true);
+  const [assignmentNotice,setAssignmentNotice]=useState("");
   const [sequence,setSequence]=useState(1),[choices,setChoices]=useState<Record<string,string>>({}),[drafts,setDrafts]=useState<Record<string,{n:number;s:string}>>({});
   const load=useCallback(async()=>{
     setLoading(true);
     try{const r=await fetch(`/api/admin/exam-catalog${cycle?`?cycleId=${encodeURIComponent(cycle)}`:""}`,{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message);setData(j);if(mode==="assign"&&!cycle&&j.cycles.length){const today=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());setCycle((j.cycles.filter((c:any)=>c.start_date>=today).sort((a:any,b:any)=>a.start_date.localeCompare(b.start_date))[0]??j.cycles[0]).id);}setError("");setDrafts({});}catch(e){setError(e instanceof Error?e.message:"조회 실패");}finally{setLoading(false);}
   },[cycle,mode]);
   useEffect(()=>{void load();},[load]);
-  async function save(key:string,body:any){setBusy(key);setError("");try{const r=await fetch("/api/admin/exam-catalog",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.message);await load();}catch(e){setError(e instanceof Error?e.message:"저장 실패");}finally{setBusy("");}}
+  async function save(key:string,body:any){setBusy(key);setError("");try{const r=await fetch("/api/admin/exam-catalog",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.message);
+    if(j.results){const done=j.results.filter((x:any)=>x.status==="assigned").length;const failed=j.results.filter((x:any)=>x.status==="failed");const skipped=j.results.filter((x:any)=>x.status==="skipped").length;setAssignmentNotice(`배정 완료 ${done}명 · 기존 배정 유지 ${skipped}명${failed.length?" · 실패 "+failed.length+"명: "+failed.map((x:any)=>`${x.name||"학생"}: ${x.message}`).join(" / "):""}`);}
+    await load();}catch(e){setError(e instanceof Error?e.message:"저장 실패");}finally{setBusy("");}}
+  const assignable=data.rows.filter((row:any)=>!row.locked&&!row.registration).map((row:any)=>{const d=drafts[row.id]??{n:row.next_sequence,s:row.scope_code??"FULL"};return {membershipId:row.id,formalSequence:d.n,scopeCode:d.s};}).filter((item:any)=>data.catalog.some((c:any)=>c.formal_sequence===item.formalSequence&&c.scope_code===item.scopeCode));
+  const assignAll=()=>{
+    if(!assignable.length)return;
+    if(window.confirm(`미배정 ${assignable.length}명을 화면에 선택된 종류·순번으로 배정할까요? 기존 배정은 유지됩니다.`))void save("all",{action:"assign-all",cycleId:cycle,items:assignable});
+  };
   const selected=data.cycles.find((c:any)=>c.id===cycle);
   return <section className="weekly">
     <header><div><h2>{mode==="assign"?"회차별 시험배정":"A/B/C 시험지 등록"}</h2><p>{mode==="catalog"?"A/B/C 범위별로 공식 시험순번에 사용할 시험지를 등록합니다.":"선택한 운영 주차의 등록 학생에게 시험순번과 범위에 맞는 시험지를 배정합니다."}</p></div><span className="time">수요일 밤 11시 · 100분</span></header>
+    {mode==="assign"&&<div className="toolbar"><p>미배정 학생을 선택된 시험순번·범위로 한 번에 배정합니다. 시험지가 없는 학생과 기존 배정은 제외합니다.</p><button disabled={!!busy||loading||!assignable.length} onClick={assignAll}>{busy==="all"?"전체 배정 중…":`전체 배정 (${assignable.length}명)`}</button></div>}
+    {assignmentNotice&&<p role="status">{assignmentNotice}</p>}
     {error&&<p role="alert" className="error">{error}</p>}
     {mode==="catalog"?<>
       <div className="toolbar"><label>공식 시험순번<input type="number" min={1} value={sequence} onChange={e=>{setSequence(Math.max(1,Number(e.target.value)||1));setChoices({});}}/></label><a href="/admin?menu=exam-input">＋ 새 시험지 파일 등록</a></div>
