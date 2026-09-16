@@ -3,6 +3,7 @@ import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { getSessionUser } from "@/lib/supabase/auth";
 import { PROBLEM_DNA_VERSION } from "@/lib/problem-dna";
 import { DIFFICULTY_PROMPT_GUIDE } from "@/lib/difficulty-scale";
+import { normalizePdfAnswerText } from "@/lib/pdf-answer-text";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -130,7 +131,7 @@ export async function GET(request: Request) {
       if (!signed.error) files.solutionUrl = signed.data.signedUrl;
     }
   }
-  return NextResponse.json({ items: data ?? [], counts, files });
+  return NextResponse.json({ items: (data ?? []).map(item=>({...item,analysis_data:{...item.analysis_data,answer:normalizePdfAnswerText(item.analysis_data?.answer)}})), counts, files });
 }
 
 export async function POST(request: Request) {
@@ -281,7 +282,7 @@ export async function POST(request: Request) {
     difficulty: Number(item.difficulty),
     confidence: Number(item.confidence),
     analysis_version: PROBLEM_DNA_VERSION,
-    analysis_data: item,
+    analysis_data: {...item,answer:normalizePdfAnswerText(item.answer),raw_answer:item.answer},
     updated_at: now,
   }));
   const saved = await ctx.supabase
