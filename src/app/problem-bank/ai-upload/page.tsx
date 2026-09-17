@@ -1072,9 +1072,12 @@ export default function AnalysisWorkspacePage() {
     return rows;
   }, [supabase]);
 
+  const workspaceRequestNo = useRef(0);
   const loadWorkspace = useCallback(async (sourceId: string) => {
     if (!sourceId) return;
+    const requestNo = ++workspaceRequestNo.current;
     setBusy("load");
+    setWorkspace(null);
     setError("");
     setMessage("");
 
@@ -1087,7 +1090,12 @@ export default function AnalysisWorkspacePage() {
         throw new Error(payload.message || "분석화면을 불러오지 못했습니다.");
       }
 
+      if (requestNo !== workspaceRequestNo.current) return;
       const nextWorkspace = payload as Workspace & { success: true };
+      const url = new URL(window.location.href);
+      url.searchParams.set("sourceId", sourceId);
+      window.history.replaceState(window.history.state, "", url);
+      window.localStorage.setItem("matspu-analysis-source-id", sourceId);
       setWorkspace(nextWorkspace);
       setSelectedId(sourceId);
       setActiveQuestionId(nextWorkspace.questions?.[0]?.id ?? "");
@@ -1115,13 +1123,14 @@ export default function AnalysisWorkspacePage() {
         setWorkflowStep(1);
       }
     } catch (caught) {
+      if (requestNo !== workspaceRequestNo.current) return;
       setWorkspace(null);
       setPdfDoc(null);
       setError(
         caught instanceof Error ? caught.message : "분석화면을 불러오지 못했습니다.",
       );
     } finally {
-      setBusy("");
+      if (requestNo === workspaceRequestNo.current) setBusy("");
     }
   }, []);
 
@@ -1130,7 +1139,10 @@ export default function AnalysisWorkspacePage() {
     void (async () => {
       try {
         const rows = await loadSources();
-        if (rows.length > 0) await loadWorkspace(rows[0].id);
+        const requestedId = new URLSearchParams(window.location.search).get("sourceId");
+        const savedId = window.localStorage.getItem("matspu-analysis-source-id");
+        const initialId = requestedId || (rows.some(row => row.id === savedId) ? savedId : rows[0]?.id);
+        if (initialId) await loadWorkspace(initialId);
       } catch (caught) {
         setError(
           caught instanceof Error ? caught.message : "시험지 목록을 불러오지 못했습니다.",

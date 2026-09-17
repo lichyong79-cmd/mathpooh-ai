@@ -489,7 +489,7 @@ export default function Home() {
                   "matspu-admin-menu",
                   "problem-sources",
                 );
-                window.location.href = "/problem-bank/ai-upload";
+                window.location.href = `/problem-bank/ai-upload?sourceId=${encodeURIComponent(sourceFileId)}`;
               }}
             />
           ) : active === "dashboard" ? (
