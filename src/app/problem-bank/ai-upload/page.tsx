@@ -1140,8 +1140,9 @@ export default function AnalysisWorkspacePage() {
       try {
         const rows = await loadSources();
         const requestedId = new URLSearchParams(window.location.search).get("sourceId");
-        const savedId = window.localStorage.getItem("matspu-analysis-source-id");
-        const initialId = requestedId || (rows.some(row => row.id === savedId) ? savedId : rows[0]?.id);
+        // Row links and refreshes keep their explicit source. The general menu
+        // starts with an unanalyzed paper, never the last completed workspace.
+        const initialId = requestedId || rows.find(row => row.workflow_state === "UNANALYZED")?.id || rows[0]?.id;
         if (initialId) await loadWorkspace(initialId);
       } catch (caught) {
         setError(
