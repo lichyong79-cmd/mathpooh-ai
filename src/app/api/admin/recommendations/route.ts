@@ -9,27 +9,19 @@ async function adminContext() {
   return { user, supabase: createClient() };
 }
 
-const clean = (value: unknown) => String(value ?? "").replace(/\s+/g, "").toLowerCase();
-const related = (left: unknown, right: unknown) => {
-  const a = clean(left), b = clean(right);
-  return Boolean(a && b && (a.includes(b) || b.includes(a)));
-};
-
 export async function GET() {
   const ctx = await adminContext();
   if (!ctx) return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
-  const [{ data: students, error: studentError }, { data: attempts, error: attemptError }, activeCountResult, {data:sosSessions,error:sosError}] = await Promise.all([
+  const [{ data: students, error: studentError }, { data: attempts, error: attemptError }, activeCountResult, {data:sosSessions,error:sosError}, cyclesResult, membersResult] = await Promise.all([
     ctx.supabase.from("students").select("id,name,school,grade,status").neq("status", "퇴원").order("name"),
     ctx.supabase.from("exam_attempts").select("id,student_id,exam_id,status,answers,submitted_at,score,correct_count,started_at,formal_sequence,scope_code").eq("status", "submitted"),
     ctx.supabase.from("problem_bank_questions").select("id", { count: "exact", head: true }).eq("status", "ACTIVE"),
     ctx.supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,round_no,cycle_kind,target_snapshot,correct_count,total_count,created_at").order("created_at",{ascending:false}),
-  ]);
-  if (studentError || attemptError || activeCountResult.error || sosError) return NextResponse.json({ message: studentError?.message || attemptError?.message || activeCountResult.error?.message || sosError?.message }, { status: 400 });
-
-  const [cyclesResult, membersResult] = await Promise.all([
     ctx.supabase.from("learning_cycles").select("id,start_date,end_date"),
     ctx.supabase.from("learning_cycle_students").select("cycle_id,student_id,formal_sequence,scope_code"),
   ]);
+  if (studentError || attemptError || activeCountResult.error || sosError) return NextResponse.json({ message: studentError?.message || attemptError?.message || activeCountResult.error?.message || sosError?.message }, { status: 400 });
+
   if (cyclesResult.error || membersResult.error) return NextResponse.json({message: cyclesResult.error?.message || membersResult.error?.message}, {status:400});
   const attemptCycles: Record<string,string[]> = {};
   for (const attempt of attempts ?? []) {
@@ -43,21 +35,8 @@ export async function GET() {
     ).map(c => c.id);
   }
 
-  // Supabase/PostgREST의 단일 응답 1,000행 제한을 피해서 SOS 추천 후보 전체를 읽는다.
-  const problems: any[] = [];
-  for (let from = 0; ; from += 1000) {
-    const page = await ctx.supabase
-      .from("problem_bank_questions")
-      .select("id,problem_code,title,unit,topic,difficulty,question_type,summary,problem_dna,status,content_role,training_course")
-      .eq("status", "ACTIVE")
-      .eq("content_role", "TRAINING")
-      .order("id")
-      .range(from, from + 999);
-    if (page.error) return NextResponse.json({ message: page.error.message }, { status: 400 });
-    const rows = page.data ?? [];
-    problems.push(...rows);
-    if (rows.length < 1000) break;
-  }
+  // The assignment screen ranks actual exam mistakes. Bank candidates are
+  // fetched by training-engine only after the admin confirms SOS_NO1.
   const examIds = [...new Set((attempts ?? []).map((item) => item.exam_id))];
   const [{ data: exams, error: examError }, { data: metadata, error: metadataError }] = await Promise.all([
     examIds.length ? ctx.supabase.from("exams").select("id,title,exam_date,question_count,total_score,answer_keys").in("id", examIds) : Promise.resolve({ data: [], error: null }),
@@ -69,23 +48,12 @@ export async function GET() {
     const performance = buildStudentPerformance((attempts ?? []).filter((item) => String(item.student_id) === String(student.id)), exams ?? [], metadata ?? []);
     const weakUnits = performance.units.filter((item) => item.total > 0 && item.rate < 70).sort((a, b) => a.rate - b.rate || b.total - a.total).slice(0, 3);
     const weakTypes = performance.types.filter((item) => item.total > 0 && item.rate < 70).sort((a, b) => a.rate - b.rate || b.total - a.total).slice(0, 3);
-    const candidates = problems.map((problem) => {
-      let score = 0;
-      const reasons: string[] = [];
-      const unit = weakUnits.find((weak) => related(weak.label, problem.unit) || related(weak.label, problem.topic));
-      const type = weakTypes.find((weak) => related(weak.label, problem.topic) || related(weak.label, problem.question_type) || related(weak.label, JSON.stringify(problem.problem_dna ?? {})));
-      if (unit) { score += 60; reasons.push(`취약 단원: ${unit.label}`); }
-      if (type) { score += 30; reasons.push(`취약 유형: ${type.label}`); }
-      const difficulty = Number(problem.difficulty);
-      if (difficulty >= 1 && difficulty <= 4) score += 10;
-      return { ...problem, matchScore: score, reasons };
-    }).filter((item) => item.matchScore > 0).sort((a, b) => b.matchScore - a.matchScore).slice(0, 12);
     const latestExam = performance.history[0] ?? null;
     const missedCount = latestExam ? latestExam.wrongNumbers.length + latestExam.unansweredNumbers.length : 0;
     const studentSos=(sosSessions??[]).filter((x:any)=>String(x.student_id)===String(student.id)).map((x:any)=>({id:x.id,parentSessionId:x.parent_session_id,phase:x.phase,status:x.status,roundNo:Number(x.round_no??1),cycleKind:x.cycle_kind??"STANDARD",correct:Number(x.correct_count??0),total:Number(x.total_count??0),createdAt:x.created_at,learningCycleId:String(x.target_snapshot?.learningCycleId??""),learningCycleName:String(x.target_snapshot?.learningCycleName??""),sourceExamTitle:String(x.target_snapshot?.sourceExamTitle??"")}));
-    return { ...student, attemptCycles: Object.fromEntries(performance.history.map(exam => [exam.attemptId, attemptCycles[exam.attemptId] ?? []])), performance, weakUnits, weakTypes, candidates, latestExam, missedCount, sosSessions:studentSos };
+    return { ...student, attemptCycles: Object.fromEntries(performance.history.map(exam => [exam.attemptId, attemptCycles[exam.attemptId] ?? []])), performance, weakUnits, weakTypes, latestExam, missedCount, sosSessions:studentSos };
   }).filter((student) => student.performance.summary.examCount > 0);
-  return NextResponse.json({ students: rows, problemCount: activeCountResult.count ?? problems.length, trainingProblemCount: problems.length });
+  return NextResponse.json({ students: rows, problemCount: activeCountResult.count ?? 0 });
 }
 
 export async function POST(request: Request) {
