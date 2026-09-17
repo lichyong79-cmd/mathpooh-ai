@@ -1815,7 +1815,7 @@ function RecommendPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [problemCount, setProblemCount] = useState(0);
-  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessionData, setSessionData] = useState<{studentId:string; rows:any[]}>({studentId:"",rows:[]});
   const [diagnosisReadyForNo1, setDiagnosisReadyForNo1] = useState(false);
   const [diagnosisErrorForNo1, setDiagnosisErrorForNo1] = useState("");
   const [rejectedSourceKeys, setRejectedSourceKeys] = useState<string[]>([]);
@@ -1857,15 +1857,21 @@ function RecommendPage() {
   }).filter(student => student.performance.history.length > 0), [rows, selectedCycleId]);
   const selected = visibleRows.find(item => String(item.id) === selectedId) ?? visibleRows[0];
   useEffect(() => { setSelectedId(selected?.id ?? ""); }, [selected?.id]);
+  const sessions = useMemo(() => {
+    if (sessionData.studentId !== String(selected?.id ?? "")) return [];
+    return sessionData.rows.filter(session => selectedCycleId === "ALL" ||
+      (Boolean(selectedCycleId) && String(session.target_snapshot?.learningCycleId ?? "") === selectedCycleId));
+  }, [sessionData, selected?.id, selectedCycleId]);
+
 
   const sessionRequestNo = useRef(0);
   const loadSessions = useCallback(async (studentId: string) => {
     const requestNo = ++sessionRequestNo.current;
-    setSessions([]);
+    setSessionData({studentId,rows:[]});
     if (!studentId) return;
     const response = await fetch(`/api/admin/training-engine?studentId=${encodeURIComponent(studentId)}`, { cache: "no-store" });
     const data = await response.json();
-    if (requestNo === sessionRequestNo.current && response.ok) setSessions(data.sessions ?? []);
+    if (requestNo === sessionRequestNo.current && response.ok) setSessionData({studentId,rows:data.sessions ?? []});
   }, []);
 
   useEffect(() => { void loadSessions(selectedId); }, [selectedId, loadSessions]);
@@ -2019,6 +2025,7 @@ function RecommendPage() {
 
   const latestDiagnosis = sessions.find((item: any) => item.phase === "DIAGNOSIS");
   const generateFollowUp = async (action: "additional-diagnosis" | "generate-training") => {
+    if (!selectedCycle) return alert("추가 생성할 운영 회차를 선택해 주세요.");
     if (!selected || !latestDiagnosis) return alert("먼저 SOS_NO1을 확정하고 진단을 생성해 주세요.");
     const diagnosticCorrect = Math.max(0, Math.min(3, Number(latestDiagnosis.correct_count ?? 0)));
     if (action === "generate-training" && latestDiagnosis.status !== "COMPLETED") {
@@ -2049,7 +2056,7 @@ function RecommendPage() {
   };
 
   const cancelTrainingSession = async (session: any) => {
-    if (!selected) return;
+    if (!selected || !sessions.some(item => item.id === session.id)) return;
     if (!["DRAFT","ASSIGNED"].includes(String(session?.status ?? ""))) {
       return alert("학생이 이미 시작한 진단·훈련은 취소할 수 없습니다.");
     }
@@ -2249,19 +2256,19 @@ function RecommendPage() {
               <p>실전모의고사 원문항 → 진단 3문항 → 진단 결과에 따른 훈련 10문항 순서로 진행합니다.</p>
             </div>
             <div className="engine-actions">
-              <button className="diagnosis-more-button" disabled={saving || !latestDiagnosis} onClick={() => void generateFollowUp("additional-diagnosis")}>추가 진단 3문항</button>
+              <button className="diagnosis-more-button" disabled={saving || !selectedCycle || !latestDiagnosis} onClick={() => void generateFollowUp("additional-diagnosis")}>추가 진단 3문항</button>
               <span style={{padding:"10px 14px",borderRadius:10,background:"#e8f5ed",color:"#216e45",fontWeight:900,fontSize:13}}>진단 제출 → 훈련 10문항 자동선정</span>
             </div>
           </div>
 
           <div className="training-session-summary">
-            <b>진단·훈련 생성 이력</b>
+            <b>{selectedCycle ? `${selectedCycle.name} · 생성 이력` : "전체 회차 · 생성 이력"}</b>
             {sessions.length ? sessions.map((session: any) =>
               <span key={session.id} className={session.phase === "DIAGNOSIS" ? "diagnosis" : "training"} style={{display:"inline-flex",alignItems:"center",gap:6}}>
                 {`${sosSessionLabel(session)} · ${sosStageLabel(session)} · ${session.question_count ?? session.total_count ?? (session.phase==="DIAGNOSIS"?3:10)}문항`} · {session.status}
                 {["DRAFT","ASSIGNED"].includes(String(session.status)) ? <button type="button" disabled={saving} onClick={()=>void cancelTrainingSession(session)} style={{border:"1px solid #e7b3b3",background:"#fff",color:"#b42318",borderRadius:999,padding:"3px 8px",fontSize:11,fontWeight:900,cursor:"pointer"}}>생성 취소</button> : null}
               </span>
-            ) : <span>아직 생성된 진단·훈련이 없습니다.</span>}
+            ) : <span>선택한 범위에 생성된 진단·훈련이 없습니다.</span>}
           </div>
 
           {!noSosNeeded && visibleSourceCandidates.length > 1 ? <>
