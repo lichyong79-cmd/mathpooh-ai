@@ -1825,7 +1825,7 @@ function RecommendPage() {
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [cycleData,setCycleData]=useState<any>({cycles:[],exams:[]});
   const [selectedCycleId,setSelectedCycleId]=useState("");
-  const [selectedExamKey,setSelectedExamKey]=useState("");
+
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1844,15 +1844,28 @@ function RecommendPage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
-  useEffect(()=>{(async()=>{try{const r=await fetch("/api/admin/learning-cycles",{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message||"회차 조회 실패");setCycleData(j);setSelectedCycleId((v)=>v&&j.cycles?.some((c:any)=>String(c.id)===v)?v:String(j.cycles?.[0]?.id??""));}catch(e){console.error(e);}})();},[]);
+  useEffect(()=>{(async()=>{try{const r=await fetch("/api/admin/learning-cycles",{cache:"no-store"});const j=await r.json();if(!r.ok)throw new Error(j.message||"회차 조회 실패");setCycleData(j);}catch(e){console.error(e);}})();},[]);
 
-  const selected = rows.find((item) => String(item.id) === selectedId) ?? rows[0];
+  useEffect(() => {
+    if (selectedCycleId || loading || !cycleData.cycles?.length) return;
+    const latest = cycleData.cycles.find((c:any) => rows.some(student => Object.values(student.attemptCycles ?? {}).some((ids:any) => ids.includes(c.id))));
+    if (latest) setSelectedCycleId(latest.id);
+  }, [rows, cycleData, loading, selectedCycleId]);
+  const visibleRows = useMemo(() => rows.map(student => {
+    const history = (student.performance?.history ?? []).filter((exam:any) => selectedCycleId === "ALL" || (student.attemptCycles?.[exam.attemptId] ?? []).includes(selectedCycleId));
+    return {...student, performance:{...student.performance, history}, latestExam:history[0] ?? null};
+  }).filter(student => student.performance.history.length > 0), [rows, selectedCycleId]);
+  const selected = visibleRows.find(item => String(item.id) === selectedId) ?? visibleRows[0];
+  useEffect(() => { setSelectedId(selected?.id ?? ""); }, [selected?.id]);
 
+  const sessionRequestNo = useRef(0);
   const loadSessions = useCallback(async (studentId: string) => {
-    if (!studentId) return setSessions([]);
+    const requestNo = ++sessionRequestNo.current;
+    setSessions([]);
+    if (!studentId) return;
     const response = await fetch(`/api/admin/training-engine?studentId=${encodeURIComponent(studentId)}`, { cache: "no-store" });
     const data = await response.json();
-    if (response.ok) setSessions(data.sessions ?? []);
+    if (requestNo === sessionRequestNo.current && response.ok) setSessions(data.sessions ?? []);
   }, []);
 
   useEffect(() => { void loadSessions(selectedId); }, [selectedId, loadSessions]);
@@ -1864,22 +1877,18 @@ function RecommendPage() {
     setDiagnosisErrorForNo1("");
     setDiagnosisCandidates([]);
     setSelectedDiagnosisIds([]);
-    setSelectedExamKey("");
-  }, [selectedId]);
+
+  }, [selectedId, selectedCycleId]);
 
   const allSourceCandidates = useMemo(
     () => buildSosSourceCandidates(selected, sessions),
     [selected, sessions],
   );
 
-  const examKeyOf=(exam:any)=>String(exam?.attemptId??exam?.attempt_id??exam?.examId??exam?.exam_id??exam?.title??"");
-  const selectedCycle=(cycleData.cycles??[]).find((c:any)=>String(c.id)===String(selectedCycleId))??null;
-  const cycleExamIds=useMemo(()=>new Set((selectedCycle?.exams??[]).map((e:any)=>String(e.id))),[selectedCycle]);
-  const examOptions=useMemo(()=>{const m=new Map<string,any>();for(const c of allSourceCandidates){const examId=String(c.sourceExam?.examId??c.sourceExam?.exam_id??"");if(selectedCycleId&&(!examId||!cycleExamIds.has(examId)))continue;const k=examKeyOf(c.sourceExam);if(k&&!m.has(k))m.set(k,c.sourceExam);}return [...m.entries()].map(([key,exam])=>({key,exam}));},[allSourceCandidates,selectedCycleId,cycleExamIds]);
-  useEffect(()=>{setRejectedSourceKeys([]);setConfirmedTarget(null);setDiagnosisCandidates([]);setSelectedDiagnosisIds([]);if(!examOptions.length){setSelectedExamKey("");return;}if(!selectedExamKey||!examOptions.some(x=>x.key===selectedExamKey))setSelectedExamKey(examOptions[0].key);},[examOptions,selectedExamKey]);
+  const selectedCycle=(cycleData.cycles??[]).find((c:any)=>String(c.id)===selectedCycleId)??null;
   const visibleSourceCandidates = useMemo(
-    () => allSourceCandidates.filter((candidate) => !rejectedSourceKeys.includes(candidate.key) && (!selectedExamKey||examKeyOf(candidate.sourceExam)===selectedExamKey)),
-    [allSourceCandidates, rejectedSourceKeys,selectedExamKey],
+    () => allSourceCandidates.filter(candidate => !rejectedSourceKeys.includes(candidate.key)),
+    [allSourceCandidates, rejectedSourceKeys],
   );
   const cycleSnapshot=selectedCycle?{learningCycleId:selectedCycle.id,learningCycleName:selectedCycle.name,learningCycleStart:selectedCycle.start_date,learningCycleEnd:selectedCycle.end_date,learningCycleDateLabel:`${selectedCycle.start_date} ~ ${selectedCycle.end_date}`}:{ };
 
@@ -1889,7 +1898,7 @@ function RecommendPage() {
   const latestResults = Array.isArray(latestExam?.questionResults) ? latestExam.questionResults : [];
   const latestWrongCount = latestResults.filter((item: any) => !item.correct).length;
   const isLatestPerfect = Boolean(latestExam) && Number(latestExam?.score) === 100 && latestWrongCount === 0;
-  const noSosNeeded = Boolean(selected&&selectedCycleId) && visibleSourceCandidates.length === 0;
+  const noSosNeeded = Boolean(selected&&selectedCycle) && visibleSourceCandidates.length === 0;
 
   const rejectCurrent = () => {
     if (!target) return;
@@ -2072,9 +2081,9 @@ function RecommendPage() {
     target?.verdict === "명확한 취약" ? "#b42318" :
     target?.verdict === "실수 의심" ? "#b54708" :
     target?.verdict === "취약 의심" ? "#175cd3" : "#667085";
-  const cycleCandidatesFor=(student:any)=>buildSosSourceCandidates(student,[]).filter((candidate:any)=>{if(!selectedCycleId)return false;const examId=String(candidate.sourceExam?.examId??candidate.sourceExam?.exam_id??"");return !!examId&&cycleExamIds.has(examId);});
+  const cycleCandidatesFor=(student:any)=>buildSosSourceCandidates(student,[]);
   const cycleSessionsFor=(student:any)=>(student?.sosSessions??[]).filter((x:any)=>String(x.learningCycleId)===String(selectedCycleId));
-  const cycleStudentState=(student:any)=>{const ss=cycleSessionsFor(student);if(!selectedCycleId)return "회차 선택 필요";if(!ss.length)return cycleCandidatesFor(student).length?"SOS 미배정":"SOS 없음";const open=ss.find((x:any)=>["ASSIGNED","IN_PROGRESS","RETRAIN"].includes(String(x.status)));if(!open)return "SOS 완료";if(open.phase==="DIAGNOSIS")return `진단 ${open.roundNo}차 ${open.status==="ASSIGNED"?"대기":"진행중"}`;if(open.cycleKind==="HOMEWORK")return "3제 굳히기";return `${open.roundNo===2?"2차":"1차"}훈련 ${open.status==="ASSIGNED"?"대기":"진행중"}`;};
+  const cycleStudentState=(student:any)=>{const ss=cycleSessionsFor(student);if(!selectedCycle)return "전체 이력";if(!ss.length)return cycleCandidatesFor(student).length?"SOS 미배정":"SOS 없음";const open=ss.find((x:any)=>["ASSIGNED","IN_PROGRESS","RETRAIN"].includes(String(x.status)));if(!open)return "SOS 완료";if(open.phase==="DIAGNOSIS")return `진단 ${open.roundNo}차 ${open.status==="ASSIGNED"?"대기":"진행중"}`;if(open.cycleKind==="HOMEWORK")return "3제 굳히기";return `${open.roundNo===2?"2차":"1차"}훈련 ${open.status==="ASSIGNED"?"대기":"진행중"}`;};
 
   return <>
     <section className="page-title-row">
@@ -2092,17 +2101,23 @@ function RecommendPage() {
     </section>
 
     <section className="student-stat-grid">
-      <MiniStat label="운영 대상" value={`${rows.length}명`} note="실전모고 제출 학생" />
+      <MiniStat label="운영 대상" value={`${visibleRows.length}명`} note="실전모고 제출 학생" />
       <MiniStat label="문제은행" value={`${problemCount}문항`} note="NO1 확정 후 진단에 사용" />
-      <MiniStat label="이번 회차 SOS 미배정" value={`${selectedCycleId?rows.filter((item)=>cycleSessionsFor(item).length===0&&cycleCandidatesFor(item).length>0).length:0}명`} note="응시 오답은 있으나 SOS 미배정" emphasis />
-      <MiniStat label="이번 회차 SOS 완료" value={`${selectedCycleId?rows.filter((item)=>cycleStudentState(item)==="SOS 완료").length:0}명`} note="회차 기준 학습 완료" />
+      <MiniStat label="이번 회차 SOS 미배정" value={`${selectedCycle?visibleRows.filter((item)=>cycleSessionsFor(item).length===0&&cycleCandidatesFor(item).length>0).length:0}명`} note="응시 오답은 있으나 SOS 미배정" emphasis />
+      <MiniStat label="이번 회차 SOS 완료" value={`${selectedCycle?visibleRows.filter((item)=>cycleStudentState(item)==="SOS 완료").length:0}명`} note="회차 기준 학습 완료" />
     </section>
 
     <section className="panel recommendation-layout">
       <aside className="recommendation-students">
         <h3>학생별 SOS 대상</h3>
-        {!selectedCycleId?<div style={{margin:"0 8px 10px",padding:10,borderRadius:10,background:"#fff4e5",fontSize:12,fontWeight:900,color:"#9a5b13"}}>먼저 오른쪽에서 운영 회차를 선택하세요.</div>:null}
-        {loading ? <p>불러오는 중...</p> : rows.map((item) => {
+        <label style={{display:"grid",gap:6,marginBottom:12}}>운영 회차
+          <select aria-label="SOS 대상 운영 회차" value={selectedCycleId} onChange={e=>{setSelectedCycleId(e.target.value);setSelectedId("");setConfirmedTarget(null);setDiagnosisReadyForNo1(false);setDiagnosisCandidates([]);setSelectedDiagnosisIds([]);setRejectedSourceKeys([]);}}>
+            <option value="" disabled>회차 선택</option><option value="ALL">전체 회차</option>
+            {(cycleData.cycles??[]).map((c:any)=><option key={c.id} value={c.id}>{c.name} · {c.start_date}</option>)}
+          </select>
+        </label>
+        {!loading && !visibleRows.length ? <p>이 회차에 제출한 학생이 없습니다.</p> : null}
+        {loading ? <p>불러오는 중...</p> : visibleRows.map((item) => {
           const candidates = cycleCandidatesFor(item);
           const first = candidates[0];
           const state=cycleStudentState(item);
@@ -2113,7 +2128,7 @@ function RecommendPage() {
             onClick={() => setSelectedId(String(item.id))}
           >
             <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"center"}}><strong>{item.name}</strong><em style={{fontStyle:"normal",fontSize:10,fontWeight:950,color:stateTone}}>{state}</em></div>
-            <span>{selectedCycle?.name??"회차 미선택"} · {candidates.length?`SOS 후보 ${candidates.length}개`:"공략 오답 없음"}</span>
+            <span>{selectedCycle?.name??"전체 회차"} · {candidates.length?`SOS 후보 ${candidates.length}개`:"공략 오답 없음"}</span>
             <small>{first ? `${first.sourceExam?.title || "실전모의고사"} ${sosQuestionNo(first.sourceQuestion)}번 · 우선도 ${first.priority}` : cycleSessionsFor(item).length?`이미 ${cycleSessionsFor(item).length}단계 생성됨`:"이 회차에서 배정할 SOS 없음"}</small>
           </button>;
         })}
@@ -2125,24 +2140,10 @@ function RecommendPage() {
             <span>최근 실전모의고사</span>
             <strong>{latestExam?.title || "응시 이력 없음"}</strong>
             <b>{latestExam ? `${latestExam.score ?? "-"}점 · 오답/미응답 ${latestWrongCount}문항` : "-"}</b>
-            <small>이번 시험 오답이 없으면 이전 시험의 미해결 오답을 확인합니다.</small>
+            <small>선택한 회차에 실제 제출한 시험의 오답을 확인합니다.</small>
           </div>
 
-          <section style={{margin:"16px 0",padding:16,border:"1px solid #dbe7df",borderRadius:16,background:"#fff"}}>
-            <div style={{display:"grid",gridTemplateColumns:"minmax(220px,1fr) minmax(240px,1.5fr)",gap:12}}>
-              <label style={{display:"grid",gap:6,fontSize:12,fontWeight:900,color:"#475467"}}>운영 회차
-                <select value={selectedCycleId} onChange={(e)=>{setSelectedCycleId(e.target.value);setSelectedExamKey("");}} style={{minHeight:44,border:"1px solid #cfd8d2",borderRadius:10,padding:"0 10px",fontWeight:900}}>
-                  <option value="">회차를 선택하세요</option>{(cycleData.cycles??[]).map((c:any)=><option key={c.id} value={c.id}>{c.name} · {c.start_date} ~ {c.end_date}</option>)}
-                </select>
-              </label>
-              <label style={{display:"grid",gap:6,fontSize:12,fontWeight:900,color:"#475467"}}>이 회차의 기준 시험
-                <select disabled={!selectedCycleId||!examOptions.length} value={selectedExamKey} onChange={(e)=>{setSelectedExamKey(e.target.value);setRejectedSourceKeys([]);setConfirmedTarget(null);setDiagnosisCandidates([]);setSelectedDiagnosisIds([]);}} style={{minHeight:44,border:"1px solid #cfd8d2",borderRadius:10,padding:"0 10px",fontWeight:900}}>
-                  {!selectedCycleId?<option>먼저 회차를 선택하세요</option>:!examOptions.length?<option>이 학생의 응시 오답이 없습니다</option>:examOptions.map(({key,exam})=><option key={key} value={key}>{exam?.title||"실전모의고사"} · {exam?.submittedAt?new Date(exam.submittedAt).toLocaleDateString("ko-KR"):exam?.examDate?new Date(exam.examDate).toLocaleDateString("ko-KR"):"응시기록"}</option>)}
-                </select>
-              </label>
-            </div>
-            {!selectedCycleId?<div style={{marginTop:10,padding:"10px 12px",borderRadius:10,background:"#fff4e5",color:"#9a5b13",fontSize:12,fontWeight:900}}>먼저 실전모의고사 관리 → 회차 관리에서 회차를 만들고 시험을 배치하세요.</div>:<div style={{marginTop:10,padding:"9px 11px",borderRadius:10,background:"#eef7f1",color:"#216e45",fontSize:12,fontWeight:800}}>이후 진단 → 1차훈련 → 2차훈련/오답 → 3제 굳히기까지 전부 <b>{selectedCycle?.name} · {selectedCycle?.start_date} ~ {selectedCycle?.end_date}</b>에 자동 귀속됩니다.</div>}
-          </section>
+          <p style={{padding:12,background:"#eef7f1",borderRadius:10}}>{selectedCycle ? `진단·훈련은 ${selectedCycle.name}에 귀속됩니다.` : "전체 회차 조회 중입니다. SOS를 배정하려면 왼쪽에서 운영 회차를 선택하세요."}</p>
 
           {noSosNeeded ? (
             <section style={{margin:"18px 0",padding:28,border:"2px solid #8ec7a1",borderRadius:18,background:"#f4fbf6"}}>
@@ -2150,7 +2151,7 @@ function RecommendPage() {
               <h3 style={{margin:"8px 0",fontSize:24}}>이번 회차 SOS 없음</h3>
               <p style={{margin:0,color:"#475467",fontWeight:700}}>
                 {isLatestPerfect
-                  ? "최근 실전모의고사를 모두 맞혔고, 이전 시험에도 남아 있는 미해결 오답이 없습니다."
+                  ? "선택한 회차의 실전모의고사를 모두 맞혔습니다."
                   : "현재 확인되는 미해결 실전모의고사 오답이 없습니다."}
               </p>
               <div style={{marginTop:14,padding:12,borderRadius:12,background:"#fff",color:"#667085",fontSize:13}}>

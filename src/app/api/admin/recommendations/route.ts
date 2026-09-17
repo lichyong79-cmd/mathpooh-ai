@@ -20,11 +20,28 @@ export async function GET() {
   if (!ctx) return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
   const [{ data: students, error: studentError }, { data: attempts, error: attemptError }, activeCountResult, {data:sosSessions,error:sosError}] = await Promise.all([
     ctx.supabase.from("students").select("id,name,school,grade,status").neq("status", "퇴원").order("name"),
-    ctx.supabase.from("exam_attempts").select("id,student_id,exam_id,status,answers,submitted_at,score,correct_count").eq("status", "submitted"),
+    ctx.supabase.from("exam_attempts").select("id,student_id,exam_id,status,answers,submitted_at,score,correct_count,started_at,formal_sequence,scope_code").eq("status", "submitted"),
     ctx.supabase.from("problem_bank_questions").select("id", { count: "exact", head: true }).eq("status", "ACTIVE"),
     ctx.supabase.from("sos_training_sessions").select("id,student_id,parent_session_id,phase,status,round_no,cycle_kind,target_snapshot,correct_count,total_count,created_at").order("created_at",{ascending:false}),
   ]);
   if (studentError || attemptError || activeCountResult.error || sosError) return NextResponse.json({ message: studentError?.message || attemptError?.message || activeCountResult.error?.message || sosError?.message }, { status: 400 });
+
+  const [cyclesResult, membersResult] = await Promise.all([
+    ctx.supabase.from("learning_cycles").select("id,start_date,end_date"),
+    ctx.supabase.from("learning_cycle_students").select("cycle_id,student_id,formal_sequence,scope_code"),
+  ]);
+  if (cyclesResult.error || membersResult.error) return NextResponse.json({message: cyclesResult.error?.message || membersResult.error?.message}, {status:400});
+  const attemptCycles: Record<string,string[]> = {};
+  for (const attempt of attempts ?? []) {
+    const day = new Intl.DateTimeFormat("sv-SE", {timeZone:"Asia/Seoul"}).format(new Date(attempt.started_at || attempt.submitted_at));
+    attemptCycles[attempt.id] = (cyclesResult.data ?? []).filter(c =>
+      day >= c.start_date && day <= c.end_date && (membersResult.data ?? []).some(m =>
+        m.cycle_id === c.id && m.student_id === attempt.student_id &&
+        (attempt.formal_sequence == null || m.formal_sequence === attempt.formal_sequence) &&
+        (attempt.scope_code == null || m.scope_code === attempt.scope_code)
+      )
+    ).map(c => c.id);
+  }
 
   // Supabase/PostgREST의 단일 응답 1,000행 제한을 피해서 SOS 추천 후보 전체를 읽는다.
   const problems: any[] = [];
@@ -66,7 +83,7 @@ export async function GET() {
     const latestExam = performance.history[0] ?? null;
     const missedCount = latestExam ? latestExam.wrongNumbers.length + latestExam.unansweredNumbers.length : 0;
     const studentSos=(sosSessions??[]).filter((x:any)=>String(x.student_id)===String(student.id)).map((x:any)=>({id:x.id,parentSessionId:x.parent_session_id,phase:x.phase,status:x.status,roundNo:Number(x.round_no??1),cycleKind:x.cycle_kind??"STANDARD",correct:Number(x.correct_count??0),total:Number(x.total_count??0),createdAt:x.created_at,learningCycleId:String(x.target_snapshot?.learningCycleId??""),learningCycleName:String(x.target_snapshot?.learningCycleName??""),sourceExamTitle:String(x.target_snapshot?.sourceExamTitle??"")}));
-    return { ...student, performance, weakUnits, weakTypes, candidates, latestExam, missedCount, sosSessions:studentSos };
+    return { ...student, attemptCycles: Object.fromEntries(performance.history.map(exam => [exam.attemptId, attemptCycles[exam.attemptId] ?? []])), performance, weakUnits, weakTypes, candidates, latestExam, missedCount, sosSessions:studentSos };
   }).filter((student) => student.performance.summary.examCount > 0);
   return NextResponse.json({ students: rows, problemCount: activeCountResult.count ?? problems.length, trainingProblemCount: problems.length });
 }
