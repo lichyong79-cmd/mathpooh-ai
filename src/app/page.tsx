@@ -953,8 +953,10 @@ function SosFinalCompletion({
 
 function SosTrainingWorkspace({
   onRefresh,
+  initialSessionId,
 }: {
   onRefresh: () => Promise<void> | void;
+  initialSessionId?: string;
 }) {
   const [data, setData] = useState<any>({ sessions: [], subunitMeters: [] });
   const [loading, setLoading] = useState(true);
@@ -1013,6 +1015,8 @@ function SosTrainingWorkspace({
       setData(json);
       workspaceLoadedRef.current = true;
       const allSessions = Array.isArray(json.sessions) ? json.sessions : [];
+      const preferredSession = allSessions.find((x:any) => String(x.id) === preferredActiveId);
+      if (preferredSession) setSelectedCycleId(String(preferredSession.learningCycle?.id ?? "UNASSIGNED"));
       const open = allSessions.find((x: any) => isSosOpen(x));
       setActiveId((current: string) => {
         // SOS288: 단계 완료 API가 새 세션 id를 이미 알고 있으면 그 세션을 즉시 선택한다.
@@ -1042,8 +1046,8 @@ function SosTrainingWorkspace({
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(initialSessionId);
+  }, [load, initialSessionId]);
 
   const nextSessionIdFromResult = (json: any) =>
     String(
@@ -2289,6 +2293,7 @@ export default function StudentHome() {
   const [activeExam, setActiveExam] = useState<Exam | null>(null);
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [homeSosSessionId, setHomeSosSessionId] = useState("");
   const [remaining, setRemaining] = useState(0);
   // SOS320: 자동저장 함수는 answers가 바뀔 때마다 새로 만들어진다.
   // 그걸 useEffect 의존성에 그대로 두면 타이머가 매 입력마다 초기화된다.
@@ -2977,7 +2982,11 @@ export default function StudentHome() {
       overdueTasks: sosTasks.filter((task) => task.overdue),
     };
   }, [portal]);
+  const homeSosTasks = useMemo(() => (portal?.sosSessions ?? [])
+    .filter(session => isSosOpen(session))
+    .sort((a,b) => a.created_at.localeCompare(b.created_at)), [portal?.sosSessions]);
   const openSosFromHome = () => {
+    setHomeSosSessionId("");
     const assignedTasks =
       (studentHomeOverview?.currentTasks.length ?? 0) +
       (studentHomeOverview?.overdueTasks.length ?? 0);
@@ -3415,6 +3424,26 @@ export default function StudentHome() {
       ) : null}
       {activeSection === "home" ? (
         <>
+          <section aria-label="SOS 학습 할 일" style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,300px),1fr))",gap:16,margin:"16px 0"}}>
+            {[true,false].map(overdue => {
+              const today = new Intl.DateTimeFormat("sv-SE",{timeZone:"Asia/Seoul"}).format(new Date());
+              const tasks = homeSosTasks.filter(session => {
+                const end = cycleFromSnapshot(session.target_snapshot)?.endDate;
+                return Boolean(end && end < today) === overdue;
+              });
+              return <article key={String(overdue)} style={{padding:20,border:`1px solid ${overdue?"#e3bd80":"#bddbc8"}`,borderRadius:16,background:overdue?"#fffaf2":"#f4faf6"}}>
+                <h2 style={{margin:"0 0 12px"}}>{overdue?"밀린 SOS 학습":"이번 주 SOS 학습"} · {tasks.length}건</h2>
+                {tasks.length ? <div style={{display:"grid",gap:8}}>{tasks.map(session => {
+                  const cycle = cycleFromSnapshot(session.target_snapshot);
+                  return <button key={session.id} type="button" onClick={()=>{setHomeSosSessionId(session.id);moveSection("strategy");}}
+                    style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,textAlign:"left",padding:"12px 14px",border:"1px solid #dbe3dc",borderRadius:10,background:"white",color:"#20372a"}}>
+                    <span><strong>{cycle?.name || session.target_snapshot?.sourceExamTitle || "회차 미지정 SOS"}</strong><br/>{sosStageLabel(session)} · {session.total_count}문항<br/><small>{session.status === "ASSIGNED" ? "미응시" : "진행 중"}{cycle?.endDate ? ` · ${cycle.endDate}까지` : " · 기간 미지정"}</small></span>
+                    <strong style={{whiteSpace:"nowrap"}}>{session.status === "ASSIGNED" ? "학습하기" : "이어하기"} →</strong>
+                  </button>;
+                })}</div> : <p>{overdue?"밀린 SOS 학습이 없습니다.":"이번 주 배정된 SOS 학습이 없습니다."}</p>}
+              </article>;
+            })}
+          </section>
           <section
             className="student-home-priority"
             aria-label="다가오는 일정과 SOS 학습 할 일"
@@ -3454,62 +3483,7 @@ export default function StudentHome() {
               </button>
             </article>
 
-            <article className="student-sos-todo-card">
-              <header>
-                <div className="student-priority-icon" aria-hidden="true">
-                  S
-                </div>
-                <div>
-                  <small>SOS TO-DO</small>
-                  <h2>SOS 학습 할 일</h2>
-                </div>
-                <div className="student-sos-counts">
-                  <span>
-                    할 일 <b>{studentHomeOverview?.currentTasks.length ?? 0}</b>
-                  </span>
-                  <span
-                    className={
-                      (studentHomeOverview?.overdueTasks.length ?? 0)
-                        ? "has-overdue"
-                        : ""
-                    }
-                  >
-                    밀린 학습{" "}
-                    <b>{studentHomeOverview?.overdueTasks.length ?? 0}</b>
-                  </span>
-                </div>
-              </header>
-              {(studentHomeOverview?.currentTasks.length ?? 0) +
-                (studentHomeOverview?.overdueTasks.length ?? 0) >
-              0 ? (
-                <div className="student-sos-task-list">
-                  {[
-                    ...(studentHomeOverview?.overdueTasks ?? []),
-                    ...(studentHomeOverview?.currentTasks ?? []),
-                  ]
-                    .slice(0, 3)
-                    .map((task) => (
-                      <div
-                        className={task.overdue ? "is-overdue" : ""}
-                        key={task.id}
-                      >
-                        <span>{task.overdue ? "밀린 학습" : "이번 할 일"}</span>
-                        <p>
-                          <b>{task.cycleName}</b> · {task.stage}
-                        </p>
-                      </div>
-                    ))}
-                </div>
-              ) : (
-                <div className="student-home-empty student-sos-empty">
-                  <strong>지금 해야 할 SOS 학습이 없습니다.</strong>
-                  <p>새 진단이나 훈련이 배정되면 이곳에 표시됩니다.</p>
-                </div>
-              )}
-              <button onClick={openSosFromHome}>
-                SOS 학습 보기
-              </button>
-            </article>
+
           </section>
           <section className="student-home-grid is-compact">
             <article className="student-home-card recent-score-card">
@@ -3808,7 +3782,7 @@ export default function StudentHome() {
               </small>
             </article>
           </div>
-          <SosTrainingWorkspace onRefresh={load} />
+          <SosTrainingWorkspace onRefresh={load} initialSessionId={homeSosSessionId || undefined} />
         </section>
       ) : null}
       {activeSection === "scores" ? (
