@@ -1,3 +1,4 @@
+import { sourceStarSchema, sourceStarGrades, sourceStarReview, type SourceStars } from "@/lib/source-star-difficulty";
 export const PROBLEM_DNA_VERSION = "problem-dna-v3.4" as const;
 
 export type EvidenceTag = { tag: string; evidence: string; confidence: number };
@@ -40,6 +41,7 @@ export type ProblemDNA = {
   };
   abilities: EvidenceTag[];
   difficulty: {
+    source_stars?: SourceStars;
     final_grade: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
     scale_version?: "sos8-v1";
     csat_point_equivalent: 2 | 3 | 4;
@@ -118,8 +120,8 @@ export const problemDnaQuestionSchema = {
     abilities: evidenceArray(13),
     difficulty: {
       type: "object", additionalProperties: false,
-      required: ["final_grade", "csat_point_equivalent", "csat_difficulty_band", "csat_basis", "concept", "condition_interpretation", "insight", "calculation", "solution_length", "trap_strength", "time_burden", "concept_count", "thinking_step_count", "estimated_minutes", "reasons"],
-      properties: { final_grade: { type: "integer", minimum: 1, maximum: 8 }, csat_point_equivalent: { type: "integer", enum: [2, 3, 4] }, csat_difficulty_band: { type: "string", enum: ["two_point", "three_point", "three_hard", "four_easy", "four_medium", "four_hard", "semi_killer", "killer"] }, csat_basis: { type: "string" }, concept: score, condition_interpretation: score, insight: score, calculation: score, solution_length: { type: "string", enum: ["짧음", "중간", "김"] }, trap_strength: score, time_burden: score, concept_count: { type: "integer", minimum: 0, maximum: 20 }, thinking_step_count: { type: "integer", minimum: 0, maximum: 30 }, estimated_minutes: { type: "number", minimum: 0, maximum: 120 }, reasons: evidenceArray(8) },
+      required: ["source_stars","final_grade", "csat_point_equivalent", "csat_difficulty_band", "csat_basis", "concept", "condition_interpretation", "insight", "calculation", "solution_length", "trap_strength", "time_burden", "concept_count", "thinking_step_count", "estimated_minutes", "reasons"],
+      properties: { source_stars: sourceStarSchema, final_grade: { type: "integer", minimum: 1, maximum: 8 }, csat_point_equivalent: { type: "integer", enum: [2, 3, 4] }, csat_difficulty_band: { type: "string", enum: ["two_point", "three_point", "three_hard", "four_easy", "four_medium", "four_hard", "semi_killer", "killer"] }, csat_basis: { type: "string" }, concept: score, condition_interpretation: score, insight: score, calculation: score, solution_length: { type: "string", enum: ["짧음", "중간", "김"] }, trap_strength: score, time_burden: score, concept_count: { type: "integer", minimum: 0, maximum: 20 }, thinking_step_count: { type: "integer", minimum: 0, maximum: 30 }, estimated_minutes: { type: "number", minimum: 0, maximum: 120 }, reasons: evidenceArray(8) },
     },
     errors: evidenceArray(14), traps: evidenceArray(12),
     educational_value: {
@@ -200,6 +202,8 @@ export function evidenceDifficultyLevel(difficulty: ProblemDNA["difficulty"]): 1
 export function calculateDifficultyLevel(dna: ProblemDNA): 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 {
   const evidence = evidenceDifficultyLevel(dna.difficulty);
   const band = difficultyLevelFromBand(dna.difficulty?.csat_difficulty_band);
+  const stars = sourceStarGrades(dna.difficulty.source_stars);
+  if (stars?.includes(Number(dna.difficulty.final_grade))) return dna.difficulty.final_grade;
   if (!band) return evidence;
   const gap = evidence - band;
   if (Math.abs(gap) <= 1) return band;
@@ -278,8 +282,9 @@ export function applyOperationalDifficultyPolicy(dna: ProblemDNA, sourceLabel = 
   // AI 판정 결과까지 덮어썼다. 이제 추정치임을 명시하고 검증 대상으로 남긴다.
   difficulty.difficulty_decision = "estimated";
   difficulty.difficulty_estimated = true;
-  difficulty.difficulty_review_required = false;
-  difficulty.difficulty_review_reason = "";
+  const starReview = sourceStarReview(dna.difficulty.source_stars, dna.difficulty.final_grade);
+  difficulty.difficulty_review_required = Boolean(starReview);
+  difficulty.difficulty_review_reason = starReview;
   difficulty.dna_recalculate_version = "dna-local-v2";
   difficulty.dna_recalculated_at = new Date().toISOString();
   return dna;

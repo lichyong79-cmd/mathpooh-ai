@@ -1,3 +1,4 @@
+import { ensureOriginalSourceStars } from "@/lib/source-star-reader";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, requireAdmin } from "@/lib/supabase/auth";
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const { data: problem, error } = await supabase
       .from("problem_bank_questions")
-      .select("id,subject,question_image_path,problem_dna,difficulty,answer")
+      .select("id,subject,source_file_id,question_image_path,problem_dna,difficulty,answer")
       .eq("id", problemId)
       .single();
     if (error || !problem) {
@@ -65,6 +66,7 @@ export async function POST(request: NextRequest) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return NextResponse.json({ success: false, message: "OPENAI_API_KEY가 없습니다." }, { status: 500 });
     const model = process.env.OPENAI_DIFFICULTY_MODEL || process.env.OPENAI_MODEL || "gpt-5-mini";
+    problem.problem_dna = await ensureOriginalSourceStars(supabase, problem, apiKey, model);
 
     let result;
     try {

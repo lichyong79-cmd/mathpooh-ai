@@ -1,3 +1,4 @@
+import { SOURCE_STAR_PROMPT } from "@/lib/source-star-difficulty";
 import { normalizeProblemAnswer, problemAnswerIssues } from "@/lib/problem-answer-integrity";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -125,7 +126,7 @@ async function requestDna(args: {
   structured: boolean;
 }) {
   const content: Array<Record<string, unknown>> = [
-    { type: "input_text", text: args.prompt },
+    { type: "input_text", text: args.prompt + SOURCE_STAR_PROMPT },
     // 자르기 완료된 문항 이미지는 이미 문항 영역만 포함하므로 auto로 전송해
     // 불필요한 고해상도 비전 처리 지연을 줄인다. DNA 항목/프롬프트는 그대로 유지한다.
     { type: "input_image", image_url: args.questionImageUrl, detail: "auto" },

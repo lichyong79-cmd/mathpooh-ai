@@ -1,3 +1,4 @@
+import { SOURCE_STAR_PROMPT, SOURCE_STAR_POLICY, sourceStarSchema, sourceStarGrades, sourceStarReview, type SourceStars } from "@/lib/source-star-difficulty";
 /**
  * SOS 8단계 난이도 판정 엔진 (SOS240)
  *
@@ -12,13 +13,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, normalizeDifficulty, type DifficultyValue } from "@/lib/difficulty-scale";
 import { canonicalSubject } from "@/lib/subject";
 
-export const DIFFICULTY_JUDGE_VERSION = "difficulty-v240-solve-verify" as const;
+export const DIFFICULTY_JUDGE_VERSION = "difficulty-v281-source-stars" as const;
 
 export type DifficultyBandName =
   | "two_point" | "three_point" | "three_hard" | "four_easy"
   | "four_medium" | "four_hard" | "semi_killer" | "killer";
 
 export type DifficultySolve = {
+  source_stars?: SourceStars;
   solvable: boolean;
   solved_answer: string;
   solution_outline: string;
@@ -77,8 +79,9 @@ export class DifficultyVerificationError extends Error {
 const solveSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["solvable","solved_answer","solution_outline","key_insight","concepts","reasoning_steps","condition_transformations","calculation_load","insight_load","confidence","issue"],
+  required: ["source_stars","solvable","solved_answer","solution_outline","key_insight","concepts","reasoning_steps","condition_transformations","calculation_load","insight_load","confidence","issue"],
   properties: {
+    source_stars: sourceStarSchema,
     solvable: { type: "boolean" },
     solved_answer: { type: "string" },
     solution_outline: { type: "string" },
@@ -130,6 +133,7 @@ function dnaSummary(dna: any) {
 function buildSolvePrompt(dna: any) {
   return `당신은 한국 고등수학 문항을 직접 푸는 검증자입니다. 난이도를 아직 판정하지 마세요. 먼저 첨부 문항을 처음부터 독립적으로 풀어야 합니다.
 
+${SOURCE_STAR_PROMPT}
 [중요]
 - DNA나 기존 난이도를 정답처럼 믿지 마세요. 이미지의 실제 문제를 우선합니다.
 - 문항이 잘렸거나 판독 불가하거나 조건이 부족하면 solvable=false로 두세요.
@@ -144,6 +148,10 @@ JSON 객체 하나만 출력하세요.`;
 
 function buildJudgePrompt(dna: any, solve: DifficultySolve, references = "", officialAnswer = "") {
   return `당신은 한국 수능 고등수학 난이도 검증자입니다. 첨부 문항과 아래의 독립 재풀이 결과를 검증한 뒤 MATHPOOH SOS 공식 8단계 중 하나를 판정하세요.
+
+${SOURCE_STAR_PROMPT}
+이번 원본 별점 판독: ${JSON.stringify(solve.source_stars ?? null)}
+허용 SOS 등급: ${JSON.stringify(sourceStarGrades(solve.source_stars) ?? "별점 미확정: 불확실하면 검토필요")}
 
 [공식 8단계]
 1=2점: 정의·공식·성질 거의 직접 적용. 매우 짧고 전략 선택 부담 거의 없음.
@@ -299,6 +307,10 @@ export async function judgeDifficulty(args: {
     prompt:buildSolvePrompt(args.dna),schema:solveSchema,schemaName:"mathpooh_difficulty_solve_v240",timeoutMs:timeout,effort:"medium",
   }) as DifficultySolve;
 
+  if (args.dna?.difficulty?.source_star_origin === "original_pdf") {
+    solve.source_stars = args.dna.difficulty.source_stars;
+  }
+
   // SOS274: 1차 재풀이 탈락 기준. 여기서 걸리면 이미지 판독 자체가 안 된 것이므로 미판정이 맞다.
   if (!solve.solvable || Number(solve.confidence) < .45) {
     return {
@@ -323,7 +335,8 @@ export async function judgeDifficulty(args: {
   // 이제 두 단계로 나눈다.
   //   hardFail   = 등급 자체를 신뢰할 수 없음 -> 미판정
   //   needsReview = 등급은 나왔으나 사람이 확인해야 함 -> 검토필요(값은 보존, 화면에 노출)
-  const hardFail = invalidGrade || !judged.final_grade || confidence < .45;
+  const starReview = sourceStarReview(solve.source_stars, judged.final_grade);
+  const hardFail = !!starReview || invalidGrade || !judged.final_grade || confidence < .45;
   const needsReview =
     judged.review_required ||
     confidence < .60 ||
@@ -332,7 +345,7 @@ export async function judgeDifficulty(args: {
 
   const finalGrade = hardFail ? null : judged.final_grade;
   const reviewReason =
-    judged.review_reason ||
+    starReview || judged.review_reason ||
     (hardFail ? "등급 판정 신뢰도가 너무 낮음"
       : judged.answer_consistency === "mismatch" ? "AI 재풀이 답과 저장 정답이 다름 · 정답 확인 필요"
       : judged.solution_verified === false ? "독립 재풀이의 타당성이 확인되지 않음"
@@ -378,6 +391,9 @@ export function applyJudgedDifficulty(dna:any,result:DifficultyJudgement,previou
     solution_verified:result.solution_verified,
     answer_consistency:result.answer_consistency,
     independent_solve:result.solve,
+    source_stars:result.solve.source_stars ?? oldDifficulty.source_stars ?? null,
+    source_star_policy:SOURCE_STAR_POLICY,
+    allowed_regrade_grades:sourceStarGrades(result.solve.source_stars),
     band_conflict:false,
   };
   return next;

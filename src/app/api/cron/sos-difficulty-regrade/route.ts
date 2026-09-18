@@ -1,3 +1,4 @@
+import { ensureOriginalSourceStars } from "@/lib/source-star-reader";
 import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { normalizeDifficulty } from "@/lib/difficulty-scale";
@@ -29,7 +30,7 @@ async function processOne(supabase: any, job: any) {
   try {
     const { data: problem, error } = await supabase
       .from("problem_bank_questions")
-      .select("id,subject,question_image_path,problem_dna,difficulty,answer")
+      .select("id,subject,source_file_id,question_image_path,problem_dna,difficulty,answer")
       .eq("id", questionId)
       .single();
     if (error || !problem) throw new Error(error?.message || "문항을 찾지 못했습니다.");
@@ -51,6 +52,7 @@ async function processOne(supabase: any, job: any) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY가 없습니다.");
     const model = process.env.OPENAI_DIFFICULTY_MODEL || process.env.OPENAI_MODEL || "gpt-5-mini";
+    problem.problem_dna = await ensureOriginalSourceStars(supabase, problem, apiKey, model);
 
     const references = await difficultyReferenceText(supabase, problem.subject);
     const result = await judgeDifficulty({
