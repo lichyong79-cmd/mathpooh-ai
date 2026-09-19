@@ -2,7 +2,7 @@ import { ensureOriginalSourceStars } from "@/lib/source-star-reader";
 import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { normalizeDifficulty } from "@/lib/difficulty-scale";
-import { applyJudgedDifficulty, difficultyReferenceText, judgeDifficulty } from "@/lib/difficulty-judge";
+import { applyJudgedDifficulty, difficultyReferenceText, judgeDifficulty, DIFFICULTY_JUDGE_VERSION } from "@/lib/difficulty-judge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +27,7 @@ const MAX_ATTEMPTS = 3;
 
 async function processOne(supabase: any, job: any) {
   const questionId = String(job.question_id);
+  const shadow = job.evaluation_mode === "SHADOW";
   try {
     const { data: problem, error } = await supabase
       .from("problem_bank_questions")
@@ -52,18 +53,33 @@ async function processOne(supabase: any, job: any) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY가 없습니다.");
     const model = process.env.OPENAI_DIFFICULTY_MODEL || process.env.OPENAI_MODEL || "gpt-5-mini";
-    problem.problem_dna = await ensureOriginalSourceStars(supabase, problem, apiKey, model);
+    if (!shadow) problem.problem_dna = await ensureOriginalSourceStars(supabase, problem, apiKey, model);
 
-    const references = await difficultyReferenceText(supabase, problem.subject);
+    const references = shadow ? "" : await difficultyReferenceText(supabase, problem.subject);
     const result = await judgeDifficulty({
       apiKey, model, imageUrl,
       dna: problem.problem_dna,
       references,
+      blind: shadow,
       officialAnswer: problem.answer,
       timeoutMs: 120_000,
     });
 
     const before = normalizeDifficulty(problem.difficulty);
+    if (shadow) {
+      // Audit results never change questions, operational grades or review metadata.
+      const saved = await supabase.from("sos_difficulty_regrade_jobs").update({
+        status:"DONE", evaluation_mode:"APPLY", before_difficulty:before || null,
+        after_difficulty:before || null, decision:result.decision,
+        review_required:result.review_required, confidence:result.confidence, last_error:null,
+        result_payload:{...job.result_payload, mode:"SHADOW", version:DIFFICULTY_JUDGE_VERSION,
+          baseline:problem.problem_dna?.difficulty ?? null, proposed:result,
+          operational_grade_unchanged:true, completed_at:new Date().toISOString()},
+        finished_at:new Date().toISOString(), updated_at:new Date().toISOString(),
+      }).eq("id",job.id);
+      if (saved.error) throw saved.error;
+      return;
+    }
     const dna = applyJudgedDifficulty(problem.problem_dna, result, before || null);
 
     // 화면 재판정과 완전히 같은 기준으로 저장한다.
@@ -109,7 +125,7 @@ async function run(request: Request) {
   const size = Math.max(1, Math.min(20, Number(url.searchParams.get("size") || BATCH_SIZE)));
 
   const supabase = createClient();
-  const cols = "id,question_id,status,attempt_count,priority";
+  const cols = "id,question_id,status,attempt_count,priority,evaluation_mode,result_payload";
   const staleCutoff = new Date(Date.now() - STALE_MINUTES * 60000).toISOString();
 
   // 죽은 채 RUNNING으로 남은 작업을 먼저 큐로 되돌린다.

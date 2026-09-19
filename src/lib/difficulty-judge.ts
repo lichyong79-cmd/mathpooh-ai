@@ -10,10 +10,10 @@ import { SOURCE_STAR_PROMPT, SOURCE_STAR_POLICY, sourceStarSchema, sourceStarGra
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, normalizeDifficulty, type DifficultyValue } from "@/lib/difficulty-scale";
+import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, normalizeDifficulty, difficultyBand, type DifficultyValue } from "@/lib/difficulty-scale";
 import { canonicalSubject } from "@/lib/subject";
 
-export const DIFFICULTY_JUDGE_VERSION = "difficulty-v281-source-stars" as const;
+export const DIFFICULTY_JUDGE_VERSION = "difficulty-v283-consistent-bands" as const;
 
 export type DifficultyBandName =
   | "two_point" | "three_point" | "three_hard" | "four_easy"
@@ -130,7 +130,7 @@ function dnaSummary(dna: any) {
   };
 }
 
-function buildSolvePrompt(dna: any) {
+function buildSolvePrompt(dna: any, blind = false) {
   return `당신은 한국 고등수학 문항을 직접 푸는 검증자입니다. 난이도를 아직 판정하지 마세요. 먼저 첨부 문항을 처음부터 독립적으로 풀어야 합니다.
 
 ${SOURCE_STAR_PROMPT}
@@ -142,11 +142,11 @@ ${SOURCE_STAR_PROMPT}
 - condition_transformations는 문제 조건을 식/그래프/치환/경우분류 등 다른 표현으로 바꾸어야 하는 횟수입니다.
 - calculation_load와 insight_load는 1(매우 낮음)~5(매우 높음)입니다.
 
-참고용 DNA(오류 가능): ${JSON.stringify(dnaSummary(dna))}
+${blind ? "독립 검증: 기존 난이도·DNA·풀이·핵심발상은 제공하지 않는다. 이미지의 모든 조건으로 답을 끝까지 계산하고, '계산하면 답이 나온다'처럼 핵심 경우분류를 생략하지 않는다." : `참고용 DNA(오류 가능): ${JSON.stringify(dnaSummary(dna))}`}
 JSON 객체 하나만 출력하세요.`;
 }
 
-function buildJudgePrompt(dna: any, solve: DifficultySolve, references = "", officialAnswer = "") {
+function buildJudgePrompt(dna: any, solve: DifficultySolve, references = "", officialAnswer = "", blind = false) {
   return `당신은 한국 수능 고등수학 난이도 검증자입니다. 첨부 문항과 아래의 독립 재풀이 결과를 검증한 뒤 MATHPOOH SOS 공식 8단계 중 하나를 판정하세요.
 
 ${SOURCE_STAR_PROMPT}
@@ -164,6 +164,10 @@ ${SOURCE_STAR_PROMPT}
 8=킬러: 최상위 난도. 핵심 발상 자체가 매우 어렵고 복합적 비정형 추론이 필수.
 
 [절대 규칙]
+- 학생이 제한 시간 안에 처음 보는 문제를 푸는 상황을 평가한다. AI가 풀이를 이미 발견했거나 해설이 짧다는 이유로 낮추지 않는다.
+- 정형 개념을 쓰더라도 진입 전략 발견, 복합 조건 연결, 빠짐없는 경우 분류, 계산 정확성, 검산 부담을 함께 평가한다. '전형적'이라는 말만으로 고난도를 배제하지 않는다.
+- 내신/학교 이름, 문제 번호 또는 예상 전체 분포만으로 등급을 올리거나 내리지 않는다. 실제 비교 기준이 제공되지 않으면 특정 연도 수능과 대조했다고 주장하지 않는다.
+- final_grade와 csat_difficulty_band는 반드시 같은 등급이어야 한다(7=semi_killer, 8=killer).
 - 모른다고 3점(2단계)에 보내지 마세요.
 - 이미지가 불완전하거나 독립 풀이가 불확실하거나 공식답과 명백히 충돌하면 decision=unclassified, final_grade=null로 두세요.
 - confidence<0.68이면 반드시 review_required=true입니다.
@@ -182,8 +186,7 @@ ${SOURCE_STAR_PROMPT}
 [독립 재풀이]
 ${JSON.stringify(solve)}
 
-[기존 DNA - 참고용, 오류 가능]
-${JSON.stringify(dnaSummary(dna))}
+${blind ? "[독립 검증] 기존 DNA·난이도·기존 풀이·관리자 기준문항은 숨겨져 있다. 위에서 새로 푼 풀이만 검증한다. 생략된 핵심 논증은 직접 검증하고 확인할 수 없으면 solution_verified=false로 둔다." : `[기존 DNA - 참고용, 오류 가능]\n${JSON.stringify(dnaSummary(dna))}`}
 ${officialAnswer ? `\n[저장된 공식 정답]\n${officialAnswer}` : ""}
 ${references ? `\n[관리자 확정 기준문항]\n${references}` : ""}
 
@@ -300,11 +303,12 @@ export async function judgeDifficulty(args: {
   references?:string;
   officialAnswer?:string | number | null;
   timeoutMs?:number;
+  blind?:boolean;
 }): Promise<DifficultyJudgement> {
   const timeout=Math.max(60_000,args.timeoutMs ?? 180_000);
   const solve=await requestStructured({
     apiKey:args.apiKey,model:args.model,imageUrl:args.imageUrl,
-    prompt:buildSolvePrompt(args.dna),schema:solveSchema,schemaName:"mathpooh_difficulty_solve_v240",timeoutMs:timeout,effort:"medium",
+    prompt:buildSolvePrompt(args.dna,args.blind),schema:solveSchema,schemaName:"mathpooh_difficulty_solve_v240",timeoutMs:timeout,effort:"medium",
   }) as DifficultySolve;
 
   if (args.dna?.difficulty?.source_star_origin === "original_pdf") {
@@ -323,12 +327,13 @@ export async function judgeDifficulty(args: {
 
   const judged=await requestStructured({
     apiKey:args.apiKey,model:args.model,imageUrl:args.imageUrl,
-    prompt:buildJudgePrompt(args.dna,solve,args.references??"",String(args.officialAnswer??"").trim()),
+    prompt:buildJudgePrompt(args.dna,solve,args.blind ? "" : args.references??"",String(args.officialAnswer??"").trim(),args.blind),
     schema:judgeSchema,schemaName:"mathpooh_difficulty_judge_v240",timeoutMs:timeout,effort:"medium",
   }) as Omit<DifficultyJudgement,"solve">;
 
   const confidence=Math.max(0,Math.min(1,Number(judged.confidence)||0));
   const invalidGrade=judged.final_grade!==null && !allowedGrades.includes(judged.final_grade as DifficultyValue);
+  const bandMismatch = !!judged.final_grade && difficultyBand(judged.final_grade) !== judged.csat_difficulty_band;
 
   // SOS274: 이전에는 정답 불일치·재풀이 미검증·신뢰도 0.55 미만을 모두 '미판정'으로 묶었다.
   // 미판정은 화면에서 사라지고 수동 확인 대상도 되지 않아, 사람이 손댈 방법이 없는 상태로 쌓였다.
@@ -338,18 +343,19 @@ export async function judgeDifficulty(args: {
   const starReview = sourceStarReview(solve.source_stars, judged.final_grade);
   const hardFail = !!starReview || invalidGrade || !judged.final_grade || confidence < .45;
   const needsReview =
+    bandMismatch || judged.decision !== "graded" ||
     judged.review_required ||
-    confidence < .60 ||
+    confidence < .68 ||
     judged.answer_consistency === "mismatch" ||   // 저장 정답이 오기입일 수 있으므로 미판정이 아닌 검토필요
     judged.solution_verified === false;
 
   const finalGrade = hardFail ? null : judged.final_grade;
   const reviewReason =
-    starReview || judged.review_reason ||
+    starReview || (bandMismatch ? "AI 등급과 난도 분류명이 불일치 · 재검증 필요" : "") || judged.review_reason ||
     (hardFail ? "등급 판정 신뢰도가 너무 낮음"
       : judged.answer_consistency === "mismatch" ? "AI 재풀이 답과 저장 정답이 다름 · 정답 확인 필요"
       : judged.solution_verified === false ? "독립 재풀이의 타당성이 확인되지 않음"
-      : confidence < .60 ? "난이도 판정 신뢰도 낮음"
+      : confidence < .68 ? "난이도 판정 신뢰도 낮음"
       : "");
 
   return {
