@@ -1503,6 +1503,7 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
                 <b>{queue?.counts?.SKIPPED ?? 0}</b>
                 <span>건너뜀</span>
               </div>
+              {!!queue?.counts?.PAUSED && <div><b>{queue.counts.PAUSED}</b><span>기준 검증 보류</span></div>}
             </div>
             <div className="queue-actions">
               <button

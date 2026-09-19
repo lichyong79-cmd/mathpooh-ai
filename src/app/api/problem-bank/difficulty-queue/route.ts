@@ -42,6 +42,12 @@ export async function GET() {
       .in("status", ["DONE", "FAILED"])
       .order("finished_at", { ascending: false }).limit(12);
     const total = statuses.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
+    const held = await supabase.from("sos_difficulty_regrade_jobs")
+      .select("id",{count:"exact",head:true}).eq("status","SKIPPED")
+      .eq("result_payload->>audit_hold","difficulty-reset-20260919");
+    if (held.error) throw held.error;
+    counts.PAUSED=held.count ?? 0;
+    counts.SKIPPED=Math.max(0,(counts.SKIPPED ?? 0)-counts.PAUSED);
     const finished = (counts.DONE ?? 0) + (counts.FAILED ?? 0) + (counts.SKIPPED ?? 0);
     return NextResponse.json({
       success: true, counts, total, finished, auditHold:DIFFICULTY_AUDIT_HOLD,

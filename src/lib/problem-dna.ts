@@ -252,6 +252,8 @@ export function applyOperationalDifficultyPolicy(dna: ProblemDNA, sourceLabel = 
   // 이 가드가 없어서 "DNA만 재계산(보조)"을 돌릴 때마다 AI 판정 결과와
   // 검토필요 플래그가 통째로 지워지고 있었다.
   if (difficultyAiVerified(dna)) return dna;
+  // A failed/review-required independent assessment must not lose its review evidence on registration.
+  if ((dna.difficulty as any).ai_regrade_version && (dna.difficulty as any).difficulty_review_required === true) return dna;
 
   applyCalculatedDifficulty(dna);
   const difficulty = dna.difficulty as Record<string, unknown>;

@@ -35,6 +35,7 @@ async function run(s=solve,j=judged){requests=[];responses=[response(s),response
  const fixed={difficulty:{admin_fixed:true,final_grade:8}};assert.equal(applyJudgedDifficulty(fixed,good,'8'),fixed);
  const updated=applyJudgedDifficulty(old,good,'7');assert.equal(updated.difficulty.final_grade,6);assert.equal(updated.difficulty.difficulty_estimated,false);
  const review={difficulty:{ai_regrade_version:'v',difficulty_decision:'graded',difficulty_review_required:true}};
+ assert.equal(applyOperationalDifficultyPolicy(review),review);
  assert.equal(difficultyAiVerified(review),false);assert.equal(difficultyAiJudged(review),false);
  const proposal=applyOperationalDifficultyPolicy({difficulty:{final_grade:8,csat_difficulty_band:'killer',source_stars:stars}},'수능특강');assert.equal(proposal.difficulty.final_grade,8);assert.equal(proposal.difficulty.source_cap_applied,false);
  const conflict=applyOperationalDifficultyPolicy({difficulty:{final_grade:7,csat_difficulty_band:'three_point',source_stars:stars}});assert.equal(conflict.difficulty.final_grade,7);assert.equal(conflict.difficulty.difficulty_review_required,true);
