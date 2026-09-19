@@ -200,12 +200,12 @@ export function evidenceDifficultyLevel(difficulty: ProblemDNA["difficulty"]): 1
  * AI 밴드를 유지한다. 근거점수와 충돌하면 검토 대상으로 표시하며 평균으로 덮어쓰지 않는다.
  */
 export function calculateDifficultyLevel(dna: ProblemDNA): 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 {
-  const evidence = evidenceDifficultyLevel(dna.difficulty);
+  const declared = Number(dna.difficulty?.final_grade);
+  // Preserve the AI's explicit grade. Conflicts are review evidence, not arithmetic input.
+  if (Number.isInteger(declared) && declared >= 1 && declared <= 8) return declared as 1|2|3|4|5|6|7|8;
   const band = difficultyLevelFromBand(dna.difficulty?.csat_difficulty_band);
-  const stars = sourceStarGrades(dna.difficulty.source_stars);
-  if (stars?.includes(Number(dna.difficulty.final_grade))) return dna.difficulty.final_grade;
-  if (!band) return evidence;
-  return band;
+  if (band) return band;
+  return evidenceDifficultyLevel(dna.difficulty);
 }
 
 export function applyCalculatedDifficulty(dna: ProblemDNA) {
@@ -217,7 +217,7 @@ export function applyCalculatedDifficulty(dna: ProblemDNA) {
   // 밴드와 근거가 크게 어긋난 문항은 난이도 탭의 이상 검토 대상으로 표시한다.
   (dna.difficulty as Record<string, unknown>).evidence_grade = evidence;
   (dna.difficulty as Record<string, unknown>).band_grade = band || null;
-  (dna.difficulty as Record<string, unknown>).band_conflict = Boolean(band) && Math.abs(evidence - band) >= 2;
+  (dna.difficulty as Record<string, unknown>).band_conflict = Boolean(band) && (band !== final || Math.abs(evidence - band) >= 2);
   return dna;
 }
 
@@ -237,7 +237,7 @@ export function difficultyAiVerified(dna: any): boolean {
   const d = dna?.difficulty ?? {};
   if (d.admin_fixed === true) return true;
   if (!String(d.ai_regrade_version ?? "").trim()) return false;
-  if (String(d.difficulty_decision ?? "") !== "graded") return false;
+  if (String(d.difficulty_decision ?? "") !== "graded" || d.difficulty_review_required === true) return false;
   const aiAt = Date.parse(String(d.ai_regraded_at ?? ""));
   const dnaAt = Date.parse(String(d.dna_recalculated_at ?? ""));
   // 공식 재계산이 AI 판정보다 나중이면 저장값은 공식이 덮어쓴 것이다.
@@ -255,33 +255,19 @@ export function applyOperationalDifficultyPolicy(dna: ProblemDNA, sourceLabel = 
 
   applyCalculatedDifficulty(dna);
   const difficulty = dna.difficulty as Record<string, unknown>;
-  const beforeCap = Number(dna.difficulty.final_grade);
-  const source = String(sourceLabel ?? "").normalize("NFKC");
-  const ebsWorkbook = /수능특강|수능완성|수특|수완/.test(source);
-
-  // 수특/수완은 운영상 킬러(8)로 자동 확정하지 않는다. 최고 준킬러(7).
-  // 다른 출처는 1~8 전체 범위를 그대로 사용한다.
-  if (ebsWorkbook && beforeCap === 8) {
-    dna.difficulty.final_grade = 7;
-    difficulty.source_cap_applied = true;
-    difficulty.source_cap_from = 8;
-    difficulty.source_cap_to = 7;
-    difficulty.source_cap_reason = "EBS 수특/수완 자동분류는 킬러 확정 금지";
-  } else {
-    difficulty.source_cap_applied = false;
-  }
-
+  // Source titles must never cap a mathematical difficulty judgement.
+  difficulty.source_cap_applied = false;
   difficulty.scale_version = "sos8-v1";
-  difficulty.classification_policy = "sos275-dna-operational-v2";
-  difficulty.difficulty_source = "dna-local-operational";
+  difficulty.classification_policy = "sos284-preserve-ai-proposal";
+  difficulty.difficulty_source = "ai-initial-proposal";
   // SOS275(A안): 이 값은 AI가 문제를 풀어보고 내린 판정이 아니라 DNA 점수 가중합 추정치다.
   // 예전에는 여기서 graded / review_required=false 도장을 찍어서, 검증된 값처럼 보이게 만들고
   // AI 판정 결과까지 덮어썼다. 이제 추정치임을 명시하고 검증 대상으로 남긴다.
   difficulty.difficulty_decision = "estimated";
   difficulty.difficulty_estimated = true;
   const starReview = sourceStarReview(dna.difficulty.source_stars, dna.difficulty.final_grade);
-  difficulty.difficulty_review_required = Boolean(starReview);
-  difficulty.difficulty_review_reason = starReview;
+  difficulty.difficulty_review_required = Boolean(starReview) || difficulty.band_conflict === true;
+  difficulty.difficulty_review_reason = starReview || (difficulty.band_conflict ? "AI 등급·분류명·근거점수 충돌: 자동 평균/하향 금지" : "");
   difficulty.dna_recalculate_version = "dna-local-v2";
   difficulty.dna_recalculated_at = new Date().toISOString();
   return dna;

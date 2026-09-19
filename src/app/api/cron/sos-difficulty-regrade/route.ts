@@ -1,3 +1,4 @@
+import { DIFFICULTY_AUDIT_HOLD } from "@/lib/difficulty-assessment-policy";
 import { ensureOriginalSourceStars } from "@/lib/source-star-reader";
 import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -20,18 +21,18 @@ export const maxDuration = 300;
  */
 
 // 문항당 약 12.5초. 300초 한도 안에서 여유를 두고 8문항으로 잡는다.
-const BATCH_SIZE = 8;
+const BATCH_SIZE = 5;
 // RUNNING으로 이 시간 이상 멈춰 있으면 죽은 작업으로 보고 회수한다.
 const STALE_MINUTES = 20;
 const MAX_ATTEMPTS = 3;
 
 async function processOne(supabase: any, job: any) {
   const questionId = String(job.question_id);
-  const shadow = job.evaluation_mode === "SHADOW";
+  const shadow = DIFFICULTY_AUDIT_HOLD || job.evaluation_mode === "SHADOW";
   try {
     const { data: problem, error } = await supabase
       .from("problem_bank_questions")
-      .select("id,subject,source_file_id,question_image_path,problem_dna,difficulty,answer")
+      .select("id,subject,source_file_id,question_image_path,problem_dna,difficulty,answer,question_no,question_type,updated_at")
       .eq("id", questionId)
       .single();
     if (error || !problem) throw new Error(error?.message || "문항을 찾지 못했습니다.");
@@ -52,17 +53,26 @@ async function processOne(supabase: any, job: any) {
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) throw new Error("OPENAI_API_KEY가 없습니다.");
-    const model = process.env.OPENAI_DIFFICULTY_MODEL || process.env.OPENAI_MODEL || "gpt-5-mini";
-    if (!shadow) problem.problem_dna = await ensureOriginalSourceStars(supabase, problem, apiKey, model);
+    const configuredModel = process.env.OPENAI_DIFFICULTY_MODEL || process.env.OPENAI_MODEL || "gpt-5-mini";
+    // Explicit comparison model only for the bounded, read-only audit cohort.
+    const model = shadow && job.result_payload?.audit_model === "gpt-5.4" ? "gpt-5.4" : configuredModel;
+    if (!shadow) {
+      await ensureOriginalSourceStars(supabase, problem, apiKey, model);
+      const fresh = await supabase.from("problem_bank_questions").select("problem_dna,updated_at,answer,question_image_path,subject").eq("id", questionId).single();
+      if (fresh.error || !fresh.data) throw fresh.error || new Error("문항 재조회 실패");
+      if (fresh.data.answer !== problem.answer || fresh.data.question_image_path !== problem.question_image_path || fresh.data.subject !== problem.subject || fresh.data.problem_dna?.difficulty?.admin_fixed === true) throw new Error("판정 도중 문항 변경 · 재검증 필요");
+      problem.problem_dna = fresh.data.problem_dna;
+      problem.updated_at = fresh.data.updated_at;
+    }
 
     const references = shadow ? "" : await difficultyReferenceText(supabase, problem.subject);
     const result = await judgeDifficulty({
-      apiKey, model, imageUrl,
+      apiKey, model, imageUrl, subject:problem.subject, questionNo:problem.question_no, questionType:problem.question_type,
       dna: problem.problem_dna,
       references,
       blind: shadow,
       officialAnswer: problem.answer,
-      timeoutMs: 120_000,
+      timeoutMs: 240_000,
     });
 
     const before = normalizeDifficulty(problem.difficulty);
@@ -73,7 +83,7 @@ async function processOne(supabase: any, job: any) {
         after_difficulty:before || null, decision:result.decision,
         review_required:result.review_required, confidence:result.confidence, last_error:null,
         result_payload:{...job.result_payload, mode:"SHADOW", version:DIFFICULTY_JUDGE_VERSION,
-          baseline:problem.problem_dna?.difficulty ?? null, proposed:result,
+          configured_model:configuredModel, baseline:problem.problem_dna?.difficulty ?? null, proposed:result,
           operational_grade_unchanged:true, completed_at:new Date().toISOString()},
         finished_at:new Date().toISOString(), updated_at:new Date().toISOString(),
       }).eq("id",job.id);
@@ -87,8 +97,8 @@ async function processOne(supabase: any, job: any) {
     const payload: any = { problem_dna: dna, updated_at: new Date().toISOString() };
     const applied = result.decision === "graded" && !!result.final_grade && !result.review_required;
     if (applied) payload.difficulty = result.final_grade;
-    const saved = await supabase.from("problem_bank_questions").update(payload).eq("id", questionId);
-    if (saved.error) throw saved.error;
+    const saved = await supabase.from("problem_bank_questions").update(payload).eq("id", questionId).eq("updated_at",problem.updated_at).select("id");
+    if (saved.error || !saved.data?.length) throw saved.error || new Error("판정 도중 문항 변경 · 재검증 필요");
 
     await supabase.from("sos_difficulty_regrade_jobs").update({
       status: "DONE",
@@ -122,7 +132,7 @@ async function run(request: Request) {
 
   const url = new URL(request.url);
   const sync = url.searchParams.get("sync") === "1";
-  const size = Math.max(1, Math.min(20, Number(url.searchParams.get("size") || BATCH_SIZE)));
+  const size = Math.max(1, Math.min(BATCH_SIZE, Number(url.searchParams.get("size") || BATCH_SIZE)));
 
   const supabase = createClient();
   const cols = "id,question_id,status,attempt_count,priority,evaluation_mode,result_payload";
@@ -133,8 +143,10 @@ async function run(request: Request) {
     .update({ status: "QUEUED", updated_at: new Date().toISOString() })
     .eq("status", "RUNNING").lt("started_at", staleCutoff);
 
-  const picked = await supabase.from("sos_difficulty_regrade_jobs").select(cols)
-    .eq("status", "QUEUED").lt("attempt_count", MAX_ATTEMPTS)
+  let pickQuery = supabase.from("sos_difficulty_regrade_jobs").select(cols)
+    .eq("status", "QUEUED").lt("attempt_count", MAX_ATTEMPTS);
+  if (DIFFICULTY_AUDIT_HOLD) pickQuery = pickQuery.eq("evaluation_mode", "SHADOW");
+  const picked = await pickQuery
     .order("priority", { ascending: true }).order("queued_at", { ascending: true })
     .limit(size);
   if (picked.error) throw picked.error;
@@ -161,10 +173,8 @@ async function run(request: Request) {
 
   const work = async () => {
     const client = createClient();
-    // 동시 4건. 화면 재판정과 같은 수준으로 맞춘다.
-    for (let i = 0; i < claimed.length; i += 4) {
-      await Promise.all(claimed.slice(i, i + 4).map(job => processOne(client, job)));
-    }
+    // All bounded jobs share the same 240s deadline budget within a 300s invocation.
+    await Promise.all(claimed.map(job => processOne(client, job)));
   };
 
   if (sync) {

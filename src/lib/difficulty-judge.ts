@@ -1,3 +1,4 @@
+import { STUDENT_DIFFICULTY_CRITERIA, curriculumContext } from "@/lib/difficulty-assessment-policy";
 import { SOURCE_STAR_PROMPT, SOURCE_STAR_POLICY, sourceStarSchema, sourceStarGrades, sourceStarReview, type SourceStars } from "@/lib/source-star-difficulty";
 /**
  * SOS 8단계 난이도 판정 엔진 (SOS240)
@@ -13,7 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, normalizeDifficulty, difficultyBand, type DifficultyValue } from "@/lib/difficulty-scale";
 import { canonicalSubject } from "@/lib/subject";
 
-export const DIFFICULTY_JUDGE_VERSION = "difficulty-v283-consistent-bands" as const;
+export const DIFFICULTY_JUDGE_VERSION = "difficulty-v284-student-audit" as const;
 
 export type DifficultyBandName =
   | "two_point" | "three_point" | "three_hard" | "four_easy"
@@ -21,6 +22,12 @@ export type DifficultyBandName =
 
 export type DifficultySolve = {
   source_stars?: SourceStars;
+  observed_question_no?: number | null;
+  observed_conditions?: string[];
+  observed_choices?: string[];
+  answer_value?: string;
+  curriculum_valid?: boolean;
+  curriculum_reason?: string;
   solvable: boolean;
   solved_answer: string;
   solution_outline: string;
@@ -46,6 +53,14 @@ export type DifficultyJudgement = {
   solution_verified: boolean;
   answer_consistency: "match" | "mismatch" | "unknown";
   solve: DifficultySolve;
+  student_assessment?: {
+    entry_barrier: string; condition_connections: string; execution_burden: string;
+    standard_student_obstacle: string; advanced_student_obstacle: string;
+    estimated_minutes_min: number; estimated_minutes_max: number;
+    lower_grade_reason: string; higher_grade_reason: string;
+    curriculum_verified: boolean;
+  };
+  execution?: { requested_model: string; calls: Array<Record<string, unknown>> };
 };
 
 const allowedGrades = DIFFICULTY_SCALE.map((x) => x.value) as DifficultyValue[];
@@ -79,8 +94,14 @@ export class DifficultyVerificationError extends Error {
 const solveSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["source_stars","solvable","solved_answer","solution_outline","key_insight","concepts","reasoning_steps","condition_transformations","calculation_load","insight_load","confidence","issue"],
+  required: ["observed_question_no","observed_conditions","observed_choices","answer_value","curriculum_valid","curriculum_reason","source_stars","solvable","solved_answer","solution_outline","key_insight","concepts","reasoning_steps","condition_transformations","calculation_load","insight_load","confidence","issue"],
   properties: {
+    observed_question_no: { anyOf: [{ type:"integer" }, { type:"null" }] },
+    observed_conditions: { type:"array", items:{type:"string"}, minItems:1 },
+    observed_choices: { type:"array", items:{type:"string"} },
+    answer_value: { type:"string" },
+    curriculum_valid: { type:"boolean" },
+    curriculum_reason: { type:"string" },
     source_stars: sourceStarSchema,
     solvable: { type: "boolean" },
     solved_answer: { type: "string" },
@@ -99,8 +120,18 @@ const solveSchema = {
 const judgeSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["decision","final_grade","csat_point_equivalent","csat_difficulty_band","reason","confidence","review_required","review_reason","solution_verified","answer_consistency"],
+  required: ["student_assessment","decision","final_grade","csat_point_equivalent","csat_difficulty_band","reason","confidence","review_required","review_reason","solution_verified","answer_consistency"],
   properties: {
+    student_assessment: {
+      type:"object", additionalProperties:false,
+      required:["entry_barrier","condition_connections","execution_burden","standard_student_obstacle","advanced_student_obstacle","estimated_minutes_min","estimated_minutes_max","lower_grade_reason","higher_grade_reason","curriculum_verified"],
+      properties:{
+        entry_barrier:{type:"string"}, condition_connections:{type:"string"}, execution_burden:{type:"string"},
+        standard_student_obstacle:{type:"string"}, advanced_student_obstacle:{type:"string"},
+        estimated_minutes_min:{type:"number",minimum:0}, estimated_minutes_max:{type:"number",minimum:0},
+        lower_grade_reason:{type:"string"}, higher_grade_reason:{type:"string"}, curriculum_verified:{type:"boolean"}
+      }
+    },
     decision: { type: "string", enum: ["graded","unclassified"] },
     final_grade: { anyOf: [{ type: "string", enum: allowedGrades }, { type: "null" }] },
     csat_point_equivalent: { anyOf: [{ type: "integer", enum: [2,3,4] }, { type: "null" }] },
@@ -114,26 +145,11 @@ const judgeSchema = {
   },
 } as const;
 
-function dnaSummary(dna: any) {
-  const basic = dna?.basic ?? {};
-  const thinking = dna?.thinking ?? {};
-  const solution = dna?.solution ?? {};
-  const concept = dna?.concept ?? {};
-  return {
-    subject: basic.subject ?? "",
-    unit: [basic.major_unit,basic.middle_unit,basic.minor_unit].filter(Boolean).join(" > "),
-    topic: basic.detailed_topic ?? "",
-    core_concepts: concept.core_concepts ?? [],
-    thinking_process: thinking.process ?? [],
-    key_insight: thinking.key_insight ?? "",
-    representative_solution: solution.representative_solution ?? [],
-  };
-}
-
-function buildSolvePrompt(dna: any, blind = false) {
+function buildSolvePrompt(subject: unknown, questionNo?: number | null) {
   return `당신은 한국 고등수학 문항을 직접 푸는 검증자입니다. 난이도를 아직 판정하지 마세요. 먼저 첨부 문항을 처음부터 독립적으로 풀어야 합니다.
 
 ${SOURCE_STAR_PROMPT}
+${curriculumContext(subject, questionNo)}
 [중요]
 - DNA나 기존 난이도를 정답처럼 믿지 마세요. 이미지의 실제 문제를 우선합니다.
 - 문항이 잘렸거나 판독 불가하거나 조건이 부족하면 solvable=false로 두세요.
@@ -142,16 +158,23 @@ ${SOURCE_STAR_PROMPT}
 - condition_transformations는 문제 조건을 식/그래프/치환/경우분류 등 다른 표현으로 바꾸어야 하는 횟수입니다.
 - calculation_load와 insight_load는 1(매우 낮음)~5(매우 높음)입니다.
 
-${blind ? "독립 검증: 기존 난이도·DNA·풀이·핵심발상은 제공하지 않는다. 이미지의 모든 조건으로 답을 끝까지 계산하고, '계산하면 답이 나온다'처럼 핵심 경우분류를 생략하지 않는다." : `참고용 DNA(오류 가능): ${JSON.stringify(dnaSummary(dna))}`}
+기존 DNA·풀이·핵심발상·정답은 제공하지 않는다. 이미지의 모든 조건으로 끝까지 풀고 핵심 경우분류를 생략하지 않는다.
+observed_conditions에는 이미지에서 직접 읽은 조건을 기록하고 observed_choices에는 실제 선택지를 기록한다.
+solved_answer는 객관식의 선지 번호만, answer_value는 그 선지의 수학적 값이다. 단답형은 두 필드에 같은 값을 기록한다.
+
 JSON 객체 하나만 출력하세요.`;
 }
 
-function buildJudgePrompt(dna: any, solve: DifficultySolve, references = "", officialAnswer = "", blind = false) {
+function buildJudgePrompt(subject: unknown, solve: DifficultySolve, references = "", officialAnswer = "", questionNo?: number | null, questionType?: string) {
   return `당신은 한국 수능 고등수학 난이도 검증자입니다. 첨부 문항과 아래의 독립 재풀이 결과를 검증한 뒤 MATHPOOH SOS 공식 8단계 중 하나를 판정하세요.
 
 ${SOURCE_STAR_PROMPT}
 이번 원본 별점 판독: ${JSON.stringify(solve.source_stars ?? null)}
 허용 SOS 등급: ${JSON.stringify(sourceStarGrades(solve.source_stars) ?? "별점 미확정: 불확실하면 검토필요")}
+
+${curriculumContext(subject, questionNo)}
+${STUDENT_DIFFICULTY_CRITERIA}
+저장 정답 형식: ${questionType || "이미지에서 확인"}. 객관식 저장 정답은 값이 아닌 선지 번호이다. 반드시 observed_choices와 대조한다.
 
 [공식 8단계]
 1=2점: 정의·공식·성질 거의 직접 적용. 매우 짧고 전략 선택 부담 거의 없음.
@@ -160,14 +183,14 @@ ${SOURCE_STAR_PROMPT}
 4=쉬4: 4점 입문. 실질적 사고가 필요하지만 구조와 진입이 비교적 명확.
 5=적4: 표준 수능 4점 중심. 개념 결합·조건 번역·관계 발견·풀이 방향 선택이 의미 있게 필요.
 6=어4: 어려운 4점. 복합추론·경우분류·구조변환·상당한 계산/해석 부담.
-7=준킬러: 비정형 핵심 발상 또는 여러 단계 추론이 필요하며 상위권 변별력이 뚜렷함.
-8=킬러: 최상위 난도. 핵심 발상 자체가 매우 어렵고 복합적 비정형 추론이 필수.
+7=준킬러: 발상 발견 또는 여러 조건의 정교한 연결·완주 부담으로 상위권 변별력이 뚜렷함.
+8=킬러: 최상위권에게도 발상 발견 또는 복합 추론·경우분류·완주가 매우 어려운 최고난도.
 
 [절대 규칙]
 - 학생이 제한 시간 안에 처음 보는 문제를 푸는 상황을 평가한다. AI가 풀이를 이미 발견했거나 해설이 짧다는 이유로 낮추지 않는다.
 - 정형 개념을 쓰더라도 진입 전략 발견, 복합 조건 연결, 빠짐없는 경우 분류, 계산 정확성, 검산 부담을 함께 평가한다. '전형적'이라는 말만으로 고난도를 배제하지 않는다.
 - 내신/학교 이름, 문제 번호 또는 예상 전체 분포만으로 등급을 올리거나 내리지 않는다. 실제 비교 기준이 제공되지 않으면 특정 연도 수능과 대조했다고 주장하지 않는다.
-- final_grade와 csat_difficulty_band는 반드시 같은 등급이어야 한다(7=semi_killer, 8=killer).
+- final_grade, csat_difficulty_band, csat_point_equivalent는 일치해야 한다. 등급1은 2점, 2/3은 3점, 4~8은 4점이다.
 - 모른다고 3점(2단계)에 보내지 마세요.
 - 이미지가 불완전하거나 독립 풀이가 불확실하거나 공식답과 명백히 충돌하면 decision=unclassified, final_grade=null로 두세요.
 - confidence<0.68이면 반드시 review_required=true입니다.
@@ -178,15 +201,15 @@ ${SOURCE_STAR_PROMPT}
   풀이 자체가 틀렸거나 문항 조건을 잘못 읽었을 때만 false입니다.
 - confidence는 "최종 8단계 등급 선택"에 대한 확신도입니다. 인접 등급 사이에서 망설인 정도만 반영하세요.
   문항 판독이나 풀이에 대한 불안은 confidence를 낮추는 대신 review_reason에 적으세요.
-- 저장된 공식 정답은 오기입일 수 있습니다. 값이 다르면 answer_consistency=mismatch로 표시하되,
-  그것만을 이유로 등급 판정을 포기하지는 마세요. 난이도 자체를 판단할 수 있으면 등급을 부여하세요.
+- 저장 정답이 오기입일 수도 있으므로 답의 불일치 원인을 기록하되 자동 적용하지 않는다. 불일치 또는 비교 불가이면 review_required=true이다.
+- student_assessment의 모든 판단에는 이 문항의 구체적 근거를 쓴다. 풀이가 짧다는 이유만으로 낮추지 않는다.
 - 단순 계산량만으로 난이도를 올리지 말고 핵심 발상, 조건 변환, 추론 단계, 전략 선택 부담을 우선하세요.
 - 전체 분포를 맞추려 하지 말고 이 문항 하나만 독립적으로 판정하세요.
 
 [독립 재풀이]
 ${JSON.stringify(solve)}
 
-${blind ? "[독립 검증] 기존 DNA·난이도·기존 풀이·관리자 기준문항은 숨겨져 있다. 위에서 새로 푼 풀이만 검증한다. 생략된 핵심 논증은 직접 검증하고 확인할 수 없으면 solution_verified=false로 둔다." : `[기존 DNA - 참고용, 오류 가능]\n${JSON.stringify(dnaSummary(dna))}`}
+[독립 검증] 기존 DNA·난이도·기존 풀이는 숨겨져 있다. 새 풀이의 생략된 핵심 논증을 검증하고 확인 불가이면 solution_verified=false이다.
 ${officialAnswer ? `\n[저장된 공식 정답]\n${officialAnswer}` : ""}
 ${references ? `\n[관리자 확정 기준문항]\n${references}` : ""}
 
@@ -198,19 +221,14 @@ function outputText(payload: any) {
   return (payload?.output ?? []).flatMap((x:any)=>x?.content??[]).map((x:any)=>x?.text??"").filter(Boolean).join("\n").trim();
 }
 
-async function requestStructured(args: { apiKey:string; model:string; imageUrl:string; prompt:string; schema:any; schemaName:string; timeoutMs:number; effort?:"low"|"medium" }) {
+async function requestStructured(args: { apiKey:string; model:string; imageUrl:string; prompt:string; schema:any; schemaName:string; timeoutMs:number; effort?:"medium"|"high"; audit?:Array<Record<string,unknown>>; deadline?:number }) {
   let lastError: DifficultyVerificationError = new DifficultyVerificationError("unknown", "AI 난이도 검증 실패", args.schemaName);
-  // SOS247: max_output_tokens 실패가 반복되는 문항은 토큰만 계속 올리지 않고
-  // 2~3차 시도에서 reasoning effort를 low로 낮춰 최종 구조화 JSON까지 도달시키는 fallback을 사용한다.
-  // 1차: 기존 품질 유지(medium/5000) -> 2차: low/8000 -> 3차: low/12000.
-  const attemptPlans = [
-    { effort: args.effort ?? "medium", maxOutputTokens: 5000 },
-    { effort: "low" as const, maxOutputTokens: 8000 },
-    { effort: "low" as const, maxOutputTokens: 12000 },
-  ];
+  // Preserve reasoning effort on retries. A truncated response is not a reason to weaken the assessor.
+  const attemptPlans = [12000, 20000].map(maxOutputTokens => ({effort:args.effort ?? "high",maxOutputTokens}));
   for (let attempt=1; attempt<=attemptPlans.length; attempt++) {
     const plan=attemptPlans[attempt-1];
     try {
+      if (args.deadline && Date.now() >= args.deadline) throw new DifficultyVerificationError("timeout", "난도 검증 전체 시간 초과", args.schemaName);
       const response = await fetch("https://api.openai.com/v1/responses", {
         method:"POST",
         headers:{ Authorization:`Bearer ${args.apiKey}`, "Content-Type":"application/json" },
@@ -222,7 +240,7 @@ async function requestStructured(args: { apiKey:string; model:string; imageUrl:s
           max_output_tokens: plan.maxOutputTokens,
           store:false,
         }),
-        signal:AbortSignal.timeout(args.timeoutMs),
+        signal:AbortSignal.timeout(Math.max(1,Math.min(args.timeoutMs,(args.deadline ?? Infinity)-Date.now()))),
         cache:"no-store",
       });
       const raw=await response.text();
@@ -246,6 +264,11 @@ async function requestStructured(args: { apiKey:string; model:string; imageUrl:s
         throw lastError;
       }
 
+      args.audit?.push({stage:args.schemaName, attempt, requested_model:args.model,
+        response_model:payload.model ?? null, reasoning_effort:plan.effort,
+        max_output_tokens:plan.maxOutputTokens, status:payload.status ?? null,
+        input_tokens:payload.usage?.input_tokens ?? null, output_tokens:payload.usage?.output_tokens ?? null,
+        reasoning_tokens:payload.usage?.output_tokens_details?.reasoning_tokens ?? null});
       if(payload?.status === "incomplete") {
         const reason=String(payload?.incomplete_details?.reason ?? "unknown");
         const failureType: DifficultyVerificationFailureType = reason==="max_output_tokens"
@@ -304,11 +327,19 @@ export async function judgeDifficulty(args: {
   officialAnswer?:string | number | null;
   timeoutMs?:number;
   blind?:boolean;
+  subject?:string | null;
+  questionNo?:number | null;
+  questionType?:string;
 }): Promise<DifficultyJudgement> {
   const timeout=Math.max(60_000,args.timeoutMs ?? 180_000);
+  const deadline=Date.now()+Math.min(timeout,240_000);
+  const calls:Array<Record<string,unknown>>=[];
+  const execution={requested_model:args.model,calls};
+  const subject=args.subject || args.dna?.basic?.subject;
+  const questionNo=args.questionNo ?? args.dna?.question_no;
   const solve=await requestStructured({
     apiKey:args.apiKey,model:args.model,imageUrl:args.imageUrl,
-    prompt:buildSolvePrompt(args.dna,args.blind),schema:solveSchema,schemaName:"mathpooh_difficulty_solve_v240",timeoutMs:timeout,effort:"medium",
+    prompt:buildSolvePrompt(subject,questionNo),schema:solveSchema,schemaName:"mathpooh_difficulty_solve_v284",timeoutMs:timeout,effort:"high",audit:calls,deadline,
   }) as DifficultySolve;
 
   if (args.dna?.difficulty?.source_star_origin === "original_pdf") {
@@ -316,23 +347,30 @@ export async function judgeDifficulty(args: {
   }
 
   // SOS274: 1차 재풀이 탈락 기준. 여기서 걸리면 이미지 판독 자체가 안 된 것이므로 미판정이 맞다.
-  if (!solve.solvable || Number(solve.confidence) < .45) {
+  const wrongQuestion=questionNo != null && solve.observed_question_no !== questionNo;
+  if (!solve.solvable || Number(solve.confidence) < .68 || solve.curriculum_valid !== true || wrongQuestion) {
     return {
       decision:"unclassified", final_grade:null, csat_point_equivalent:null, csat_difficulty_band:null,
       reason:"독립 재풀이 단계에서 문항을 안정적으로 해석/풀이하지 못했습니다.", confidence:Number(solve.confidence)||0,
-      review_required:true, review_reason:solve.issue || "문항 판독 또는 독립 풀이 신뢰도가 낮음",
-      solution_verified:false, answer_consistency:"unknown", solve,
+      review_required:true, review_reason:wrongQuestion ? "대상 문항 번호 확인 실패" : solve.curriculum_valid !== true ? "교육과정 내 풀이 미검증: " + (solve.curriculum_reason || "") : solve.issue || "문항 판독 또는 독립 풀이 신뢰도가 낮음",
+      solution_verified:false, answer_consistency:"unknown", solve, execution,
     };
   }
 
   const judged=await requestStructured({
     apiKey:args.apiKey,model:args.model,imageUrl:args.imageUrl,
-    prompt:buildJudgePrompt(args.dna,solve,args.blind ? "" : args.references??"",String(args.officialAnswer??"").trim(),args.blind),
-    schema:judgeSchema,schemaName:"mathpooh_difficulty_judge_v240",timeoutMs:timeout,effort:"medium",
+    prompt:buildJudgePrompt(subject,solve,args.blind ? "" : args.references??"",String(args.officialAnswer??"").trim(),questionNo,args.questionType),
+    schema:judgeSchema,schemaName:"mathpooh_difficulty_judge_v284",timeoutMs:timeout,effort:"high",audit:calls,deadline,
   }) as Omit<DifficultyJudgement,"solve">;
 
   const confidence=Math.max(0,Math.min(1,Number(judged.confidence)||0));
   const invalidGrade=judged.final_grade!==null && !allowedGrades.includes(judged.final_grade as DifficultyValue);
+  const expectedPoint = judged.final_grade === "1" ? 2 : Number(judged.final_grade) <= 3 ? 3 : 4;
+  const pointMismatch=!!judged.final_grade && judged.csat_point_equivalent !== expectedPoint;
+  const a=judged.student_assessment;
+  const assessmentInvalid=!a || a.curriculum_verified !== true || a.estimated_minutes_max < a.estimated_minutes_min ||
+    ![a.entry_barrier,a.condition_connections,a.execution_burden,a.standard_student_obstacle,a.advanced_student_obstacle,a.lower_grade_reason,a.higher_grade_reason].every(x=>typeof x === "string" && x.trim().length>0);
+  const answerUnknown=String(args.officialAnswer??"").trim() !== "" && judged.answer_consistency === "unknown";
   const bandMismatch = !!judged.final_grade && difficultyBand(judged.final_grade) !== judged.csat_difficulty_band;
 
   // SOS274: 이전에는 정답 불일치·재풀이 미검증·신뢰도 0.55 미만을 모두 '미판정'으로 묶었다.
@@ -343,7 +381,7 @@ export async function judgeDifficulty(args: {
   const starReview = sourceStarReview(solve.source_stars, judged.final_grade);
   const hardFail = !!starReview || invalidGrade || !judged.final_grade || confidence < .45;
   const needsReview =
-    bandMismatch || judged.decision !== "graded" ||
+    pointMismatch || assessmentInvalid || answerUnknown || bandMismatch || judged.decision !== "graded" ||
     judged.review_required ||
     confidence < .68 ||
     judged.answer_consistency === "mismatch" ||   // 저장 정답이 오기입일 수 있으므로 미판정이 아닌 검토필요
@@ -351,7 +389,7 @@ export async function judgeDifficulty(args: {
 
   const finalGrade = hardFail ? null : judged.final_grade;
   const reviewReason =
-    starReview || (bandMismatch ? "AI 등급과 난도 분류명이 불일치 · 재검증 필요" : "") || judged.review_reason ||
+    starReview || (assessmentInvalid ? "학생 관점·교육과정 검증 근거 불충분" : "") || (pointMismatch ? "등급과 수능 상당 배점 불일치" : "") || (answerUnknown ? "저장 정답과 비교 불가" : "") || (bandMismatch ? "AI 등급과 난도 분류명이 불일치 · 재검증 필요" : "") || judged.review_reason ||
     (hardFail ? "등급 판정 신뢰도가 너무 낮음"
       : judged.answer_consistency === "mismatch" ? "AI 재풀이 답과 저장 정답이 다름 · 정답 확인 필요"
       : judged.solution_verified === false ? "독립 재풀이의 타당성이 확인되지 않음"
@@ -360,19 +398,20 @@ export async function judgeDifficulty(args: {
 
   return {
     ...judged,
-    decision: hardFail ? "unclassified" : "graded",
+    decision: hardFail || judged.decision !== "graded" ? "unclassified" : "graded",
     final_grade: finalGrade as DifficultyValue | null,
     csat_point_equivalent: finalGrade ? judged.csat_point_equivalent : null,
     csat_difficulty_band: finalGrade ? judged.csat_difficulty_band : null,
     confidence,
     review_required: hardFail || needsReview,
     review_reason: reviewReason,
-    solve,
+    solve, execution,
   };
 }
 
 /** 판정 결과를 DNA에 반영. 미판정이면 기존 난이도/기존 scale_version을 절대 확정값처럼 바꾸지 않는다. */
 export function applyJudgedDifficulty(dna:any,result:DifficultyJudgement,previousGrade:string|null=null) {
+  if (dna?.difficulty?.admin_fixed === true) return dna;
   const next=dna&&typeof dna==="object"?{...dna}:{};
   const oldDifficulty={...(next.difficulty??{})};
   const graded = result.decision === "graded" && !!result.final_grade && !result.review_required;
@@ -397,6 +436,9 @@ export function applyJudgedDifficulty(dna:any,result:DifficultyJudgement,previou
     solution_verified:result.solution_verified,
     answer_consistency:result.answer_consistency,
     independent_solve:result.solve,
+    student_assessment:result.student_assessment ?? null,
+    execution:result.execution ?? null,
+    ...(graded ? {difficulty_source:"ai-student-assessment",difficulty_estimated:false,source_cap_applied:false} : {}),
     source_stars:result.solve.source_stars ?? oldDifficulty.source_stars ?? null,
     source_star_policy:SOURCE_STAR_POLICY,
     allowed_regrade_grades:sourceStarGrades(result.solve.source_stars),

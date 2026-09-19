@@ -1,3 +1,4 @@
+import { DIFFICULTY_AUDIT_HOLD } from "@/lib/difficulty-assessment-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, requireAdmin } from "@/lib/supabase/auth";
@@ -43,7 +44,7 @@ export async function GET() {
     const total = statuses.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
     const finished = (counts.DONE ?? 0) + (counts.FAILED ?? 0) + (counts.SKIPPED ?? 0);
     return NextResponse.json({
-      success: true, counts, total, finished,
+      success: true, counts, total, finished, auditHold:DIFFICULTY_AUDIT_HOLD,
       percent: total ? Math.round((finished / total) * 100) : 0,
       recent: recent.data ?? [],
     });
@@ -58,6 +59,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({} as any));
     const action = String(body?.action ?? "enqueue");
+    if (DIFFICULTY_AUDIT_HOLD && action !== "clear") return NextResponse.json({success:false,message:"난도 기준 검증 중: 전체 재판정은 일시 중지되어 있습니다."},{status:409});
     const supabase = createClient();
 
     if (action === "clear") {

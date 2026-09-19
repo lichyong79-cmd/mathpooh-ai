@@ -1,3 +1,4 @@
+import { DIFFICULTY_AUDIT_HOLD } from "@/lib/difficulty-assessment-policy";
 import { ensureOriginalSourceStars } from "@/lib/source-star-reader";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({} as Record<string, unknown>));
     const problemId = String((body as any)?.problemId ?? "").trim();
-    const dryRun = (body as any)?.dryRun === true;
+    const dryRun = DIFFICULTY_AUDIT_HOLD || (body as any)?.dryRun === true;
     const referenceIds: string[] = Array.isArray((body as any)?.referenceIds)
       ? (body as any).referenceIds.map((x: unknown) => String(x ?? "").trim()).filter(Boolean).slice(0, 24)
       : [];
@@ -33,11 +34,14 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
     const { data: problem, error } = await supabase
       .from("problem_bank_questions")
-      .select("id,subject,source_file_id,question_image_path,problem_dna,difficulty,answer")
+      .select("id,subject,source_file_id,question_image_path,problem_dna,difficulty,answer,question_no,question_type,updated_at")
       .eq("id", problemId)
       .single();
     if (error || !problem) {
       return NextResponse.json({ success: false, message: error?.message || "문항을 찾지 못했습니다." }, { status: 404 });
+    }
+    if (problem.problem_dna?.difficulty?.admin_fixed === true && !dryRun) {
+      return NextResponse.json({success:false,message:"관리자 확정 문항은 자동 재판정으로 변경할 수 없습니다."},{status:409});
     }
     if (!problem.question_image_path) {
       return NextResponse.json({ success: false, message: "문항 이미지가 없습니다." }, { status: 400 });
@@ -66,18 +70,25 @@ export async function POST(request: NextRequest) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return NextResponse.json({ success: false, message: "OPENAI_API_KEY가 없습니다." }, { status: 500 });
     const model = process.env.OPENAI_DIFFICULTY_MODEL || process.env.OPENAI_MODEL || "gpt-5-mini";
-    problem.problem_dna = await ensureOriginalSourceStars(supabase, problem, apiKey, model);
+    if (!dryRun) {
+      await ensureOriginalSourceStars(supabase, problem, apiKey, model);
+      const fresh = await supabase.from("problem_bank_questions").select("problem_dna,updated_at,answer,question_image_path,subject").eq("id", problemId).single();
+      if (fresh.error || !fresh.data) throw fresh.error || new Error("문항 재조회 실패");
+      if (fresh.data.answer !== problem.answer || fresh.data.question_image_path !== problem.question_image_path || fresh.data.subject !== problem.subject || fresh.data.problem_dna?.difficulty?.admin_fixed === true) throw new Error("판정 도중 문항 변경 · 재검증 필요");
+      problem.problem_dna = fresh.data.problem_dna;
+      problem.updated_at = fresh.data.updated_at;
+    }
 
     let result;
     try {
       result = await judgeDifficulty({
         apiKey,
         model,
-        imageUrl: imageDataUrl,
+        imageUrl: imageDataUrl, subject:problem.subject, questionNo:problem.question_no, questionType:problem.question_type,
         dna: problem.problem_dna,
         references,
         officialAnswer: problem.answer,
-        timeoutMs: 180_000,
+        timeoutMs: 240_000,
       });
     } catch (judgeError) {
       const message = judgeError instanceof Error ? judgeError.message : "AI 난이도 판정 실패";
@@ -101,7 +112,8 @@ export async function POST(request: NextRequest) {
     if (!dryRun) {
       const updatePayload: any = { problem_dna: dna, updated_at: new Date().toISOString() };
       if (result.decision === "graded" && result.final_grade && !result.review_required) updatePayload.difficulty = result.final_grade;
-      const { error: updateError } = await supabase.from("problem_bank_questions").update(updatePayload).eq("id", problemId);
+      const { error: updateError, data: savedRows } = await supabase.from("problem_bank_questions").update(updatePayload).eq("id", problemId).eq("updated_at",problem.updated_at).select("id");
+      if (!updateError && !savedRows?.length) return NextResponse.json({success:false,message:"판정 도중 문항이 변경되었습니다. 재검증해 주세요."},{status:409});
       if (updateError) return NextResponse.json({ success: false, message: updateError.message }, { status: 500 });
     }
 
@@ -126,6 +138,8 @@ export async function POST(request: NextRequest) {
       csatPointEquivalent: result.csat_point_equivalent,
       csatDifficultyBand: result.csat_difficulty_band,
       dryRun,
+      auditHold:DIFFICULTY_AUDIT_HOLD,
+      message:DIFFICULTY_AUDIT_HOLD ? "난도 기준 검증 중: 비교 결과만 생성하며 저장 난도는 유지합니다." : undefined,
       applied: !dryRun && result.decision === "graded" && !!result.final_grade && !result.review_required,
       version: DIFFICULTY_JUDGE_VERSION,
       previewJudgement: dryRun ? result : undefined,

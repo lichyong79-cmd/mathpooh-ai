@@ -79,7 +79,7 @@ export function difficultyAiJudged(dna?: any): boolean {
   const d = dna?.difficulty ?? {};
   if (d?.admin_fixed === true) return true;                 // 관리자가 직접 확정한 값은 검증된 것으로 본다
   if (!String(d?.ai_regrade_version ?? "").trim()) return false;
-  if (String(d?.difficulty_decision ?? "") !== "graded") return false;
+  if (String(d?.difficulty_decision ?? "") !== "graded" || d?.difficulty_review_required === true) return false;
   // SOS275: DNA 공식 재계산이 AI 판정보다 나중에 돌았다면 저장값은 공식 추정치다.
   const aiAt = Date.parse(String(d?.ai_regraded_at ?? ""));
   const dnaAt = Date.parse(String(d?.dna_recalculated_at ?? ""));

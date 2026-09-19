@@ -1,4 +1,5 @@
 "use client";
+import { DIFFICULTY_AUDIT_HOLD } from "@/lib/difficulty-assessment-policy";
 
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -1382,6 +1383,10 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
     <AdminPortalShell current="sos-difficulty">
       <main className="difficulty-page">
         <div className="difficulty-wrap">
+          {DIFFICULTY_AUDIT_HOLD && <div role="status" style={{padding:"14px 18px",border:"1px solid #d49c42",borderRadius:12,background:"#fff8e8",marginBottom:16}}>
+            <strong>난도 기준 검증 중 · 자동 반영 일시 중지</strong>
+            <p style={{margin:"6px 0 0"}}>저장된 난도는 유지됩니다. AI 재판정은 비교용으로만 실행하며, 전체 재판정·미리보기 적용·DNA 재계산은 검증 후 재개합니다.</p>
+          </div>}
           <div className="difficulty-header">
             <div>
               <div className="eyebrow">MATHPOOH SOS</div>

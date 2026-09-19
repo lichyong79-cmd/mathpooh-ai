@@ -1,3 +1,4 @@
+import { DIFFICULTY_AUDIT_HOLD } from "@/lib/difficulty-assessment-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser, requireAdmin } from "@/lib/supabase/auth";
@@ -10,6 +11,7 @@ export const maxDuration = 300;
 export async function POST(request: NextRequest) {
   const denied = await requireAdmin();  // SOS280: 관리자 전용
   if (denied) return denied;
+  if (DIFFICULTY_AUDIT_HOLD) return NextResponse.json({success:false,message:"난도 기준 검증 중에는 DNA 계산값으로 난도를 덮어쓰지 않습니다."},{status:409});
   try {
     const body = await request.json().catch(() => ({}));
     const offset = Math.max(0, Number(body?.offset) || 0);

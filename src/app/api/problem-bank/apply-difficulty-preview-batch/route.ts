@@ -1,6 +1,7 @@
+import { DIFFICULTY_AUDIT_HOLD } from "@/lib/difficulty-assessment-policy";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { requireUser } from "@/lib/supabase/auth";
+import { requireAdmin } from "@/lib/supabase/auth";
 import { normalizeDifficulty } from "@/lib/difficulty-scale";
 import { applyJudgedDifficulty, type DifficultyJudgement } from "@/lib/difficulty-judge";
 
@@ -19,8 +20,9 @@ function validJudgement(value:any): value is DifficultyJudgement {
 
 export async function POST(request:NextRequest){
   try{
-    const denied=await requireUser();
+    const denied=await requireAdmin();
     if(denied)return denied;
+    if(DIFFICULTY_AUDIT_HOLD)return NextResponse.json({success:false,message:"난도 기준 검증 중: 이전 미리보기 결과도 자동 적용하지 않습니다."},{status:409});
 
     const body=await request.json().catch(()=>({}));
     const rows=Array.isArray(body?.rows)?body.rows.slice(0,100):[];

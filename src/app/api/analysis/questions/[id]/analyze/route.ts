@@ -1,3 +1,4 @@
+import { DIFFICULTY_AUDIT_HOLD, STUDENT_DIFFICULTY_CRITERIA, curriculumContext } from "@/lib/difficulty-assessment-policy";
 import { SOURCE_STAR_PROMPT } from "@/lib/source-star-difficulty";
 import { normalizeProblemAnswer, problemAnswerIssues } from "@/lib/problem-answer-integrity";
 import { NextRequest, NextResponse } from "next/server";
@@ -239,6 +240,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 문항 이미지와 공식 해설을 함께 확인하여 ${PROBLEM_DNA_VERSION} JSON을 생성하세요.
 시험지 정보: ${source?.grade ?? "학년 미상"} / ${source?.subject ?? "과목 미상"} / ${source?.title ?? "제목 미상"}
 문항 번호: ${question.question_no}
+${curriculumContext(source?.subject,question.question_no)}
+${STUDENT_DIFFICULTY_CRITERIA}
 
 원칙:
 - schema_version은 반드시 ${PROBLEM_DNA_VERSION}, question_no는 ${question.question_no}입니다.
@@ -300,13 +303,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     // 예외 검증 결과도 자동으로 기준값을 덮지 않고, 큰 충돌만 관리자 검토로 보낸다.
     let difficultyJudged = false;
     const localDifficulty = Number(dna.difficulty?.final_grade || 0);
-    if (shouldVerifyOperationalDifficulty(dna)) {
+    if (!DIFFICULTY_AUDIT_HOLD && shouldVerifyOperationalDifficulty(dna)) {
       try {
         const references = await difficultyReferenceText(supabase, canonical);
         const judgement = await judgeDifficulty({
           apiKey,
           model: process.env.OPENAI_DIFFICULTY_MODEL || model,
-          imageUrl: signed.data.signedUrl,
+          imageUrl: signed.data.signedUrl, subject:canonical, questionNo:question.question_no,
           dna,
           references,
           officialAnswer: question.answer,
