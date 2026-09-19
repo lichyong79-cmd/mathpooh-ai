@@ -1,6 +1,6 @@
 /** Printed school-exam stars are a separate scale from SOS grades. */
 export const SOURCE_STAR_POLICY = "school-stars-v1";
-export const SOURCE_STAR_GRADES: Record<number, number[]> = {1:[1],2:[2,3,4],3:[4,5,6],4:[7,8]};
+export const SOURCE_STAR_GRADES: Record<number, number[]> = {1:[1],2:[2,3,4],3:[4,5,6,7,8],4:[7,8]};
 export type SourceStars = { status: "present" | "absent" | "uncertain" | "not_applicable"; count: number | null; confidence: number; evidence: string };
 export const sourceStarSchema = {
   type:"object", additionalProperties:false,
@@ -14,7 +14,7 @@ export const sourceStarSchema = {
 export const SOURCE_STAR_PROMPT = `
 [내신 기출 원본 별점: 최우선 난도 기준]
 문제번호 바로 위/주변의 인쇄된 별 개수를 읽어 source_stars에 기록한다.
-내신 기출의 별1=SOS 1(2점), 별2=SOS 2/3/4(3점/어3/쉬4), 별3=SOS 4/5/6(쉬4/적4/어4), 별4=SOS 7/8(준킬러/킬러).
+내신 기출의 별1=SOS 1(2점), 별2=SOS 2/3/4(3점/어3/쉬4), 별3=SOS 4/5/6/7/8(쉬4 이상 전부: 쉬4/적4/어4/준킬러/킬러), 별4=SOS 7/8(준킬러/킬러). 별3에는 상한이 없으며 킬러도 포함한다.
 별점은 난도 범위를 정하며, 그 범위 안의 세부 등급은 실제 풀이로 판정한다. 별3을 3점으로 낮추거나 별4를 어4 이하로 낮추지 않는다.
 시험지의 배점(3점/4점), 문제번호, 해설 기호, 장식, 다른 문항의 별은 세지 않는다. 기존 DNA나 저장 난도로 별 개수를 역추정하지 않는다.
 status=present는 이 문항의 내신 별점이 직접 보이는 경우만 사용하고 count=1~4, confidence, 시각적 위치 근거 evidence를 기록한다.

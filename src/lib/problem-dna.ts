@@ -197,7 +197,7 @@ export function evidenceDifficultyLevel(difficulty: ProblemDNA["difficulty"]): 1
  * v164 이전에는 csat_difficulty_band 하나만 보고 등급을 정했다.
  * 밴드는 스키마상 필수라 AI가 애매하면 three_point로 몰아넣었고,
  * 그 결과 신규 등록 문항 대부분이 "3점"으로 찍혔다.
- * 이제 밴드와 근거점수를 함께 보고, 둘이 2단계 이상 어긋나면 중간값으로 보정한다.
+ * AI 밴드를 유지한다. 근거점수와 충돌하면 검토 대상으로 표시하며 평균으로 덮어쓰지 않는다.
  */
 export function calculateDifficultyLevel(dna: ProblemDNA): 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 {
   const evidence = evidenceDifficultyLevel(dna.difficulty);
@@ -205,10 +205,7 @@ export function calculateDifficultyLevel(dna: ProblemDNA): 1 | 2 | 3 | 4 | 5 | 6
   const stars = sourceStarGrades(dna.difficulty.source_stars);
   if (stars?.includes(Number(dna.difficulty.final_grade))) return dna.difficulty.final_grade;
   if (!band) return evidence;
-  const gap = evidence - band;
-  if (Math.abs(gap) <= 1) return band;
-  const blended = Math.round((band + evidence) / 2);
-  return Math.max(1, Math.min(8, blended)) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  return band;
 }
 
 export function applyCalculatedDifficulty(dna: ProblemDNA) {
