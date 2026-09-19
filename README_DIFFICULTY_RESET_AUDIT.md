@@ -27,3 +27,16 @@ The operational grades have not been reset or bulk replaced. 470 queued APPLY jo
 
 ## Resume gate
 Keep the hold until real image-backed trial results have been inspected for correct question/conditions/answers and defensible student difficulty. Then restore held queued records from their saved status, with the approved judge version. Do not force any target number of killer/semi-killer questions. Do not treat the five-question trial as validation of all 7,587 bank questions.
+
+## Live shadow trial
+All five jobs completed on 2026-09-19 after deployment. Server configured model was `gpt-5-mini`; trial responses report `gpt-5.4-2026-03-05`, high reasoning, one solve and one judge request each. This trial changes both model and assessment method, so it does not isolate a single causal factor.
+
+| Paper/question | Saved | Previous blind | New proposal |
+|---|---|---|---|
+| 청운고 수Ⅰ 12 | 3점 | 쉬4 | 3점 (reading uncertainty: review required) |
+| 강서고 기말 수Ⅰ 11 | 적4 | 어3 | 쉬4 |
+| 단대부고 수Ⅱ 11 | 쉬4 | 어3 | 쉬4 |
+| 은광여고 수Ⅱ 16 | 쉬4 | 3점 | 3점 |
+| 보인고 수Ⅰ 13 | 적4 | 3점 | 쉬4 |
+
+No operational grade was changed. This is not successful calibration of the whole bank. The Cheongun question's independently read logarithm expressions differ between the two runs despite both matching the saved choice. The new solver also explicitly reports a small/uncertain symbol. The final guard now sends any unresolved solve issue to review rather than treating an answer match as proof of accurate reading. Cached and fresh star evidence are retained separately; conflicting clear evidence cannot be silently overwritten.

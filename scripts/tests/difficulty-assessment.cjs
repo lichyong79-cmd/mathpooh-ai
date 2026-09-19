@@ -24,6 +24,7 @@ async function run(s=solve,j=judged){requests=[];responses=[response(s),response
  assert.ok(requests.every(r=>r.reasoning.effort==='high'));
  assert.ok(requests.every(r=>!JSON.stringify(r).includes('OLD_SECRET')));
  assert.ok(requests[0].input[0].content[0].text.includes('미적분 I'));
+ const unclear=await run({...solve,issue:"symbol unclear"});assert.equal(unclear.review_required,true);assert.equal(applyJudgedDifficulty({difficulty:{final_grade:5}},unclear).difficulty.final_grade,5);
  const badBand=await run(solve,{...judged,csat_difficulty_band:'three_point'});assert.equal(badBand.review_required,true);
  const badPoint=await run(solve,{...judged,csat_point_equivalent:3});assert.equal(badPoint.review_required,true);
  const badCurr=await run({...solve,curriculum_valid:false});assert.equal(badCurr.final_grade,null);assert.equal(requests.length,1);

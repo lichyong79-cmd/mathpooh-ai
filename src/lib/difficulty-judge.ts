@@ -60,7 +60,7 @@ export type DifficultyJudgement = {
     lower_grade_reason: string; higher_grade_reason: string;
     curriculum_verified: boolean;
   };
-  execution?: { requested_model: string; calls: Array<Record<string, unknown>> };
+  execution?: { requested_model: string; calls: Array<Record<string, unknown>>; source_star_evidence?: Record<string,unknown> };
 };
 
 const allowedGrades = DIFFICULTY_SCALE.map((x) => x.value) as DifficultyValue[];
@@ -334,7 +334,7 @@ export async function judgeDifficulty(args: {
   const timeout=Math.max(60_000,args.timeoutMs ?? 180_000);
   const deadline=Date.now()+Math.min(timeout,240_000);
   const calls:Array<Record<string,unknown>>=[];
-  const execution={requested_model:args.model,calls};
+  const execution:NonNullable<DifficultyJudgement["execution"]>={requested_model:args.model,calls};
   const subject=args.subject || args.dna?.basic?.subject;
   const questionNo=args.questionNo ?? args.dna?.question_no;
   const solve=await requestStructured({
@@ -342,8 +342,18 @@ export async function judgeDifficulty(args: {
     prompt:buildSolvePrompt(subject,questionNo),schema:solveSchema,schemaName:"mathpooh_difficulty_solve_v284",timeoutMs:timeout,effort:"high",audit:calls,deadline,
   }) as DifficultySolve;
 
-  if (args.dna?.difficulty?.source_star_origin === "original_pdf") {
-    solve.source_stars = args.dna.difficulty.source_stars;
+  const imageStars=solve.source_stars;
+  const paperStars=args.dna?.difficulty?.source_star_origin === "original_pdf" ? args.dna.difficulty.source_stars as SourceStars : undefined;
+  execution.source_star_evidence={image:imageStars ?? null, cached_paper:paperStars ?? null};
+  if (paperStars) {
+    const imageConfirmed=sourceStarGrades(imageStars);
+    const paperConfirmed=sourceStarGrades(paperStars);
+    // A cached 'absent' must not silently erase newly visible printed stars.
+    if (imageConfirmed && ((paperConfirmed && imageStars?.count !== paperStars.count) || paperStars.status === "absent")) {
+      solve.source_stars={status:"uncertain",count:null,confidence:0,evidence:"새 이미지의 별점과 기존 원본 PDF 판독이 충돌함"};
+    } else {
+      solve.source_stars=imageConfirmed && !paperConfirmed ? imageStars : paperStars;
+    }
   }
 
   // SOS274: 1차 재풀이 탈락 기준. 여기서 걸리면 이미지 판독 자체가 안 된 것이므로 미판정이 맞다.
@@ -380,8 +390,9 @@ export async function judgeDifficulty(args: {
   //   needsReview = 등급은 나왔으나 사람이 확인해야 함 -> 검토필요(값은 보존, 화면에 노출)
   const starReview = sourceStarReview(solve.source_stars, judged.final_grade);
   const hardFail = !!starReview || invalidGrade || !judged.final_grade || confidence < .45;
+  const imageIssue=String(solve.issue ?? "").trim();
   const needsReview =
-    pointMismatch || assessmentInvalid || answerUnknown || bandMismatch || judged.decision !== "graded" ||
+    !!imageIssue || pointMismatch || assessmentInvalid || answerUnknown || bandMismatch || judged.decision !== "graded" ||
     judged.review_required ||
     confidence < .68 ||
     judged.answer_consistency === "mismatch" ||   // 저장 정답이 오기입일 수 있으므로 미판정이 아닌 검토필요
@@ -389,7 +400,7 @@ export async function judgeDifficulty(args: {
 
   const finalGrade = hardFail ? null : judged.final_grade;
   const reviewReason =
-    starReview || (assessmentInvalid ? "학생 관점·교육과정 검증 근거 불충분" : "") || (pointMismatch ? "등급과 수능 상당 배점 불일치" : "") || (answerUnknown ? "저장 정답과 비교 불가" : "") || (bandMismatch ? "AI 등급과 난도 분류명이 불일치 · 재검증 필요" : "") || judged.review_reason ||
+    starReview || (imageIssue ? "독립 재풀이의 미해결 사항: " + imageIssue : "") || (assessmentInvalid ? "학생 관점·교육과정 검증 근거 불충분" : "") || (pointMismatch ? "등급과 수능 상당 배점 불일치" : "") || (answerUnknown ? "저장 정답과 비교 불가" : "") || (bandMismatch ? "AI 등급과 난도 분류명이 불일치 · 재검증 필요" : "") || judged.review_reason ||
     (hardFail ? "등급 판정 신뢰도가 너무 낮음"
       : judged.answer_consistency === "mismatch" ? "AI 재풀이 답과 저장 정답이 다름 · 정답 확인 필요"
       : judged.solution_verified === false ? "독립 재풀이의 타당성이 확인되지 않음"
