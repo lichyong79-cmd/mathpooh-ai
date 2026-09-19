@@ -1,5 +1,5 @@
 import { STUDENT_DIFFICULTY_CRITERIA, curriculumContext } from "@/lib/difficulty-assessment-policy";
-import { SOURCE_STAR_PROMPT, SOURCE_STAR_POLICY, sourceStarSchema, sourceStarGrades, sourceStarReview, type SourceStars } from "@/lib/source-star-difficulty";
+import { SOURCE_STAR_PROMPT, SOURCE_STAR_POLICY, SOURCE_STAR_READER_VERSION, sourceStarSchema, sourceStarGrades, sourceStarReview, type SourceStars } from "@/lib/source-star-difficulty";
 /**
  * SOS 8단계 난이도 판정 엔진 (SOS240)
  *
@@ -14,7 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, normalizeDifficulty, difficultyBand, type DifficultyValue } from "@/lib/difficulty-scale";
 import { canonicalSubject } from "@/lib/subject";
 
-export const DIFFICULTY_JUDGE_VERSION = "difficulty-v284-student-audit" as const;
+export const DIFFICULTY_JUDGE_VERSION = "difficulty-v285-provenance-audit" as const;
 
 export type DifficultyBandName =
   | "two_point" | "three_point" | "three_hard" | "four_easy"
@@ -339,11 +339,11 @@ export async function judgeDifficulty(args: {
   const questionNo=args.questionNo ?? args.dna?.question_no;
   const solve=await requestStructured({
     apiKey:args.apiKey,model:args.model,imageUrl:args.imageUrl,
-    prompt:buildSolvePrompt(subject,questionNo),schema:solveSchema,schemaName:"mathpooh_difficulty_solve_v284",timeoutMs:timeout,effort:"high",audit:calls,deadline,
+    prompt:buildSolvePrompt(subject,questionNo),schema:solveSchema,schemaName:"mathpooh_difficulty_solve_v285",timeoutMs:timeout,effort:"high",audit:calls,deadline,
   }) as DifficultySolve;
 
   const imageStars=solve.source_stars;
-  const paperStars=args.dna?.difficulty?.source_star_origin === "original_pdf" ? args.dna.difficulty.source_stars as SourceStars : undefined;
+  const paperStars=args.dna?.difficulty?.source_star_origin === "original_pdf" && args.dna?.difficulty?.source_star_reader_version === SOURCE_STAR_READER_VERSION && args.dna?.difficulty?.source_star_fingerprint ? (args.dna.difficulty.source_star_paper_evidence ?? args.dna.difficulty.source_stars) as SourceStars : undefined;
   execution.source_star_evidence={image:imageStars ?? null, cached_paper:paperStars ?? null};
   if (paperStars) {
     const imageConfirmed=sourceStarGrades(imageStars);
@@ -370,7 +370,7 @@ export async function judgeDifficulty(args: {
   const judged=await requestStructured({
     apiKey:args.apiKey,model:args.model,imageUrl:args.imageUrl,
     prompt:buildJudgePrompt(subject,solve,args.blind ? "" : args.references??"",String(args.officialAnswer??"").trim(),questionNo,args.questionType),
-    schema:judgeSchema,schemaName:"mathpooh_difficulty_judge_v284",timeoutMs:timeout,effort:"high",audit:calls,deadline,
+    schema:judgeSchema,schemaName:"mathpooh_difficulty_judge_v285",timeoutMs:timeout,effort:"high",audit:calls,deadline,
   }) as Omit<DifficultyJudgement,"solve">;
 
   const confidence=Math.max(0,Math.min(1,Number(judged.confidence)||0));
@@ -420,12 +420,24 @@ export async function judgeDifficulty(args: {
   };
 }
 
+/** Recheck invariants at every write boundary, including old/client-held previews. */
+export function isApplicableDifficultyJudgement(value: any): value is DifficultyJudgement {
+  if (!value || value.decision !== "graded" || !allowedGrades.includes(value.final_grade) || value.review_required !== false) return false;
+  if (value.csat_difficulty_band !== difficultyBand(value.final_grade) || value.csat_point_equivalent !== (value.final_grade === "1" ? 2 : Number(value.final_grade)<=3 ? 3 : 4)) return false;
+  const s=value.solve, a=value.student_assessment;
+  if (!s || s.solvable !== true || s.curriculum_valid !== true || String(s.issue ?? "").trim() || !Number.isFinite(s.confidence) || s.confidence<.68 || s.confidence>1) return false;
+  if (!Number.isFinite(value.confidence) || value.confidence<.68 || value.confidence>1 || value.solution_verified !== true || value.answer_consistency !== "match") return false;
+  if (sourceStarReview(s.source_stars,value.final_grade)) return false;
+  return !!a && a.curriculum_verified === true && Number.isFinite(a.estimated_minutes_min) && Number.isFinite(a.estimated_minutes_max) && a.estimated_minutes_min>=0 && a.estimated_minutes_max>=a.estimated_minutes_min &&
+    [s.solution_outline,s.curriculum_reason,a.entry_barrier,a.condition_connections,a.execution_burden,a.standard_student_obstacle,a.advanced_student_obstacle,a.lower_grade_reason,a.higher_grade_reason].every(x=>typeof x === "string" && x.trim().length>0);
+}
+
 /** 판정 결과를 DNA에 반영. 미판정이면 기존 난이도/기존 scale_version을 절대 확정값처럼 바꾸지 않는다. */
 export function applyJudgedDifficulty(dna:any,result:DifficultyJudgement,previousGrade:string|null=null) {
   if (dna?.difficulty?.admin_fixed === true) return dna;
   const next=dna&&typeof dna==="object"?{...dna}:{};
   const oldDifficulty={...(next.difficulty??{})};
-  const graded = result.decision === "graded" && !!result.final_grade && !result.review_required;
+  const graded = isApplicableDifficultyJudgement(result);
   next.difficulty = {
     ...oldDifficulty,
     ...(graded ? {

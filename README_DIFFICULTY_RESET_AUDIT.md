@@ -40,3 +40,20 @@ All five jobs completed on 2026-09-19 after deployment. Server configured model 
 | 보인고 수Ⅰ 13 | 적4 | 3점 | 쉬4 |
 
 No operational grade was changed. This is not successful calibration of the whole bank. The Cheongun question's independently read logarithm expressions differ between the two runs despite both matching the saved choice. The new solver also explicitly reports a small/uncertain symbol. The final guard now sends any unresolved solve issue to review rather than treating an answer match as proof of accurate reading. Cached and fresh star evidence are retained separately; conflicting clear evidence cannot be silently overwritten.
+
+## Additional audit: provenance and write boundaries
+- Database check: 7,587 question records, no duplicate `(source_file_id, question_no)` slots, no empty bank answers, no missing exam/solution PDF paths. These checks do not establish that the images/solutions are correctly cropped.
+- All 224 source papers referenced by bank questions have an exam storage object and object version. The 148 bank/DNA grade differences are blank operational grades with retained DNA proposals, not 148 cases of one numeric grade overwriting another.
+- 1,161 cached original-PDF star readings had no stored PDF path/version provenance. Old caches could survive paper replacement. Cache validation now binds source ID, path, Storage object version, reader version and requested model. Legacy cache evidence is not silently trusted by the independent judge. Teacher-fixed records are excluded from star metadata writes.
+- Preview application checked the old grade only, so edited content with an unchanged grade could receive a stale judgement. Responses and UI now carry a question update snapshot and judge version; application checks both and uses an atomic update-time predicate. Old previews are rejected.
+- A common application guard now checks curriculum, unresolved reading issues, proof/answer verification, student evidence and grade/band/point consistency at each difficulty write boundary. This is protection against invalid results, not calibration evidence.
+- Initial-analysis instructions previously referred to searching an official PDF even though only an optional cropped solution image was sent. Instructions now explicitly restrict official verification to attached solution evidence.
+- Original PDF evidence is stored separately from later cropped-image/judgement evidence. PDF preparation time is deducted from the total regrading request budget to avoid a 120-second source read plus 240-second judge exceeding the 300-second function limit.
+- Existing operational grades remain unchanged and the global audit hold remains enabled.
+
+## Rubric reconstruction gate
+Do not declare the grade boundaries calibrated while original-image verification and actual CSAT/mock anchor comparison are incomplete. Separate: (1) readable and correctly linked input, (2) valid curriculum-level solution, (3) student difficulty classification. Failure in the first two becomes review-required, never an easy grade.
+
+Proposed calibration procedure (not yet operationally validated): use verified original questions spanning each adjacent SOS band; compare initial entry, independent condition connections, and completion burden with multiple same-subject CSAT/mock anchors. Require an explanation of why the neighboring lower and higher bands do not fit. Do not use answer agreement, short solutions, familiarity of concepts, school names, or target high-difficulty counts as substitutes. Do not assign hard numeric time cutoffs from AI estimates. Evaluate low/high grade errors separately on held-out questions before releasing bulk application.
+
+Printed-star constraints remain unchanged: star 1→2점; star 2→3점/어3/쉬4; star 3→쉬4 and every higher band; star 4→준킬러/킬러. Confirm the printed evidence before enforcing the constraint; ambiguous marks stay pending review.

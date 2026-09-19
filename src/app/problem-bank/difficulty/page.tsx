@@ -64,6 +64,8 @@ type RegradeResult = {
   failureStage?: string;
   failureDetail?: string;
   previewJudgement?: any;
+  snapshotUpdatedAt?: string;
+  version?: string;
 };
 
 type TestRow = Problem & { before: string; result?: RegradeResult };
@@ -1155,6 +1157,8 @@ AI 호출량이 많고 시간이 걸릴 수 있습니다. 미리보기를 시작
                 problemId: x.id,
                 previousDifficulty: x.before || null,
                 judgement: x.result?.previewJudgement,
+                snapshotUpdatedAt: x.result?.snapshotUpdatedAt,
+                version: x.result?.version,
               })),
             }),
           },

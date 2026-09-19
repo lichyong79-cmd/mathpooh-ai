@@ -246,9 +246,9 @@ ${STUDENT_DIFFICULTY_CRITERIA}
 원칙:
 - schema_version은 반드시 ${PROBLEM_DNA_VERSION}, question_no는 ${question.question_no}입니다.
 - 먼저 문항을 끝까지 직접 풀어 정답을 산출한 뒤 나머지 분석을 수행합니다.
-- 공식 해설 PDF가 있으면 반드시 그 안에서 ${question.question_no}번의 정답과 풀이를 찾아 직접 푼 결과와 교차 검증합니다. 다른 문항의 해설을 사용하면 안 됩니다.
+- 공식 해설은 실제 첨부된 두 번째 이미지가 있는 경우에만 확인할 수 있습니다. 그 이미지에서 ${question.question_no}번인지 확인한 뒤 정답과 풀이를 교차 검증합니다. PDF 경로나 제목만으로 해설을 읽었다고 판단하지 않습니다. 해설 이미지가 없으면 공식 해설 미검증으로 기록하며, 다른 문항의 해설을 사용하면 안 됩니다.
 - official_solution에 답지 존재 여부, 동일 문항 탐색 성공 여부, 공식 정답, AI 정답 일치 여부와 근거를 반드시 기록합니다.
-- solution.representative_solution과 standard_solution에는 공식 해설의 핵심 풀이 흐름을 짧게 재구성해 기록합니다. 원문을 길게 복사하지 않습니다.
+- solution.representative_solution과 standard_solution에는 직접 검증한 교육과정 내 풀이를 기록합니다. 실제 첨부 해설과 대조했다면 그 근거를 구분하고, 첨부되지 않은 해설의 내용을 추정하지 않습니다.
 - 공식 해설에서 ${question.question_no}번을 찾지 못하거나 직접 푼 정답과 공식 정답이 충돌하면 summary.review_required=true로 하고 review_reasons에 그 사실을 기록합니다.
 - 객관식 answer는 선지 번호 1~5 중 하나만, 단답형은 최종 답만 간결하게 기록합니다.
 - 문항 일부가 잘렸거나 글자가 불명확해서 정답을 확정할 수 없을 때만 answer를 빈 문자열로 두고 review_required=true로 설정합니다.

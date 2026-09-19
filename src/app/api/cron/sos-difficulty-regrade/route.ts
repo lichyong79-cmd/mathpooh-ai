@@ -3,7 +3,7 @@ import { ensureOriginalSourceStars } from "@/lib/source-star-reader";
 import { NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { normalizeDifficulty } from "@/lib/difficulty-scale";
-import { applyJudgedDifficulty, difficultyReferenceText, judgeDifficulty, DIFFICULTY_JUDGE_VERSION } from "@/lib/difficulty-judge";
+import { applyJudgedDifficulty, isApplicableDifficultyJudgement, difficultyReferenceText, judgeDifficulty, DIFFICULTY_JUDGE_VERSION } from "@/lib/difficulty-judge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +27,7 @@ const STALE_MINUTES = 20;
 const MAX_ATTEMPTS = 3;
 
 async function processOne(supabase: any, job: any) {
+  const requestDeadline=Date.now()+270_000;
   const questionId = String(job.question_id);
   const shadow = DIFFICULTY_AUDIT_HOLD || job.evaluation_mode === "SHADOW";
   try {
@@ -66,13 +67,15 @@ async function processOne(supabase: any, job: any) {
     }
 
     const references = shadow ? "" : await difficultyReferenceText(supabase, problem.subject);
+    const judgeBudget=Math.min(240_000,requestDeadline-Date.now());
+    if (judgeBudget<60_000) throw new Error("원본 준비 후 재풀이 시간이 부족합니다. 다음 실행에서 재시도해 주세요.");
     const result = await judgeDifficulty({
       apiKey, model, imageUrl, subject:problem.subject, questionNo:problem.question_no, questionType:problem.question_type,
       dna: problem.problem_dna,
       references,
       blind: shadow,
       officialAnswer: problem.answer,
-      timeoutMs: 240_000,
+      timeoutMs: judgeBudget,
     });
 
     const before = normalizeDifficulty(problem.difficulty);
@@ -95,7 +98,7 @@ async function processOne(supabase: any, job: any) {
     // 화면 재판정과 완전히 같은 기준으로 저장한다.
     // 미판정·검토필요는 기존 난이도를 유지하고 검증 메타데이터만 남긴다.
     const payload: any = { problem_dna: dna, updated_at: new Date().toISOString() };
-    const applied = result.decision === "graded" && !!result.final_grade && !result.review_required;
+    const applied = isApplicableDifficultyJudgement(result);
     if (applied) payload.difficulty = result.final_grade;
     const saved = await supabase.from("problem_bank_questions").update(payload).eq("id", questionId).eq("updated_at",problem.updated_at).select("id");
     if (saved.error || !saved.data?.length) throw saved.error || new Error("판정 도중 문항 변경 · 재검증 필요");

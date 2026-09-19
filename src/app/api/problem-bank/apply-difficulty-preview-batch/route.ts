@@ -3,20 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/supabase/auth";
 import { normalizeDifficulty } from "@/lib/difficulty-scale";
-import { applyJudgedDifficulty, type DifficultyJudgement } from "@/lib/difficulty-judge";
+import { applyJudgedDifficulty, isApplicableDifficultyJudgement, DIFFICULTY_JUDGE_VERSION } from "@/lib/difficulty-judge";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
-
-function validJudgement(value:any): value is DifficultyJudgement {
-  if(!value || typeof value!=="object") return false;
-  if(value.decision!=="graded") return false;
-  if(!/^[1-8]$/.test(String(value.final_grade??""))) return false;
-  if(value.review_required===true) return false;
-  if(!value.solve || typeof value.solve!=="object") return false;
-  return true;
-}
 
 export async function POST(request:NextRequest){
   try{
@@ -36,13 +27,13 @@ export async function POST(request:NextRequest){
       const problemId=String(row?.problemId??"").trim();
       const judgement=row?.judgement;
       const previous=normalizeDifficulty(row?.previousDifficulty);
-      if(!problemId || !validJudgement(judgement)){
+      if(!problemId || !isApplicableDifficultyJudgement(judgement) || row?.version !== DIFFICULTY_JUDGE_VERSION || !row?.snapshotUpdatedAt){
         failed++;results.push({problemId,ok:false,message:"유효하지 않은 미리보기 판정"});continue;
       }
 
       const {data:problem,error}=await supabase
         .from("problem_bank_questions")
-        .select("id,difficulty,problem_dna")
+        .select("id,difficulty,problem_dna,updated_at,question_no")
         .eq("id",problemId)
         .single();
 
@@ -54,23 +45,24 @@ export async function POST(request:NextRequest){
       }
 
       const current=normalizeDifficulty(problem.difficulty);
-      if(current!==previous){
-        stale++;results.push({problemId,ok:false,stale:true,message:`미리보기 후 현재 난이도가 변경됨 (${previous||"미분류"}→${current||"미분류"})`});continue;
+      if(current!==previous || problem.updated_at !== row.snapshotUpdatedAt || judgement.solve.observed_question_no !== problem.question_no){
+        stale++;results.push({problemId,ok:false,stale:true,message:`미리보기 후 문항 또는 난이도가 변경됨 (${previous||"미분류"}→${current||"미분류"})`});continue;
       }
 
       const dna=applyJudgedDifficulty(problem.problem_dna,judgement,current||null);
-      const {error:updateError}=await supabase
+      const {error:updateError,data:saved}=await supabase
         .from("problem_bank_questions")
         .update({
           difficulty:String(judgement.final_grade),
           problem_dna:dna,
           updated_at:new Date().toISOString(),
         })
-        .eq("id",problemId);
+        .eq("id",problemId).eq("updated_at",problem.updated_at).select("id");
 
       if(updateError){
         failed++;results.push({problemId,ok:false,message:updateError.message});continue;
       }
+      if (!saved?.length) {stale++;results.push({problemId,ok:false,stale:true,message:"적용 도중 문항 변경 · 다시 검증해 주세요."});continue;}
       applied++;
       results.push({problemId,ok:true,difficulty:String(judgement.final_grade)});
     }

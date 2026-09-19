@@ -1,4 +1,10 @@
 /** Printed school-exam stars are a separate scale from SOS grades. */
+export const SOURCE_STAR_READER_VERSION = "paper-stars-v2-provenance";
+export function sourceStarCacheMatches(dna: any, fingerprint: string, model: string) {
+  const d=dna?.difficulty;
+  return !!fingerprint && d?.source_star_origin === "original_pdf" && d.source_star_policy === SOURCE_STAR_POLICY &&
+    d.source_star_reader_version === SOURCE_STAR_READER_VERSION && d.source_star_fingerprint === fingerprint && d.source_star_model === model;
+}
 export const SOURCE_STAR_POLICY = "school-stars-v1";
 export const SOURCE_STAR_GRADES: Record<number, number[]> = {1:[1],2:[2,3,4],3:[4,5,6,7,8],4:[7,8]};
 export type SourceStars = { status: "present" | "absent" | "uncertain" | "not_applicable"; count: number | null; confidence: number; evidence: string };

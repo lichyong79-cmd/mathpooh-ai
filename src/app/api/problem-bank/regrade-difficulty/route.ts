@@ -8,6 +8,7 @@ import {
   DIFFICULTY_JUDGE_VERSION,
   DifficultyVerificationError,
   applyJudgedDifficulty,
+  isApplicableDifficultyJudgement,
   formatDifficultyReferences,
   judgeDifficulty,
 } from "@/lib/difficulty-judge";
@@ -19,6 +20,7 @@ export const dynamic = "force-dynamic";
 // v164: 난이도 판정 프롬프트/스키마는 src/lib/difficulty-judge.ts 한 곳에만 둔다.
 // 신규 문항 등록(AI 분석)과 난이도 탭 재판정이 같은 기준을 쓰도록 하기 위한 것이다.
 export async function POST(request: NextRequest) {
+  const requestDeadline=Date.now()+270_000;
   try {
     const denied = await requireAdmin();  // SOS280: 관리자 전용
     if (denied) return denied;
@@ -81,6 +83,8 @@ export async function POST(request: NextRequest) {
 
     let result;
     try {
+      const judgeBudget=Math.min(240_000,requestDeadline-Date.now());
+      if (judgeBudget<60_000) throw new Error("원본 준비 후 재풀이 시간이 부족합니다. 다음 실행에서 재시도해 주세요.");
       result = await judgeDifficulty({
         apiKey,
         model,
@@ -88,7 +92,7 @@ export async function POST(request: NextRequest) {
         dna: problem.problem_dna,
         references,
         officialAnswer: problem.answer,
-        timeoutMs: 240_000,
+        timeoutMs: judgeBudget,
       });
     } catch (judgeError) {
       const message = judgeError instanceof Error ? judgeError.message : "AI 난이도 판정 실패";
@@ -111,7 +115,7 @@ export async function POST(request: NextRequest) {
     // dryRun=false여도 검증 메타데이터만 저장하고, 확정 가능한 graded 결과만 실제 난이도를 갱신한다.
     if (!dryRun) {
       const updatePayload: any = { problem_dna: dna, updated_at: new Date().toISOString() };
-      if (result.decision === "graded" && result.final_grade && !result.review_required) updatePayload.difficulty = result.final_grade;
+      if (isApplicableDifficultyJudgement(result)) updatePayload.difficulty = result.final_grade;
       const { error: updateError, data: savedRows } = await supabase.from("problem_bank_questions").update(updatePayload).eq("id", problemId).eq("updated_at",problem.updated_at).select("id");
       if (!updateError && !savedRows?.length) return NextResponse.json({success:false,message:"판정 도중 문항이 변경되었습니다. 재검증해 주세요."},{status:409});
       if (updateError) return NextResponse.json({ success: false, message: updateError.message }, { status: 500 });
@@ -140,8 +144,9 @@ export async function POST(request: NextRequest) {
       dryRun,
       auditHold:DIFFICULTY_AUDIT_HOLD,
       message:DIFFICULTY_AUDIT_HOLD ? "난도 기준 검증 중: 비교 결과만 생성하며 저장 난도는 유지합니다." : undefined,
-      applied: !dryRun && result.decision === "graded" && !!result.final_grade && !result.review_required,
+      applied: !dryRun && isApplicableDifficultyJudgement(result),
       version: DIFFICULTY_JUDGE_VERSION,
+      snapshotUpdatedAt: problem.updated_at,
       previewJudgement: dryRun ? result : undefined,
     });
   } catch (error) {

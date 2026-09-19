@@ -7,10 +7,10 @@ function load(file){
  const code=ts.transpileModule(fs.readFileSync(abs,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
  vm.runInNewContext(`(function(require,module,exports){${code}\n})`,{console,process,Date,AbortSignal,fetch:async(url,args)=>{requests.push(JSON.parse(args.body));const out=responses.shift();assert.ok(out,'Unexpected API call');return {ok:true,text:async()=>JSON.stringify(out)};}})(id=>id.startsWith('@/')?load('src/'+id.slice(2)+'.ts'):require(id),mod,mod.exports);return mod.exports;
 }
-const {judgeDifficulty,applyJudgedDifficulty}=load('src/lib/difficulty-judge.ts');
+const {judgeDifficulty,applyJudgedDifficulty,isApplicableDifficultyJudgement}=load('src/lib/difficulty-judge.ts');
 const {applyOperationalDifficultyPolicy,difficultyAiVerified}=load('src/lib/problem-dna.ts');
 const {difficultyAiJudged}=load('src/lib/difficulty-scale.ts');
-const {sourceStarGrades}=load('src/lib/source-star-difficulty.ts');
+const {sourceStarGrades,sourceStarCacheMatches,SOURCE_STAR_POLICY,SOURCE_STAR_READER_VERSION}=load('src/lib/source-star-difficulty.ts');
 const stars={status:'absent',count:null,confidence:.95,evidence:'full visible margin'};
 const solve={observed_question_no:11,observed_conditions:['condition'],observed_choices:['1','2','3','4','5'],answer_value:'15',curriculum_valid:true,curriculum_reason:'derivative definition',source_stars:stars,solvable:true,solved_answer:'3',solution_outline:'complete proof',key_insight:'finite limit',concepts:['derivative'],reasoning_steps:5,condition_transformations:3,calculation_load:3,insight_load:4,confidence:.9,issue:''};
 const assessment={entry_barrier:'finite limit condition',condition_connections:'two limits',execution_burden:'integer cases',standard_student_obstacle:'implicit f(1)',advanced_student_obstacle:'factor pairs',estimated_minutes_min:4,estimated_minutes_max:7,lower_grade_reason:'combined constraints',higher_grade_reason:'bounded cases',curriculum_verified:true};
@@ -24,6 +24,15 @@ async function run(s=solve,j=judged){requests=[];responses=[response(s),response
  assert.ok(requests.every(r=>r.reasoning.effort==='high'));
  assert.ok(requests.every(r=>!JSON.stringify(r).includes('OLD_SECRET')));
  assert.ok(requests[0].input[0].content[0].text.includes('미적분 I'));
+ assert.equal(isApplicableDifficultyJudgement(good),true);
+ for (const bad of [{...good,solution_verified:false},{...good,answer_consistency:'unknown'},{...good,solve:{...good.solve,issue:'unclear symbol'}},{...good,csat_point_equivalent:3},{...good,student_assessment:{...assessment,estimated_minutes_max:NaN}}]) {
+  assert.equal(isApplicableDifficultyJudgement(bad),false);assert.equal(applyJudgedDifficulty({difficulty:{final_grade:7}},bad).difficulty.final_grade,7);
+ }
+ const cached={difficulty:{source_star_origin:'original_pdf',source_star_policy:SOURCE_STAR_POLICY,source_star_reader_version:SOURCE_STAR_READER_VERSION,source_star_fingerprint:'pdf-v1',source_star_model:'model'}};
+ assert.equal(sourceStarCacheMatches(cached,'pdf-v1','model'),true);
+ assert.equal(sourceStarCacheMatches(cached,'pdf-v2','model'),false);
+ assert.equal(sourceStarCacheMatches(cached,'pdf-v1','new-model'),false);
+ assert.equal(sourceStarCacheMatches({difficulty:{source_star_origin:'original_pdf',source_star_policy:SOURCE_STAR_POLICY}},'pdf-v1','model'),false);
  const unclear=await run({...solve,issue:"symbol unclear"});assert.equal(unclear.review_required,true);assert.equal(applyJudgedDifficulty({difficulty:{final_grade:5}},unclear).difficulty.final_grade,5);
  const badBand=await run(solve,{...judged,csat_difficulty_band:'three_point'});assert.equal(badBand.review_required,true);
  const badPoint=await run(solve,{...judged,csat_point_equivalent:3});assert.equal(badPoint.review_required,true);
