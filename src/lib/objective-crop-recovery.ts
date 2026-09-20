@@ -185,26 +185,42 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
       if(pdfSigned.error||imgSigned.error||pdfDownload.error||!pdfDownload.data)throw new Error(pdfSigned.error?.message||imgSigned.error?.message||pdfDownload.error?.message||"원본 로드 실패");
       const pdfBytes=new Uint8Array(await pdfDownload.data.arrayBuffer());
       const deterministicRect=await locateByTextAnchor(pdfBytes.slice(),Number(row.question_no??0));
-      const rect=deterministicRect??await locateObjectiveCrop({
+      let rect=deterministicRect??await locateObjectiveCrop({
         apiKey,model,pdfUrl:pdfSigned.data.signedUrl,imageUrl:imgSigned.data.signedUrl,
         questionNo:Number(row.question_no??0),title:String(row.title??""),pageNo:Number(row.page_no??1),
         x:Number(row.crop_x??0),y:Number(row.crop_y??0),width:Number(row.crop_width??1),height:Number(row.crop_height??1)
       });
       const locator=deterministicRect?"TEXT_ANCHOR":"AI_FALLBACK";
-      const rendered=await renderPdfCrop(pdfBytes.slice(),rect);
+      let rendered=await renderPdfCrop(pdfBytes.slice(),rect);
       const base=String(row.question_image_path).split("/").slice(0,-1).join("/");
       const filename=`${String(row.question_no??0).padStart(3,"0")}-recovered-v1.png`;
       const path=base?`${base}/${filename}`:`recovered/${row.id}/${filename}`;
       const uploaded=await db.storage.from("question-images").upload(path,rendered.bytes,{contentType:"image/png",upsert:true});
       if(uploaded.error)throw uploaded.error;
-      const newSigned=await db.storage.from("question-images").createSignedUrl(path,1200);
+      let newSigned=await db.storage.from("question-images").createSignedUrl(path,1200);
       if(newSigned.error)throw newSigned.error;
-      const validation=await validateRecovered({apiKey,model,pdfUrl:pdfSigned.data.signedUrl,imageUrl:newSigned.data.signedUrl,questionNo:Number(row.question_no??0),title:String(row.title??"")});
+      let validation=await validateRecovered({apiKey,model,pdfUrl:pdfSigned.data.signedUrl,imageUrl:newSigned.data.signedUrl,questionNo:Number(row.question_no??0),title:String(row.title??"")});
+
+      // 본문/선택지는 온전한데 다음 문항 머리만 따라온 경우, 아래 경계만 단계적으로 당겨 한 번 더 살린다.
+      if(validation.body_complete&&validation.foreign_question){
+        for(const trim of [1.2,2.4]){
+          const candidate={...rect,crop_height:Math.max(1,Number(rect.crop_height)-trim)};
+          const rerendered=await renderPdfCrop(pdfBytes.slice(),candidate);
+          const reup=await db.storage.from("question-images").upload(path,rerendered.bytes,{contentType:"image/png",upsert:true});
+          if(reup.error)continue;
+          const resigned=await db.storage.from("question-images").createSignedUrl(path,1200);
+          if(resigned.error)continue;
+          const revalidation=await validateRecovered({apiKey,model,pdfUrl:pdfSigned.data.signedUrl,imageUrl:resigned.data.signedUrl,questionNo:Number(row.question_no??0),title:String(row.title??"")});
+          if(revalidation.body_complete&&!revalidation.foreign_question){
+            rect=candidate;rendered=rerendered;newSigned=resigned;validation=revalidation;break;
+          }
+        }
+      }
       const pass=validation.choices_visible&&validation.body_complete&&!validation.foreign_question&&Number(validation.confidence)>=0.8;
       const finished=new Date().toISOString();
       if(pass){
         const nextDna={...dna,cropAudit:{...audit,pending:false,confirmed:false,normal:true,recovered:true,missing_choices:false,
-          recovery:{status:"PASS",started_at:now,finished_at:finished,confidence:validation.confidence,reason:validation.reason,engine:"objective-recovery-v2",locator}},
+          recovery:{status:"PASS",started_at:now,finished_at:finished,confidence:validation.confidence,reason:validation.reason,engine:"objective-recovery-v3",locator}},
         };
         delete (nextDna as any).errorReview;
         const bank=await db.from("problem_bank_questions").update({
@@ -219,7 +235,7 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
               page_no:rendered.pageNo,crop_x:rendered.x,crop_y:rendered.y,crop_width:rendered.w,crop_height:rendered.h,
               question_image_path:path,
               ai_result:{...(aq.data.ai_result??{}),crop_recovery:{rect,validation,finished_at:finished}},
-              review_result:{...(aq.data.review_result??{}),crop_engine_version:"objective-recovery-v2",crop_manual:false,crop_recovered:true},
+              review_result:{...(aq.data.review_result??{}),crop_engine_version:"objective-recovery-v3",crop_manual:false,crop_recovered:true},
               review_reason:null,updated_at:finished
             }).eq("id",row.analysis_question_id);
           }
@@ -231,7 +247,7 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
           ? `원본 문항번호~다음 문항번호 전체 범위에도 선택지가 없음 · 문항형식 재검토 필요: ${validation.reason}`
           : `재크롭 후 검수 미통과: ${validation.reason}`;
         const nextDna={...dna,cropAudit:{...audit,pending:false,confirmed:true,normal:false,
-          recovery:{status:"FINAL_HOLD",started_at:now,finished_at:finished,candidate_path:path,confidence:validation.confidence,reason:finalReason,engine:"objective-recovery-v2",locator,metadata_mismatch:metadataMismatch}},
+          recovery:{status:"FINAL_HOLD",started_at:now,finished_at:finished,candidate_path:path,confidence:validation.confidence,reason:finalReason,engine:"objective-recovery-v3",locator,metadata_mismatch:metadataMismatch}},
           errorReview:{...(dna.errorReview??{}),open:true,kind:metadataMismatch?"QUESTION_TYPE_MISMATCH":"CROP_CLIPPED",reason:finalReason,checkedAt:finished}
         };
         await db.from("problem_bank_questions").update({problem_dna:nextDna,updated_at:finished}).eq("id",row.id);
@@ -244,7 +260,7 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
       const current=fresh.data?.problem_dna??dna;
       const ca=current.cropAudit??audit;
       await db.from("problem_bank_questions").update({
-        problem_dna:{...current,cropAudit:{...ca,recovery:{status:"FAILED",started_at:ca?.recovery?.started_at??now,finished_at:finished,error:message.slice(0,500),engine:"objective-recovery-v2"}}},
+        problem_dna:{...current,cropAudit:{...ca,recovery:{status:"FAILED",started_at:ca?.recovery?.started_at??now,finished_at:finished,error:message.slice(0,500),engine:"objective-recovery-v3"}}},
         updated_at:finished
       }).eq("id",row.id);
       failed++;
