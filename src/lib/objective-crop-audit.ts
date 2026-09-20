@@ -101,6 +101,6 @@ export async function processObjectiveCropAuditBatch(db:any,batchSize=16){
       }).eq("id",row.id);
     }
   };
-  for(let i=0;i<rows.length;i+=8)await Promise.all(rows.slice(i,i+8).map(work));
+  for(let i=0;i<rows.length;i+=12)await Promise.all(rows.slice(i,i+12).map(work));
   return {processed:rows.length,normal,clipped,failed};
 }
