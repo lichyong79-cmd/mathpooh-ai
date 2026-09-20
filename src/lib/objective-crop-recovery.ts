@@ -1,3 +1,4 @@
+import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
 type Rect={page_no:number;crop_x:number;crop_y:number;crop_width:number;crop_height:number;confidence:number;reason:string};
 type Validation={choices_visible:boolean;body_complete:boolean;foreign_question:boolean;confidence:number;reason:string};
 
@@ -74,6 +75,36 @@ async function validateRecovered(args:{apiKey:string;model:string;pdfUrl:string;
 }
 
 function clamp(v:any,min:number,max:number){const n=Number(v);return Math.min(max,Math.max(min,Number.isFinite(n)?n:min));}
+
+async function locateByTextAnchor(pdfBytes:Uint8Array,questionNo:number):Promise<Rect|null>{
+  const canvasMod:any=await import("@napi-rs/canvas");
+  const g:any=globalThis as any;
+  if(!g.DOMMatrix&&canvasMod.DOMMatrix)g.DOMMatrix=canvasMod.DOMMatrix;
+  if(!g.ImageData&&canvasMod.ImageData)g.ImageData=canvasMod.ImageData;
+  if(!g.Path2D&&canvasMod.Path2D)g.Path2D=canvasMod.Path2D;
+  const pdfjs:any=await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const doc=await pdfjs.getDocument({data:pdfBytes,useSystemFonts:true}).promise;
+  try{
+    const anchors=await buildDocumentAnchors(doc,[questionNo]);
+    const anchor=anchors.byQuestionNo.get(questionNo);
+    if(!anchor)return null;
+    const y=Math.max(0,anchor.topPct-0.65);
+    const bottom=anchor.nextTopPct===null
+      ? Math.min(99.2,anchor.bottomPct)
+      : Math.max(y+1,Math.min(99.2,anchor.nextTopPct-0.18));
+    return {
+      page_no:anchor.page,
+      crop_x:Math.max(0,anchor.columnLeftPct),
+      crop_y:y,
+      crop_width:Math.max(1,anchor.columnRightPct-anchor.columnLeftPct),
+      crop_height:Math.max(1,bottom-y),
+      confidence:0.99,
+      reason:"PDF 텍스트 레이어의 실제 문항번호 시작점부터 같은 단의 다음 문항번호 직전까지 사용",
+    };
+  }finally{
+    try{await doc.destroy();}catch{}
+  }
+}
 
 async function renderPdfCrop(pdfBytes:Uint8Array,rect:Rect){
   const canvasMod:any=await import("@napi-rs/canvas");
@@ -152,12 +183,15 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
         db.storage.from("exam-pdf").download(String(row.exam_pdf_path)),
       ]);
       if(pdfSigned.error||imgSigned.error||pdfDownload.error||!pdfDownload.data)throw new Error(pdfSigned.error?.message||imgSigned.error?.message||pdfDownload.error?.message||"원본 로드 실패");
-      const rect=await locateObjectiveCrop({
+      const pdfBytes=new Uint8Array(await pdfDownload.data.arrayBuffer());
+      const deterministicRect=await locateByTextAnchor(pdfBytes,Number(row.question_no??0));
+      const rect=deterministicRect??await locateObjectiveCrop({
         apiKey,model,pdfUrl:pdfSigned.data.signedUrl,imageUrl:imgSigned.data.signedUrl,
         questionNo:Number(row.question_no??0),title:String(row.title??""),pageNo:Number(row.page_no??1),
         x:Number(row.crop_x??0),y:Number(row.crop_y??0),width:Number(row.crop_width??1),height:Number(row.crop_height??1)
       });
-      const rendered=await renderPdfCrop(new Uint8Array(await pdfDownload.data.arrayBuffer()),rect);
+      const locator=deterministicRect?"TEXT_ANCHOR":"AI_FALLBACK";
+      const rendered=await renderPdfCrop(pdfBytes,rect);
       const base=String(row.question_image_path).split("/").slice(0,-1).join("/");
       const filename=`${String(row.question_no??0).padStart(3,"0")}-recovered-v1.png`;
       const path=base?`${base}/${filename}`:`recovered/${row.id}/${filename}`;
@@ -170,7 +204,7 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
       const finished=new Date().toISOString();
       if(pass){
         const nextDna={...dna,cropAudit:{...audit,pending:false,confirmed:false,normal:true,recovered:true,missing_choices:false,
-          recovery:{status:"PASS",started_at:now,finished_at:finished,confidence:validation.confidence,reason:validation.reason,engine:"objective-recovery-v1"}},
+          recovery:{status:"PASS",started_at:now,finished_at:finished,confidence:validation.confidence,reason:validation.reason,engine:"objective-recovery-v2",locator}},
         };
         delete (nextDna as any).errorReview;
         const bank=await db.from("problem_bank_questions").update({
@@ -185,16 +219,20 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
               page_no:rendered.pageNo,crop_x:rendered.x,crop_y:rendered.y,crop_width:rendered.w,crop_height:rendered.h,
               question_image_path:path,
               ai_result:{...(aq.data.ai_result??{}),crop_recovery:{rect,validation,finished_at:finished}},
-              review_result:{...(aq.data.review_result??{}),crop_engine_version:"objective-recovery-v1",crop_manual:false,crop_recovered:true},
+              review_result:{...(aq.data.review_result??{}),crop_engine_version:"objective-recovery-v2",crop_manual:false,crop_recovered:true},
               review_reason:null,updated_at:finished
             }).eq("id",row.analysis_question_id);
           }
         }
         recovered++;
       }else{
+        const metadataMismatch=locator==="TEXT_ANCHOR"&&validation.body_complete&&!validation.choices_visible&&!validation.foreign_question;
+        const finalReason=metadataMismatch
+          ? `원본 문항번호~다음 문항번호 전체 범위에도 선택지가 없음 · 문항형식 재검토 필요: ${validation.reason}`
+          : `재크롭 후 검수 미통과: ${validation.reason}`;
         const nextDna={...dna,cropAudit:{...audit,pending:false,confirmed:true,normal:false,
-          recovery:{status:"REVIEW",started_at:now,finished_at:finished,candidate_path:path,confidence:validation.confidence,reason:validation.reason,engine:"objective-recovery-v1"}},
-          errorReview:{...(dna.errorReview??{}),open:true,kind:"CROP_CLIPPED",reason:`재크롭 후에도 검수 미통과: ${validation.reason}`,checkedAt:finished}
+          recovery:{status:"FINAL_HOLD",started_at:now,finished_at:finished,candidate_path:path,confidence:validation.confidence,reason:finalReason,engine:"objective-recovery-v2",locator,metadata_mismatch:metadataMismatch}},
+          errorReview:{...(dna.errorReview??{}),open:true,kind:metadataMismatch?"QUESTION_TYPE_MISMATCH":"CROP_CLIPPED",reason:finalReason,checkedAt:finished}
         };
         await db.from("problem_bank_questions").update({problem_dna:nextDna,updated_at:finished}).eq("id",row.id);
         held++;
@@ -206,7 +244,7 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
       const current=fresh.data?.problem_dna??dna;
       const ca=current.cropAudit??audit;
       await db.from("problem_bank_questions").update({
-        problem_dna:{...current,cropAudit:{...ca,recovery:{status:"FAILED",started_at:ca?.recovery?.started_at??now,finished_at:finished,error:message.slice(0,500),engine:"objective-recovery-v1"}}},
+        problem_dna:{...current,cropAudit:{...ca,recovery:{status:"FAILED",started_at:ca?.recovery?.started_at??now,finished_at:finished,error:message.slice(0,500),engine:"objective-recovery-v2"}}},
         updated_at:finished
       }).eq("id",row.id);
       failed++;
