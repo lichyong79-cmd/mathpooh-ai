@@ -14,7 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { DIFFICULTY_SCALE, DIFFICULTY_SCALE_VERSION, normalizeDifficulty, difficultyBand, type DifficultyValue } from "@/lib/difficulty-scale";
 import { canonicalSubject } from "@/lib/subject";
 
-export const DIFFICULTY_JUDGE_VERSION = "difficulty-v286-8band-recalibrated" as const;
+export const DIFFICULTY_JUDGE_VERSION = "difficulty-v287-dna-anchored" as const;
 
 export type DifficultyBandName =
   | "two_point" | "three_point" | "three_hard" | "four_easy"
@@ -165,7 +165,7 @@ solved_answer는 객관식의 선지 번호만, answer_value는 그 선지의 �
 JSON 객체 하나만 출력하세요.`;
 }
 
-function buildJudgePrompt(subject: unknown, solve: DifficultySolve, references = "", officialAnswer = "", questionNo?: number | null, questionType?: string) {
+function buildJudgePrompt(subject: unknown, solve: DifficultySolve, dna: any, references = "", officialAnswer = "", questionNo?: number | null, questionType?: string) {
   return `당신은 한국 수능 고등수학 난이도 검증자입니다. 첨부 문항과 아래의 독립 재풀이 결과를 검증한 뒤 MATHPOOH SOS 공식 8단계 중 하나를 판정하세요.
 
 ${SOURCE_STAR_PROMPT}
@@ -175,6 +175,12 @@ ${SOURCE_STAR_PROMPT}
 ${curriculumContext(subject, questionNo)}
 ${STUDENT_DIFFICULTY_CRITERIA}
 ${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
+[Problem DNA 구조 분석 — 운영 난도 판단의 1차 근거]
+${JSON.stringify({scale_version:dna?.difficulty?.scale_version ?? null, final_grade:dna?.difficulty?.final_grade ?? null, csat_difficulty_band:dna?.difficulty?.csat_difficulty_band ?? null, csat_basis:dna?.difficulty?.csat_basis ?? "", concept:dna?.difficulty?.concept ?? null, condition_interpretation:dna?.difficulty?.condition_interpretation ?? null, insight:dna?.difficulty?.insight ?? null, calculation:dna?.difficulty?.calculation ?? null, time_burden:dna?.difficulty?.time_burden ?? null, thinking_step_count:dna?.difficulty?.thinking_step_count ?? null, key_insight:dna?.thinking?.key_insight ?? "", process:dna?.thinking?.process ?? []})}
+- 재풀이는 정답·조건·풀이 타당성을 검증하기 위한 자료이지, 'AI가 이미 풀었으니 쉽다'는 하향 근거가 아니다.
+- scale_version=sos8-v1이면 기존 DNA 난도를 운영 기준점으로 우선 존중한다. 2단계 이상 변경하려면 실제 문항 구조와 기준문항 대비 이유를 구체적으로 제시해야 한다.
+- 구버전/미상 scale이면 숫자 final_grade 자체를 현재 8단계로 그대로 해석하지 말고, DNA의 사고과정·발상·조건연결·계산부담과 실제 이미지, 기준문항을 이용해 새 8단계로 판정한다.
+- 독립 재풀이가 짧거나 매끄럽다는 사실만으로 DNA보다 하향하지 않는다.
 저장 정답 형식: ${questionType || "이미지에서 확인"}. 객관식 저장 정답은 값이 아닌 선지 번호이다. 반드시 observed_choices와 대조한다.
 
 [공식 8단계]
@@ -375,7 +381,7 @@ export async function judgeDifficulty(args: {
 
   const judged=await requestStructured({
     apiKey:args.apiKey,model:args.model,imageUrl:args.imageUrl,
-    prompt:buildJudgePrompt(subject,solve,args.blind ? "" : args.references??"",String(args.officialAnswer??"").trim(),questionNo,args.questionType),
+    prompt:buildJudgePrompt(subject,solve,args.dna,args.blind ? "" : args.references??"",String(args.officialAnswer??"").trim(),questionNo,args.questionType),
     schema:judgeSchema,schemaName:"mathpooh_difficulty_judge_v285",timeoutMs:timeout,effort:"high",audit:calls,deadline,
   }) as Omit<DifficultyJudgement,"solve">;
 
