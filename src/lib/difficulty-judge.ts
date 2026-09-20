@@ -1,4 +1,4 @@
-import { STUDENT_DIFFICULTY_CRITERIA, curriculumContext } from "@/lib/difficulty-assessment-policy";
+import { HIGH_DIFFICULTY_REFERENCE_ANCHORS, STUDENT_DIFFICULTY_CRITERIA, curriculumContext } from "@/lib/difficulty-assessment-policy";
 import { SOURCE_STAR_PROMPT, SOURCE_STAR_POLICY, SOURCE_STAR_READER_VERSION, sourceStarSchema, sourceStarGrades, sourceStarReview, type SourceStars } from "@/lib/source-star-difficulty";
 /**
  * SOS 8단계 난이도 판정 엔진 (SOS240)
@@ -174,6 +174,7 @@ ${SOURCE_STAR_PROMPT}
 
 ${curriculumContext(subject, questionNo)}
 ${STUDENT_DIFFICULTY_CRITERIA}
+${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
 저장 정답 형식: ${questionType || "이미지에서 확인"}. 객관식 저장 정답은 값이 아닌 선지 번호이다. 반드시 observed_choices와 대조한다.
 
 [공식 8단계]
