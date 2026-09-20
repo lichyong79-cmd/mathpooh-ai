@@ -327,6 +327,9 @@ ${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
       analysis_model: model,
       analyzed_at: new Date().toISOString(),
       difficulty_judged: difficultyJudged,
+      difficulty_scale_version: "sos8-v1",
+      difficulty_source: "problem_dna.difficulty.final_grade",
+      legacy_difficulty_raw: null,
       official_solution: {
         connected: Boolean(solutionImagePath && solutionImageUrl),
         source_path: source?.solution_pdf_path ?? null,
