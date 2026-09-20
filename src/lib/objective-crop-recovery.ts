@@ -81,8 +81,6 @@ async function renderPdfCrop(pdfBytes:Uint8Array,rect:Rect){
   if(!g.DOMMatrix&&canvasMod.DOMMatrix)g.DOMMatrix=canvasMod.DOMMatrix;
   if(!g.ImageData&&canvasMod.ImageData)g.ImageData=canvasMod.ImageData;
   if(!g.Path2D&&canvasMod.Path2D)g.Path2D=canvasMod.Path2D;
-  const workerMod:any=await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
-  if(!g.pdfjsWorker)g.pdfjsWorker=workerMod;
   const pdfjs:any=await import("pdfjs-dist/legacy/build/pdf.mjs");
   const doc=await pdfjs.getDocument({data:pdfBytes,useSystemFonts:true}).promise;
   try{
