@@ -1,11 +1,10 @@
-import { DIFFICULTY_AUDIT_HOLD, STUDENT_DIFFICULTY_CRITERIA, curriculumContext } from "@/lib/difficulty-assessment-policy";
+import { HIGH_DIFFICULTY_REFERENCE_ANCHORS, STUDENT_DIFFICULTY_CRITERIA, curriculumContext } from "@/lib/difficulty-assessment-policy";
 import { SOURCE_STAR_PROMPT } from "@/lib/source-star-difficulty";
 import { normalizeProblemAnswer, problemAnswerIssues } from "@/lib/problem-answer-integrity";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
-import { PROBLEM_DNA_VERSION, applyOperationalDifficultyPolicy, shouldVerifyOperationalDifficulty, legacyFieldsFromDNA, problemDnaQuestionSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
-import { difficultyReferenceText, judgeDifficulty } from "@/lib/difficulty-judge";
+import { PROBLEM_DNA_VERSION, applyOperationalDifficultyPolicy, legacyFieldsFromDNA, problemDnaQuestionSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
 import { canonicalSubject } from "@/lib/subject";
 
 export const runtime = "nodejs";
@@ -242,6 +241,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 문항 번호: ${question.question_no}
 ${curriculumContext(source?.subject,question.question_no)}
 ${STUDENT_DIFFICULTY_CRITERIA}
+${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
 
 원칙:
 - schema_version은 반드시 ${PROBLEM_DNA_VERSION}, question_no는 ${question.question_no}입니다.
@@ -298,58 +298,16 @@ ${STUDENT_DIFFICULTY_CRITERIA}
     const canonical = canonicalSubject(source?.subject, dna.basic?.subject);
     dna.basic = { ...(dna.basic ?? {}), subject: canonical } as ProblemDNA["basic"];
 
-    // SOS249: 모든 신규문항에 비싼 독립 재풀이를 다시 돌리지 않는다.
-    // 기본 난이도는 위 DNA 운영 단일 기준으로 확정하고, 밴드충돌/준킬러 이상/낮은 신뢰도만 예외 검증한다.
-    // 예외 검증 결과도 자동으로 기준값을 덮지 않고, 큰 충돌만 관리자 검토로 보낸다.
+    // SOS286: 최초 Problem DNA의 SOS 8단계 판정을 운영 난도의 단일 기준으로 사용한다.
+    // 독립 재풀이는 정답/판독/풀이 타당성 검증용일 뿐 난도를 하향하거나 등록을 막지 않는다.
+    // 난도 재검증은 별도 shadow/regrade queue에서 수행하며 이 분석 경로의 REVIEW 사유가 될 수 없다.
     let difficultyJudged = false;
-    const localDifficulty = Number(dna.difficulty?.final_grade || 0);
-    if (!DIFFICULTY_AUDIT_HOLD && shouldVerifyOperationalDifficulty(dna)) {
-      try {
-        const references = await difficultyReferenceText(supabase, canonical);
-        const judgement = await judgeDifficulty({
-          apiKey,
-          model: process.env.OPENAI_DIFFICULTY_MODEL || model,
-          imageUrl: signed.data.signedUrl, subject:canonical, questionNo:question.question_no,
-          dna,
-          references,
-          officialAnswer: question.answer,
-        });
-        difficultyJudged = judgement.decision === "graded" && !!judgement.final_grade && !judgement.review_required;
-        const verifiedGrade = Number(judgement.final_grade || 0);
-        const gradeGap = verifiedGrade && localDifficulty ? Math.abs(verifiedGrade-localDifficulty) : 0;
-        const difficultyMeta = dna.difficulty as unknown as Record<string, unknown>;
-        difficultyMeta.verification_attempted = true;
-        difficultyMeta.verification_grade = judgement.final_grade;
-        difficultyMeta.verification_confidence = judgement.confidence;
-        difficultyMeta.verification_reason = judgement.reason;
-        difficultyMeta.verification_version = "sos249-selective-verify-v1";
-        difficultyMeta.verification_gap = gradeGap;
-        difficultyMeta.verification_review_required = judgement.review_required || judgement.decision !== "graded" || gradeGap >= 2;
-
-        if (difficultyMeta.verification_review_required === true) {
-          dna.summary = {
-            ...(dna.summary ?? {}),
-            review_required: true,
-            review_reasons: [...new Set([
-              ...(Array.isArray(dna.summary?.review_reasons) ? dna.summary.review_reasons : []),
-              `난이도 예외검증 필요: DNA ${localDifficulty}단계 / 재풀이 ${judgement.final_grade ?? "미판정"}${gradeGap ? ` / 차이 ${gradeGap}단계` : ""}`,
-            ])],
-          } as ProblemDNA["summary"];
-        }
-      } catch (judgeError) {
-        // 검증 API 실패가 신규문항의 기본 DNA 분류를 없애지는 않는다.
-        const difficultyMeta = dna.difficulty as unknown as Record<string, unknown>;
-        difficultyMeta.verification_attempted = true;
-        difficultyMeta.verification_failed = true;
-        difficultyMeta.verification_error = judgeError instanceof Error ? judgeError.message : String(judgeError);
-        difficultyMeta.verification_version = "sos249-selective-verify-v1";
-        console.warn("[analyze] selective difficulty verify skipped:", difficultyMeta.verification_error);
-      }
-    } else {
-      const difficultyMeta = dna.difficulty as unknown as Record<string, unknown>;
-      difficultyMeta.verification_attempted = false;
-      difficultyMeta.verification_version = "sos249-selective-verify-v1";
-    }
+    const difficultyMeta = dna.difficulty as unknown as Record<string, unknown>;
+    difficultyMeta.verification_attempted = false;
+    difficultyMeta.verification_deferred = true;
+    difficultyMeta.verification_version = "sos286-shadow-only";
+    difficultyMeta.verification_role = "answer-and-solution-audit-only";
+    difficultyMeta.operational_grade_source = "initial-problem-dna-sos8";
 
     const validation = validateProblemDNA(dna);
     const officialSolutionIssues = [
