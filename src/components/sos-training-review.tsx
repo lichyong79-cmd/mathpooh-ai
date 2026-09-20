@@ -7,6 +7,7 @@ import SosProblemImage from "./sos-problem-image";
 import SosGeneratedQuestionMathJax from "./sos-generated-question-mathjax";
 
 function fmt(seconds:number){const s=Math.max(0,Math.floor(seconds));return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;}
+function isMultipleChoice(item:any){return String(item?.problem?.questionType??"")==="multiple_choice";}
 type ReviewedState={answer:string;seconds:number;isCorrect:boolean;completed:boolean;explained?:boolean};
 type Feedback={ok:boolean;attemptNo:number;hint?:string;hintLevel?:number;revealAnswer?:boolean;correctAnswer?:string;solution?:string};
 
@@ -93,7 +94,9 @@ function SosTrainingReviewContent({session,onCompleted,onNotice}:{session:any;on
       <div className="sos-answer-lock-box">
         {feedback?.hint&&!feedback.revealAnswer?<div className={`sos-review-hint level-${feedback.hintLevel}`}><small>풀이 힌트 {feedback.hintLevel}/2</small><b>{feedback.hint}</b><span>정답은 아직 공개하지 않습니다. 힌트를 이용해 다시 풀어보세요.</span></div>:null}
         {feedback?.revealAnswer?<div className="sos-review-solution"><small>3회 재도전 완료</small><h4>정답과 핵심 풀이를 확인하세요.</h4><b>정답 · {feedback.correctAnswer||item.problem?.correctAnswer||"-"}</b>{feedback.solution?<p>{feedback.solution}</p>:<p>정답에 도달하는 데 필요한 정의·공식과 조건 연결을 다시 확인하세요. 다음 유사문항에서는 같은 풀이 구조를 스스로 적용해야 합니다.</p>}</div>:null}
-        {!done&&!feedback?.revealAnswer?<label><span>다시 푼 답</span><input autoFocus disabled={busy} value={answer} onChange={(e:React.ChangeEvent<HTMLInputElement>)=>setAnswer(e.target.value)} onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void saveReview();}}/></label>:null}
+        {!done&&!feedback?.revealAnswer?(isMultipleChoice(item)
+          ?<div className="sos-choice-answer" role="group" aria-label="객관식 재답 선택"><span>다시 푼 답 선택</span><div>{["1","2","3","4","5"].map((choice)=><button key={choice} type="button" disabled={busy} aria-pressed={answer===choice} className={answer===choice?"selected":""} onClick={()=>setAnswer(choice)}>{["①","②","③","④","⑤"][Number(choice)-1]}</button>)}</div></div>
+          :<label><span>다시 푼 답</span><input autoFocus disabled={busy} value={answer} inputMode="numeric" onChange={(e:React.ChangeEvent<HTMLInputElement>)=>setAnswer(e.target.value)} onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void saveReview();}}/></label>):null}
         {feedback?.ok?<div className="sos-review-feedback correct"><b>✓ 스스로 교정 완료</b><span>{feedback.attemptNo}번째 재도전에서 정답</span></div>:null}
         <div className="sos-training-actions"><button type="button" className="secondary" disabled={busy} onClick={()=>setSelectedId(null)}>← 성적표로</button>{!done&&!feedback?.revealAnswer?<button disabled={busy||!answer.trim()} onClick={()=>void saveReview()}>{busy?"채점 중...":attempt?"힌트 적용 · 다시 채점":"다시 채점"}</button>:feedback?.revealAnswer?<button disabled={busy} onClick={()=>void completeExplanation()}>{busy?"저장 중...":"풀이 확인 완료 · 성적표로"}</button>:<button onClick={()=>setSelectedId(null)}>교정 완료 · 성적표로</button>}</div>
       </div></article></div>}
