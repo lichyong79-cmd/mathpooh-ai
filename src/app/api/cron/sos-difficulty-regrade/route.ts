@@ -146,7 +146,7 @@ async function run(request: Request) {
   after(async()=>{
     try { await processObjectiveCropRecoveryBatch(createClient(), 12); }
     catch { /* crop recovery failure must not break difficulty worker */ }
-    try { await processObjectiveCropAuditBatch(createClient(), 16); }
+    try { await processObjectiveCropAuditBatch(createClient(), 32); }
     catch { /* crop audit failure must not break difficulty worker */ }
   });
   const cols = "id,question_id,status,attempt_count,priority,evaluation_mode,result_payload";
