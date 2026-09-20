@@ -72,15 +72,15 @@ export async function processObjectiveCropAuditBatch(db:any,batchSize=16){
       ]);
       if(pdf.error||image.error)throw new Error(pdf.error?.message||image.error?.message||"signed url error");
       const audit=await auditOne({apiKey,model,pdfUrl:pdf.data.signedUrl,imageUrl:image.data.signedUrl,title:String(row.title??""),answer:String(row.answer??""),questionNo:Number(row.question_no??0)});
-      const confirmed=(audit.clipped===true||audit.missing_choices===true)&&audit.confidence>=0.75;
-      const safeNormal=audit.clipped===false&&audit.choices_visible_in_crop===true&&audit.source_looks_objective===true&&audit.confidence>=0.8;
-      const metadataMismatch=audit.choices_visible_in_crop===false&&audit.choices_visible_in_original===false&&audit.confidence>=0.75;
+      const confirmed=(audit.clipped===true||audit.missing_choices===true)&&audit.confidence>=0.6;
+      const safeNormal=audit.clipped===false&&audit.missing_choices===false&&audit.choices_visible_in_crop===true&&audit.choices_visible_in_original===true&&audit.source_looks_objective===true&&audit.confidence>=0.6;
+      const metadataMismatch=audit.clipped===false&&audit.missing_choices===false&&audit.choices_visible_in_crop===false&&audit.choices_visible_in_original===false&&audit.source_looks_objective===false&&audit.confidence>=0.6;
       const ambiguous=!confirmed&&!safeNormal&&!metadataMismatch;
       const now=new Date().toISOString();
       const dna=row.problem_dna??{};
       const nextDna={
         ...dna,
-        cropAudit:{...(dna.cropAudit??{}),pending:ambiguous,confirmed,normal:safeNormal,metadata_mismatch:metadataMismatch,missing_choices:audit.missing_choices,choices_visible_in_crop:audit.choices_visible_in_crop,choices_visible_in_original:audit.choices_visible_in_original,source_looks_objective:audit.source_looks_objective,confidence:audit.confidence,reason:audit.reason,checked_at:now,rule:"objective-crop-height-lt8-v3"},
+        cropAudit:{...(dna.cropAudit??{}),pending:ambiguous,confirmed,normal:safeNormal,metadata_mismatch:metadataMismatch,clipped:audit.clipped,missing_choices:audit.missing_choices,choices_visible_in_crop:audit.choices_visible_in_crop,choices_visible_in_original:audit.choices_visible_in_original,source_looks_objective:audit.source_looks_objective,confidence:audit.confidence,reason:audit.reason,checked_at:now,rule:"objective-crop-height-lt8-v4"},
         ...((confirmed||metadataMismatch)?{errorReview:{open:true,kind:metadataMismatch?"QUESTION_TYPE_MISMATCH":"CROP_CLIPPED",reason:audit.reason,confidence:audit.confidence,checkedAt:now}}:{})
       };
       const status=safeNormal?"ACTIVE":"HOLD";
