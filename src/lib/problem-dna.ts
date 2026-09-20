@@ -260,8 +260,8 @@ export function applyOperationalDifficultyPolicy(dna: ProblemDNA, sourceLabel = 
   // Source titles must never cap a mathematical difficulty judgement.
   difficulty.source_cap_applied = false;
   difficulty.scale_version = "sos8-v1";
-  difficulty.classification_policy = "sos284-preserve-ai-proposal";
-  difficulty.difficulty_source = "ai-initial-proposal";
+  difficulty.classification_policy = "sos286-dna-authoritative";
+  difficulty.difficulty_source = "problem-dna-initial-sos8";
   // SOS275(A안): 이 값은 AI가 문제를 풀어보고 내린 판정이 아니라 DNA 점수 가중합 추정치다.
   // 예전에는 여기서 graded / review_required=false 도장을 찍어서, 검증된 값처럼 보이게 만들고
   // AI 판정 결과까지 덮어썼다. 이제 추정치임을 명시하고 검증 대상으로 남긴다.
