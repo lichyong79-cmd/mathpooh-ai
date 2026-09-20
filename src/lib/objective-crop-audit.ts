@@ -45,7 +45,7 @@ export async function processObjectiveCropAuditBatch(db:any,batchSize=16){
   const model=process.env.OPENAI_MODEL||"gpt-5-mini";
 
   const picked=await db.from("problem_bank_questions")
-    .select("id,title,question_no,answer,question_image_path,source_file_id,analysis_question_id,crop_height,problem_dna,status")
+    .select("id,title,question_no,answer,question_image_path,source_file_id,analysis_question_id,crop_height,problem_dna,status,updated_at")
     .eq("status","HOLD")
     .eq("question_type","multiple_choice")
     .lt("crop_height",8)
@@ -84,8 +84,15 @@ export async function processObjectiveCropAuditBatch(db:any,batchSize=16){
         ...((confirmed||metadataMismatch)?{errorReview:{open:true,kind:metadataMismatch?"QUESTION_TYPE_MISMATCH":"CROP_CLIPPED",reason:audit.reason,confidence:audit.confidence,checkedAt:now}}:{})
       };
       const status=safeNormal?"ACTIVE":"HOLD";
-      const saved=await db.from("problem_bank_questions").update({status,problem_dna:nextDna,updated_at:now}).eq("id",row.id);
+      const saved=await db.from("problem_bank_questions")
+        .update({status,problem_dna:nextDna,updated_at:now})
+        .eq("id",row.id)
+        .eq("status","HOLD")
+        .eq("question_type","multiple_choice")
+        .eq("updated_at",row.updated_at)
+        .select("id");
       if(saved.error)throw saved.error;
+      if(!(saved.data??[]).length)return;
       if(row.analysis_question_id){
         const aq=await db.from("analysis_questions").select("ai_result").eq("id",row.analysis_question_id).maybeSingle();
         if(!aq.error&&aq.data)await db.from("analysis_questions").update({ai_result:{...(aq.data.ai_result??{}),objective_crop_audit:audit},updated_at:now}).eq("id",row.analysis_question_id);
@@ -98,7 +105,7 @@ export async function processObjectiveCropAuditBatch(db:any,batchSize=16){
       await db.from("problem_bank_questions").update({
         problem_dna:{...dna,cropAudit:{...prev,pending:true,last_error:e instanceof Error?e.message:String(e),last_attempt_at:new Date().toISOString()}},
         updated_at:new Date().toISOString()
-      }).eq("id",row.id);
+      }).eq("id",row.id).eq("status","HOLD").eq("question_type","multiple_choice").eq("updated_at",row.updated_at);
     }
   };
   for(let i=0;i<rows.length;i+=12)await Promise.all(rows.slice(i,i+12).map(work));
