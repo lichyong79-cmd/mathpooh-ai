@@ -74,14 +74,14 @@ export async function processObjectiveCropAuditBatch(db:any,batchSize=16){
       const audit=await auditOne({apiKey,model,pdfUrl:pdf.data.signedUrl,imageUrl:image.data.signedUrl,title:String(row.title??""),answer:String(row.answer??""),questionNo:Number(row.question_no??0)});
       const confirmed=(audit.clipped===true||audit.missing_choices===true)&&audit.confidence>=0.75;
       const safeNormal=audit.clipped===false&&audit.choices_visible_in_crop===true&&audit.source_looks_objective===true&&audit.confidence>=0.8;
-      const metadataMismatch=audit.choices_visible_in_crop===false&&audit.choices_visible_in_original===false;
-      const ambiguous=!confirmed&&!safeNormal;
+      const metadataMismatch=audit.choices_visible_in_crop===false&&audit.choices_visible_in_original===false&&audit.confidence>=0.75;
+      const ambiguous=!confirmed&&!safeNormal&&!metadataMismatch;
       const now=new Date().toISOString();
       const dna=row.problem_dna??{};
       const nextDna={
         ...dna,
-        cropAudit:{pending:ambiguous,confirmed,normal:safeNormal,metadata_mismatch:metadataMismatch,missing_choices:audit.missing_choices,choices_visible_in_crop:audit.choices_visible_in_crop,choices_visible_in_original:audit.choices_visible_in_original,source_looks_objective:audit.source_looks_objective,confidence:audit.confidence,reason:audit.reason,checked_at:now,rule:"objective-crop-height-lt8-v2"},
-        ...(confirmed?{errorReview:{open:true,kind:"CROP_CLIPPED",reason:audit.reason,confidence:audit.confidence,checkedAt:now}}:{})
+        cropAudit:{...(dna.cropAudit??{}),pending:ambiguous,confirmed,normal:safeNormal,metadata_mismatch:metadataMismatch,missing_choices:audit.missing_choices,choices_visible_in_crop:audit.choices_visible_in_crop,choices_visible_in_original:audit.choices_visible_in_original,source_looks_objective:audit.source_looks_objective,confidence:audit.confidence,reason:audit.reason,checked_at:now,rule:"objective-crop-height-lt8-v3"},
+        ...((confirmed||metadataMismatch)?{errorReview:{open:true,kind:metadataMismatch?"QUESTION_TYPE_MISMATCH":"CROP_CLIPPED",reason:audit.reason,confidence:audit.confidence,checkedAt:now}}:{})
       };
       const status=safeNormal?"ACTIVE":"HOLD";
       const saved=await db.from("problem_bank_questions").update({status,problem_dna:nextDna,updated_at:now}).eq("id",row.id);
@@ -90,7 +90,7 @@ export async function processObjectiveCropAuditBatch(db:any,batchSize=16){
         const aq=await db.from("analysis_questions").select("ai_result").eq("id",row.analysis_question_id).maybeSingle();
         if(!aq.error&&aq.data)await db.from("analysis_questions").update({ai_result:{...(aq.data.ai_result??{}),objective_crop_audit:audit},updated_at:now}).eq("id",row.analysis_question_id);
       }
-      if(confirmed)clipped++; else if(safeNormal)normal++; else failed++;
+      if(confirmed)clipped++; else if(safeNormal)normal++; else if(metadataMismatch)clipped++; else failed++;
     }catch(e){
       failed++;
       const dna=row.problem_dna??{};
@@ -101,6 +101,6 @@ export async function processObjectiveCropAuditBatch(db:any,batchSize=16){
       }).eq("id",row.id);
     }
   };
-  for(let i=0;i<rows.length;i+=4)await Promise.all(rows.slice(i,i+4).map(work));
+  for(let i=0;i<rows.length;i+=8)await Promise.all(rows.slice(i,i+8).map(work));
   return {processed:rows.length,normal,clipped,failed};
 }
