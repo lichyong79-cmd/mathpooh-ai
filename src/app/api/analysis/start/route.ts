@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
+import { PDFDocument } from "pdf-lib";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -86,15 +87,9 @@ function clamp(value: number, min: number, max: number) {
 async function getPdfPageCount(url: string) {
   const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`시험지 PDF 페이지 수 확인 실패 (${response.status})`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const task = pdfjs.getDocument({ data: bytes });
-  const pdf = await task.promise;
-  try {
-    return Math.max(1, Number(pdf.numPages) || 1);
-  } finally {
-    await pdf.destroy().catch(() => undefined);
-  }
+  const bytes = await response.arrayBuffer();
+  const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+  return Math.max(1, pdf.getPageCount());
 }
 
 function pageRanges(pageCount: number, batchSize = 2) {
