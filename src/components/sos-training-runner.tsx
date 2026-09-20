@@ -12,6 +12,9 @@ function fmt(seconds:number){
   const s=Math.max(0,Math.floor(seconds));
   return `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 }
+function isMultipleChoice(item:any){
+  return String(item?.problem?.questionType??"")==="multiple_choice";
+}
 
 function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;onCompleted:(json:any)=>Promise<void>|void;onNotice:(message:string)=>void}){
   const items:any[]=Array.isArray(session?.items)?session.items:[];
@@ -273,8 +276,12 @@ function SosTrainingRunnerContent({session,onCompleted,onNotice}:{session:any;on
             :<p>문항 이미지가 없습니다.</p>}
       </div>
       <div className="sos-answer-lock-box">
-        {/* SOS283: 정답은 -999~999 정수인데 모바일에서 문자 키보드가 떴다. */}
-        <label><span>정답</span><input autoFocus disabled={busy} value={answer} inputMode="numeric" enterKeyHint="next" autoComplete="off" onChange={(e:React.ChangeEvent<HTMLInputElement>)=>{setAnswer(e.target.value);cacheDraft(index,itemId,e.target.value,elapsed);}} placeholder="정답을 입력하세요" onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void next();}}/></label>
+        {isMultipleChoice(item)
+          ?<div className="sos-choice-answer" role="group" aria-label="객관식 답 선택">
+            <span>정답 선택</span>
+            <div>{["1","2","3","4","5"].map((choice)=><button key={choice} type="button" disabled={busy} aria-pressed={answer===choice} className={answer===choice?"selected":""} onClick={()=>{setAnswer(choice);cacheDraft(index,itemId,choice,elapsed);}}>{["①","②","③","④","⑤"][Number(choice)-1]}</button>)}</div>
+          </div>
+          :<label><span>정답</span><input autoFocus disabled={busy} value={answer} inputMode="numeric" enterKeyHint="next" autoComplete="off" onChange={(e:React.ChangeEvent<HTMLInputElement>)=>{setAnswer(e.target.value);cacheDraft(index,itemId,e.target.value,elapsed);}} placeholder="정답을 입력하세요" onKeyDown={(e:React.KeyboardEvent<HTMLInputElement>)=>{if(e.key==="Enter")void next();}}/></label>}
         <p>{homework?"시간 제한 없이 충분히 풀어도 됩니다. 최초 정답과 오답 교정 과정은 기록되지만 바로미터에는 반영되지 않습니다.":"문항별 풀이시간이 기록되어 바로미터 산정에 함께 반영됩니다."}</p>
         {saveError?<p role="alert" style={{color:"#a12626",background:"#fff0ed",padding:12,borderRadius:8}}>{saveError}</p>:null}
         {submitPrompt?<div role="group" aria-label="답안 제출 확인" style={{background:"#edf7ef",padding:16,borderRadius:10}}><p>{items.length}문항의 답을 제출하고 성적표를 확인할까요?</p><button type="button" disabled={busy} onClick={()=>void submitAll(true)}>제출 확정</button> <button type="button" disabled={busy} onClick={()=>setSubmitPrompt(false)}>계속 풀기</button></div>:null}
