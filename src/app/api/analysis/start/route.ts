@@ -31,7 +31,7 @@ const cropSchema = {
   properties: {
     questions: {
       type: "array",
-      minItems: 1,
+      minItems: 0,
       maxItems: 200,
       items: {
         type: "object",
@@ -80,6 +80,39 @@ function parseJson<T>(payload: OpenAiPayload): T {
 function clamp(value: number, min: number, max: number) {
   const safe = Number.isFinite(value) ? value : min;
   return Math.min(max, Math.max(min, safe));
+}
+
+
+async function getPdfPageCount(url: string) {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`시험지 PDF 페이지 수 확인 실패 (${response.status})`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const task = pdfjs.getDocument({ data: bytes });
+  const pdf = await task.promise;
+  try {
+    return Math.max(1, Number(pdf.numPages) || 1);
+  } finally {
+    await pdf.destroy().catch(() => undefined);
+  }
+}
+
+function pageRanges(pageCount: number, batchSize = 2) {
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (let start = 1; start <= pageCount; start += batchSize) {
+    ranges.push({ start, end: Math.min(pageCount, start + batchSize - 1) });
+  }
+  return ranges;
+}
+
+function missingQuestionNumbers(items: AiCropQuestion[]) {
+  const numbers = [...new Set(items.map((item) => Math.trunc(Number(item.question_no))).filter((n) => Number.isFinite(n) && n > 0))].sort((a, b) => a - b);
+  if (!numbers.length) return [];
+  const missing: number[] = [];
+  for (let n = 1; n <= numbers[numbers.length - 1]; n++) {
+    if (!numbers.includes(n)) missing.push(n);
+  }
+  return missing;
 }
 
 /**
@@ -357,23 +390,94 @@ export async function POST(request: NextRequest) {
       `시험지 정보: ${source.title} / ${source.grade ?? ""} / ${source.subject ?? ""}`,
     ].join("\n");
 
-    // 1단계는 문항번호·페이지·위치만 인식한다.
-    // 정답·단원·난이도·DNA 분석은 자르기 검수가 끝난 뒤 3단계 API에서만 실행한다.
-    const cropRaw = await callOpenAi({
-      apiKey,
-      model,
-      prompt: cropPrompt,
-      files: [examUrl],
-      schemaName: "math_exam_recognition",
-      schema: cropSchema,
-      maxOutputTokens: 14000,
-    });
+    // SOS287: PDF 전체 1회 인식은 후반 페이지를 통째로 누락할 수 있었다.
+    // 실제 페이지 수를 먼저 확인하고 2페이지씩 명시적으로 끝까지 훑은 뒤 결과를 합친다.
+    const pdfPageCount = await getPdfPageCount(examUrl);
+    const ranges = pageRanges(pdfPageCount, 2);
+    const recognized: AiCropQuestion[] = [];
+    const recognitionWarnings: string[] = [];
+    let totalTokens = 0;
 
-    const cropPayload = parseJson<{ questions: AiCropQuestion[] }>(cropRaw);
-    const crops = normalizeAiCrops(cropPayload.questions);
-    if (!crops.length) {
-      throw new Error("AI가 문항 영역을 찾지 못했습니다.");
+    for (let index = 0; index < ranges.length; index++) {
+      const range = ranges[index];
+      await supabase
+        .from("source_analysis")
+        .update({
+          progress: Math.min(75, 15 + Math.round(((index + 1) / ranges.length) * 55)),
+          current_step: `1단계 · PDF ${range.start}~${range.end}/${pdfPageCount}페이지 문항 인식 중`,
+        })
+        .eq("id", analysis.id);
+
+      const rangePrompt = [
+        cropPrompt,
+        "",
+        `[이번 호출의 필수 검사 범위] PDF ${range.start}페이지부터 ${range.end}페이지까지만 검사한다.`,
+        "첨부 PDF 전체가 보이더라도 위 페이지 범위를 첫 줄부터 마지막 줄까지 끝까지 확인한다.",
+        "범위 안에 보이는 모든 실제 문항번호를 빠짐없이 반환한다. 범위 밖 페이지의 문항은 반환하지 않는다.",
+        "page_no는 첨부 PDF의 원래 페이지 번호를 그대로 사용한다.",
+        "이 호출에서 문항이 전혀 없는 페이지가 있으면 그 페이지는 억지로 만들지 않아도 된다.",
+      ].join("\n");
+
+      const raw = await callOpenAi({
+        apiKey,
+        model,
+        prompt: rangePrompt,
+        files: [examUrl],
+        schemaName: `math_exam_recognition_p${range.start}_${range.end}`,
+        schema: cropSchema,
+        maxOutputTokens: 10000,
+      });
+      totalTokens += Number(raw.usage?.total_tokens ?? 0);
+
+      const payload = parseJson<{ questions: AiCropQuestion[] }>(raw);
+      const inRange = (payload.questions ?? []).filter((item) => {
+        const page = Math.trunc(Number(item.page_no));
+        return page >= range.start && page <= range.end;
+      });
+      if (!inRange.length) {
+        recognitionWarnings.push(`${range.start}~${range.end}페이지에서 문항이 인식되지 않음`);
+      }
+      recognized.push(...inRange);
     }
+
+    let crops = normalizeAiCrops(recognized);
+    if (!crops.length) throw new Error("AI가 문항 영역을 찾지 못했습니다.");
+
+    // 번호 중간 누락은 한 번 더 전체 PDF에서 해당 번호만 표적 복구한다.
+    let missingNumbers = missingQuestionNumbers(crops);
+    if (missingNumbers.length) {
+      const recoveryPrompt = [
+        cropPrompt,
+        "",
+        `[누락 번호 복구] 1차 페이지별 인식에서 다음 문항번호가 빠졌다: ${missingNumbers.join(", ")}.`,
+        "첨부 PDF 전체에서 위 번호가 실제로 존재하는지 찾아라.",
+        "실제로 보이는 누락 번호만 반환하고, 추측해서 문항을 만들지 마라.",
+        "찾은 경우 원래 PDF page_no와 정확한 영역을 반환한다.",
+      ].join("\n");
+      const recoveryRaw = await callOpenAi({
+        apiKey,
+        model,
+        prompt: recoveryPrompt,
+        files: [examUrl],
+        schemaName: "math_exam_recognition_gap_recovery",
+        schema: cropSchema,
+        maxOutputTokens: 8000,
+      });
+      totalTokens += Number(recoveryRaw.usage?.total_tokens ?? 0);
+      const recovery = parseJson<{ questions: AiCropQuestion[] }>(recoveryRaw);
+      crops = normalizeAiCrops([...crops, ...(recovery.questions ?? [])]);
+      missingNumbers = missingQuestionNumbers(crops);
+    }
+
+    const recognizedPages = new Set(crops.map((crop) => crop.page_no));
+    const lastPageHasQuestion = recognizedPages.has(pdfPageCount);
+    if (!lastPageHasQuestion) {
+      recognitionWarnings.push(`마지막 ${pdfPageCount}페이지에서 문항이 확인되지 않음 — 빈 페이지인지 사람 확인 필요`);
+    }
+    if (missingNumbers.length) {
+      recognitionWarnings.push(`문항번호 연속성 확인 실패: ${missingNumbers.join(", ")}번 누락`);
+    }
+    const recognitionNeedsReview = recognitionWarnings.length > 0;
 
     await supabase
       .from("source_analysis")
@@ -404,7 +508,10 @@ export async function POST(request: NextRequest) {
           ? crop.review_reason || "AI가 자른 문항 영역을 확인해 주세요."
           : null,
         ai_result: {
-          recognition_engine: "AI_DIRECT_VISION",
+          recognition_engine: "AI_PAGE_BATCH_V2",
+          recognition_pdf_pages: pdfPageCount,
+          recognition_needs_review: recognitionNeedsReview,
+          recognition_warnings: recognitionWarnings,
           ai_crop: {
             confidence: crop.confidence,
             review_reason: crop.review_reason || null,
@@ -442,9 +549,11 @@ export async function POST(request: NextRequest) {
     const updated = await supabase
       .from("source_analysis")
       .update({
-        status: "WAITING",
+        status: recognitionNeedsReview ? "REVIEW" : "WAITING",
         progress: 100,
-        current_step: `1단계 · AI 문제인식 완료 · ${rows.length}개 문항 · 위치 재확인 ${reviewIds.length}개`,
+        current_step: recognitionNeedsReview
+          ? `1단계 · 문제인식 검토필요 · ${rows.length}개 문항 · ${recognitionWarnings.join(" / ")}`
+          : `1단계 · AI 문제인식 완료 · ${rows.length}개 문항 · PDF ${pdfPageCount}페이지 전수확인 · 위치 재확인 ${reviewIds.length}개`,
         total_questions: rows.length,
         objective_count: 0,
         subjective_count: 0,
@@ -457,8 +566,6 @@ export async function POST(request: NextRequest) {
 
     if (updated.error) throw updated.error;
 
-    const totalTokens = Number(cropRaw.usage?.total_tokens ?? 0);
-
     await supabase
       .from("analysis_jobs")
       .update({
@@ -470,7 +577,7 @@ export async function POST(request: NextRequest) {
           ...baseLogs,
           {
             at: finishedAt,
-            message: `${rows.length}개 1단계 문제인식 완료${
+            message: `${rows.length}개 1단계 문제인식 완료 · PDF ${pdfPageCount}페이지 전수확인${
               totalTokens
                 ? ` · ${totalTokens.toLocaleString("ko-KR")} tokens`
                 : ""
@@ -489,7 +596,11 @@ export async function POST(request: NextRequest) {
       reviewPending: reviewIds.length,
       cropValidCount: crops.filter((crop) => crop.confidence >= 0.82).length,
       cropInvalidCount: crops.filter((crop) => crop.confidence < 0.82).length,
-      mode: "AI_DIRECT_VISION",
+      mode: "AI_PAGE_BATCH_V2",
+      pdfPageCount,
+      recognitionComplete: !recognitionNeedsReview,
+      recognitionWarnings,
+      missingQuestionNumbers: missingNumbers,
       model,
     });
   } catch (error) {
