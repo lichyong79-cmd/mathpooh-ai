@@ -1,8 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/cron/objective-crop-audit",
-      "schedule": "*/2 * * * *"
-    }
-  ]
-}
+{}
