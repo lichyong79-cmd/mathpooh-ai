@@ -156,7 +156,7 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
   if(q.error)throw q.error;
   const rows=(q.data??[]).filter((row:any)=>{
     const rec=row.problem_dna?.cropAudit?.recovery;
-    if(rec?.status==="PASS")return false;
+    if(rec?.status==="PASS"||rec?.status==="FINAL_HOLD")return false;
     if(rec?.status==="RUNNING"&&rec?.started_at){
       const age=Date.now()-Date.parse(String(rec.started_at));
       if(Number.isFinite(age)&&age<20*60*1000)return false;
@@ -184,14 +184,14 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
       ]);
       if(pdfSigned.error||imgSigned.error||pdfDownload.error||!pdfDownload.data)throw new Error(pdfSigned.error?.message||imgSigned.error?.message||pdfDownload.error?.message||"원본 로드 실패");
       const pdfBytes=new Uint8Array(await pdfDownload.data.arrayBuffer());
-      const deterministicRect=await locateByTextAnchor(pdfBytes,Number(row.question_no??0));
+      const deterministicRect=await locateByTextAnchor(pdfBytes.slice(),Number(row.question_no??0));
       const rect=deterministicRect??await locateObjectiveCrop({
         apiKey,model,pdfUrl:pdfSigned.data.signedUrl,imageUrl:imgSigned.data.signedUrl,
         questionNo:Number(row.question_no??0),title:String(row.title??""),pageNo:Number(row.page_no??1),
         x:Number(row.crop_x??0),y:Number(row.crop_y??0),width:Number(row.crop_width??1),height:Number(row.crop_height??1)
       });
       const locator=deterministicRect?"TEXT_ANCHOR":"AI_FALLBACK";
-      const rendered=await renderPdfCrop(pdfBytes,rect);
+      const rendered=await renderPdfCrop(pdfBytes.slice(),rect);
       const base=String(row.question_image_path).split("/").slice(0,-1).join("/");
       const filename=`${String(row.question_no??0).padStart(3,"0")}-recovered-v1.png`;
       const path=base?`${base}/${filename}`:`recovered/${row.id}/${filename}`;
