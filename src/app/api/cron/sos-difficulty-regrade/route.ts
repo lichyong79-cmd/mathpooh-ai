@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { normalizeDifficulty } from "@/lib/difficulty-scale";
 import { applyJudgedDifficulty, isApplicableDifficultyJudgement, difficultyReferenceText, judgeDifficulty, DIFFICULTY_JUDGE_VERSION } from "@/lib/difficulty-judge";
 import { processObjectiveCropAuditBatch } from "@/lib/objective-crop-audit";
+import { processObjectiveCropRecoveryBatch } from "@/lib/objective-crop-recovery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -143,6 +144,8 @@ async function run(request: Request) {
   // 저높이 객관식 crop 320문항 품질검수도 기존 외부 cron 호출에 함께 태운다.
   // 의심문항은 사전에 HOLD 상태라 학생에게 출제되지 않으며, 정상 판정된 것만 ACTIVE로 복귀한다.
   after(async()=>{
+    try { await processObjectiveCropRecoveryBatch(createClient(), 8); }
+    catch { /* crop recovery failure must not break difficulty worker */ }
     try { await processObjectiveCropAuditBatch(createClient(), 16); }
     catch { /* crop audit failure must not break difficulty worker */ }
   });
