@@ -214,6 +214,6 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
     }
   };
 
-  for(let i=0;i<rows.length;i+=2)await Promise.all(rows.slice(i,i+2).map(processOne));
+  for(let i=0;i<rows.length;i+=3)await Promise.all(rows.slice(i,i+3).map(processOne));
   return {processed:rows.length,recovered,held,failed};
 }
