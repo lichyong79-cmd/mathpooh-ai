@@ -168,7 +168,7 @@ export async function GET(request: Request) {
   const result = await supabase
     .from("sos_training_sessions")
     .select(
-      "id,phase,status,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,training_meter,review_meter,cycle_kind,parent_session_id,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,problem_id,item_order,item_role,student_answer,is_correct,response_seconds,answered_at,revealed_at,answer_locked_at,solution_photo_path,photo_submitted_at,photo_submit_seconds,screen_exit_count,subunit_key,student_meter_before,student_meter_after,problem_meter_before,problem_meter_after,generated_problem,review_answer,review_is_correct,review_response_seconds,review_answered_at,problem_bank_questions(id,problem_code,title,subject,unit,topic,difficulty,difficulty_meter,question_image_path,answer))",
+      "id,phase,status,target_snapshot,weakness_snapshot,baseline_meter,goal_meter,training_meter,review_meter,cycle_kind,parent_session_id,round_no,correct_count,total_count,decision,created_at,updated_at,sos_training_items(id,problem_id,item_order,item_role,student_answer,is_correct,response_seconds,answered_at,revealed_at,answer_locked_at,solution_photo_path,photo_submitted_at,photo_submit_seconds,screen_exit_count,subunit_key,student_meter_before,student_meter_after,problem_meter_before,problem_meter_after,generated_problem,review_answer,review_is_correct,review_response_seconds,review_answered_at,problem_bank_questions(id,problem_code,title,subject,unit,topic,difficulty,difficulty_meter,question_image_path,answer,question_type,problem_dna))",
     )
     .eq("student_id", student.id)
     .in("status", ["ASSIGNED", "IN_PROGRESS", "COMPLETED", "PASSED", "RETRAIN"])
@@ -296,6 +296,15 @@ export async function GET(request: Request) {
                 difficulty: bank?.difficulty ?? generated?.difficulty ?? null,
                 difficultyMeter:
                   bank?.difficulty_meter ?? generated?.meter ?? null,
+                questionType: bank
+                  ? (String(bank?.question_type ?? "").trim() ||
+                    (String(bank?.problem_dna?.basic?.question_format ?? "") === "objective"
+                      ? "multiple_choice"
+                      : String(bank?.problem_dna?.basic?.question_format ?? "") === "short_answer"
+                        ? "short_answer"
+                        : "unknown"))
+                  : String(generated?.questionType ?? generated?.question_type ?? "short_answer"),
+
                 // 현재 풀 단계와 사용자가 직접 연 과거 단계만 이미지 URL을 만든다.
                 imageUrl:
                   bank &&
