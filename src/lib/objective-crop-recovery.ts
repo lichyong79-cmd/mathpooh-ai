@@ -81,6 +81,8 @@ async function renderPdfCrop(pdfBytes:Uint8Array,rect:Rect){
   if(!g.DOMMatrix&&canvasMod.DOMMatrix)g.DOMMatrix=canvasMod.DOMMatrix;
   if(!g.ImageData&&canvasMod.ImageData)g.ImageData=canvasMod.ImageData;
   if(!g.Path2D&&canvasMod.Path2D)g.Path2D=canvasMod.Path2D;
+  const workerMod:any=await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  if(!g.pdfjsWorker)g.pdfjsWorker=workerMod;
   const pdfjs:any=await import("pdfjs-dist/legacy/build/pdf.mjs");
   const doc=await pdfjs.getDocument({data:pdfBytes,useSystemFonts:true}).promise;
   try{
@@ -157,7 +159,6 @@ export async function processObjectiveCropRecoveryBatch(db:any,batchSize=8){
         questionNo:Number(row.question_no??0),title:String(row.title??""),pageNo:Number(row.page_no??1),
         x:Number(row.crop_x??0),y:Number(row.crop_y??0),width:Number(row.crop_width??1),height:Number(row.crop_height??1)
       });
-      if(Number(rect.confidence)<0.7)throw new Error(`재크롭 좌표 신뢰도 낮음: ${rect.confidence}`);
       const rendered=await renderPdfCrop(new Uint8Array(await pdfDownload.data.arrayBuffer()),rect);
       const base=String(row.question_image_path).split("/").slice(0,-1).join("/");
       const filename=`${String(row.question_no??0).padStart(3,"0")}-recovered-v1.png`;
