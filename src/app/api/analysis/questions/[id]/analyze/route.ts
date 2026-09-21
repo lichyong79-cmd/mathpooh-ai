@@ -237,9 +237,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const prompt = `당신은 한국 중고등 수학 문항을 직접 풀고 교육적으로 분류하는 MATHPOOH Problem DNA 엔진입니다.
 첫 번째 첨부는 분석할 한 문항 이미지입니다.${solutionImageUrl ? " 두 번째 첨부는 같은 문항번호의 공식 해설 이미지만 잘라낸 것입니다." : " 해당 문항의 공식 해설 이미지는 첨부되지 않았습니다."}
 문항 이미지와 공식 해설을 함께 확인하여 ${PROBLEM_DNA_VERSION} JSON을 생성하세요.
-시험지 정보: ${source?.grade ?? "학년 미상"} / ${source?.subject ?? "과목 미상"} / ${source?.title ?? "제목 미상"}
+시험지 정보: ${source?.grade ?? "학년 미상"} / 혼합과목 가능 / ${source?.title ?? "제목 미상"}
 문항 번호: ${question.question_no}
-${curriculumContext(source?.subject,question.question_no)}
+${curriculumContext("",question.question_no)}
 ${STUDENT_DIFFICULTY_CRITERIA}
 ${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
 
@@ -253,6 +253,8 @@ ${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
 - 객관식 answer는 선지 번호 1~5 중 하나만, 단답형은 최종 답만 간결하게 기록합니다.
 - 문항 일부가 잘렸거나 글자가 불명확해서 정답을 확정할 수 없을 때만 answer를 빈 문자열로 두고 review_required=true로 설정합니다.
 - 풀이가 가능하지만 단순히 정답표가 이미지에 없다는 이유로 answer를 비우지 않습니다.
+- 이 PDF는 대수·미적분 I·확률과 통계 등이 한 파일에 섞인 모의고사일 수 있습니다. 시험지 전체 과목명을 추정하지 말고 현재 문항 내용만 보고 과목을 판정합니다.
+- basic.subject는 반드시 표준 과목 중 하나로 판정합니다: 중등수학, 공통수학1, 공통수학2, 대수, 미적분 I, 확률과 통계.
 - basic은 과목·학년·교육과정·대/중/소단원·세부주제·객관식/단답형/서술형·단일/복합개념·출제형태를 분류합니다.
 - concept는 핵심/보조/선수/연결개념, 공식, 정리, 개념 연결순서, 직접/변형/역이용/조건유도/개념결합 적용을 기록합니다.
 - thinking.process는 조건읽기→조건번역→정보선별→관계발견→식세우기→구조변환→경우분류→계산→검증 중 실제 단계를 순서대로 기록하고 thinking_types에는 요구된 사고유형을 근거와 함께 기록합니다.
@@ -294,8 +296,8 @@ ${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
       `${String(source?.source ?? "")} ${String(source?.title ?? "")}`,
     );
 
-    // v164: 과목은 문제등록에 입력한 시험지 과목을 최종 기준으로 고정한다.
-    const canonical = canonicalSubject(source?.subject, dna.basic?.subject);
+    // 혼합 시험지: 문항 자체의 AI 과목 판정을 우선하고, source.subject는 과거 단일과목 자료의 fallback으로만 사용한다.
+    const canonical = canonicalSubject(dna.basic?.subject, source?.subject);
     dna.basic = { ...(dna.basic ?? {}), subject: canonical } as ProblemDNA["basic"];
 
     // 난이도는 이 문제은행 입력 분석에서 한 번만 확정한다.
