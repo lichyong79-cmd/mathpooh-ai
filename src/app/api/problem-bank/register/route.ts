@@ -19,7 +19,7 @@ function registrationMissing(item: any) {
   if (dna?.schema_version === PROBLEM_DNA_VERSION) {
     const validation = validateProblemDNA(dna);
     const required: Array<[string, unknown]> = [
-      ["정답", item.answer], ["과목", isCanonicalSubject(dna.basic?.subject) ? dna.basic?.subject : ""], ["학년", dna.basic?.grade],
+      ["정답", item.answer], ["과목", isCanonicalSubject(result.subject) ? result.subject : (isCanonicalSubject(dna.basic?.subject) ? dna.basic?.subject : "")], ["학년", dna.basic?.grade],
       ["교육과정", dna.basic?.curriculum], ["대단원", dna.basic?.major_unit],
       ["중단원", dna.basic?.middle_unit], ["소단원", dna.basic?.minor_unit],
       ["세부주제", dna.basic?.detailed_topic], ["문항형식", dna.basic?.question_format],
