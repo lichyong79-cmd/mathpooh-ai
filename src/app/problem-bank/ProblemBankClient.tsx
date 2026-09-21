@@ -8,7 +8,7 @@ import { ProblemDnaCard } from "@/components/problem-dna-card";
 import type { ProblemDNA } from "@/lib/problem-dna";
 import AdminPortalShell from "@/components/admin-portal-sidebar";
 import { DIFFICULTY_SCALE, difficultyLabel, normalizeProblemDifficulty } from "@/lib/difficulty-scale";
-import { SUBJECTS, canonicalSubject } from "@/lib/subject";
+import { SUBJECTS, canonicalSubject, normalizeSubject } from "@/lib/subject";
 import MATHPOOHLoader from "../../components/math-pooh-loader";
 
 type Problem = {
@@ -366,7 +366,8 @@ export default function ProblemBankClient() {
           Prefer: "return=representation",
         },
         body: JSON.stringify((() => {
-          const canonical = canonicalSubject(draft.subject);
+          const canonical = normalizeSubject(draft.subject);
+          if (!canonical) throw new Error("문항 과목을 표준 과목 중 하나로 선택해 주세요.");
           const nextDna = {
             ...baseDna,
             basic: {
@@ -580,7 +581,7 @@ export default function ProblemBankClient() {
               {detailTab === "basic" ? <div className="edit-grid">
                 <label className="wide"><span>문항명</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
                 <label><span>학년</span><input value={draft.grade} onChange={(event) => setDraft({ ...draft, grade: event.target.value })} /></label>
-                <label><span>과목</span><select value={canonicalSubject(draft.subject)} onChange={(event) => setDraft({ ...draft, subject: event.target.value })}>{SUBJECTS.map((value)=><option key={value} value={value}>{value}</option>)}</select></label>
+                <label><span>과목</span><select value={normalizeSubject(draft.subject)} onChange={(event) => setDraft({ ...draft, subject: event.target.value })}><option value="" disabled>미분류 · 과목 선택 필요</option>{SUBJECTS.map((value)=><option key={value} value={value}>{value}</option>)}</select></label>
                 <label><span>단원</span><input value={draft.unit} onChange={(event) => setDraft({ ...draft, unit: event.target.value })} /></label>
                 <label><span>유형</span><input value={draft.topic} onChange={(event) => setDraft({ ...draft, topic: event.target.value })} /></label>
                 <label><span>난이도</span><select value={draft.difficulty} onChange={(event) => setDraft({ ...draft, difficulty: event.target.value })}><option value="" disabled>미분류 · 관리자 확인 필요</option>{DIFFICULTY_SCALE.map((d)=><option key={d.value} value={d.value}>{d.label}</option>)}</select></label>
