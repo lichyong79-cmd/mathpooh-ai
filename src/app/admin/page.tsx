@@ -5632,7 +5632,6 @@ function ProblemsPage({
 }) {
   const [title, setTitle] = useState("");
   const [source, setSource] = useState("MATHPOOH 자체 제작");
-  const [subject, setSubject] = useState("공통수학1");
   const [contentRole, setContentRole] = useState<"TRAINING" | "REFERENCE">("TRAINING");
   const [hwpFile, setHwpFile] = useState<File | null>(null);
   const [examPdf, setExamPdf] = useState<File | null>(null);
@@ -5645,9 +5644,7 @@ function ProblemsPage({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editSource, setEditSource] = useState("");
-  const [editSubject, setEditSubject] = useState("공통수학1");
   const [savingEdit, setSavingEdit] = useState(false);
-  const [syncingSubjects, setSyncingSubjects] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [replacingFile, setReplacingFile] = useState<{ id: string; kind: UploadFileKind } | null>(null);
   const [replacementRefresh, setReplacementRefresh] = useState<ReplacementRefreshState | null>(null);
@@ -5823,7 +5820,6 @@ const loadFiles = useCallback(async () => {
           mode: "direct",
           title: title.trim(),
           source: source.trim(),
-          subject,
           contentRole,
           folder: prepared.folder,
           hwpPath,
@@ -5879,8 +5875,6 @@ const loadFiles = useCallback(async () => {
     setEditingId(item.id);
     setEditTitle(item.title);
     setEditSource(item.source || "");
-    // 예전에 자유 입력으로 들어간 과목도 표준 6과목으로 맞춰 보여준다.
-    setEditSubject(normalizeSubject(item.subject) || "공통수학1");
     setMessage("");
     setErrorMessage("");
   };
@@ -6130,7 +6124,6 @@ const loadFiles = useCallback(async () => {
         body: JSON.stringify({
           title: editTitle.trim(),
           source: editSource.trim() || null,
-          subject: editSubject,
         }),
       });
       const payload = await response.json() as {
@@ -6152,23 +6145,6 @@ const loadFiles = useCallback(async () => {
     }
   };
 
-  const syncAllSubjectsFromSources = async () => {
-    if (!window.confirm("현재 문제등록의 시험지 과목을 기준으로 기존 문제은행 전체 과목을 재동기화할까요?\n\n문제등록의 과목값이 최종 기준으로 적용됩니다.")) return;
-    setSyncingSubjects(true);
-    setMessage("");
-    setErrorMessage("");
-    try {
-      const response = await fetch("/api/problem-bank/sync-subjects-from-sources", { method: "POST" });
-      const payload = await response.json() as { success?: boolean; sourceCount?: number; bankUpdated?: number; analysisUpdated?: number; message?: string };
-      if (!response.ok || !payload.success) throw new Error(payload.message || "과목 재동기화에 실패했습니다.");
-      setMessage(payload.message || `시험지 ${payload.sourceCount ?? 0}개 기준 · 문제은행 ${payload.bankUpdated ?? 0}문항 · AI 분석 ${payload.analysisUpdated ?? 0}문항 과목 동기화 완료`);
-      await loadFiles();
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "과목 재동기화에 실패했습니다.");
-    } finally {
-      setSyncingSubjects(false);
-    }
-  };
 
   const allReady = Boolean(title.trim() && hwpFile && examPdf && solutionPdf);
 
@@ -6217,16 +6193,11 @@ const loadFiles = useCallback(async () => {
               disabled={uploading}
             />
           </label>
-          <label className="field">
+          <div className="field">
             <span>과목</span>
-            <select
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              disabled={uploading}
-            >
-              {SUBJECTS.map((value) => <option key={value}>{value}</option>)}
-            </select>
-          </label>
+            <strong>문항별 AI 자동분류</strong>
+            <small>대수·미적분 I·확률과 통계가 한 파일에 섞여 있어도 각 문항을 따로 판정합니다.</small>
+          </div>
         </div>
         <div className="bundle-upload-grid">
           <label className={`bundle-drop-zone ${hwpFile ? "selected" : ""}`}>
@@ -6334,7 +6305,7 @@ const loadFiles = useCallback(async () => {
               className="secondary-button"
               type="button"
               onClick={() => void loadFiles()}
-              disabled={loading || syncingSubjects}
+              disabled={loading}
             >
               새로고침
             </button>
@@ -6349,7 +6320,7 @@ const loadFiles = useCallback(async () => {
             <div className="source-file-head">
               <span>등록일</span>
               <span>시험지명</span>
-              <span>과목</span>
+              <span>과목 분류</span>
               <span>파일 구성</span>
               <span>진행 상태</span>
               <span>관리</span>
@@ -6374,16 +6345,11 @@ const loadFiles = useCallback(async () => {
                         disabled={savingEdit}
                       />
                     </label>
-                    <label className="field">
+                    <div className="field">
                       <span>과목</span>
-                      <select
-                        value={editSubject}
-                        onChange={(e) => setEditSubject(e.target.value)}
-                        disabled={savingEdit}
-                      >
-                        {SUBJECTS.map((value) => <option key={value}>{value}</option>)}
-                      </select>
-                    </label>
+                      <strong>문항별 분류 유지</strong>
+                      <small>시험지 수정으로 문항 과목을 덮어쓰지 않습니다.</small>
+                    </div>
                   </div>
                   <div className="source-file-replace-box">
                     <strong>원본 파일 관리</strong>
@@ -6503,9 +6469,7 @@ const loadFiles = useCallback(async () => {
                     <small>{item.source || "-"}</small>
                     <small className={`source-purpose ${item.content_role === "REFERENCE" ? "reference" : "training"}`}>{item.content_role === "REFERENCE" ? "참고·보관용" : "훈련용 문항"}</small>
                   </div>
-                  <span>
-                    {item.subject || "-"}
-                  </span>
+                  <span>문항별 자동</span>
                   <div className="file-badges">
                     <span className={item.hwp_path ? "ok" : "missing"}>HWP</span>
                     <button
