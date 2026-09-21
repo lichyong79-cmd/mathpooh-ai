@@ -306,7 +306,7 @@ ${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
     // 이후 별도 재풀이/백그라운드 재판정/DNA 재계산으로 난이도를 덮어쓰지 않는다.
     const difficultyMeta = dna.difficulty as unknown as Record<string, unknown>;
     difficultyMeta.scale_version = "sos8-v1";
-    difficultyMeta.classification_policy = "input-analysis-only";
+    difficultyMeta.classification_policy = "input-analysis-band-floor-v1";
     difficultyMeta.difficulty_source = "problem-bank-input-analysis";
     difficultyMeta.difficulty_decision = "graded";
     difficultyMeta.difficulty_review_required = false;
