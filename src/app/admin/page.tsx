@@ -22,6 +22,7 @@ import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
 import { DIFFICULTY_SCALE, DIFFICULTY_WEIGHTS, difficultyLabel, difficultyNumber } from "@/lib/difficulty-scale";
+import { SUBJECTS } from "@/lib/subject";
 import { sosSessionLabel, sosStageLabel } from "@/lib/sos-week";
 import {
   SOURCE_WORKFLOW_LABEL,
@@ -5631,6 +5632,7 @@ function ProblemsPage({
 }) {
   const [title, setTitle] = useState("");
   const [source, setSource] = useState("MATHPOOH 자체 제작");
+  const [subject, setSubject] = useState("__AUTO__");
   const [contentRole, setContentRole] = useState<"TRAINING" | "REFERENCE">("TRAINING");
   const [hwpFile, setHwpFile] = useState<File | null>(null);
   const [examPdf, setExamPdf] = useState<File | null>(null);
@@ -5643,6 +5645,7 @@ function ProblemsPage({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editSource, setEditSource] = useState("");
+  const [editSubject, setEditSubject] = useState("__AUTO__");
   const [savingEdit, setSavingEdit] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [replacingFile, setReplacingFile] = useState<{ id: string; kind: UploadFileKind } | null>(null);
@@ -5819,6 +5822,7 @@ const loadFiles = useCallback(async () => {
           mode: "direct",
           title: title.trim(),
           source: source.trim(),
+          subject: subject === "__AUTO__" ? null : subject,
           contentRole,
           folder: prepared.folder,
           hwpPath,
@@ -5874,6 +5878,7 @@ const loadFiles = useCallback(async () => {
     setEditingId(item.id);
     setEditTitle(item.title);
     setEditSource(item.source || "");
+    setEditSubject(item.subject || "__AUTO__");
     setMessage("");
     setErrorMessage("");
   };
@@ -6123,6 +6128,7 @@ const loadFiles = useCallback(async () => {
         body: JSON.stringify({
           title: editTitle.trim(),
           source: editSource.trim() || null,
+          subject: editSubject === "__AUTO__" ? null : editSubject,
         }),
       });
       const payload = await response.json() as {
@@ -6192,11 +6198,18 @@ const loadFiles = useCallback(async () => {
               disabled={uploading}
             />
           </label>
-          <div className="field">
+          <label className="field">
             <span>과목</span>
-            <strong>문항별 AI 자동분류</strong>
-            <small>대수·미적분 I·확률과 통계가 한 파일에 섞여 있어도 각 문항을 따로 판정합니다.</small>
-          </div>
+            <select
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              disabled={uploading}
+            >
+              <option value="__AUTO__">혼합 / 문항별 자동분류</option>
+              {SUBJECTS.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+            <small>단일과목 자료는 과목을 지정하고, 모의고사처럼 섞인 파일은 혼합을 선택하세요.</small>
+          </label>
         </div>
         <div className="bundle-upload-grid">
           <label className={`bundle-drop-zone ${hwpFile ? "selected" : ""}`}>
@@ -6319,7 +6332,7 @@ const loadFiles = useCallback(async () => {
             <div className="source-file-head">
               <span>등록일</span>
               <span>시험지명</span>
-              <span>과목 분류</span>
+              <span>시험지 과목</span>
               <span>파일 구성</span>
               <span>진행 상태</span>
               <span>관리</span>
@@ -6344,11 +6357,18 @@ const loadFiles = useCallback(async () => {
                         disabled={savingEdit}
                       />
                     </label>
-                    <div className="field">
-                      <span>과목</span>
-                      <strong>문항별 분류 유지</strong>
-                      <small>시험지 수정으로 문항 과목을 덮어쓰지 않습니다.</small>
-                    </div>
+                    <label className="field">
+                      <span>시험지 과목</span>
+                      <select
+                        value={editSubject}
+                        onChange={(e) => setEditSubject(e.target.value)}
+                        disabled={savingEdit}
+                      >
+                        <option value="__AUTO__">혼합 / 문항별 자동분류</option>
+                        {SUBJECTS.map((value) => <option key={value} value={value}>{value}</option>)}
+                      </select>
+                      <small>이 값은 분석 힌트/표시용이며 기존 문항 과목을 일괄 덮어쓰지 않습니다.</small>
+                    </label>
                   </div>
                   <div className="source-file-replace-box">
                     <strong>원본 파일 관리</strong>
@@ -6468,7 +6488,7 @@ const loadFiles = useCallback(async () => {
                     <small>{item.source || "-"}</small>
                     <small className={`source-purpose ${item.content_role === "REFERENCE" ? "reference" : "training"}`}>{item.content_role === "REFERENCE" ? "참고·보관용" : "훈련용 문항"}</small>
                   </div>
-                  <span>문항별 자동</span>
+                  <span>{item.subject || "혼합/자동"}</span>
                   <div className="file-badges">
                     <span className={item.hwp_path ? "ok" : "missing"}>HWP</span>
                     <button
