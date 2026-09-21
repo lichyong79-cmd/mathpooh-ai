@@ -1,7 +1,6 @@
 import { problemAnswerIssues } from "@/lib/problem-answer-integrity";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PROBLEM_DNA_VERSION, applyOperationalDifficultyPolicy, collectProblemDnaTags, problemDnaEmbeddingText, type ProblemDNA } from "@/lib/problem-dna";
-import { enqueueDifficultyRegrade } from "@/lib/difficulty-regrade-queue";
 import { canonicalSubject } from "@/lib/subject";
 
 type AnalysisQuestion = {
@@ -327,13 +326,8 @@ export async function registerQuestions(
     throw err;
   }
 
-  // SOS279: 등록 시 AI 검증을 못 받은 문항을 재판정 큐에 자동으로 넣는다.
-  // 실패해도 등록 결과에는 영향을 주지 않는다.
-  const queued = await enqueueDifficultyRegrade(supabase, upsert.data ?? []);
-
   return {
     registered: rows.length,
-    difficultyQueued: queued,
     embedded: embeddings.length,
     registeredQuestionIds: uniqueQuestions.map((item) => item.id),
     duplicateQuestionIds: duplicates.map((item) => item.questionId),
