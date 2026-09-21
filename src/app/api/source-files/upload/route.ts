@@ -25,7 +25,6 @@ type DirectUploadCommit = {
   title?: string;
   source?: string;
   grade?: string;
-  subject?: string;
   contentRole?: string;
   folder?: string;
   hwpPath?: string;
@@ -54,7 +53,6 @@ async function commitDirectUpload(body: DirectUploadCommit) {
   const title = String(body.title ?? "").trim();
   const source = String(body.source ?? "").trim();
   const grade = String(body.grade ?? "").trim();
-  const subject = String(body.subject ?? "").trim();
   const contentRole = String(body.contentRole ?? "TRAINING").trim();
 
   if (!title) {
@@ -90,7 +88,7 @@ async function commitDirectUpload(body: DirectUploadCommit) {
       title,
       source: source || null,
       grade: grade || null,
-      subject: subject || null,
+      subject: null,
       content_role: contentRole === "REFERENCE" ? "REFERENCE" : "TRAINING",
       storage_path: examPdfPath,
       hwp_path: hwpPath,
@@ -167,7 +165,6 @@ export async function POST(request: NextRequest) {
     const title = String(formData.get("title") ?? "").trim();
     const source = String(formData.get("source") ?? "").trim();
     const grade = String(formData.get("grade") ?? "").trim();
-    const subject = String(formData.get("subject") ?? "").trim();
     const contentRole = String(formData.get("contentRole") ?? "TRAINING").trim();
     const hwpFile = formData.get("hwpFile");
     const examPdf = formData.get("examPdf");
@@ -242,7 +239,7 @@ export async function POST(request: NextRequest) {
         title,
         source: source || null,
         grade: grade || null,
-        subject: subject || null,
+        subject: null,
         content_role: contentRole === "REFERENCE" ? "REFERENCE" : "TRAINING",
         // training_course는 DB 기본값(대표유형)을 사용합니다.
         // source_files.training_course가 NOT NULL이므로 null을 직접 보내면 등록이 실패합니다.
