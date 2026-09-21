@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/supabase/auth";
 import { PROBLEM_DNA_VERSION, applyOperationalDifficultyPolicy, legacyFieldsFromDNA, problemDnaQuestionSchema, validateProblemDNA, type ProblemDNA } from "@/lib/problem-dna";
-import { canonicalSubject } from "@/lib/subject";
+import { canonicalSubject, isCanonicalSubject } from "@/lib/subject";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -94,7 +94,7 @@ function cropOnlyReviewResult(value: unknown) {
 
 function missingDnaClassification(dna: ProblemDNA) {
   const fields: Array<[string, unknown]> = [
-    ["과목", dna.basic?.subject],
+    ["과목", isCanonicalSubject(dna.basic?.subject) ? dna.basic?.subject : ""],
     ["학년", dna.basic?.grade],
     ["교육과정", dna.basic?.curriculum],
     ["대단원", dna.basic?.major_unit],
