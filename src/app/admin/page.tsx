@@ -22,7 +22,6 @@ import ExamResultDiagnosis from "@/components/exam-result-diagnosis";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { buildDocumentAnchors } from "@/lib/crop/question-anchors";
 import { DIFFICULTY_SCALE, DIFFICULTY_WEIGHTS, difficultyLabel, difficultyNumber } from "@/lib/difficulty-scale";
-import { SUBJECTS, normalizeSubject } from "@/lib/subject";
 import { sosSessionLabel, sosStageLabel } from "@/lib/sos-week";
 import {
   SOURCE_WORKFLOW_LABEL,
