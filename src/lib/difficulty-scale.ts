@@ -36,7 +36,7 @@ export const DIFFICULTY_PROMPT_GUIDE = `SOS 공식 난이도는 아래 8단계 �
 특히 어3/쉬4/적4/어4 경계를 세밀하게 구분하고 분포를 억지로 맞추지 않는다.
 상위 단계 7·8도 정상적인 공식 등급이다. AI가 익숙하게 풀었다는 이유, 해설이 짧다는 이유로 상위권 학생의 실제 진입·연결·완주 부담을 낮춰 잡지 않는다.
 문항의 난도 밴드와 SOS 단계는 정확히 다음 순서로 대응한다: two_point=1, three_point=2, three_hard=3, four_easy=4, four_medium=5, four_hard=6, semi_killer=7, killer=8.
-문항을 특정 밴드로 판정했다면 최종 SOS 난이도를 그 대응 단계보다 낮게 주지 않는다.
+문항을 특정 밴드로 판정했다면 최종 SOS 난이도를 그 대응 단계보다 낮게 주지 않는다.`;
 
 
 export function normalizeDifficulty(value: unknown, fallback: DifficultyValue | "" = "") : DifficultyValue | "" {
