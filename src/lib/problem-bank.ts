@@ -55,7 +55,7 @@ function duplicateKeyFromQuestion(question: AnalysisQuestion, source: SourceFile
   const dna = problemDna(result);
   if (dna?.schema_version === PROBLEM_DNA_VERSION) {
     return duplicateKeyFromParts([
-      canonicalSubject(source.subject, dna.basic?.subject),
+      canonicalSubject(result.subject, dna.basic?.subject || source.subject),
       dna.basic?.grade || source.grade,
       dna.basic?.major_unit,
       dna.basic?.middle_unit,
@@ -67,7 +67,7 @@ function duplicateKeyFromQuestion(question: AnalysisQuestion, source: SourceFile
     ]);
   }
   return duplicateKeyFromParts([
-    canonicalSubject(source.subject, result.subject),
+    canonicalSubject(result.subject, source.subject),
     source.grade,
     result.unit,
     result.topic,
@@ -125,12 +125,15 @@ function normalizeDifficultyValue(value: unknown) {
 }
 
 /**
- * v164: 과목은 "문제등록에 입력한 시험지 과목"이 항상 최종 기준이다.
- * AI가 만든 자유 표기(수학Ⅱ, 미적분, 확통...)를 그대로 저장하면
- * 문제은행 과목별 보유 현황이 갈라지므로 표준 6과목으로만 고정한다.
+ * 혼합 시험지 대응:
+ * 1) 문항별 관리자 수정값(review_result.subject)
+ * 2) 문항별 AI/DNA 판정
+ * 3) 과거 단일과목 시험지의 source.subject (legacy fallback)
+ * 순서로 표준 과목을 확정한다.
  */
 function resolvedSubject(result: Record<string, unknown>, source: SourceFile) {
-  return canonicalSubject(source.subject, result.subject);
+  const dna = problemDna(result);
+  return canonicalSubject(result.subject, dna?.basic?.subject || source.subject);
 }
 
 function resolvedDifficulty(result: Record<string, unknown>) {
