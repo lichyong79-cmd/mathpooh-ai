@@ -298,16 +298,15 @@ ${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
     const canonical = canonicalSubject(source?.subject, dna.basic?.subject);
     dna.basic = { ...(dna.basic ?? {}), subject: canonical } as ProblemDNA["basic"];
 
-    // SOS286: 최초 Problem DNA의 SOS 8단계 판정을 운영 난도의 단일 기준으로 사용한다.
-    // 독립 재풀이는 정답/판독/풀이 타당성 검증용일 뿐 난도를 하향하거나 등록을 막지 않는다.
-    // 난도 재검증은 별도 shadow/regrade queue에서 수행하며 이 분석 경로의 REVIEW 사유가 될 수 없다.
-    let difficultyJudged = false;
+    // 난이도는 이 문제은행 입력 분석에서 한 번만 확정한다.
+    // 이후 별도 재풀이/백그라운드 재판정/DNA 재계산으로 난이도를 덮어쓰지 않는다.
     const difficultyMeta = dna.difficulty as unknown as Record<string, unknown>;
-    difficultyMeta.verification_attempted = false;
-    difficultyMeta.verification_deferred = true;
-    difficultyMeta.verification_version = "sos286-shadow-only";
-    difficultyMeta.verification_role = "answer-and-solution-audit-only";
-    difficultyMeta.operational_grade_source = "initial-problem-dna-sos8";
+    difficultyMeta.scale_version = "sos8-v1";
+    difficultyMeta.classification_policy = "input-analysis-only";
+    difficultyMeta.difficulty_source = "problem-bank-input-analysis";
+    difficultyMeta.difficulty_decision = "graded";
+    difficultyMeta.difficulty_review_required = false;
+    difficultyMeta.difficulty_review_reason = "";
 
     const validation = validateProblemDNA(dna);
     const officialSolutionIssues = [
@@ -326,9 +325,8 @@ ${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
       analysis_version: PROBLEM_DNA_VERSION,
       analysis_model: model,
       analyzed_at: new Date().toISOString(),
-      difficulty_judged: difficultyJudged,
       difficulty_scale_version: "sos8-v1",
-      difficulty_source: "problem_dna.difficulty.final_grade",
+      difficulty_source: "problem-bank-input-analysis",
       legacy_difficulty_raw: null,
       official_solution: {
         connected: Boolean(solutionImagePath && solutionImageUrl),
