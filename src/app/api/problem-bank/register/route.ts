@@ -154,13 +154,22 @@ export async function POST(request: NextRequest) {
     );
     const registrationUpdateError = registrationUpdates.find((item) => item.error)?.error;
     if (registrationUpdateError) throw registrationUpdateError;
+    const remainingReview = await supabase
+      .from("analysis_questions")
+      .select("id", { count: "exact", head: true })
+      .eq("analysis_id", analysisId)
+      .eq("status", "REVIEW");
+    if (remainingReview.error) throw remainingReview.error;
+    const reviewCount = remainingReview.count ?? 0;
     const analysisUpdate = await supabase
       .from("source_analysis")
       .update({
-        status: "DONE",
+        status: reviewCount > 0 ? "REVIEW" : "DONE",
         progress: 100,
-        current_step: "3단계 · 문제은행 등록 완료",
-        finished_at: now,
+        current_step: reviewCount > 0
+          ? `3단계 · 문제은행 ${result.registered}개 등록 · ${reviewCount}개 검토 필요`
+          : "3단계 · 문제은행 등록 완료",
+        finished_at: reviewCount > 0 ? null : now,
         updated_at: now,
       })
       .eq("id", analysisId);
