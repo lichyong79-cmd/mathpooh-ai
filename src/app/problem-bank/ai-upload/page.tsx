@@ -2676,7 +2676,7 @@ export default function AnalysisWorkspacePage() {
             {sources.length === 0 ? <option value="">등록된 시험지가 없습니다.</option> : null}
             {sources.map((source) => (
               <option key={source.id} value={source.id}>
-                [{source.workflow_label || "상태 확인 중"}] {source.title} · 문항별 과목 자동분류
+                [{source.workflow_label || "상태 확인 중"}] {source.title} · {source.subject || "혼합/문항별 자동"}
               </option>
             ))}
           </select>
