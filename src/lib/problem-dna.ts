@@ -227,68 +227,52 @@ export function applyCalculatedDifficulty(dna: ProblemDNA) {
  * 관리자가 확정한 문항은 절대 덮어쓰지 않는다.
  */
 /**
- * SOS275: 이 문항의 난이도가 "AI가 실제로 문제를 풀어보고 확정한 값"인가.
- *
- * ai_regrade_version만 보면 안 된다. 아래 DNA 공식 재계산이 나중에 돌면
- * 난이도 값과 검토 플래그를 통째로 덮어쓰기 때문에, AI 판정 흔적은 남아 있어도
- * 실제 저장값은 공식 추정치인 경우가 있다. 시간 순서로 구분한다.
+ * 난이도는 입력 시점의 문항분석 결과를 그대로 운영값으로 사용한다.
+ * 이후 별도 재풀이·백그라운드 재판정·DNA 재계산으로 덮어쓰지 않는다.
+ * 관리자 수동 확정값은 그대로 보존한다.
  */
 export function difficultyAiVerified(dna: any): boolean {
   const d = dna?.difficulty ?? {};
-  if (d.admin_fixed === true) return true;
-  if (!String(d.ai_regrade_version ?? "").trim()) return false;
-  if (String(d.difficulty_decision ?? "") !== "graded" || d.difficulty_review_required === true) return false;
-  const aiAt = Date.parse(String(d.ai_regraded_at ?? ""));
-  const dnaAt = Date.parse(String(d.dna_recalculated_at ?? ""));
-  // 공식 재계산이 AI 판정보다 나중이면 저장값은 공식이 덮어쓴 것이다.
-  if (Number.isFinite(aiAt) && Number.isFinite(dnaAt) && dnaAt > aiAt) return false;
-  return true;
+  return d.admin_fixed === true || (
+    String(d.scale_version ?? "") === "sos8-v1" &&
+    Number.isInteger(Number(d.final_grade)) &&
+    Number(d.final_grade) >= 1 &&
+    Number(d.final_grade) <= 8
+  );
 }
 
-export function applyOperationalDifficultyPolicy(dna: ProblemDNA, sourceLabel = "") {
+export function applyOperationalDifficultyPolicy(dna: ProblemDNA, _sourceLabel = "") {
   if (!dna?.difficulty) return dna;
-  if ((dna.difficulty as Record<string, unknown>).admin_fixed === true) return dna;
-  // SOS275(A안): AI가 재풀이해서 확정한 난이도는 공식 추정치로 덮어쓰지 않는다.
-  // 이 가드가 없어서 "DNA만 재계산(보조)"을 돌릴 때마다 AI 판정 결과와
-  // 검토필요 플래그가 통째로 지워지고 있었다.
-  if (difficultyAiVerified(dna)) return dna;
-  // A failed/review-required independent assessment must not lose its review evidence on registration.
-  if ((dna.difficulty as any).ai_regrade_version && (dna.difficulty as any).difficulty_review_required === true) return dna;
-
-  applyCalculatedDifficulty(dna);
   const difficulty = dna.difficulty as Record<string, unknown>;
-  // Source titles must never cap a mathematical difficulty judgement.
-  difficulty.source_cap_applied = false;
+  if (difficulty.admin_fixed === true) return dna;
+
+  const declared = Number(dna.difficulty.final_grade);
+  if (!Number.isInteger(declared) || declared < 1 || declared > 8) {
+    applyCalculatedDifficulty(dna);
+  }
+
   difficulty.scale_version = "sos8-v1";
-  difficulty.classification_policy = "sos286-dna-authoritative";
-  difficulty.difficulty_source = "problem-dna-initial-sos8";
-  // SOS275(A안): 이 값은 AI가 문제를 풀어보고 내린 판정이 아니라 DNA 점수 가중합 추정치다.
-  // 예전에는 여기서 graded / review_required=false 도장을 찍어서, 검증된 값처럼 보이게 만들고
-  // AI 판정 결과까지 덮어썼다. 이제 추정치임을 명시하고 검증 대상으로 남긴다.
-  difficulty.difficulty_decision = "estimated";
-  difficulty.difficulty_estimated = true;
-  const starReview = sourceStarReview(dna.difficulty.source_stars, dna.difficulty.final_grade);
-  difficulty.difficulty_review_required = Boolean(starReview) || difficulty.band_conflict === true;
-  difficulty.difficulty_review_reason = starReview || (difficulty.band_conflict ? "AI 등급·분류명·근거점수 충돌: 자동 평균/하향 금지" : "");
-  difficulty.dna_recalculate_version = "dna-local-v2";
-  difficulty.dna_recalculated_at = new Date().toISOString();
+  difficulty.classification_policy = "input-analysis-only";
+  difficulty.difficulty_source = "problem-bank-input-analysis";
+  difficulty.difficulty_decision = "graded";
+  difficulty.difficulty_estimated = false;
+  difficulty.difficulty_review_required = false;
+  difficulty.difficulty_review_reason = "";
+  difficulty.source_cap_applied = false;
+
+  // 과거 후처리 검증/재판정 흔적은 신규 분석 결과에 남기지 않는다.
+  for (const key of [
+    "ai_regrade_version","ai_regraded_at","dna_recalculate_version","dna_recalculated_at",
+    "verification_attempted","verification_deferred","verification_version","verification_role",
+    "operational_grade_source","verification_judgement","verification_grade",
+  ]) delete difficulty[key];
+
   return dna;
 }
 
-/** 추가 AI 재풀이가 필요한 '예외'만 선별한다. 최종 난이도 기본값은 위 운영 DNA 기준이다. */
-export function shouldVerifyOperationalDifficulty(dna: ProblemDNA) {
-  const difficulty = dna?.difficulty as Record<string, unknown> | undefined;
-  if (!difficulty || difficulty.admin_fixed === true) return false;
-  const final = Number(dna.difficulty.final_grade);
-  const confidence = Number(dna.summary?.ai_confidence ?? 0);
-  // SOS279: SOS275에서 4로 내렸던 값을 7로 되돌린다.
-  //
-  // 등록 시점의 이 검증은 결과를 실제 난이도에 반영하지 않고 verification_* 메타만 남긴다.
-  // 그래서 SOS278 재판정 큐가 같은 문항을 한 번 더 판정하게 되어 AI 호출이 두 배로 든다.
-  // 이제 검증은 큐가 맡는다(등록 즉시 자동 등록 → 몇 시간 안에 판정·반영).
-  // 여기서는 준킬러 이상만 등록 화면에서 곧바로 눈에 띄도록 남겨 둔다.
-  const VERIFY_FROM_GRADE = 7;
-  return difficulty.band_conflict === true || final >= VERIFY_FROM_GRADE || (Number.isFinite(confidence) && confidence > 0 && confidence < 0.72);
+/** 입력 시점 외 추가 난이도 재검증은 사용하지 않는다. */
+export function shouldVerifyOperationalDifficulty(_dna: ProblemDNA) {
+  return false;
 }
 
 export function validateProblemDNA(value: unknown): { valid: boolean; errors: string[]; dna?: ProblemDNA } {
