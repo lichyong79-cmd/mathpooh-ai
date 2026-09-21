@@ -115,7 +115,9 @@ function problemDna(result: Record<string, unknown>) {
 }
 
 function normalizeDifficultyValue(value: unknown) {
-  const raw = text(value);
+  const raw = typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : text(value);
   const mapped: Record<string, string> = {
     "1":"1","2":"2","3":"3","4":"4","5":"5","6":"6","7":"7","8":"8",
     A:"1",B:"2",C:"4",D:"6",E:"8",
