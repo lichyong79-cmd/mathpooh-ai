@@ -21,6 +21,7 @@ import AdminPortalShell from "@/components/admin-portal-sidebar";
 import MATHPOOHLoader from "@/components/math-pooh-loader";
 import { DIFFICULTY_SCALE, difficultyLabel } from "@/lib/difficulty-scale";
 import { SOURCE_WORKFLOW_LABEL, classifyQuestionStage, type SourceWorkflowState } from "@/lib/source-workflow";
+import { SUBJECTS } from "@/lib/subject";
 
 type SourceFile = {
   id: string;
@@ -3014,7 +3015,12 @@ export default function AnalysisWorkspacePage() {
                       </select>
                     </label>
 
-                    <label>과목<input name="subject" defaultValue={valueOf(activeQuestion, "subject")} /></label>
+                    <label>과목
+                      <select name="subject" defaultValue={valueOf(activeQuestion, "subject") || ""}>
+                        <option value="">미분류 · 확인 필요</option>
+                        {SUBJECTS.map((value)=><option key={value} value={value}>{value}</option>)}
+                      </select>
+                    </label>
                     <label>단원<input name="unit" defaultValue={valueOf(activeQuestion, "unit")} /></label>
                     <label>세부 유형<input name="topic" defaultValue={valueOf(activeQuestion, "topic")} /></label>
                     <label>난이도
