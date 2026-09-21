@@ -251,8 +251,19 @@ export function applyOperationalDifficultyPolicy(dna: ProblemDNA, _sourceLabel =
     applyCalculatedDifficulty(dna);
   }
 
+  const current = Number(dna.difficulty.final_grade);
+  const band = difficultyLevelFromBand(dna.difficulty.csat_difficulty_band);
+  const calibrated = Math.max(
+    Number.isInteger(current) && current >= 1 && current <= 8 ? current : 1,
+    band || 1,
+  ) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  dna.difficulty.final_grade = calibrated;
+  difficulty.band_grade = band || null;
+  difficulty.evidence_grade = evidenceDifficultyLevel(dna.difficulty);
+  difficulty.band_conflict = Boolean(band) && Number(difficulty.evidence_grade) !== band;
+
   difficulty.scale_version = "sos8-v1";
-  difficulty.classification_policy = "input-analysis-only";
+  difficulty.classification_policy = "input-analysis-band-floor-v1";
   difficulty.difficulty_source = "problem-bank-input-analysis";
   difficulty.difficulty_decision = "graded";
   difficulty.difficulty_estimated = false;
@@ -260,7 +271,6 @@ export function applyOperationalDifficultyPolicy(dna: ProblemDNA, _sourceLabel =
   difficulty.difficulty_review_reason = "";
   difficulty.source_cap_applied = false;
 
-  // 과거 후처리 검증/재판정 흔적은 신규 분석 결과에 남기지 않는다.
   for (const key of [
     "ai_regrade_version","ai_regraded_at","dna_recalculate_version","dna_recalculated_at",
     "verification_attempted","verification_deferred","verification_version","verification_role",
