@@ -7,6 +7,10 @@ export function normalizeProblemAnswer(value: unknown, format: unknown): string 
     const numbered = raw.match(/^([1-5])(?:번)?$/);
     if (numbered) return numbered[1];
   }
+  if (format === "short_answer") {
+    const labeled = raw.match(/^[A-Za-z가-힣][A-Za-z0-9가-힣_]*\s*=\s*(.+)$/);
+    if (labeled?.[1]) return labeled[1].trim();
+  }
   return raw;
 }
 
