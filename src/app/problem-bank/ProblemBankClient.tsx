@@ -365,24 +365,33 @@ export default function ProblemBankClient() {
           "Content-Type": "application/json",
           Prefer: "return=representation",
         },
-        body: JSON.stringify({
-          ...draft,
-          status:baseDna?.errorReview?.open?"HOLD":draft.status,
-          problem_dna: draft.difficulty
-            ? {
-                ...baseDna,
-                difficulty: {
-                  ...(baseDna?.difficulty ?? {}),
-                  final_grade: Number(draft.difficulty),
-                  scale_version: "sos8-v1",
-                  admin_fixed: true,
-                  admin_fixed_at: new Date().toISOString(),
-                  admin_fixed_source: "problem-bank-admin",
-                },
-              }
-            : baseDna,   // SOS305: 축약본이 아니라 전문을 그대로 유지한다
-          updated_at: new Date().toISOString(),
-        }),
+        body: JSON.stringify((() => {
+          const canonical = canonicalSubject(draft.subject);
+          const nextDna = {
+            ...baseDna,
+            basic: {
+              ...(baseDna?.basic ?? {}),
+              subject: canonical,
+            },
+            ...(draft.difficulty ? {
+              difficulty: {
+                ...(baseDna?.difficulty ?? {}),
+                final_grade: Number(draft.difficulty),
+                scale_version: "sos8-v1",
+                admin_fixed: true,
+                admin_fixed_at: new Date().toISOString(),
+                admin_fixed_source: "problem-bank-admin",
+              },
+            } : {}),
+          };
+          return {
+            ...draft,
+            subject: canonical,
+            status:baseDna?.errorReview?.open?"HOLD":draft.status,
+            problem_dna: nextDna,
+            updated_at: new Date().toISOString(),
+          };
+        })()),
       });
       if (!response.ok) throw new Error(await response.text());
       const rows = (await response.json()) as Problem[];
@@ -571,7 +580,7 @@ export default function ProblemBankClient() {
               {detailTab === "basic" ? <div className="edit-grid">
                 <label className="wide"><span>문항명</span><input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
                 <label><span>학년</span><input value={draft.grade} onChange={(event) => setDraft({ ...draft, grade: event.target.value })} /></label>
-                <label><span>과목</span><input value={draft.subject} onChange={(event) => setDraft({ ...draft, subject: event.target.value })} /></label>
+                <label><span>과목</span><select value={canonicalSubject(draft.subject)} onChange={(event) => setDraft({ ...draft, subject: event.target.value })}>{SUBJECTS.map((value)=><option key={value} value={value}>{value}</option>)}</select></label>
                 <label><span>단원</span><input value={draft.unit} onChange={(event) => setDraft({ ...draft, unit: event.target.value })} /></label>
                 <label><span>유형</span><input value={draft.topic} onChange={(event) => setDraft({ ...draft, topic: event.target.value })} /></label>
                 <label><span>난이도</span><select value={draft.difficulty} onChange={(event) => setDraft({ ...draft, difficulty: event.target.value })}><option value="" disabled>미분류 · 관리자 확인 필요</option>{DIFFICULTY_SCALE.map((d)=><option key={d.value} value={d.value}>{d.label}</option>)}</select></label>
