@@ -264,6 +264,7 @@ ${HIGH_DIFFICULTY_REFERENCE_ANCHORS}
 - difficulty는 현재 문항을 같은 과목·교육과정의 수능 문항으로 환산해 판정합니다. 수능 문항이 아닌 교재·내신 문항도 수능 상당 배점과 난도를 추정합니다.
 - csat_point_equivalent는 2, 3, 4 중 하나입니다. csat_difficulty_band는 two_point, three_point, three_hard, four_easy, four_medium, four_hard, semi_killer, killer 중 하나입니다.
 - SOS 최종 난이도는 8단계만 사용합니다: 2점=1, 3점=2, 어려운3점=3, 쉬운4점=4, 적정4점=5, 어려운4점=6, 준킬러=7, 킬러=8.
+- csat_difficulty_band와 final_grade를 서로 모순되게 쓰지 않습니다. two_point=1, three_point=2, three_hard=3, four_easy=4, four_medium=5, four_hard=6, semi_killer=7, killer=8이며, final_grade는 자신이 판정한 band의 단계보다 낮을 수 없습니다.
 - csat_basis에는 해당 배점·난도로 본 결정적 근거를 구체적으로 기록합니다. 과목 범위 밖이라는 이유만으로 난이도를 올리지 말고, 해당 과목을 학습한 수능 응시생 기준으로 판정합니다.
 - 개념/조건해석/발상/계산/풀이길이/함정/시간부담/개념결합수/사고단계수도 독립적으로 평가합니다. 무조건 중간 단계로 몰아넣지 말고 문항 근거를 reasons에 기록합니다. 세부 점수는 0~100입니다.
 - errors와 traps는 실제 문항 근거가 있는 항목만 기록합니다.
