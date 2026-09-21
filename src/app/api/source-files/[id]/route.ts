@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireUser } from "@/lib/supabase/auth";
+import { normalizeSubject } from "@/lib/subject";
 
 export const runtime = "nodejs";
 // v164: 문항이 많은 시험지를 수정할 때 중간에 끊기지 않도록 실행 시간을 늘린다.
@@ -73,6 +74,7 @@ async function deleteStorageObjects(
 type SourceMetadataPatch = {
   title?: unknown;
   source?: unknown;
+  subject?: unknown;
 };
 
 function cleanMetadataText(value: unknown) {
@@ -99,6 +101,11 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const body = await request.json() as SourceMetadataPatch;
     const title = cleanMetadataText(body.title);
     const source = cleanMetadataText(body.source);
+    const requestedSubject = cleanMetadataText(body.subject);
+    const subject = requestedSubject ? normalizeSubject(requestedSubject) : "";
+    if (requestedSubject && !subject) {
+      return NextResponse.json({ success: false, message: "시험지 과목이 올바르지 않습니다." }, { status: 400 });
+    }
     if (!title) {
       return NextResponse.json({ success: false, message: "시험지명을 입력해 주세요." }, { status: 400 });
     }
@@ -116,6 +123,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const sourceRows = await restPatch(url, headers, `source_files?id=eq.${encodedId}`, {
       title,
       source: source || null,
+      subject: subject || null,
     });
     if (!sourceRows.length) {
       return NextResponse.json({ success: false, message: "수정할 시험지를 찾지 못했습니다." }, { status: 404 });
