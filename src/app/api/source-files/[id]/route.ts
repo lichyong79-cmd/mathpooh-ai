@@ -116,7 +116,6 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ i
     const sourceRows = await restPatch(url, headers, `source_files?id=eq.${encodedId}`, {
       title,
       source: source || null,
-      subject: null,
     });
     if (!sourceRows.length) {
       return NextResponse.json({ success: false, message: "수정할 시험지를 찾지 못했습니다." }, { status: 404 });
