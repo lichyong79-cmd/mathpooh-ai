@@ -284,7 +284,7 @@ export async function registerQuestions(
       subject,
       unit: text(result.unit),
       topic: text(result.topic),
-      difficulty: resolvedDifficulty(result),
+      difficulty: dna ? String(dna.difficulty.final_grade) : resolvedDifficulty(result),
       question_type: text(result.question_type) || "unknown",
       answer: question.answer ?? "",
       summary: text(result.summary),
