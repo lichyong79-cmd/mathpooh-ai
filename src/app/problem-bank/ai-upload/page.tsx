@@ -1004,6 +1004,9 @@ export default function AnalysisWorkspacePage() {
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pageRenderTaskRef = useRef<any>(null);
+  // 전체 자르기에서 같은 PDF 페이지를 문항마다 다시 렌더링하지 않는다.
+  // pageNo -> 렌더 완료 canvas Promise 캐시. 100문항/26페이지면 100회 렌더 대신 최대 26회.
+  const materializePageCanvasCacheRef = useRef<Map<number, Promise<HTMLCanvasElement>>>(new Map());
   const selectionRef = useRef<Rect | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
@@ -2059,20 +2062,31 @@ export default function AnalysisWorkspacePage() {
   }
 
 
-  async function materializeQuestion(question: Question, forceCorrection = false): Promise<Question> {
+  async function materializeQuestion(question: Question, forceCorrection = false, updateUi = true): Promise<Question> {
     if (!workspace?.analysis?.id || !pdfDoc || !hasValidCrop(question)) throw new Error(`${question.question_no}번 자르기 좌표가 없습니다.`);
     // 앵커가 있으면 실제 인쇄된 쪽을 쓴다. AI가 쪽을 잘못 잡은 문항도 여기서 교정된다.
     const anchor = anchorFor(question, anchors);
     const targetPageNo = anchor?.page ?? Number(question.page_no);
-    const page = await pdfDoc.getPage(targetPageNo);
-    const base = page.getViewport({ scale: 1 });
-    const viewport = page.getViewport({ scale: Math.max(1.6, 1800 / base.width) });
-    const sourceCanvas = document.createElement("canvas");
-    sourceCanvas.width = Math.ceil(viewport.width);
-    sourceCanvas.height = Math.ceil(viewport.height);
-    const sourceContext = sourceCanvas.getContext("2d");
-    if (!sourceContext) throw new Error("PDF 캔버스를 만들지 못했습니다.");
-    await page.render({ canvasContext: sourceContext, viewport }).promise;
+    let pageCanvasPromise = materializePageCanvasCacheRef.current.get(targetPageNo);
+    if (!pageCanvasPromise) {
+      pageCanvasPromise = (async () => {
+        const page = await pdfDoc.getPage(targetPageNo);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: Math.max(1.6, 1800 / base.width) });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("PDF 캔버스를 만들지 못했습니다.");
+        await page.render({ canvasContext: context, viewport }).promise;
+        return canvas;
+      })().catch((error) => {
+        materializePageCanvasCacheRef.current.delete(targetPageNo);
+        throw error;
+      });
+      materializePageCanvasCacheRef.current.set(targetPageNo, pageCanvasPromise);
+    }
+    const sourceCanvas = await pageCanvasPromise;
 
     // 2단계 전체 자르기는 1단계 인식 좌표를 출발점으로 경계를 다시 보정한다.
     // 사람이 직접 저장한 문항은 덮어쓰지 않는다.
@@ -2086,10 +2100,12 @@ export default function AnalysisWorkspacePage() {
           });
         })()
       : resolveQuestionCrop(sourceCanvas, question, anchors);
-    setThumbnailUrls((current) => ({
-      ...current,
-      [question.id]: canonical.canvas.toDataURL("image/jpeg", .82),
-    }));
+    if (updateUi) {
+      setThumbnailUrls((current) => ({
+        ...current,
+        [question.id]: canonical.canvas.toDataURL("image/jpeg", .82),
+      }));
+    }
     const blob = await new Promise<Blob>((resolve, reject) => canonical.canvas.toBlob((value) => value ? resolve(value) : reject(new Error("이미지 변환 실패")), "image/webp", .92));
     const form = new FormData();
     form.append("image", blob, `${String(question.question_no).padStart(3, "0")}.webp`);
@@ -2215,22 +2231,33 @@ export default function AnalysisWorkspacePage() {
     setMessage("");
     setQueueProgress({ done: 0, total: questions.length });
     try {
-      const updated: Question[] = [];
-      for (let index = 0; index < questions.length; index += 1) {
-        if (isManualCrop(questions[index])) {
-          updated.push(questions[index]);
-          setQueueProgress({ done: index + 1, total: questions.length });
-          continue;
+      // 대량 입력에서 가장 큰 병목이었다:
+      // 100문항을 1개씩 순차 처리 + 같은 페이지 반복 렌더 + 매 문항 React 전체 갱신.
+      // 페이지 렌더 캐시 + 4개 제한 병렬 + 완료 후 1회 화면 갱신으로 바꾼다.
+      materializePageCanvasCacheRef.current.clear();
+      const updated: Question[] = new Array(questions.length);
+      let cursor = 0;
+      let done = 0;
+      const concurrency = Math.min(4, questions.length);
+
+      async function cropWorker() {
+        while (true) {
+          const index = cursor++;
+          if (index >= questions.length) return;
+          const question = questions[index];
+          if (isManualCrop(question)) {
+            updated[index] = question;
+          } else {
+            updated[index] = await materializeQuestion(question, true, false);
+          }
+          done += 1;
+          setQueueProgress({ done, total: questions.length });
         }
-        const nextQuestion = await materializeQuestion(questions[index], true);
-        updated.push(nextQuestion);
-        setWorkspace((current) => current ? {
-          ...current,
-          questions: current.questions.map((item) => item.id === nextQuestion.id ? nextQuestion : item),
-        } : current);
-        setQueueProgress({ done: index + 1, total: questions.length });
       }
-      setMessage(`전체 문항 보정 자르기 완료 · ${updated.length}문항 · 수동 저장 문항은 유지했습니다.`);
+
+      await Promise.all(Array.from({ length: concurrency }, () => cropWorker()));
+      await loadWorkspace(workspace.source.id);
+      setMessage(`전체 문항 보정 자르기 완료 · ${updated.length}문항 · 페이지 렌더 캐시/병렬 저장 적용 · 수동 저장 문항은 유지했습니다.`);
       return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "전체 문항 다시 자르기에 실패했습니다.");
