@@ -1635,7 +1635,18 @@ export default function AnalysisWorkspacePage() {
           force: forceRecognition,
         }),
       });
-      const payload = await response.json();
+      const responseText = await response.text();
+      let payload: any = {};
+      try {
+        payload = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        const preview = responseText.trim().slice(0, 180);
+        throw new Error(
+          response.status === 504 || /timeout|timed out|An error occurred/i.test(responseText)
+            ? "문제인식 처리시간이 초과되었습니다. 진행상태를 복구했으니 다시 시작해 주세요."
+            : `문제인식 서버 응답을 읽지 못했습니다.${preview ? ` · ${preview}` : ""}`,
+        );
+      }
       if (!response.ok || !payload.success) {
         throw new Error(payload.message || "AI 분석에 실패했습니다.");
       }
