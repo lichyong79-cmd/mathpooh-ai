@@ -44,6 +44,10 @@ export function normalizeDisplayLatex(raw:any){
   // $ ... $ -> \( ... \)   (이스케이프된 \$ 는 건드리지 않는다)
   s=s.replace(/(^|[^\\$])\$([^$\n]+?)\$/g,(_m,head,inner)=>head+"\\("+inner+"\\)");
 
+  // 시그마는 인라인 수식 안에서도 위/아래 첨자가 Σ의 오른쪽으로 눕지 않도록
+  // 항상 limits를 강제한다. MathJax의 기본 inline 스타일은 \sum의 첨자를 옆에 붙인다.
+  s=s.replace(/\\sum(?!\\(?:limits|nolimits)\b)/g,"\\sum\\limits");
+
   // 선택지는 언제나 새 줄에서 시작하게 만든다.
   s=s.replace(/([^\n])[ \t]*(?=[\u2460\u2461\u2462\u2463\u2464])/g,"$1\n");
 
