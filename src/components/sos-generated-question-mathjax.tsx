@@ -47,9 +47,9 @@ export function normalizeDisplayLatex(raw:any){
   // 시그마는 어떤 입력 형태로 와도 교과서형 큰 합기호 + 위/아래 limits로 통일한다.
   // AI가 ∑, Σ, \\Sigma, \\sum, \\sum\\nolimits 등을 섞어 보내는 경우가 있어
   // 단순 \\sum 치환만으로는 첨자가 오른쪽에 붙는 문항이 남았다.
-  s=s.replace(/[∑Σ](?=\\s*[_^])/g,"\\\\sum");
-  s=s.replace(/\\\\Sigma(?=\\s*[_^])/g,"\\\\sum");
-  s=s.replace(/(?:\\\\displaystyle\\s*)?\\\\sum(?:\\\\limits|\\\\nolimits)?/g,"\\\\displaystyle\\\\sum\\\\limits");
+  s=s.replace(/[∑Σ](?=\s*[_^])/g,"\\sum");
+  s=s.replace(/\\Sigma(?=\s*[_^])/g,"\\sum");
+  s=s.replace(/(?:\\displaystyle\s*)?\\sum(?:\\limits|\\nolimits)?/g,"\\displaystyle\\sum\\limits");
 
   // 선택지는 언제나 새 줄에서 시작하게 만든다.
   s=s.replace(/([^\n])[ \t]*(?=[\u2460\u2461\u2462\u2463\u2464])/g,"$1\n");
