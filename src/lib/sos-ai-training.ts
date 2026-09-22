@@ -486,6 +486,20 @@ function wrapLooseLatex(raw:string){
   }).join("\n");
 }
 
+function hasRawLatexOutsideMath(raw:string){
+  const text=String(raw??"");
+  const command=/^\\(?:frac|dfrac|tfrac|sqrt|lim|int|sum|prod|begin|end|left|right|cdot|times|leq|geq|neq|infty|alpha|beta|gamma|theta|pi|quad|qquad|text|bar|overline|underline|binom|mathrm|mathbf|mathbb)\b/;
+  let mode:"text"|"inline"|"display"="text";
+  for(let i=0;i<text.length;i++){
+    if(mode==="text"&&text.startsWith("\\(",i)){mode="inline";i++;continue;}
+    if(mode==="text"&&text.startsWith("\\[",i)){mode="display";i++;continue;}
+    if(mode==="inline"&&text.startsWith("\\)",i)){mode="text";i++;continue;}
+    if(mode==="display"&&text.startsWith("\\]",i)){mode="text";i++;continue;}
+    if(mode==="text"&&text[i]==="\\"&&command.test(text.slice(i)))return true;
+  }
+  return false;
+}
+
 function cleanRenderBlocks(raw:any){
   if(!Array.isArray(raw))return [];
   const dirty=/\\(?:frac|dfrac|tfrac|lim|sqrt|begin|end|left|right)\b/;
@@ -509,6 +523,7 @@ function validateGeneratedMathLayout(problem:any){
   const hasDelimiter=/(\\\(|\\\[)/.test(latex);
   const hasRawLatex=/\\(?:frac|dfrac|tfrac|sqrt|lim|int|sum|prod|begin|end|left|right|cdot|times|leq|geq|neq|infty|alpha|beta|gamma|theta|pi)\b/.test(latex)||/[\^_]\{/.test(latex);
   if(!hasDelimiter&&hasRawLatex)return "수식이 구분자 밖으로 노출됨";
+  if(hasRawLatexOutsideMath(latex))return "수식 구분자 밖에 LaTeX 명령이 섞여 있음";
 
   // 수식 구분자 짝이 맞는지 확인한다. 안 맞으면 화면에서 raw LaTeX이 그대로 노출된다.
   const inlineOpen=(latex.match(/\\\(/g)??[]).length;
@@ -737,7 +752,9 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 각 문항마다 displayLatex와 renderBlocks만 반환합니다.
 - displayLatex는 한국어 문장과 MathJax 수식을 포함한 완성 문제입니다. 수식은 \\( ... \\) 또는 \\[ ... \\] 안에 둡니다.\n- $ ... $ 또는 $$ ... $$ 표기는 절대 쓰지 않습니다. 여는 구분자와 닫는 구분자 개수를 반드시 일치시킵니다.\n- 문제 본문과 각 선택지 사이에는 실제 줄바꿈(\\n)을 넣습니다. 선택지가 있으면 1~5 각각을 별도 줄로 씁니다.
 - 분수 \\frac, 극한 \\lim, 적분 \\int, 근호 \\sqrt, 조각함수 \\begin{cases}를 표준 LaTeX로 사용합니다.\n- 시그마 합은 반드시 \\displaystyle\\sum\\limits_{k=...}^{n} 형태로 씁니다. 시작값은 Σ 바로 아래, 끝값은 Σ 바로 위에 수직으로 배치되어야 합니다.
-- 시그마에 Unicode ∑/Σ 문자, \\Sigma, \\sum_{k=...}^{n}, \\sum\\nolimits 표기를 절대 사용하지 않습니다. 시그마가 하나라도 있으면 반드시 \\displaystyle\\sum\\limits_{...}^{...} 형식입니다.\n- 중요: 모든 수식과 변수, 지수, 첨자는 예외 없이 \\( ... \\) 안에 넣습니다. f(x), x^2, a_n 처럼 짧은 것도 반드시 감쌉니다. 구분자 밖에 LaTeX 명령을 두면 화면에 글자 그대로 노출됩니다.\n- renderBlocks의 mathml 값에는 LaTeX 명령(\\frac, \\lim, \\sqrt 등)을 절대 넣지 않습니다. 순수 MathML 태그만 씁니다. 확신이 없으면 mathml 블록을 비우고 text 블록만 반환하세요.
+- 시그마에 Unicode ∑/Σ 문자, \\Sigma, \\sum_{k=...}^{n}, \\sum\\nolimits 표기를 절대 사용하지 않습니다. 시그마가 하나라도 있으면 반드시 \\displaystyle\\sum\\limits_{...}^{...} 형식입니다.
+- 확률분포표·수열표·값 대응표처럼 행과 열이 있는 자료는 \\quad 공백으로 흉내내지 않습니다. 반드시 하나의 블록수식 \\[ \\begin{array}{...} ... \\end{array} \\] 로 표 전체를 묶어 열 정렬을 유지합니다.
+- \\quad, \\text, \\frac, \\tfrac 같은 LaTeX 명령은 절대로 \\( ... \\) 또는 \\[ ... \\] 밖에 두지 않습니다.\n- 중요: 모든 수식과 변수, 지수, 첨자는 예외 없이 \\( ... \\) 안에 넣습니다. f(x), x^2, a_n 처럼 짧은 것도 반드시 감쌉니다. 구분자 밖에 LaTeX 명령을 두면 화면에 글자 그대로 노출됩니다.\n- renderBlocks의 mathml 값에는 LaTeX 명령(\\frac, \\lim, \\sqrt 등)을 절대 넣지 않습니다. 순수 MathML 태그만 씁니다. 확신이 없으면 mathml 블록을 비우고 text 블록만 반환하세요.
 - renderBlocks의 일반 문장은 text, 수식은 mathml입니다. mathml은 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 구조여야 합니다.
 - 분수는 반드시 <mfrac>, 지수는 <msup>, 근호는 <msqrt>를 사용합니다.
 - MathML 안에 LaTeX 명령을 남기지 않습니다.
