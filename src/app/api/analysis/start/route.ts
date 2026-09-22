@@ -393,46 +393,72 @@ export async function POST(request: NextRequest) {
     const recognitionWarnings: string[] = [];
     let totalTokens = 0;
 
-    for (let index = 0; index < ranges.length; index++) {
-      const range = ranges[index];
+    // 긴 PDF를 2페이지씩 "직렬" 호출하면 20~30페이지에서 Vercel 300초 제한을 넘길 수 있다.
+    // 4개 범위를 한 묶음으로 병렬 처리해 전수확인은 유지하면서 실행시간을 줄인다.
+    const RANGE_CONCURRENCY = 4;
+    for (let offset = 0; offset < ranges.length; offset += RANGE_CONCURRENCY) {
+      const wave = ranges.slice(offset, offset + RANGE_CONCURRENCY);
+      const first = wave[0];
+      const last = wave[wave.length - 1];
       await supabase
         .from("source_analysis")
         .update({
-          progress: Math.min(75, 15 + Math.round(((index + 1) / ranges.length) * 55)),
-          current_step: `1단계 · PDF ${range.start}~${range.end}/${pdfPageCount}페이지 문항 인식 중`,
+          progress: Math.min(75, 15 + Math.round((offset / ranges.length) * 55)),
+          current_step: `1단계 · PDF ${first.start}~${last.end}/${pdfPageCount}페이지 문항 인식 중`,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", analysis.id);
 
-      const rangePrompt = [
-        cropPrompt,
-        "",
-        `[이번 호출의 필수 검사 범위] PDF ${range.start}페이지부터 ${range.end}페이지까지만 검사한다.`,
-        "첨부 PDF 전체가 보이더라도 위 페이지 범위를 첫 줄부터 마지막 줄까지 끝까지 확인한다.",
-        "범위 안에 보이는 모든 실제 문항번호를 빠짐없이 반환한다. 범위 밖 페이지의 문항은 반환하지 않는다.",
-        "page_no는 첨부 PDF의 원래 페이지 번호를 그대로 사용한다.",
-        "이 호출에서 문항이 전혀 없는 페이지가 있으면 그 페이지는 억지로 만들지 않아도 된다.",
-      ].join("\n");
+      const waveResults = await Promise.all(
+        wave.map(async (range) => {
+          const rangePrompt = [
+            cropPrompt,
+            "",
+            `[이번 호출의 필수 검사 범위] PDF ${range.start}페이지부터 ${range.end}페이지까지만 검사한다.`,
+            "첨부 PDF 전체가 보이더라도 위 페이지 범위를 첫 줄부터 마지막 줄까지 끝까지 확인한다.",
+            "범위 안에 보이는 모든 실제 문항번호를 빠짐없이 반환한다. 범위 밖 페이지의 문항은 반환하지 않는다.",
+            "page_no는 첨부 PDF의 원래 페이지 번호를 그대로 사용한다.",
+            "이 호출에서 문항이 전혀 없는 페이지가 있으면 그 페이지는 억지로 만들지 않아도 된다.",
+          ].join("\n");
 
-      const raw = await callOpenAi({
-        apiKey,
-        model,
-        prompt: rangePrompt,
-        files: [examUrl],
-        schemaName: `math_exam_recognition_p${range.start}_${range.end}`,
-        schema: cropSchema,
-        maxOutputTokens: 10000,
-      });
-      totalTokens += Number(raw.usage?.total_tokens ?? 0);
+          const raw = await callOpenAi({
+            apiKey,
+            model,
+            prompt: rangePrompt,
+            files: [examUrl],
+            schemaName: `math_exam_recognition_p${range.start}_${range.end}`,
+            schema: cropSchema,
+            maxOutputTokens: 10000,
+          });
+          const payload = parseJson<{ questions: AiCropQuestion[] }>(raw);
+          const inRange = (payload.questions ?? []).filter((item) => {
+            const page = Math.trunc(Number(item.page_no));
+            return page >= range.start && page <= range.end;
+          });
+          return {
+            range,
+            questions: inRange,
+            tokens: Number(raw.usage?.total_tokens ?? 0),
+          };
+        }),
+      );
 
-      const payload = parseJson<{ questions: AiCropQuestion[] }>(raw);
-      const inRange = (payload.questions ?? []).filter((item) => {
-        const page = Math.trunc(Number(item.page_no));
-        return page >= range.start && page <= range.end;
-      });
-      if (!inRange.length) {
-        recognitionWarnings.push(`${range.start}~${range.end}페이지에서 문항이 인식되지 않음`);
+      for (const result of waveResults) {
+        totalTokens += result.tokens;
+        if (!result.questions.length) {
+          recognitionWarnings.push(`${result.range.start}~${result.range.end}페이지에서 문항이 인식되지 않음`);
+        }
+        recognized.push(...result.questions);
       }
-      recognized.push(...inRange);
+
+      await supabase
+        .from("source_analysis")
+        .update({
+          progress: Math.min(75, 15 + Math.round((Math.min(ranges.length, offset + wave.length) / ranges.length) * 55)),
+          current_step: `1단계 · PDF ${last.end}/${pdfPageCount}페이지까지 문항 인식 완료`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", analysis.id);
     }
 
     let crops = normalizeAiCrops(recognized);
