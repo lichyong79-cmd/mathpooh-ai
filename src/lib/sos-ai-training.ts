@@ -444,9 +444,9 @@ export function normalizeDisplayLatex(raw:any){
   s=s.replace(/(^|[^\\$])\$([^$\n]+?)\$/g,(_m:string,head:string,inner:string)=>head+"\\("+inner+"\\)");
   // AI가 ∑, Σ, \\Sigma, \\sum 등 어떤 표기로 보내도
   // 교과서형 큰 합기호 + 시작값 아래 / 끝값 위 형태로 저장한다.
-  s=s.replace(/[∑Σ](?=\\s*[_^])/g,"\\\\sum");
-  s=s.replace(/\\\\Sigma(?=\\s*[_^])/g,"\\\\sum");
-  s=s.replace(/(?:\\\\displaystyle\\s*)?\\\\sum(?:\\\\limits|\\\\nolimits)?/g,"\\\\displaystyle\\\\sum\\\\limits");
+  s=s.replace(/[∑Σ](?=\s*[_^])/g,"\\sum");
+  s=s.replace(/\\Sigma(?=\s*[_^])/g,"\\sum");
+  s=s.replace(/(?:\\displaystyle\s*)?\\sum(?:\\limits|\\nolimits)?/g,"\\displaystyle\\sum\\limits");
   s=s.replace(/([^\n])[ \t]*(?=[\u2460\u2461\u2462\u2463\u2464])/g,"$1\n");
   return s.replace(/\n{3,}/g,"\n\n").trim();
 }
