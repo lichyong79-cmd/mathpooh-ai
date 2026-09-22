@@ -442,8 +442,11 @@ export function normalizeDisplayLatex(raw:any){
   s=s.replace(/\\\\([()[\]])/g,"\\$1");
   s=s.replace(/\$\$([\s\S]+?)\$\$/g,(_m:string,inner:string)=>"\\["+inner+"\\]");
   s=s.replace(/(^|[^\\$])\$([^$\n]+?)\$/g,(_m:string,head:string,inner:string)=>head+"\\("+inner+"\\)");
-  // MathJax inline 모드에서도 시그마의 시작/끝 첨자가 Σ 위·아래에 오도록 강제한다.
-  s=s.replace(/\\sum(?!\\(?:limits|nolimits)\b)/g,"\\sum\\limits");
+  // AI가 ∑, Σ, \\Sigma, \\sum 등 어떤 표기로 보내도
+  // 교과서형 큰 합기호 + 시작값 아래 / 끝값 위 형태로 저장한다.
+  s=s.replace(/[∑Σ](?=\\s*[_^])/g,"\\\\sum");
+  s=s.replace(/\\\\Sigma(?=\\s*[_^])/g,"\\\\sum");
+  s=s.replace(/(?:\\\\displaystyle\\s*)?\\\\sum(?:\\\\limits|\\\\nolimits)?/g,"\\\\displaystyle\\\\sum\\\\limits");
   s=s.replace(/([^\n])[ \t]*(?=[\u2460\u2461\u2462\u2463\u2464])/g,"$1\n");
   return s.replace(/\n{3,}/g,"\n\n").trim();
 }
@@ -524,6 +527,8 @@ function validateGeneratedMathLayout(problem:any){
   }
   if(/\bx\^\([^)]*\)/.test(latex))return "displayLatex 수식 바깥 원시 지수표기";
   if(/\blim[_\s]/.test(latex)&&!/\\lim/.test(latex))return "극한이 표준 LaTeX가 아님";
+  if(/[∑Σ](?=\s*[_^])|\\Sigma(?=\s*[_^])|\\sum\\nolimits/.test(latex))return "시그마 위·아래 첨자 조판이 표준형이 아님";
+  if(/\\sum(?!\\limits)/.test(latex))return "시그마 limits 누락";
 
   // SOS293: renderBlocks(MathML)는 화면에 표시되지 않는 예비 데이터다.
   // 학생이 보는 것은 displayLatex뿐인데, 예전에는 이 MathML에 LaTeX 명령이
@@ -731,7 +736,8 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 
 각 문항마다 displayLatex와 renderBlocks만 반환합니다.
 - displayLatex는 한국어 문장과 MathJax 수식을 포함한 완성 문제입니다. 수식은 \\( ... \\) 또는 \\[ ... \\] 안에 둡니다.\n- $ ... $ 또는 $$ ... $$ 표기는 절대 쓰지 않습니다. 여는 구분자와 닫는 구분자 개수를 반드시 일치시킵니다.\n- 문제 본문과 각 선택지 사이에는 실제 줄바꿈(\\n)을 넣습니다. 선택지가 있으면 1~5 각각을 별도 줄로 씁니다.
-- 분수 \\frac, 극한 \\lim, 적분 \\int, 근호 \\sqrt, 조각함수 \\begin{cases}를 표준 LaTeX로 사용합니다.\n- 시그마 합은 반드시 \\sum\\limits_{k=...}^{n} 형태로 써서 시작값은 Σ 아래, 끝값은 Σ 위에 수직으로 배치합니다. \\sum_{k=...}^{n}처럼 첨자가 오른쪽에 붙는 형태는 쓰지 않습니다.\n- 중요: 모든 수식과 변수, 지수, 첨자는 예외 없이 \\( ... \\) 안에 넣습니다. f(x), x^2, a_n 처럼 짧은 것도 반드시 감쌉니다. 구분자 밖에 LaTeX 명령을 두면 화면에 글자 그대로 노출됩니다.\n- renderBlocks의 mathml 값에는 LaTeX 명령(\\frac, \\lim, \\sqrt 등)을 절대 넣지 않습니다. 순수 MathML 태그만 씁니다. 확신이 없으면 mathml 블록을 비우고 text 블록만 반환하세요.
+- 분수 \\frac, 극한 \\lim, 적분 \\int, 근호 \\sqrt, 조각함수 \\begin{cases}를 표준 LaTeX로 사용합니다.\n- 시그마 합은 반드시 \\displaystyle\\sum\\limits_{k=...}^{n} 형태로 씁니다. 시작값은 Σ 바로 아래, 끝값은 Σ 바로 위에 수직으로 배치되어야 합니다.
+- 시그마에 Unicode ∑/Σ 문자, \\Sigma, \\sum_{k=...}^{n}, \\sum\\nolimits 표기를 절대 사용하지 않습니다. 시그마가 하나라도 있으면 반드시 \\displaystyle\\sum\\limits_{...}^{...} 형식입니다.\n- 중요: 모든 수식과 변수, 지수, 첨자는 예외 없이 \\( ... \\) 안에 넣습니다. f(x), x^2, a_n 처럼 짧은 것도 반드시 감쌉니다. 구분자 밖에 LaTeX 명령을 두면 화면에 글자 그대로 노출됩니다.\n- renderBlocks의 mathml 값에는 LaTeX 명령(\\frac, \\lim, \\sqrt 등)을 절대 넣지 않습니다. 순수 MathML 태그만 씁니다. 확신이 없으면 mathml 블록을 비우고 text 블록만 반환하세요.
 - renderBlocks의 일반 문장은 text, 수식은 mathml입니다. mathml은 완전한 <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">...</math> 구조여야 합니다.
 - 분수는 반드시 <mfrac>, 지수는 <msup>, 근호는 <msqrt>를 사용합니다.
 - MathML 안에 LaTeX 명령을 남기지 않습니다.
