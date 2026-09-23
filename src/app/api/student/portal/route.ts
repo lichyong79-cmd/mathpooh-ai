@@ -581,7 +581,7 @@ export async function POST(request: Request) {
     ]);
     if (allBookings.error || allLearning.error) return NextResponse.json({message:"이전 학습 상태를 확인하지 못했습니다."},{status:503});
     if (!priorLearningPassed(allBookings.data ?? [], allLearning.data ?? [], currentMembership.data ?? {}))
-      return NextResponse.json({message:"이전 시험의 SOS 학습을 완료해야 다음 시험을 시작할 수 있습니다."},{status:423});
+      return NextResponse.json({message:"SOS학습을 완료하지 않아 시험을 응시할 수 없습니다. (관리자에게 문의하세요)"},{status:423});
 
   }
   const { data: sourceExam } = await supabase
