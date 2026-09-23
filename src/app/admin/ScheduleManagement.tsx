@@ -1,15 +1,16 @@
 "use client";
 import { useEffect, useState } from "react";
+import { SOS_DEFAULT_START_LABEL, SOS_DEFAULT_START_TIME } from "@/lib/sos-schedule";
 
 type Schedule = { id: string; name: string; start_date: string; end_date: string; scheduled_at?: string; exams?: unknown[] };
-const localTime = (c: Schedule) => c.scheduled_at ? new Date(new Date(c.scheduled_at).getTime()+9*3600000).toISOString().slice(11,16) : "23:00";
+const localTime = (c: Schedule) => c.scheduled_at ? new Date(new Date(c.scheduled_at).getTime()+9*3600000).toISOString().slice(11,16) : SOS_DEFAULT_START_TIME;
 export default function ScheduleManagement() {
   const [cycles,setCycles]=useState<Schedule[]>([]),[selected,setSelected]=useState("");
-  const [form,setForm]=useState({name:"",startDate:"",endDate:"",time:"23:00"});
+  const [form,setForm]=useState({name:"",startDate:"",endDate:"",time:SOS_DEFAULT_START_TIME});
   const [busy,setBusy]=useState(false),[message,setMessage]=useState("");
   const load=async()=>{const r=await fetch("/api/admin/learning-cycles",{cache:"no-store"});const j=await r.json();if(!r.ok)throw Error(j.message);setCycles(j.cycles??[]);};
   useEffect(()=>{load().catch(e=>setMessage(e.message));},[]);
-  const choose=(c?:Schedule)=>{setSelected(c?.id??"");setForm(c?{name:c.name,startDate:c.start_date.slice(0,10),endDate:c.end_date.slice(0,10),time:localTime(c)}:{name:"",startDate:"",endDate:"",time:"23:00"});setMessage("");};
+  const choose=(c?:Schedule)=>{setSelected(c?.id??"");setForm(c?{name:c.name,startDate:c.start_date.slice(0,10),endDate:c.end_date.slice(0,10),time:localTime(c)}:{name:"",startDate:"",endDate:"",time:SOS_DEFAULT_START_TIME});setMessage("");};
   const save=async()=>{
     if(!form.name.trim()||!form.startDate||!form.endDate||!form.time||form.endDate<form.startDate){setMessage("일정명과 올바른 운영 기간·시작시간을 입력해 주세요.");return;}
     const old=cycles.find(c=>c.id===selected);
@@ -19,7 +20,7 @@ export default function ScheduleManagement() {
   };
   return <div className="schedule-page">
     <header><div><h2>응시 일정 관리</h2><p>매주 참가할 날짜와 시험 시작시간을 관리합니다.</p></div><button onClick={()=>choose()}>＋ 새 일정</button></header>
-    <div className="notice"><b>정규 줌 모의고사 · 수요일 밤 11시</b><span>시험지는 A/B/C 시험지 등록에서 준비하고, 회차별 시험배정에서 학생에게 배정해 주세요.</span></div>
+    <div className="notice"><b>정규 줌 모의고사 · {SOS_DEFAULT_START_LABEL}</b><span>시험지는 A/B/C 시험지 등록에서 준비하고, 회차별 시험배정에서 학생에게 배정해 주세요.</span></div>
     <div className="layout"><section className="schedule-list"><h3>운영 일정 <small>{cycles.length}개</small></h3>{cycles.map(c=><button className={selected===c.id?"chosen":""} key={c.id} onClick={()=>choose(c)}><b>{c.name}</b><span>{c.start_date.slice(0,10)} ~ {c.end_date.slice(0,10)}</span><strong>{localTime(c)} 시작</strong></button>)}{!cycles.length&&<p>등록된 일정이 없습니다.</p>}</section>
     <section className="editor"><small>{selected?"일정 수정":"새 운영 일정"}</small><h3>{selected?"응시 일정 상세":"다음 모의고사 일정을 만드세요"}</h3>
       <label>일정명<input value={form.name} placeholder="예: SOS_제6회모의고사" onChange={e=>setForm({...form,name:e.target.value})}/></label>
