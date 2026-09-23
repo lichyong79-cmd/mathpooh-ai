@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import GlobalWaitOverlay from "../components/global-wait-overlay";
+import SosScheduleCopySync from "../components/sos-schedule-copy-sync";
 export const metadata: Metadata = { title: "SOS · Score Optimization System", description: "AI 기반 수학 실전 분석과 개인별 공략 훈련" };
 
 // SOS283: viewport 메타가 없어서 모바일 브라우저가 데스크톱 폭(980px)으로 가정하고
@@ -10,4 +11,4 @@ export const viewport: Viewport = {
   initialScale: 1,
   viewportFit: "cover",   // 노치 있는 기기에서 좌우가 잘리지 않게
 };
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) { return <html lang="ko"><body>{children}<GlobalWaitOverlay/></body></html>; }
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) { return <html lang="ko"><body>{children}<GlobalWaitOverlay/><SosScheduleCopySync/></body></html>; }
