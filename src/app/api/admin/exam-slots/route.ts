@@ -94,7 +94,27 @@ export async function POST(request: Request) {
   if (!cycleId) return NextResponse.json({ message: "응시 일정을 선택해 주세요." }, { status: 400 });
   try {
     const slot = await slotRows(supabase, cycleId);
-    if(!["prepare","start","pause","resume"].includes(action))return NextResponse.json({message:"지원하지 않는 작업입니다."},{status:400});
+    if(!["prepare","start","pause","resume","override-gate","revoke-gate"].includes(action))return NextResponse.json({message:"지원하지 않는 작업입니다."},{status:400});
+    if(action==="override-gate"||action==="revoke-gate"){
+      const membershipId=String(body.membershipId??"");
+      if(!membershipId)return NextResponse.json({message:"학생 회차 정보가 없습니다."},{status:400});
+      const membership=slot.rows.find((r:any)=>String(r.id)===membershipId);
+      if(!membership)return NextResponse.json({message:"이 회차의 학생을 찾지 못했습니다."},{status:404});
+      const nextStatus=action==="override-gate"?"OVERRIDE":"LOCKED";
+      const changed=await supabase.from("learning_cycle_students").update({
+        sos_gate_status:nextStatus,
+        updated_at:new Date().toISOString(),
+      }).eq("id",membershipId).eq("cycle_id",cycleId);
+      if(changed.error)throw changed.error;
+      return NextResponse.json({
+        success:true,
+        membershipId,
+        override:action==="override-gate",
+        message:action==="override-gate"
+          ?"SOS 미완료 경고를 유지한 채 이번 회차 시험 응시를 관리자 권한으로 허용했습니다."
+          :"관리자 예외 허용을 취소했습니다. 실제 SOS 완료 상태로 다시 판정합니다.",
+      });
+    }
     const assigned=slot.rows.filter((r:any)=>r.exam_id&&!["CANCELLED","NO_SHOW","COMPLETED"].includes(String(r.booking_status)));
     const eligible=assigned.filter((r:any)=>action==="prepare"?true:action==="start"?r.sos_gate_open:action==="pause"?r.booking_status==="IN_PROGRESS"&&!r.exam?.paused_at&&Date.parse(r.exam?.close_at)>Date.now():r.booking_status==="IN_PROGRESS"&&r.exam?.paused_at);
     if(!eligible.length)return NextResponse.json({message:action==="start"?"시작할 학생이 없습니다. 시험지 배정과 이전 SOS 완료 상태를 확인해 주세요.":"처리할 학생이 없습니다. 회차와 배정 상태를 확인해 주세요."},{status:409});
