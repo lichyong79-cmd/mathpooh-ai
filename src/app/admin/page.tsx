@@ -4249,8 +4249,8 @@ function ExamsPage({
     if (
       !window.confirm(
         next
-          ? "학생 페이지에 이 시험을 공개할까요?"
-          : "학생 응시를 마감할까요? 진행 중인 학생에게도 더 이상 보이지 않을 수 있습니다.",
+          ? "현재 '학생 응시 불가' 상태입니다.\n학생 응시 가능으로 변경할까요?"
+          : "현재 '학생 응시 가능' 상태입니다.\n학생 응시 불가로 변경할까요? 진행 중인 학생에게도 더 이상 보이지 않을 수 있습니다.",
       )
     )
       return;
@@ -4551,8 +4551,12 @@ function ExamsPage({
                               ? `분석 결과 확인 ${analysisCounts[exam.id]}/${exam.questionCount}`
                             : `AI 문항분석 ${analysisCounts[exam.id] ?? 0}/${exam.questionCount}`}
                       </button>
-                      <button onClick={() => void toggleStudentOpen(exam)}>
-                        {exam.studentOpen ? "응시 마감" : "학생 공개"}
+                      <button
+                        className={exam.studentOpen ? "student-exam-open" : "student-exam-closed"}
+                        title={exam.studentOpen ? "현재 학생 응시 가능 · 클릭하면 응시 불가로 변경" : "현재 학생 응시 불가 · 클릭하면 응시 가능으로 변경"}
+                        onClick={() => void toggleStudentOpen(exam)}
+                      >
+                        {exam.studentOpen ? "학생 응시 가능" : "학생 응시 불가"}
                       </button>
                       <button onClick={() => editExam(exam)}>수정</button>
                       <button
