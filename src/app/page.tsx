@@ -2428,7 +2428,19 @@ export default function StudentHome() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const isExamSosBlocked = (examId: string) =>
+    (portal?.examSchedules ?? []).some(
+      (schedule) =>
+        String(schedule.exam_id ?? "") === String(examId) &&
+        schedule.sos_gate_open === false &&
+        !["COMPLETED", "CANCELLED", "NO_SHOW"].includes(String(schedule.booking_status ?? "")),
+    );
+
   const requestStartExam = (exam: Exam) => {
+    if (!exam.attempt && isExamSosBlocked(exam.id)) {
+      window.alert("SOS학습을 완료하지 않아 시험을 응시할 수 없습니다. (관리자에게 문의하세요)");
+      return;
+    }
     if (exam.attempt) {
       void startExam(exam);
       return;
@@ -3716,17 +3728,25 @@ export default function StudentHome() {
                         시험지 받기
                       </a>
                     ) : null}
+                    {!exam.attempt && isExamSosBlocked(exam.id) ? (
+                      <div className="exam-sos-blocked">
+                        <strong>SOS학습을 완료하지 않아 시험을 응시할 수 없습니다.</strong>
+                        <span>(관리자에게 문의하세요)</span>
+                      </div>
+                    ) : null}
                     <button
-                      disabled={!!busy || (!exam.available && !exam.waiting_available) || !exam.test_url}
+                      disabled={!!busy || (!exam.attempt && isExamSosBlocked(exam.id)) || (!exam.available && !exam.waiting_available) || !exam.test_url}
                       onClick={() => requestStartExam(exam)}
                     >
                       {exam.attempt
                         ? "이어서 풀기"
-                        : exam.available
-                          ? "시험 시작"
-                          : exam.waiting_available
-                            ? "시험 보러가기"
-                          : "응시시간 대기"}
+                        : isExamSosBlocked(exam.id)
+                          ? "SOS 학습 미완료"
+                          : exam.available
+                            ? "시험 시작"
+                            : exam.waiting_available
+                              ? "시험 보러가기"
+                              : "응시시간 대기"}
                     </button>
                   </>
                 )}
