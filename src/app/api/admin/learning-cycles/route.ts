@@ -84,7 +84,7 @@ export async function POST(request: Request) {
 
   if (action === "create") {
     const name = String(body.name ?? "").trim(), start = String(body.startDate ?? ""), end = String(body.endDate ?? start);
-    const scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : start ? new Date(`${start}T23:00:00+09:00`) : null;
+    const scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : start ? new Date(`${start}T22:20:00+09:00`) : null;
     if (!name || !start || !end || !scheduledAt || Number.isNaN(scheduledAt.getTime()))
       return NextResponse.json({ message: "일정명과 날짜·응시시각을 입력해 주세요." }, { status: 400 });
     const saved = await ctx.supabase.from("learning_cycles").insert({
