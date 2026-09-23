@@ -94,18 +94,50 @@ export async function POST(request: Request) {
   if (!cycleId) return NextResponse.json({ message: "응시 일정을 선택해 주세요." }, { status: 400 });
   try {
     const slot = await slotRows(supabase, cycleId);
-    if(!["prepare","start","pause","resume","override-gate","revoke-gate"].includes(action))return NextResponse.json({message:"지원하지 않는 작업입니다."},{status:400});
-    if(action==="override-gate"||action==="revoke-gate"){
+    if(!["prepare","start","pause","resume","override-gate","override-start","revoke-gate"].includes(action))return NextResponse.json({message:"지원하지 않는 작업입니다."},{status:400});
+
+    if(action==="override-gate"||action==="override-start"||action==="revoke-gate"){
       const membershipId=String(body.membershipId??"");
       if(!membershipId)return NextResponse.json({message:"학생 회차 정보가 없습니다."},{status:400});
       const membership=slot.rows.find((r:any)=>String(r.id)===membershipId);
       if(!membership)return NextResponse.json({message:"이 회차의 학생을 찾지 못했습니다."},{status:404});
-      const nextStatus=action==="override-gate"?"OVERRIDE":"LOCKED";
+
+      if(action==="override-start"){
+        if(!membership.exam_id||!membership.registration)return NextResponse.json({message:"이 학생의 시험지 배정을 먼저 완료해 주세요."},{status:409});
+        if(String(membership.booking_status)!=="SCHEDULED")return NextResponse.json({message:"시험 시작 대기 중인 학생만 뒤늦게 시작할 수 있습니다."},{status:409});
+      }
+
+      const previousStatus=String(membership.sos_gate_status??"LOCKED");
+      const nextStatus=action==="revoke-gate"?"LOCKED":"OVERRIDE";
       const changed=await supabase.from("learning_cycle_students").update({
         sos_gate_status:nextStatus,
         updated_at:new Date().toISOString(),
       }).eq("id",membershipId).eq("cycle_id",cycleId);
       if(changed.error)throw changed.error;
+
+      if(action==="override-start"){
+        const started=await supabase.rpc("sos_control_cycle_exam",{
+          p_cycle_id:cycleId,
+          p_action:"start-late",
+          p_membership_ids:[membershipId],
+        });
+        if(started.error){
+          await supabase.from("learning_cycle_students").update({
+            sos_gate_status:previousStatus,
+            updated_at:new Date().toISOString(),
+          }).eq("id",membershipId).eq("cycle_id",cycleId);
+          throw started.error;
+        }
+        return NextResponse.json({
+          ...started.data,
+          success:true,
+          started:1,
+          membershipId,
+          override:true,
+          message:"SOS 미완료 경고를 확인하고 이번 회차 시험을 지금 시작했습니다. 이 학생에게는 시작 시점부터 전체 시험시간이 부여됩니다.",
+        });
+      }
+
       return NextResponse.json({
         success:true,
         membershipId,
@@ -115,6 +147,7 @@ export async function POST(request: Request) {
           :"관리자 예외 허용을 취소했습니다. 실제 SOS 완료 상태로 다시 판정합니다.",
       });
     }
+
     const assigned=slot.rows.filter((r:any)=>r.exam_id&&!["CANCELLED","NO_SHOW","COMPLETED"].includes(String(r.booking_status)));
     const eligible=assigned.filter((r:any)=>action==="prepare"?true:action==="start"?r.sos_gate_open:action==="pause"?r.booking_status==="IN_PROGRESS"&&!r.exam?.paused_at&&Date.parse(r.exam?.close_at)>Date.now():r.booking_status==="IN_PROGRESS"&&r.exam?.paused_at);
     if(!eligible.length)return NextResponse.json({message:action==="start"?"시작할 학생이 없습니다. 시험지 배정과 이전 SOS 완료 상태를 확인해 주세요.":"처리할 학생이 없습니다. 회차와 배정 상태를 확인해 주세요."},{status:409});
