@@ -2138,7 +2138,7 @@ function RecommendPage() {
     setBulkBusy(true);setBulkResults({});
     const results:Record<string,{status:"success"|"failed"|"skipped";message:string}>={};
     for(const student of targets){
-      const id=String(student.id),name=String(student.name??"학생");
+      const id=String(student.id);
       try{
         if(cycleSessionsFor(student).length){results[id]={status:"skipped",message:"이미 SOS가 생성되어 제외"};setBulkResults({...results});continue;}
         const first=cycleCandidatesFor(student)[0];
