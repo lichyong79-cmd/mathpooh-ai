@@ -1827,7 +1827,7 @@ function RecommendPage() {
   const [selectedCycleId,setSelectedCycleId]=useState("");
   const [bulkSelectedIds,setBulkSelectedIds]=useState<string[]>([]);
   const [bulkBusy,setBulkBusy]=useState(false);
-  const [bulkResults,setBulkResults]=useState<Record<string,{status:"success"|"failed"|"skipped";message:string}>>({});
+  const [bulkResults,setBulkResults]=useState<Record<string,{status:"success"|"failed"|"skipped";message:string;no1?:string;unit?:string;diagnosis?:string}>>({});
 
 
   const load = useCallback(async () => {
@@ -2136,7 +2136,7 @@ function RecommendPage() {
     if(!targets.length)return alert("일괄 배정할 학생을 선택해 주세요.");
     if(!window.confirm(`선택한 ${targets.length}명에게 기존 SOS 배정 방식으로 진단 3문항을 일괄 배정할까요?\n\n각 학생의 SOS_NO1을 기준으로 AI 추천 상위 3문항을 자동 선택합니다. 이미 SOS가 생성된 학생은 건드리지 않습니다.`))return;
     setBulkBusy(true);setBulkResults({});
-    const results:Record<string,{status:"success"|"failed"|"skipped";message:string}>={};
+    const results:Record<string,{status:"success"|"failed"|"skipped";message:string;no1?:string;unit?:string;diagnosis?:string}>={};
     for(const student of targets){
       const id=String(student.id);
       try{
@@ -2152,7 +2152,14 @@ function RecommendPage() {
         const assignResponse=await fetch("/api/admin/training-engine",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"assign-diagnosis-selected",studentId:id,problemIds:top3,target:{...targetPayload,autoNextTargets:bulkAutoNextTargets(student,first),bulkAssigned:true}})});
         const assignData=await assignResponse.json();
         if(!assignResponse.ok)throw new Error(assignData.message||"진단 배정 실패");
-        results[id]={status:"success",message:"진단 3문항 배정 완료"};
+        const q=first.sourceQuestion??{},e=first.sourceExam??{};
+        results[id]={
+          status:"success",
+          message:"진단 3문항 배정 완료",
+          no1:`${e?.title??"실전모의고사"} ${sosQuestionNo(q)}번`,
+          unit:String(q?.unit??q?.minorUnit??q?.middleUnit??q?.subject??"미분류"),
+          diagnosis:`${top3.length}문항 배정`,
+        };
       }catch(error){results[id]={status:"failed",message:error instanceof Error?error.message:"배정 실패"};}
       setBulkResults({...results});
     }
@@ -2192,7 +2199,22 @@ function RecommendPage() {
             <b style={{fontSize:12,color:"#216e45"}}>{bulkSelectedIds.length}/{bulkEligibleRows.length}명 선택</b>
           </div>
           <button type="button" className="primary-button" disabled={bulkBusy||!bulkSelectedIds.length} onClick={()=>void runBulkAssignment()} style={{width:"100%",marginTop:9}}>{bulkBusy?"SOS 일괄 배정 중…":`선택 학생 SOS 일괄 배정 (${bulkSelectedIds.length}명)`}</button>
-          {Object.keys(bulkResults).length ? <div style={{display:"grid",gap:4,marginTop:9,fontSize:11}}>{Object.entries(bulkResults).map(([id,result])=>{const student=visibleRows.find((x:any)=>String(x.id)===id);const tone=result.status==="success"?"#176d42":result.status==="failed"?"#b42318":"#667085";return <span key={id} style={{color:tone,fontWeight:800}}>{student?.name??"학생"} · {result.status==="success"?"성공":result.status==="failed"?"실패":"제외"} · {result.message}</span>;})}</div>:null}
+          {Object.keys(bulkResults).length ? <div style={{marginTop:12,borderTop:"1px solid #dbe7df",paddingTop:10}}>
+            {(()=>{const entries=Object.entries(bulkResults);const success=entries.filter(([,r])=>r.status==="success").length;const failed=entries.filter(([,r])=>r.status==="failed").length;const skipped=entries.filter(([,r])=>r.status==="skipped").length;return <>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6,marginBottom:8}}>
+                <span style={{padding:"7px 8px",borderRadius:8,background:"#fff",fontSize:11,fontWeight:900}}>총 {entries.length}명</span>
+                <span style={{padding:"7px 8px",borderRadius:8,background:"#eef8f1",color:"#176d42",fontSize:11,fontWeight:900}}>배정 {success}명</span>
+                <span style={{padding:"7px 8px",borderRadius:8,background:"#f5f5f5",color:"#667085",fontSize:11,fontWeight:900}}>제외 {skipped}명</span>
+                <span style={{padding:"7px 8px",borderRadius:8,background:"#fff1ef",color:"#b42318",fontSize:11,fontWeight:900}}>실패 {failed}명</span>
+              </div>
+              <div style={{overflowX:"auto",background:"#fff",border:"1px solid #e2e8e4",borderRadius:10}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:520}}>
+                  <thead><tr style={{background:"#f7faf8",textAlign:"left"}}><th style={{padding:8}}>학생</th><th style={{padding:8}}>결과</th><th style={{padding:8}}>SOS_NO1</th><th style={{padding:8}}>단원</th><th style={{padding:8}}>진단</th></tr></thead>
+                  <tbody>{entries.map(([id,result])=>{const student=visibleRows.find((x:any)=>String(x.id)===id);const tone=result.status==="success"?"#176d42":result.status==="failed"?"#b42318":"#667085";return <tr key={id} style={{borderTop:"1px solid #edf1ee"}}><td style={{padding:8,fontWeight:900}}>{student?.name??"학생"}</td><td style={{padding:8,color:tone,fontWeight:900}}>{result.status==="success"?"성공":result.status==="failed"?"실패":"제외"}</td><td style={{padding:8}}>{result.no1??"-"}</td><td style={{padding:8}}>{result.unit??"-"}</td><td style={{padding:8}}>{result.diagnosis??result.message}</td></tr>})}</tbody>
+                </table>
+              </div>
+            </>})()}
+          </div>:null}
         </div> : null}
         <label style={{display:"grid",gap:6,marginBottom:12}}>운영 회차
           <select aria-label="SOS 대상 운영 회차" value={selectedCycleId} onChange={e=>{setSelectedCycleId(e.target.value);setSelectedId("");setConfirmedTarget(null);setDiagnosisReadyForNo1(false);setDiagnosisCandidates([]);setSelectedDiagnosisIds([]);setRejectedSourceKeys([]);}}>
