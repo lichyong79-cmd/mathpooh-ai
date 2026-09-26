@@ -1825,6 +1825,9 @@ function RecommendPage() {
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [cycleData,setCycleData]=useState<any>({cycles:[],exams:[]});
   const [selectedCycleId,setSelectedCycleId]=useState("");
+  const [bulkSelectedIds,setBulkSelectedIds]=useState<string[]>([]);
+  const [bulkBusy,setBulkBusy]=useState(false);
+  const [bulkResults,setBulkResults]=useState<Record<string,{status:"success"|"failed"|"skipped";message:string}>>({});
 
 
   const load = useCallback(async () => {
@@ -1885,6 +1888,11 @@ function RecommendPage() {
     setSelectedDiagnosisIds([]);
 
   }, [selectedId, selectedCycleId]);
+
+  useEffect(() => {
+    setBulkSelectedIds([]);
+    setBulkResults({});
+  }, [selectedCycleId]);
 
   const allSourceCandidates = useMemo(
     () => buildSosSourceCandidates(selected, sessions),
@@ -2092,6 +2100,67 @@ function RecommendPage() {
   const cycleSessionsFor=(student:any)=>(student?.sosSessions??[]).filter((x:any)=>String(x.learningCycleId)===String(selectedCycleId));
   const cycleStudentState=(student:any)=>{const ss=cycleSessionsFor(student);if(!selectedCycle)return "전체 이력";if(!ss.length)return cycleCandidatesFor(student).length?"SOS 미배정":"SOS 없음";const open=ss.find((x:any)=>["ASSIGNED","IN_PROGRESS","RETRAIN"].includes(String(x.status)));if(!open)return "SOS 완료";if(open.phase==="DIAGNOSIS")return `진단 ${open.roundNo}차 ${open.status==="ASSIGNED"?"대기":"진행중"}`;if(open.cycleKind==="HOMEWORK")return "3제 굳히기";return `${open.roundNo===2?"2차":"1차"}훈련 ${open.status==="ASSIGNED"?"대기":"진행중"}`;};
 
+  const bulkEligibleRows = selectedCycle ? visibleRows.filter((student:any) => cycleSessionsFor(student).length===0 && cycleCandidatesFor(student).length>0) : [];
+  const toggleBulkStudent=(id:string)=>setBulkSelectedIds((current)=>current.includes(id)?current.filter(x=>x!==id):[...current,id]);
+  const toggleBulkAll=()=>setBulkSelectedIds((current)=>current.length===bulkEligibleRows.length?[]:bulkEligibleRows.map((x:any)=>String(x.id)));
+
+  const bulkTargetPayload=(student:any,candidate:any)=>{
+    const item=candidate.sourceQuestion??{};
+    const exam=candidate.sourceExam??{};
+    const unit=String(item?.unit??item?.minorUnit??item?.middleUnit??item?.subject??"").trim();
+    const type=String(item?.type??item?.topic??item?.detailedTopic??"").trim();
+    const sourceAttemptId=String(exam?.attemptId??exam?.attempt_id??exam?.examId??exam?.exam_id??"");
+    return {
+      units:unit?[{label:unit,rate:0}]:student.weakUnits,
+      types:type?[{label:type,rate:0}]:student.weakTypes,
+      sourceAttemptId, sourceExamId:exam?.examId??exam?.exam_id??null, sourceExamTitle:exam?.title??"실전모의고사",
+      sourceExamCode:exam?.examCode??exam?.exam_code??"", sourceSubject:item?.subject??exam?.subject??null, sourceUnit:unit||null,
+      sourceMajorUnit:item?.majorUnit??null, sourceMiddleUnit:item?.middleUnit??null, sourceMinorUnit:item?.minorUnit??null,
+      sourceDetailedTopic:item?.detailedTopic??item?.type??item?.topic??null, sourceQuestionType:item?.questionType??null,
+      sourceProblemTypes:Array.isArray(item?.problemTypes)?item.problemTypes:[], sourceQuestionNo:sosQuestionNo(item),
+      sourceDifficulty:sosDifficulty(item?.difficulty), sourcePriority:candidate.priority, sourceVerdict:candidate.verdict,
+      sourceKey:String(candidate.key??""), sosNo:1, ...cycleSnapshot,
+    };
+  };
+
+  const bulkAutoNextTargets=(student:any,first:any)=>cycleCandidatesFor(student)
+    .filter((candidate:any)=>candidate?.key!==first?.key).slice(0,5).map((candidate:any)=>{
+      const q=candidate?.sourceQuestion??{},e=candidate?.sourceExam??{};
+      const unit=String(q?.unit??q?.minorUnit??q?.middleUnit??q?.subject??"").trim();
+      return {sourceKey:String(candidate?.key??""),sourceExamId:e?.examId??e?.exam_id??null,sourceExamTitle:e?.title??"실전모의고사",sourceExamCode:e?.examCode??e?.exam_code??"",sourceSubject:q?.subject??e?.subject??null,sourceUnit:unit||null,sourceMajorUnit:q?.majorUnit??null,sourceMiddleUnit:q?.middleUnit??null,sourceMinorUnit:q?.minorUnit??null,sourceDetailedTopic:q?.detailedTopic??q?.type??q?.topic??null,sourceQuestionType:q?.questionType??null,sourceProblemTypes:Array.isArray(q?.problemTypes)?q.problemTypes:[],sourceQuestionNo:sosQuestionNo(q),sourceDifficulty:sosDifficulty(q?.difficulty),sourcePriority:candidate?.priority??null,sourceVerdict:candidate?.verdict??null};
+    });
+
+  const runBulkAssignment=async()=>{
+    if(!selectedCycle)return alert("먼저 운영 회차를 선택해 주세요.");
+    const targets=bulkEligibleRows.filter((student:any)=>bulkSelectedIds.includes(String(student.id)));
+    if(!targets.length)return alert("일괄 배정할 학생을 선택해 주세요.");
+    if(!window.confirm(`선택한 ${targets.length}명에게 기존 SOS 배정 방식으로 진단 3문항을 일괄 배정할까요?\n\n각 학생의 SOS_NO1을 기준으로 AI 추천 상위 3문항을 자동 선택합니다. 이미 SOS가 생성된 학생은 건드리지 않습니다.`))return;
+    setBulkBusy(true);setBulkResults({});
+    const results:Record<string,{status:"success"|"failed"|"skipped";message:string}>={};
+    for(const student of targets){
+      const id=String(student.id),name=String(student.name??"학생");
+      try{
+        if(cycleSessionsFor(student).length){results[id]={status:"skipped",message:"이미 SOS가 생성되어 제외"};setBulkResults({...results});continue;}
+        const first=cycleCandidatesFor(student)[0];
+        if(!first){results[id]={status:"skipped",message:"배정할 SOS_NO1 후보 없음"};setBulkResults({...results});continue;}
+        const targetPayload=bulkTargetPayload(student,first);
+        const candidateResponse=await fetch("/api/admin/training-engine",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"diagnosis-candidates",studentId:id,target:targetPayload})});
+        const candidateData=await candidateResponse.json();
+        if(!candidateResponse.ok)throw new Error(candidateData.message||"진단 후보 조회 실패");
+        const top3=(candidateData.candidates??[]).slice(0,3).map((x:any)=>String(x.id));
+        if(top3.length!==3)throw new Error(`진단 후보 부족 (${top3.length}/3)`);
+        const assignResponse=await fetch("/api/admin/training-engine",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"assign-diagnosis-selected",studentId:id,problemIds:top3,target:{...targetPayload,autoNextTargets:bulkAutoNextTargets(student,first),bulkAssigned:true}})});
+        const assignData=await assignResponse.json();
+        if(!assignResponse.ok)throw new Error(assignData.message||"진단 배정 실패");
+        results[id]={status:"success",message:"진단 3문항 배정 완료"};
+      }catch(error){results[id]={status:"failed",message:error instanceof Error?error.message:"배정 실패"};}
+      setBulkResults({...results});
+    }
+    await load();
+    if(selectedId)await loadSessions(selectedId);
+    setBulkBusy(false);
+  };
+
   return <>
     <section className="page-title-row">
       <div>
@@ -2117,6 +2186,14 @@ function RecommendPage() {
     <section className="panel recommendation-layout">
       <aside className="recommendation-students">
         <h3>학생별 SOS 대상</h3>
+        {selectedCycle ? <div style={{marginBottom:12,padding:12,border:"1px solid #cfe0d4",borderRadius:12,background:"#f5faf7"}}>
+          <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"space-between",flexWrap:"wrap"}}>
+            <label style={{display:"flex",gap:7,alignItems:"center",fontWeight:900,fontSize:12}}><input type="checkbox" checked={bulkEligibleRows.length>0&&bulkSelectedIds.length===bulkEligibleRows.length} onChange={toggleBulkAll} disabled={bulkBusy||!bulkEligibleRows.length}/> 미배정 전체 선택</label>
+            <b style={{fontSize:12,color:"#216e45"}}>{bulkSelectedIds.length}/{bulkEligibleRows.length}명 선택</b>
+          </div>
+          <button type="button" className="primary-button" disabled={bulkBusy||!bulkSelectedIds.length} onClick={()=>void runBulkAssignment()} style={{width:"100%",marginTop:9}}>{bulkBusy?"SOS 일괄 배정 중…":`선택 학생 SOS 일괄 배정 (${bulkSelectedIds.length}명)`}</button>
+          {Object.keys(bulkResults).length ? <div style={{display:"grid",gap:4,marginTop:9,fontSize:11}}>{Object.entries(bulkResults).map(([id,result])=>{const student=visibleRows.find((x:any)=>String(x.id)===id);const tone=result.status==="success"?"#176d42":result.status==="failed"?"#b42318":"#667085";return <span key={id} style={{color:tone,fontWeight:800}}>{student?.name??"학생"} · {result.status==="success"?"성공":result.status==="failed"?"실패":"제외"} · {result.message}</span>;})}</div>:null}
+        </div> : null}
         <label style={{display:"grid",gap:6,marginBottom:12}}>운영 회차
           <select aria-label="SOS 대상 운영 회차" value={selectedCycleId} onChange={e=>{setSelectedCycleId(e.target.value);setSelectedId("");setConfirmedTarget(null);setDiagnosisReadyForNo1(false);setDiagnosisCandidates([]);setSelectedDiagnosisIds([]);setRejectedSourceKeys([]);}}>
             <option value="" disabled>회차 선택</option><option value="ALL">전체 회차</option>
@@ -2129,15 +2206,19 @@ function RecommendPage() {
           const first = candidates[0];
           const state=cycleStudentState(item);
           const stateTone=state==="SOS 완료"?"#176d42":state.includes("미배정")?"#b54708":"#475467";
-          return <button
-            key={item.id}
+          const bulkEligible=Boolean(selectedCycle)&&cycleSessionsFor(item).length===0&&candidates.length>0;
+          const bulkChecked=bulkSelectedIds.includes(String(item.id));
+          return <div key={item.id} style={{position:"relative"}}>
+            {bulkEligible ? <label title="SOS 일괄 배정 선택" style={{position:"absolute",zIndex:2,left:8,top:10,display:"grid",placeItems:"center",width:24,height:24,borderRadius:7,background:bulkChecked?"#e8f5ed":"#fff",border:"1px solid #b8c9be",cursor:bulkBusy?"default":"pointer"}} onClick={e=>e.stopPropagation()}><input type="checkbox" checked={bulkChecked} disabled={bulkBusy} onChange={()=>toggleBulkStudent(String(item.id))} style={{margin:0}}/></label>:null}
+          <button
+            style={{width:"100%",paddingLeft:bulkEligible?42:undefined}}
             className={String(item.id) === String(selected?.id) ? "selected" : ""}
             onClick={() => setSelectedId(String(item.id))}
           >
             <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"center"}}><strong>{item.name}</strong><em style={{fontStyle:"normal",fontSize:10,fontWeight:950,color:stateTone}}>{state}</em></div>
             <span>{selectedCycle?.name??"전체 회차"} · {candidates.length?`SOS 후보 ${candidates.length}개`:"공략 오답 없음"}</span>
             <small>{first ? `${first.sourceExam?.title || "실전모의고사"} ${sosQuestionNo(first.sourceQuestion)}번 · 우선도 ${first.priority}` : cycleSessionsFor(item).length?`이미 ${cycleSessionsFor(item).length}단계 생성됨`:"이 회차에서 배정할 SOS 없음"}</small>
-          </button>;
+          </button></div>;
         })}
       </aside>
 
