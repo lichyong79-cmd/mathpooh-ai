@@ -81,8 +81,8 @@ export async function POST(request: Request) {
     if(!selectedIds.includes(cycleId))return NextResponse.json({message:"신청한 참가일만 변경할 수 있습니다."},{status:400});
     const cycle=await supabase.from("learning_cycles").select("id,scheduled_at").eq("id",cycleId).maybeSingle();
     if(cycle.error||!cycle.data?.scheduled_at)return NextResponse.json({message:"시험 시작시간을 확인할 수 없습니다."},{status:400});
-    const lockAt=new Date(cycle.data.scheduled_at).getTime()-60*60*1000;
-    if(Date.now()>=lockAt)return NextResponse.json({message:"시험지 출력이 시작되어 유형을 변경할 수 없습니다. 시험 1시간 전까지만 변경 가능합니다."},{status:409});
+    const lockAt=new Date(cycle.data.scheduled_at).getTime()-24*60*60*1000;
+    if(Date.now()>=lockAt)return NextResponse.json({message:"시험지 출력이 시작되어 유형을 변경할 수 없습니다. 시험 24시간 전까지만 변경 가능합니다."},{status:409});
 
     if(String(app.data.status)==="ENROLLED"){
       const membership=await supabase.from("learning_cycle_students").select("id,student_id").eq("cycle_id",cycleId).eq("student_id",app.data.student_id).eq("status","ACTIVE").maybeSingle();
