@@ -337,6 +337,31 @@ export default function ParentPortal() {
     }
   };
 
+  const changeAppliedScope = async (application:any, cycle:any, nextScope:string) => {
+    if (!application?.id || applicationBusy) return;
+    const scheduledAt = cycle?.scheduled_at ? new Date(cycle.scheduled_at).getTime() : NaN;
+    const locked = Number.isFinite(scheduledAt) && Date.now() >= scheduledAt - 60 * 60 * 1000;
+    if (locked) return alert("시험지 출력이 시작되어 유형을 변경할 수 없습니다. 시험 1시간 전까지만 변경 가능합니다.");
+    const letter = nextScope === "ALGEBRA" ? "A · 대수" : nextScope === "ALGEBRA_CALC1" ? "B · 대수+미적Ⅰ" : "C · 대수+미적Ⅰ+확통";
+    if (!confirm(`${fmt(cycle.start_date)} 시험 유형을 ${letter}로 변경할까요?\n시험 1시간 전부터는 변경할 수 없습니다.`)) return;
+    setApplicationBusy(`scope-${application.id}-${cycle.cycle_id ?? cycle.id}`);
+    try {
+      const r = await fetch("/api/program-applications", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "update-scope", applicationId: application.id, cycleId: String(cycle.cycle_id ?? cycle.id), scopeCode: nextScope }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.message || "시험 유형을 변경하지 못했습니다.");
+      await load();
+      alert(`${fmt(cycle.start_date)} 시험 유형을 ${letter}로 변경했습니다.`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "시험 유형을 변경하지 못했습니다.");
+    } finally {
+      setApplicationBusy("");
+    }
+  };
+
   const cancelProgramApplication = async (application: any) => {
     if (!application?.id || applicationBusy) return;
     if (!confirm("이 SOS 신청을 취소할까요?\n취소 후에는 다시 신청할 수 있습니다.")) return;
@@ -802,7 +827,7 @@ export default function ParentPortal() {
                     <article key={batch.id} className="application-program">
                       <div className="application-program-head"><div><small>MATHPOOH SOS</small><b>{batch.title}</b><span>1회 {unitPrice.toLocaleString("ko-KR")}원 · 선택 가능한 참가일 {available.length}개</span></div>{applied ? <strong className={applied.status === "ENROLLED" ? "assigned" : "requested"}>{applied.status === "ENROLLED" ? "일정 확정" : applied.status === "PAID" ? "결제 확인" : "신청 접수"}</strong> : null}</div>
                       <div className="application-cycle-grid">
-                        {(batch.cycles ?? []).map((c: any) => { const cycleId = String(c.cycle_id ?? c.id); const checked = displayedCycles.includes(cycleId); const appliedScope = applied?.selected_cycle_scopes?.[cycleId] ?? applied?.scope_code ?? "FULL"; return <label key={cycleId} className={`${c.is_closed ? "closed" : ""} ${checked ? "picked" : ""}`}><input type="checkbox" disabled={c.is_closed || !!applied} checked={checked} onChange={() => toggleCycle(cycleId)} /><b>{fmt(c.start_date)}</b><span>{SOS_DEFAULT_START_LABEL}</span><select aria-label={`${fmt(c.start_date)} 시험 범위`} disabled={c.is_closed || !!applied || !checked} value={applied ? appliedScope : (cycleScopeById[cycleId] ?? "FULL")} onClick={(e) => e.stopPropagation()} onChange={(e) => { const value=e.target.value; setCycleScopeById((prev)=>({...prev,[cycleId]:value})); if(!checked) toggleCycle(cycleId); }}><option value="ALGEBRA">A · 대수</option><option value="ALGEBRA_CALC1">B · 대수+미적Ⅰ</option><option value="FULL">C · 대수+미적Ⅰ+확통</option></select>{c.is_closed ? <em>마감</em> : checked ? <em>{applied ? "신청 범위" : "선택 완료"}</em> : <em>날짜를 먼저 선택하세요</em>}</label>; })}
+                        {(batch.cycles ?? []).map((c: any) => { const cycleId = String(c.cycle_id ?? c.id); const checked = displayedCycles.includes(cycleId); const appliedScope = applied?.selected_cycle_scopes?.[cycleId] ?? applied?.scope_code ?? "FULL"; const printLockAt=c.scheduled_at?new Date(c.scheduled_at).getTime()-60*60*1000:NaN; const scopeLocked=c.is_closed||(Number.isFinite(printLockAt)&&Date.now()>=printLockAt); const scopeBusy=applicationBusy===`scope-${applied?.id}-${cycleId}`; return <label key={cycleId} className={`${scopeLocked ? "closed" : ""} ${checked ? "picked" : ""}`}><input type="checkbox" disabled={c.is_closed || !!applied} checked={checked} onChange={() => toggleCycle(cycleId)} /><b>{fmt(c.start_date)}</b><span>{SOS_DEFAULT_START_LABEL}</span><select aria-label={`${fmt(c.start_date)} 시험 범위`} disabled={!checked || scopeLocked || scopeBusy} value={applied ? appliedScope : (cycleScopeById[cycleId] ?? "FULL")} onClick={(e) => e.stopPropagation()} onChange={(e) => { const value=e.target.value; if(applied){void changeAppliedScope(applied,c,value);} else {setCycleScopeById((prev)=>({...prev,[cycleId]:value})); if(!checked) toggleCycle(cycleId);} }}><option value="ALGEBRA">A · 대수</option><option value="ALGEBRA_CALC1">B · 대수+미적Ⅰ</option><option value="FULL">C · 대수+미적Ⅰ+확통</option></select>{scopeLocked ? <em>출력 시작 · 변경 마감</em> : checked ? <em>{applied ? "시험 1시간 전까지 변경 가능" : "선택 완료"}</em> : <em>날짜를 먼저 선택하세요</em>}</label>; })}
                       </div>
                       {!applied ? <div className="application-buttons"><button className="request all" disabled={applicationBusy === String(batch.id) || !available.length} onClick={() => void changeApplication(batch, "ALL")}>{applicationBusy === String(batch.id) ? "처리 중…" : `${available.length === 5 ? "5회 참가 신청" : `남은 ${available.length}회 참가 신청`} · ${(unitPrice * available.length).toLocaleString("ko-KR")}원`}</button><button className="request selected" disabled={applicationBusy === String(batch.id) || !selectedCycles.length} onClick={() => void changeApplication(batch, "CYCLES")}>{selectedCycles.length ? `선택한 날짜 ${selectedCycles.length}회 · ${selectedPrice.toLocaleString("ko-KR")}원` : "참가일을 선택해 주세요"}</button></div> : <div className="application-applied-detail"><span>{Array.isArray(applied.selected_cycle_ids) && applied.selected_cycle_ids.length ? `예약 참가일 ${applied.selected_cycle_ids.length}개 · ${Number(applied.charged_price ?? 0).toLocaleString("ko-KR")}원` : "전체 참가일 신청"}</span>{applied.status === "REQUESTED" ? <button disabled={applicationBusy === `cancel-${applied.id}`} onClick={() => void cancelProgramApplication(applied)}>{applicationBusy === `cancel-${applied.id}` ? "취소 처리 중…" : "신청 취소"}</button> : <small>결제 확인 또는 일정 확정 후 변경은 관리자에게 문의해 주세요.</small>}</div>}
                     </article>
