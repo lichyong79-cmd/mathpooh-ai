@@ -66,6 +66,41 @@ export async function POST(request: Request) {
     return cancelled.error ? NextResponse.json({ message: missing(cancelled.error.message) }, { status: 400 }) : NextResponse.json({ success: true });
   }
 
+  if (action === "update-scope") {
+    const applicationId=String(body.applicationId??"");
+    const cycleId=String(body.cycleId??"");
+    const nextScope=normalizeSosScope(body.scopeCode);
+    if(!applicationId||!cycleId)return NextResponse.json({message:"신청 회차를 확인해 주세요."},{status:400});
+    const supabase=createClient();
+    const app=await supabase.from("sos_program_applications").select("id,student_id,parent_phone,status,selected_cycle_ids,selected_cycle_scopes,scope_code").eq("id",applicationId).maybeSingle();
+    if(app.error||!app.data||digits(app.data.parent_phone)!==parentPhoneFromUser)
+      return NextResponse.json({message:"신청 정보를 확인할 수 없습니다."},{status:404});
+    if(!["REQUESTED","PAID","ENROLLED"].includes(String(app.data.status)))
+      return NextResponse.json({message:"현재 상태에서는 시험지 유형을 변경할 수 없습니다."},{status:409});
+    const selectedIds=Array.isArray(app.data.selected_cycle_ids)?app.data.selected_cycle_ids.map(String):[];
+    if(!selectedIds.includes(cycleId))return NextResponse.json({message:"신청한 참가일만 변경할 수 있습니다."},{status:400});
+    const cycle=await supabase.from("learning_cycles").select("id,scheduled_at").eq("id",cycleId).maybeSingle();
+    if(cycle.error||!cycle.data?.scheduled_at)return NextResponse.json({message:"시험 시작시간을 확인할 수 없습니다."},{status:400});
+    const lockAt=new Date(cycle.data.scheduled_at).getTime()-60*60*1000;
+    if(Date.now()>=lockAt)return NextResponse.json({message:"시험지 출력이 시작되어 유형을 변경할 수 없습니다. 시험 1시간 전까지만 변경 가능합니다."},{status:409});
+
+    if(String(app.data.status)==="ENROLLED"){
+      const membership=await supabase.from("learning_cycle_students").select("id,student_id").eq("cycle_id",cycleId).eq("student_id",app.data.student_id).eq("status","ACTIVE").maybeSingle();
+      if(membership.error||!membership.data)return NextResponse.json({message:"확정된 참가 일정을 찾지 못했습니다."},{status:404});
+      const attempts=await supabase.from("exam_attempts").select("formal_sequence").eq("student_id",app.data.student_id).eq("status","submitted").eq("is_practice",false).eq("scope_code",nextScope);
+      if(attempts.error)return NextResponse.json({message:attempts.error.message},{status:400});
+      const formalSequence=Math.max(0,...(attempts.data??[]).map((x:any)=>Number(x.formal_sequence)||0))+1;
+      const assigned=await supabase.rpc("sos_assign_papers",{p_cycle_id:cycleId,p_items:[{membershipId:membership.data.id,formalSequence,scopeCode:nextScope}],p_only_unassigned:false});
+      if(assigned.error)return NextResponse.json({message:assigned.error.message},{status:400});
+      const result=(assigned.data as any)?.results?.[0];
+      if(result?.status!=="assigned")return NextResponse.json({message:result?.message||"변경할 시험지를 배정하지 못했습니다."},{status:409});
+    }
+
+    const scopes={...(app.data.selected_cycle_scopes??{}),[cycleId]:nextScope};
+    const updated=await supabase.from("sos_program_applications").update({selected_cycle_scopes:scopes,scope_code:nextScope,updated_at:new Date().toISOString()}).eq("id",applicationId);
+    return updated.error?NextResponse.json({message:updated.error.message},{status:400}):NextResponse.json({success:true,scopeCode:nextScope});
+  }
+
   const batchId = String(body.batchId ?? "");
   const parentName = String(user.user_metadata?.name ?? body.parentName ?? "학부모").trim();
   const parentPhone = parentPhoneFromUser;
