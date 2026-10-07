@@ -218,9 +218,10 @@ export async function GET(request: Request) {
     if (!registration.cycle_student_id) return true;
     const membership = (memberships.data ?? []).find((row: any) => String(row.id) === String(registration.cycle_student_id));
     if (!membership || membership.booking_status === "COMPLETED") return true;
-    const resolved = resolvedSequenceByMembership.get(String(membership.id));
-    return Number(registration.formal_sequence) === Number(resolved) &&
-      String(registration.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL");
+    // 관리자가 특정 회차에 시험지를 직접 교체한 경우(예: C03 대신 C04),
+    // 공식 다음 순번과 시험지 카탈로그 순번이 달라도 현재 회차의 직접 배정을 우선한다.
+    // cycle_student_id가 정확히 일치하고 범위가 같은 배정이면 학생 화면에 노출한다.
+    return String(registration.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL");
   });
   const validAccessibleExamIds = new Set(validRegistrations.map((registration: any) => String(registration.exam_id)));
   const registrationMap = new Map(validRegistrations.map((registration: any) => [String(registration.exam_id), registration]));
