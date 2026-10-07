@@ -1,3 +1,4 @@
+import { bookedSequence } from "@/lib/exam-assignment";
 import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import { nextExamSequence } from "@/lib/exam-flow";
 import { NextResponse } from "next/server";
@@ -208,7 +209,7 @@ export async function GET() {
     const runningByScope=new Map(completedByScope);
     const childSchedules=pendingSchedules.map((schedule:any)=>{
       const scope=String(schedule.scope_code??"FULL");
-      const formalSequence=nextExamSequence(attempts.filter((a:any)=>String(a.student_id)===String(child.id)),scope);
+      const formalSequence=bookedSequence(registrations,schedule,nextExamSequence(attempts.filter((a:any)=>String(a.student_id)===String(child.id)),scope));
       runningByScope.set(scope,formalSequence);
       return {...schedule,formal_sequence:formalSequence};
     });

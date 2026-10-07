@@ -1,0 +1,26 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const ts=require('typescript');
+const Module=require('node:module');
+const source=fs.readFileSync('src/lib/exam-assignment.ts','utf8');
+const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+const m=new Module('exam-assignment-tests');m._compile(compiled,'exam-assignment-tests.js');
+const {exactPaperBooking,bookedSequence,defaultPaper}=m.exports;
+const member={id:'membership-1',student_id:'student-1',scope_code:'FULL',formal_sequence:3};
+const booking={id:'booking-1',student_id:'student-1',cycle_student_id:'membership-1',scope_code:'FULL',formal_sequence:3,exam_id:'C04',status:'assigned'};
+let count=0;
+function test(name,fn){fn();count++;console.log('PASS',name);}
+test('Explicit C04 resolves at personal attendance 3',()=>{assert.equal(exactPaperBooking([booking],member).exam_id,'C04');assert.equal(bookedSequence([booking],member,3),3);});
+test('Existing explicit booking sequence is authoritative',()=>assert.equal(bookedSequence([{...booking,formal_sequence:4}],member,3),4));
+test('Another student/cycle/scope never matches',()=>{for(const change of [{student_id:'other'},{cycle_student_id:'other'},{scope_code:'ALGEBRA'}])assert.equal(exactPaperBooking([{...booking,...change}],member),undefined);});
+test('Cancelled registration ignored',()=>assert.equal(exactPaperBooking([{...booking,status:'cancelled'}],member),undefined));
+test('No booking retains automatic fallback',()=>assert.equal(bookedSequence([],member,3),3));
+const catalog=[{formal_sequence:3,scope_code:'FULL',exam_id:'C03'},{formal_sequence:4,scope_code:'FULL',exam_id:'C04'},{formal_sequence:1,scope_code:'ALGEBRA',exam_id:'A01'}];
+test('Default remains C03 for third unattempted paper',()=>assert.equal(defaultPaper(catalog,[],3,'FULL').exam_id,'C03'));
+test('Default skips previously consumed paper after override',()=>assert.equal(defaultPaper(catalog,[{exam_id:'C03',status:'submitted'}],3,'FULL').exam_id,'C04'));
+test('Never default to a previously opened paper',()=>assert.equal(defaultPaper(catalog,[{exam_id:'C03',status:'in_progress'},{exam_id:'C04',status:'submitted'}],3,'FULL'),undefined));
+test('Other scopes remain isolated',()=>assert.equal(defaultPaper(catalog,[],1,'ALGEBRA').exam_id,'A01'));
+test('Student schedule uses direct registration, not computed catalogue slot',()=>assert.match(fs.readFileSync('src/app/api/student/portal/route.ts','utf8'),/const examId = directBooking \? String\(directBooking.exam_id\)/));
+test('Timer link uses actual paper, not personal attendance count',()=>assert.doesNotMatch(fs.readFileSync('src/app/api/admin/exam-slots/route.ts','utf8'),/item\.exam_id === registration\?\.exam_id && Number\(item\.formal_sequence\)/));
+test('Admin UI includes manual change control',()=>assert.match(fs.readFileSync('src/app/admin/WeeklyAssignments.tsx','utf8'),/<ManualPaperChange row=\{row\}/));
+console.log(`All ${count} paper override regression tests passed.`);

@@ -60,7 +60,7 @@ async function slotRows(supabase: any, cycleId: string) {
         String(session.student_id) === String(membership.student_id));
       const gateOpen = priorLearningPassed((allMemberships.data ?? []).filter((m:any)=>String(m.student_id)===String(membership.student_id)), studentSessions, membership);
       const link = (links.data ?? []).find((item: any) =>
-        item.exam_id === registration?.exam_id && Number(item.formal_sequence) === formalSequence &&
+        item.exam_id === registration?.exam_id &&
         String(item.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL"));
       return {
         ...membership,

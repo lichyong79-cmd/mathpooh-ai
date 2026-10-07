@@ -1,3 +1,4 @@
+import { exactPaperBooking, bookedSequence } from "@/lib/exam-assignment";
 import { isArchivedPracticeExam, isArchivedPracticeCycle, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import { nextExamSequence, priorLearningPassed, bookingExam } from "@/lib/exam-flow";
 import { NextResponse } from "next/server";
@@ -209,7 +210,7 @@ export async function GET(request: Request) {
   const resolvedSequenceByMembership = new Map<string,number>();
   pendingMemberships.forEach((membership:any)=>{
     const scope=String(membership.scope_code??"FULL");
-    const sequence=nextExamSequence(canonicalAttempts, scope);
+    const sequence=bookedSequence(registrations??[],membership,nextExamSequence(canonicalAttempts, scope));
     runningByScope.set(scope,sequence);
     resolvedSequenceByMembership.set(String(membership.id),sequence);
   });
@@ -443,12 +444,14 @@ export async function GET(request: Request) {
     return !membership?.is_practice && !(links.length && links.every((link: any) => archivedExamIds.has(String(link.exam_id))));
   }).map((cycle: any) => {
     const membership: any = membershipByCycle.get(String(cycle.id)) ?? {};
-    const resolvedSequence = resolvedSequenceByMembership.get(String(membership.id)) ?? Number(membership.formal_sequence ?? 0);
+    const directBooking = exactPaperBooking(registrations ?? [], membership);
+    const resolvedSequence = bookedSequence(registrations ?? [], membership,
+      resolvedSequenceByMembership.get(String(membership.id)) ?? Number(membership.formal_sequence ?? 0));
     const link = memberExamLinks.find((row: any) =>
       String(row.cycle_id) === String(cycle.id) &&
-      Number(row.formal_sequence) === Number(resolvedSequence) &&
+      (directBooking ? String(row.exam_id) === String(directBooking.exam_id) : Number(row.formal_sequence) === Number(resolvedSequence)) &&
       String(row.scope_code ?? "FULL") === String(membership.scope_code ?? "FULL"));
-    const examId = link ? String(link.exam_id) : null;
+    const examId = directBooking ? String(directBooking.exam_id) : link ? String(link.exam_id) : null;
     const previous = Number(resolvedSequence) <= 1
       ? null
       : (memberships.data ?? []).find((row: any) =>
