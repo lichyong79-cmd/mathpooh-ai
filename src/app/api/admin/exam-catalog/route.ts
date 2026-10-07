@@ -1,5 +1,6 @@
 import { isArchivedPracticeCycle, isArchivedPracticeExam, isArchivedPracticeSession } from "@/lib/archived-practice-exams";
 import { nextExamSequence, priorLearningPassed } from "@/lib/exam-flow";
+import { defaultPaper } from "@/lib/exam-assignment";
 import { NextResponse } from "next/server";
 import { getAdminUser } from "@/lib/supabase/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -53,7 +54,8 @@ export async function GET(request: Request) {
           const previous=(history.data??[]).filter(h=>h.student_id===m.student_id&&String(h.scope_code??"FULL")===scope&&Number(h.formal_sequence)===sequence-1&&!h.is_practice);
           const passed=priorLearningPassed((history.data??[]).filter(h=>h.student_id===m.student_id),(sessions.data??[]).filter(t=>t.student_id===m.student_id),m);
           const nextByScope=Object.fromEntries(SOS_SCOPE_CODES.map(code=>[code,nextExamSequence((attempts.data??[]).filter(a=>a.student_id===m.student_id),code)]));
-          return {...m,next_by_scope:nextByScope,completed_sequence:completed,next_sequence:completed+1,sos_passed:passed,registration,exam,attempt_status:attempt?.status??null,past,locked:past||!!attempt};
+          const defaultByScope=Object.fromEntries(SOS_SCOPE_CODES.map(code=>[code,defaultPaper(catalog.data??[],(attempts.data??[]).filter(a=>a.student_id===m.student_id),nextByScope[code],code)??null]));
+          return {...m,default_by_scope:defaultByScope,next_by_scope:nextByScope,completed_sequence:completed,next_sequence:completed+1,sos_passed:passed,registration,exam,attempt_status:attempt?.status??null,past,locked:past||!!attempt};
         });
       }
     }
