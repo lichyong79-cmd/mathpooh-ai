@@ -27,8 +27,10 @@ jobs:
           cache: npm
       - name: Integrate patch
         run: python3 scripts/apply-paper-override.py
-      - name: Install exact locked dependencies
-        run: npm ci --ignore-scripts
+      - name: Reconcile existing manifest and lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Regression tests
         run: node scripts/test-paper-overrides.cjs
       - name: Production build and types
@@ -38,7 +40,7 @@ jobs:
           git config user.name 'SOS Maintenance'
           git config user.email 'sos-maintenance@users.noreply.github.com'
           git rm scripts/apply-paper-override.py .github/workflows/sos-paper-override-build.yml
-          git add src/app/admin/WeeklyAssignments.tsx src/app/api/admin/exam-catalog/route.ts src/app/api/admin/exam-slots/route.ts src/app/api/student/portal/route.ts src/app/api/parent/portal/route.ts
+          git add package-lock.json src/app/admin/WeeklyAssignments.tsx src/app/api/admin/exam-catalog/route.ts src/app/api/admin/exam-slots/route.ts src/app/api/student/portal/route.ts src/app/api/parent/portal/route.ts
           git diff --cached --check
           git commit -m 'SOS: integrate verified administrator paper overrides'
           git push origin HEAD:fix/admin-paper-override-20261007
