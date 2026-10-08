@@ -4251,7 +4251,7 @@ function ExamsPage({
 
   const replacementInfo = (exam: Pick<PracticeExam, "memo">) => {
     const match = String(exam.memo ?? "").match(
-      /^SOS_REPLACEMENT\\|SOURCE=([0-9a-f-]{36})\\|RANGE=(\\d+)-(\\d+)\\|/i,
+      /^SOS_REPLACEMENT\|SOURCE=([0-9a-f-]{36})\|RANGE=(\d+)-(\d+)\|/i,
     );
     return match
       ? { sourceExamId: match[1], fromQuestion: Number(match[2]), toQuestion: Number(match[3]) }
@@ -4259,23 +4259,23 @@ function ExamsPage({
   };
 
   const isReplacedSource = (exam: Pick<PracticeExam, "memo">) =>
-    /(?:^|\\n)SOS_REPLACED_BY=/i.test(String(exam.memo ?? ""));
+    /(?:^|\n)SOS_REPLACED_BY=/i.test(String(exam.memo ?? ""));
 
   const createReplacement = async (exam: PracticeExam) => {
-    if (!/^SOS_[ABC]_\\d+$/i.test(exam.examCode))
+    if (!/^SOS_[ABC]_\d+$/i.test(exam.examCode))
       return alert("A/B/C 정식 SOS 시험지만 교체본을 만들 수 있습니다.");
     if (replacementInfo(exam))
       return alert("이미 교체본으로 만든 시험입니다.");
     if (isReplacedSource(exam))
       return alert("이미 새 교체본으로 전환된 과거 보관 시험입니다.");
 
-    const defaultRange = exam.questionCount === 30 ? "23-30" : `1-${exam.questionCount}`;
+    const defaultRange = exam.questionCount === 30 ? "23-30" : \`1-\${exam.questionCount}\`;
     const entered = window.prompt(
-      `${exam.examCode}에서 교체할 문항 범위를 입력하세요.\\n예: 23-30\\n\\n원본 시험과 기존 응시 기록은 그대로 보존됩니다.`,
+      \`\${exam.examCode}에서 교체할 문항 범위를 입력하세요.\n예: 23-30\n\n원본 시험과 기존 응시 기록은 그대로 보존됩니다.\`,
       defaultRange,
     );
     if (!entered) return;
-    const match = entered.trim().match(/^(\\d+)\\s*[-~]\\s*(\\d+)$/);
+    const match = entered.trim().match(/^(\d+)\s*[-~]\s*(\d+)$/);
     if (!match) return alert("문항 범위를 23-30처럼 입력해 주세요.");
     const fromQuestion = Number(match[1]);
     const toQuestion = Number(match[2]);
@@ -4286,11 +4286,11 @@ function ExamsPage({
       toQuestion < fromQuestion ||
       toQuestion > exam.questionCount
     )
-      return alert(`1~${exam.questionCount} 범위 안에서 교체 문항을 지정해 주세요.`);
+      return alert(\`1~\${exam.questionCount} 범위 안에서 교체 문항을 지정해 주세요.\`);
 
     if (
       !window.confirm(
-        `${exam.examCode} 교체본을 새 시험 ID로 만들까요?\\n\\n교체 범위: ${fromQuestion}~${toQuestion}번\\n기존 시험·성적·답안은 변경하지 않습니다.\\n교체 범위의 정답만 비워진 작성중 시험이 새로 생성됩니다.`,
+        \`\${exam.examCode} 교체본을 새 시험 ID로 만들까요?\n\n교체 범위: \${fromQuestion}~\${toQuestion}번\n기존 시험·성적·답안은 변경하지 않습니다.\n교체 범위의 정답만 비워진 작성중 시험이 새로 생성됩니다.\`,
       )
     )
       return;
@@ -4310,7 +4310,7 @@ function ExamsPage({
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.replacementExamId)
         throw new Error(result.message || "교체본을 만들지 못했습니다.");
-      window.location.href = `/admin?menu=exam-input&exam=${encodeURIComponent(result.replacementExamId)}`;
+      window.location.href = \`/admin?menu=exam-input&exam=\${encodeURIComponent(result.replacementExamId)}\`;
     } catch (error) {
       alert(error instanceof Error ? error.message : "교체본 생성 실패");
     } finally {
@@ -4755,7 +4755,7 @@ function ExamsPage({
                         {exam.studentOpen ? "학생 응시 가능" : "학생 응시 불가"}
                       </button>
                       <button onClick={() => editExam(exam)}>수정</button>
-                      {/^SOS_[ABC]_\\d+$/i.test(exam.examCode) && !replacementInfo(exam) && !isReplacedSource(exam) ? (
+                      {/^SOS_[ABC]_\d+$/i.test(exam.examCode) && !replacementInfo(exam) && !isReplacedSource(exam) ? (
                         <button
                           type="button"
                           disabled={saving}
