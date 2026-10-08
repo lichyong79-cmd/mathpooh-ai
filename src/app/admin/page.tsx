@@ -4249,6 +4249,77 @@ function ExamsPage({
     window.location.href = `/pdf-mapper?exam=${encodeURIComponent(editingId)}&questions=${form.questionCount}`;
   };
 
+  const replacementInfo = (exam: Pick<PracticeExam, "memo">) => {
+    const match = String(exam.memo ?? "").match(
+      /^SOS_REPLACEMENT\|SOURCE=([0-9a-f-]{36})\|RANGE=(\d+)-(\d+)\|/i,
+    );
+    return match
+      ? { sourceExamId: match[1], fromQuestion: Number(match[2]), toQuestion: Number(match[3]) }
+      : null;
+  };
+
+  const isReplacedSource = (exam: Pick<PracticeExam, "memo">) =>
+    /(?:^|\n)SOS_REPLACED_BY=/i.test(String(exam.memo ?? ""));
+
+  const createReplacement = async (exam: PracticeExam) => {
+    if (!/^SOS_[ABC]_\d+$/i.test(exam.examCode))
+      return alert("A/B/C 정식 SOS 시험지만 교체본을 만들 수 있습니다.");
+    if (replacementInfo(exam))
+      return alert("이미 교체본으로 만든 시험입니다.");
+    if (isReplacedSource(exam))
+      return alert("이미 새 교체본으로 전환된 과거 보관 시험입니다.");
+
+    const defaultRange = exam.questionCount === 30 ? "23-30" : "1-" + exam.questionCount;
+    const entered = window.prompt(
+      exam.examCode + "에서 교체할 문항 범위를 입력하세요.\n예: 23-30\n\n원본 시험과 기존 응시 기록은 그대로 보존됩니다.",
+      defaultRange,
+    );
+    if (!entered) return;
+    const match = entered.trim().match(/^(\d+)\s*[-~]\s*(\d+)$/);
+    if (!match) return alert("문항 범위를 23-30처럼 입력해 주세요.");
+    const fromQuestion = Number(match[1]);
+    const toQuestion = Number(match[2]);
+    if (
+      !Number.isInteger(fromQuestion) ||
+      !Number.isInteger(toQuestion) ||
+      fromQuestion < 1 ||
+      toQuestion < fromQuestion ||
+      toQuestion > exam.questionCount
+    )
+      return alert("1~" + exam.questionCount + " 범위 안에서 교체 문항을 지정해 주세요.");
+
+    if (
+      !window.confirm(
+        exam.examCode + " 교체본을 새 시험 ID로 만들까요?\n\n교체 범위: " +
+          fromQuestion + "~" + toQuestion +
+          "번\n기존 시험·성적·답안은 변경하지 않습니다.\n교체 범위의 정답만 비워진 작성중 시험이 새로 생성됩니다.",
+      )
+    )
+      return;
+
+    setSaving(true);
+    try {
+      const response = await fetch("/api/admin/exam-replacement", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          sourceExamId: exam.id,
+          fromQuestion,
+          toQuestion,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.replacementExamId)
+        throw new Error(result.message || "교체본을 만들지 못했습니다.");
+      window.location.href = "/admin?menu=exam-input&exam=" + encodeURIComponent(result.replacementExamId);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "교체본 생성 실패");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const registrationProgress = (exam: PracticeExam) => {
     const checks = [
       {
@@ -4324,6 +4395,23 @@ function ExamsPage({
     }
     try {
       if(status==="등록완료"){
+        const replacement = replacementInfo(exam);
+        if(replacement){
+          const response=await fetch("/api/admin/exam-replacement",{
+            method:"POST",
+            headers:{"content-type":"application/json"},
+            body:JSON.stringify({
+              action:"activate",
+              replacementExamId:exam.id,
+              sourceExamId:replacement.sourceExamId,
+            }),
+          });
+          const data=await response.json().catch(()=>({}));
+          if(!response.ok||!data.success)throw new Error(data.message||"교체본 활성화 실패");
+          alert(`${exam.examCode} 교체 완료. 기존 응시 기록은 과거 원본에 유지되고 앞으로는 새 교체본이 기본 배정됩니다.`);
+          window.location.reload();
+          return;
+        }
         const kind=exam.examCode.match(/^SOS_([ABC])_/i)?.[1]?.toUpperCase();
         if(kind){
           const response=await fetch("/api/admin/exam-catalog",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"register-paper",examId:exam.id,formalSequence:exam.round,scopeCode:kind==="A"?"ALGEBRA":kind==="B"?"ALGEBRA_CALC1":"FULL"})});
@@ -4562,6 +4650,13 @@ function ExamsPage({
                       <div>
                         <strong>{exam.title}</strong>
                         <small>{exam.range || "범위 미입력"}</small>
+                        {replacementInfo(exam) ? (
+                          <small style={{color:"#8a5b14",fontWeight:900}}>
+                            교체본 · {replacementInfo(exam)!.fromQuestion}~{replacementInfo(exam)!.toQuestion}번 교체
+                          </small>
+                        ) : isReplacedSource(exam) ? (
+                          <small style={{color:"#7b8790",fontWeight:900}}>과거 보관본 · 새 교체본 사용 중</small>
+                        ) : null}
                       </div>
                     </div>
                     <b data-label="시험코드">{exam.examCode}</b>
@@ -4662,6 +4757,16 @@ function ExamsPage({
                         {exam.studentOpen ? "학생 응시 가능" : "학생 응시 불가"}
                       </button>
                       <button onClick={() => editExam(exam)}>수정</button>
+                      {/^SOS_[ABC]_\d+$/i.test(exam.examCode) && !replacementInfo(exam) && !isReplacedSource(exam) ? (
+                        <button
+                          type="button"
+                          disabled={saving}
+                          title="과거 응시 기록은 유지하고 같은 시험순번의 새 교체본을 만듭니다."
+                          onClick={() => void createReplacement(exam)}
+                        >
+                          교체본 만들기
+                        </button>
+                      ) : null}
                       <button
                         className="delete"
                         onClick={() => void remove(exam)}
