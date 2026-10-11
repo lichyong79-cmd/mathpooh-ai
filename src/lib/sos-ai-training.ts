@@ -555,6 +555,8 @@ function validateGeneratedMathLayout(problem:any){
 
 async function archiveGeneratedProblems(args:{supabase:any;studentId:string;sourceSessionId:string;kind:"HOMEWORK"|"SECOND_TRAINING";problems:any[]}){
   const {supabase,studentId,sourceSessionId,kind,problems}=args;
+  const formatError=validateStagedDrafts(problems,problems.length);
+  if(formatError)throw new Error(`AI 생성 문제은행 저장 전 답안형식 검수 실패: ${formatError}`);
   const rows=problems.map((p:any)=>({
     content_hash:createHash("sha256").update(`${p.sourceProblemId??""}|${kind}|${p.question??""}`).digest("hex"),
     source_problem_id:p.sourceProblemId??null,
@@ -595,6 +597,29 @@ const stagedDraftSchema=(count:number)=>({type:"object",additionalProperties:fal
 const stagedRenderSchema=(count:number)=>({type:"object",additionalProperties:false,required:["problems"],properties:{problems:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["sourceSlot","displayLatex","renderBlocks"],properties:{sourceSlot:{type:"integer",minimum:1,maximum:count},displayLatex:{type:"string"},renderBlocks:{type:"array",minItems:1,maxItems:18,items:{type:"object",additionalProperties:false,required:["type","value"],properties:{type:{type:"string",enum:["text","mathml"]},value:{type:"string"}}}}}}}}});
 const stagedVerifySchema=(count:number)=>({type:"object",additionalProperties:false,required:["checks"],properties:{checks:{type:"array",minItems:count,maxItems:count,items:{type:"object",additionalProperties:false,required:["index","valid","sourceFaithful","computedAnswer","reason"],properties:{index:{type:"integer",minimum:1,maximum:count},valid:{type:"boolean"},sourceFaithful:{type:"boolean"},computedAnswer:{type:"string"},reason:{type:"string"}}}}}});
 
+// 생성형 SOS 문항은 학생 답안을 한 개의 -999~999 정수로 표준화한다.
+// 원문이 객관식/ㄱㄴㄷ 선택형이어도 선택지 번호를 정답으로 쓰지 않고,
+// 문제 자체를 "참인 명제의 개수"처럼 정수값을 직접 묻게 바꿔야 한다.
+function integerAnswerFormatError(questionValue:unknown){
+  const question=String(questionValue??"").normalize("NFKC").trim();
+  if(!question)return "문제 본문 없음";
+  if(/[①②③④⑤]/.test(question))return "객관식 선택지 포함";
+  if(/보기와\s*(?:동일|같은)\s*형태|보기에서\s*고르|정답\s*번호|선택지/i.test(question))
+    return "객관식 잔여 문구";
+  if(/(?:참인|옳은|맞는)\s*것(?:을|만)?[^\n]{0,24}(?:모두\s*)?(?:고르|적으|쓰)|(?:모두\s*)(?:고르|적으|쓰)/i.test(question))
+    return "복수 선택형 답안 문구";
+  const hasStatements=/ㄱ[.\s)]/.test(question)&&/ㄴ[.\s)]/.test(question);
+  if(hasStatements){
+    const asksInteger=
+      /(?:참인|옳은|맞는)[^\n]{0,30}(?:개수|몇\s*개)/i.test(question) ||
+      /(?:명제|항|문장)[^\n]{0,30}(?:개수|몇\s*개)/i.test(question) ||
+      /(?:번호|가중치)[^\n]{0,30}(?:합|합계)/i.test(question) ||
+      /(?:개수|몇\s*개)[^\n]{0,20}(?:구하|답하)/i.test(question);
+    if(!asksInteger)return "ㄱㄴㄷ 문항이 정수답형으로 변환되지 않음";
+  }
+  return "";
+}
+
 function validateStagedDrafts(list:any[],count:number){
   if(list.length!==count)return `문항 수 ${list.length}/${count}`;
   for(let i=0;i<list.length;i++){
@@ -605,9 +630,10 @@ function validateStagedDrafts(list:any[],count:number){
     const n=Number(a);if(!Number.isSafeInteger(n)||n<-999||n>999)return `${i+1}번 정답 범위 오류`;
     const question=String(p?.question??"").trim();
     if(question.length<18)return `${i+1}번 문제 본문이 너무 짧음`;
-    // SOS302: 객관식 원문의 정답번호(1~5)를 수학적 답으로 복사하고 보기는 없애는 사고 방지.
-    if(/보기와\s*(?:동일|같은)\s*형태|보기에서\s*고르|옳은\s*것을\s*고르|정답\s*번호|선택지/i.test(question))return `${i+1}번 객관식 잔여 문구`;
-    if(/[①②③④⑤]/.test(question))return `${i+1}번 객관식 선택지 포함`;
+    // SOS326: 정수답 생성 파이프라인에 객관식/ㄱㄴㄷ 선택형 문구가 남으면
+    // 선택지 번호를 실제 답으로 저장하는 오류가 생긴다. AI 검수 전에 코드로 차단한다.
+    const answerFormatError=integerAnswerFormatError(question);
+    if(answerFormatError)return `${i+1}번 ${answerFormatError}`;
     if(!String(p?.solution??"").trim())return `${i+1}번 풀이 없음`;
   }
   return "";
@@ -666,7 +692,7 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
   const {supabase,jobId,kind,count,sourceSlots,sourceImages,sourceSummary,weakness,target}=args;
   const total=8;
   const transformLevel=kind==="HOMEWORK"?"안전변형":"표준변형";
-  const design=sourceSummary.map((x:any)=>({sourceSlot:x.slot,policy:transformLevel,keep:"핵심개념·풀이순서·질문유형",change:"수치·계수·동등한 조건만 제한 변경"}));
+  const design=sourceSummary.map((x:any)=>({sourceSlot:x.slot,policy:transformLevel,keep:"핵심개념·풀이순서",change:"수치·계수·동등한 조건만 제한 변경 · 객관식/복수선택 답안형은 정수입력형으로 표준화"}));
 
   let drafts:any[]=[];
   let rendered:any[]=[];
@@ -696,7 +722,8 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
     const savedChecks=checkpointMatches(resume.data?.verification_payload)&&Array.isArray(resume.data?.verification_payload?.checks)?resume.data.verification_payload.checks:[];
     if(savedDrafts.length===count&&!validateStagedDrafts(savedDrafts,count))drafts=savedDrafts;
     const savedLayoutErrors=savedRendered.length===count?savedRendered.map((p:any)=>validateGeneratedMathLayout(p)).filter(Boolean):["count"];
-    if(savedRendered.length===count&&!savedLayoutErrors.length)rendered=savedRendered;
+    const savedAnswerFormatError=savedRendered.length===count?validateStagedDrafts(savedRendered,count):"count";
+    if(savedRendered.length===count&&!savedLayoutErrors.length&&!savedAnswerFormatError)rendered=savedRendered;
     if(rendered.length===count&&savedChecks.length===count&&savedChecks.every((c:any,i:number)=>c?.valid===true&&c?.sourceFaithful===true&&String(c?.computedAnswer??"")===String(rendered[i]?.answer??""))){
       await updateGenerationStage(supabase,jobId,"FINAL_VERIFIED",8,total,"저장된 최종 재풀이 검증 결과부터 복구했습니다.");
       return rendered.map((p:any,index:number)=>({...p,verification:{method:"PIPELINE_V2_RESUMED_VERIFICATION",valid:true,sourceFaithful:true,computedAnswer:String(savedChecks[index]?.computedAnswer??""),reason:String(savedChecks[index]?.reason??"")}}));
@@ -717,12 +744,14 @@ async function buildStagedGeneratedProblems(args:{supabase:any;jobId?:string;kin
 
 정확히 ${count}문항을 sourceSlot 1~${count} 순서로 생성하세요.
 이 단계에서는 '문제 내용'만 완성합니다. 조판용 LaTeX/MathML은 만들지 마세요.
-- 원문의 핵심 개념, 풀이순서, 질문유형을 유지합니다.
+- 원문의 핵심 개념과 풀이순서는 유지합니다. 다만 학생 답안 형식은 반드시 '정수 1개 직접 입력'으로 표준화합니다.
 - 새 개념, 자유창작, 전혀 다른 풀이법을 추가하지 않습니다.
 - ${kind==="HOMEWORK"?"수치·계수·좌표·구간 등만 안전하게 변경합니다.":"수치·계수·동등한 조건을 변경하되 원문 구조를 유지합니다."}
-- answer는 -999~999의 유일한 정수 하나여야 합니다.
+- answer는 -999~999의 유일한 정수 하나여야 하며, 문제 문장 자체가 그 정수를 직접 묻고 있어야 합니다.
 - sourceAnswer가 1~5여도 객관식의 '정답 번호'일 수 있으므로 절대 복사하지 말고 새 문제를 직접 풀어 실제 수학적 값을 구합니다.
-- 객관식 보기와 ①~⑤를 모두 제거하고, '보기와 동일한 형태', '옳은 것을 고르시오', '정답 번호' 같은 문구도 절대 남기지 않습니다.
+- 객관식 보기와 ①~⑤를 모두 제거하고, '보기와 동일한 형태', '정답 번호', '선택지' 같은 문구도 절대 남기지 않습니다.
+- 원문이 ㄱ·ㄴ·ㄷ 중 고르는 문제라면 '옳은 것을 모두 고르시오/적으시오'를 절대 유지하지 마세요. 대신 '참인 명제의 개수를 구하시오'처럼 정수 하나를 직접 묻게 바꾸고 answer도 그 개수로 저장합니다.
+- ㄱ=1, ㄴ=2 같은 암묵적 번호 합이나 원래 선택지 번호를 answer로 쓰지 않습니다. 번호의 합을 답으로 쓰려면 문제 본문에 그 규칙을 명시해야 합니다.
 - 계산 결과가 \\log 6, \\sqrt{2}, 3\\pi 같은 기호식이면 그 식을 답으로 요구하지 말고, 예를 들어 '값이 \\log m일 때 자연수 m'처럼 동치인 정수 매개변수를 묻도록 질문을 완결합니다.
 - 밑이 생략된 log는 상용로그입니다. \\log 6을 밑이 6인 로그로 해석하면 안 됩니다. 밑이 6인 로그는 반드시 \\log_{6}처럼 씁니다.
 - solution은 실제 계산이 확인되는 충분한 풀이를 적습니다.
@@ -777,15 +806,18 @@ ${lastError?`이전 시도 실패 원인: ${lastError}. 반드시 수정하세�
 
 검수 기준:
 1) 조건에 모순/누락이 없고 풀이 가능해야 합니다.
-2) 정답은 유일한 -999~999 정수 하나입니다.
+2) 문제 문장 자체가 유일한 -999~999 정수 하나를 직접 답하도록 요구해야 합니다.
 3) computedAnswer가 claimedAnswer와 정확히 같아야 합니다.
-4) 같은 sourceSlot 원문의 핵심 개념·풀이 흐름·질문 유형을 유지한 제한변형이어야 sourceFaithful=true입니다.
+4) 같은 sourceSlot 원문의 핵심 개념·풀이 흐름을 유지한 제한변형이어야 sourceFaithful=true입니다. 객관식/복수선택의 답안 형식을 정수입력형으로 바꾼 것은 허용합니다.
 5) 하나라도 어기면 valid=false입니다.
 
-중요 로그·객관식 검수 규칙:
+중요 로그·객관식·ㄱㄴㄷ 검수 규칙:
 - 밑이 생략된 log 또는 \\log는 상용로그입니다. \\log 6은 log_6(6)이 아니며 1이 아닙니다.
 - 원문 sourceAnswer 1~5는 선택지 번호일 수 있으므로 claimedAnswer의 근거로 사용하지 않습니다.
 - 보기가 없는데 '보기와 동일한 형태' 같은 문구가 남아 있으면 valid=false입니다.
+- '옳은 것을 모두 고르시오/적으시오', '참인 것을 모두 쓰시오'처럼 답이 ㄱ·ㄴ·ㄷ 기호 목록이어야 하는 문장은 정수입력 문항이 아니므로 valid=false입니다.
+- ㄱ·ㄴ·ㄷ형은 '참인 명제의 개수'처럼 문제 본문이 정수값을 명시적으로 묻는 경우에만 valid=true입니다.
+- 풀이에서 '선택지 3', '①', 'ㄱ=1, ㄴ=2의 합'처럼 문제에 없는 암묵적 인코딩으로 claimedAnswer를 정당화하면 valid=false입니다.
 - 최종 결과가 기호식인데 문제는 그 식 자체를 요구하면 정수입력 문항이 아니므로 valid=false입니다.`;
     const verifyContent:any[]=[{type:"input_text",text:verifyPrompt}];
     sourceSlots.forEach((slot,index)=>{verifyContent.push({type:"input_text",text:`[검수 sourceSlot ${slot.slot}] 원문`});if(sourceImages[index])verifyContent.push({type:"input_image",image_url:sourceImages[index]});else verifyContent.push({type:"input_text",text:JSON.stringify(slot.dna)});});
