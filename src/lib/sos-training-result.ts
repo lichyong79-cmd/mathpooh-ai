@@ -9,11 +9,14 @@ import { requireSubunit } from "@/lib/subunit-key";
 import { trainingPerformanceActual } from "@/lib/sos-training-policy";
 
 function normalizeAnswer(value: unknown) {
-  const raw=String(value ?? "")
+  let raw=String(value ?? "")
     .normalize("NFKC")
     .trim()
     .replace(/\s+/g, "")
     .replace(/,/g, "");
+  raw=raw.replace(/^(?:정답|답)[:：](?=.+)/,"");
+  raw=raw.replace(/^[1-9][.)](?=.+)/,"");
+  raw=raw.replace(/^[①②③④⑤](?=.+)/,"");
   const optionMap:Record<string,string>={"①":"1","②":"2","③":"3","④":"4","⑤":"5","㉠":"1","㉡":"2","㉢":"3","㉣":"4","㉤":"5"};
   return optionMap[raw] ?? raw.replace(/^([1-5])[.)번]$/,"$1");
 }
