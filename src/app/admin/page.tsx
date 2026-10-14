@@ -3534,6 +3534,17 @@ function ExamsPage({
   const [analysisPreviewTab, setAnalysisPreviewTab] = useState<
     "question" | "solution"
   >("question");
+  const examListScrollRef = useRef<HTMLDivElement | null>(null);
+  const examListTopScrollRef = useRef<HTMLDivElement | null>(null);
+  const syncExamListScroll = useCallback(
+    (source: HTMLDivElement | null, target: HTMLDivElement | null) => {
+      if (!source || !target) return;
+      if (Math.abs(target.scrollLeft - source.scrollLeft) > 1) {
+        target.scrollLeft = source.scrollLeft;
+      }
+    },
+    [],
+  );
   const examsByDate = useMemo(
     () =>
       [...exams].sort((a, b) => {
@@ -3837,6 +3848,42 @@ function ExamsPage({
       if (!updateResponse.ok) throw new Error(await updateResponse.text());
       examRowCommitted = true;
       const savedExam = examFromRow((await updateResponse.json())[0]);
+
+      // 등록완료 상태로 저장된 A/B/C 시험지는 저장 경로와 무관하게
+      // 반드시 SOS 기본 시험지 카탈로그에도 연결한다.
+      // 목록의 '등록완료' 버튼을 거치지 않고 편집 화면에서 저장해도
+      // 다음 순번 자동배정에서 "시험지 없음"이 나오지 않게 한다.
+      if (
+        savedExam.status === "등록완료" &&
+        !replacementInfo(savedExam) &&
+        !isReplacedSource(savedExam)
+      ) {
+        const kind = savedExam.examCode.match(/^SOS_([ABC])_/i)?.[1]?.toUpperCase();
+        if (kind) {
+          const catalogResponse = await fetch("/api/admin/exam-catalog", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              action: "register-paper",
+              examId: savedExam.id,
+              formalSequence: savedExam.round,
+              scopeCode:
+                kind === "A"
+                  ? "ALGEBRA"
+                  : kind === "B"
+                    ? "ALGEBRA_CALC1"
+                    : "FULL",
+            }),
+          });
+          const catalogResult = await catalogResponse.json().catch(() => ({}));
+          if (!catalogResponse.ok) {
+            throw new Error(
+              `시험 자료는 저장됐지만 SOS 시험지 연결에 실패했습니다: ${catalogResult.message || "카탈로그 연결 실패"}`,
+            );
+          }
+        }
+      }
+
       setExams((prev) =>
         editingId
           ? prev.map((exam) => (exam.id === savedExam.id ? savedExam : exam))
@@ -4524,16 +4571,16 @@ function ExamsPage({
           .exam-list .table-head,
           .exam-list .table-row {
             grid-template-columns:
-              minmax(300px, 1.55fr)
-              160px
-              210px
+              minmax(235px, 1.45fr)
+              120px
+              155px
+              112px
+              122px
+              195px
               140px
-              160px
-              250px
-              180px
-              140px
-              150px !important;
-            min-width: 1690px !important;
+              112px
+              220px !important;
+            min-width: 1515px !important;
           }
 
           .exam-list-panel {
@@ -4629,7 +4676,23 @@ function ExamsPage({
               <span>{tab === "analysis" ? "시험별 분석 진행률과 문항 수를 확인하세요." : "컴퓨터가 달라도 동일한 DB 내용을 표시합니다."}</span></div>
               {tab === "list" && emptyDrafts.length ? <button className="cleanup-empty-exams" onClick={() => void cleanupEmptyDrafts()}>빈 작성중 시험 {emptyDrafts.length}개 일괄 삭제</button> : null}
             </div>
-            <div className={`data-table exam-list ${tab === "analysis" ? "analysis-card-list" : ""}`}>
+            <div
+              className="exam-list-top-scroll"
+              ref={examListTopScrollRef}
+              onScroll={(event) =>
+                syncExamListScroll(event.currentTarget, examListScrollRef.current)
+              }
+              aria-label="시험 목록 가로 스크롤"
+            >
+              <div className="exam-list-top-scroll-spacer" />
+            </div>
+            <div
+              className={`data-table exam-list ${tab === "analysis" ? "analysis-card-list" : ""}`}
+              ref={examListScrollRef}
+              onScroll={(event) =>
+                syncExamListScroll(event.currentTarget, examListTopScrollRef.current)
+              }
+            >
               <div className="table-head">
                 <span>회차 / 시험명</span>
                 <span>시험코드</span>
