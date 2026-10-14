@@ -3848,42 +3848,6 @@ function ExamsPage({
       if (!updateResponse.ok) throw new Error(await updateResponse.text());
       examRowCommitted = true;
       const savedExam = examFromRow((await updateResponse.json())[0]);
-
-      // 등록완료 상태로 저장된 A/B/C 시험지는 저장 경로와 무관하게
-      // 반드시 SOS 기본 시험지 카탈로그에도 연결한다.
-      // 목록의 '등록완료' 버튼을 거치지 않고 편집 화면에서 저장해도
-      // 다음 순번 자동배정에서 "시험지 없음"이 나오지 않게 한다.
-      if (
-        savedExam.status === "등록완료" &&
-        !replacementInfo(savedExam) &&
-        !isReplacedSource(savedExam)
-      ) {
-        const kind = savedExam.examCode.match(/^SOS_([ABC])_/i)?.[1]?.toUpperCase();
-        if (kind) {
-          const catalogResponse = await fetch("/api/admin/exam-catalog", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              action: "register-paper",
-              examId: savedExam.id,
-              formalSequence: savedExam.round,
-              scopeCode:
-                kind === "A"
-                  ? "ALGEBRA"
-                  : kind === "B"
-                    ? "ALGEBRA_CALC1"
-                    : "FULL",
-            }),
-          });
-          const catalogResult = await catalogResponse.json().catch(() => ({}));
-          if (!catalogResponse.ok) {
-            throw new Error(
-              `시험 자료는 저장됐지만 SOS 시험지 연결에 실패했습니다: ${catalogResult.message || "카탈로그 연결 실패"}`,
-            );
-          }
-        }
-      }
-
       setExams((prev) =>
         editingId
           ? prev.map((exam) => (exam.id === savedExam.id ? savedExam : exam))
