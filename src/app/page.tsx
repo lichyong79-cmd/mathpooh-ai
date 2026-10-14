@@ -2997,6 +2997,36 @@ export default function StudentHome() {
   const homeSosTasks = useMemo(() => (portal?.sosSessions ?? [])
     .filter(session => isSosOpen(session))
     .sort((a,b) => a.created_at.localeCompare(b.created_at)), [portal?.sosSessions]);
+  const pendingSosNotice = useMemo(() => {
+    if (!homeSosTasks.length) return null;
+    const today = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: "Asia/Seoul",
+    }).format(new Date());
+    const sorted = [...homeSosTasks].sort((a, b) => {
+      const aEnd = cycleFromSnapshot(a.target_snapshot)?.endDate ?? "9999-12-31";
+      const bEnd = cycleFromSnapshot(b.target_snapshot)?.endDate ?? "9999-12-31";
+      const aOverdue = aEnd < today;
+      const bOverdue = bEnd < today;
+      if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+      return aEnd.localeCompare(bEnd) || a.created_at.localeCompare(b.created_at);
+    });
+    const focus = sorted[0];
+    const focusCycle = cycleFromSnapshot(focus.target_snapshot);
+    const overdueCount = sorted.filter((session) => {
+      const end = cycleFromSnapshot(session.target_snapshot)?.endDate;
+      return Boolean(end && end < today);
+    }).length;
+    return {
+      count: sorted.length,
+      overdueCount,
+      focusSessionId: focus.id,
+      cycleName:
+        focusCycle?.name ??
+        focus.target_snapshot?.sourceExamTitle ??
+        "SOS 학습",
+      stage: sosStageLabel(focus),
+    };
+  }, [homeSosTasks]);
   const openSosFromHome = () => {
     setHomeSosSessionId("");
     const assignedTasks =
@@ -3433,6 +3463,35 @@ export default function StudentHome() {
             </button>
           </aside>
         </div>
+      ) : null}
+      {pendingSosNotice ? (
+        <section className="sos-incomplete-alert" role="alert" aria-live="polite">
+          <div className="sos-incomplete-alert-icon" aria-hidden="true">!</div>
+          <div className="sos-incomplete-alert-copy">
+            <small>SOS LEARNING REQUIRED</small>
+            <h2>SOS 학습이 아직 완료되지 않았습니다!</h2>
+            <p>
+              다음 시험 전까지 꼭 완료하세요.
+              <strong> 현재 {pendingSosNotice.count}건</strong>의 학습이 남아 있습니다.
+              {pendingSosNotice.overdueCount
+                ? ` · 밀린 학습 ${pendingSosNotice.overdueCount}건`
+                : ""}
+            </p>
+            <span>
+              먼저 할 학습 · {pendingSosNotice.cycleName} · {pendingSosNotice.stage}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setHomeSosSessionId(pendingSosNotice.focusSessionId);
+              moveSection("strategy");
+            }}
+          >
+            지금 SOS 학습하기
+            <b aria-hidden="true">→</b>
+          </button>
+        </section>
       ) : null}
       {activeSection === "home" ? (
         <>
