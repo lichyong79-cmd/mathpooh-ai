@@ -478,7 +478,7 @@ function wrapLooseLatex(raw:string){
   if(/(\\\(|\\\[)/.test(text))return text;   // 이미 구분자가 있으면 손대지 않는다
 
   // 줄 단위로 보되, LaTeX 조각이 있는 줄만 처리한다.
-  const token=/(\\(?:frac|dfrac|tfrac|sqrt|lim|int|sum|prod|left|right|cdot|times|leq|geq|neq|infty|alpha|beta|gamma|theta|pi)\b[^\s]*(?:\{[^{}]*\})*|[A-Za-z0-9)\]}]+[\^_]\{[^{}]*\}|[A-Za-z0-9)\]}]+[\^_][A-Za-z0-9]+)/g;
+  const token=/(\\(?:frac|dfrac|tfrac|sqrt|lim|int|sum|prod|log|ln|sin|cos|tan|left|right|cdot|times|leq|geq|neq|infty|alpha|beta|gamma|theta|pi)\b[^\s]*(?:\{[^{}]*\})*|[A-Za-z0-9)\]}]+[\^_]\{[^{}]*\}|[A-Za-z0-9)\]}]+[\^_][A-Za-z0-9]+)/g;
   return text.split("\n").map(line=>{
     if(!token.test(line)){token.lastIndex=0;return line;}
     token.lastIndex=0;
@@ -488,7 +488,7 @@ function wrapLooseLatex(raw:string){
 
 function hasRawLatexOutsideMath(raw:string){
   const text=String(raw??"");
-  const command=/^\\(?:frac|dfrac|tfrac|sqrt|lim|int|sum|prod|begin|end|left|right|cdot|times|leq|geq|neq|infty|alpha|beta|gamma|theta|pi|quad|qquad|text|bar|overline|underline|binom|mathrm|mathbf|mathbb)\b/;
+  const command=/^\\(?:frac|dfrac|tfrac|sqrt|lim|int|sum|prod|log|ln|sin|cos|tan|begin|end|left|right|cdot|times|leq|geq|neq|infty|alpha|beta|gamma|theta|pi|quad|qquad|text|bar|overline|underline|binom|mathrm|mathbf|mathbb)\b/;
   let mode:"text"|"inline"|"display"="text";
   for(let i=0;i<text.length;i++){
     if(mode==="text"&&text.startsWith("\\(",i)){mode="inline";i++;continue;}
@@ -521,7 +521,7 @@ function validateGeneratedMathLayout(problem:any){
   // 이제 LaTeX 명령이 구분자 밖에 노출된 경우에만 실패시킨다.
   // (그 경우는 화면에 \frac 같은 문자가 그대로 보이므로 실제 문제다.)
   const hasDelimiter=/(\\\(|\\\[)/.test(latex);
-  const hasRawLatex=/\\(?:frac|dfrac|tfrac|sqrt|lim|int|sum|prod|begin|end|left|right|cdot|times|leq|geq|neq|infty|alpha|beta|gamma|theta|pi)\b/.test(latex)||/[\^_]\{/.test(latex);
+  const hasRawLatex=/\\(?:frac|dfrac|tfrac|sqrt|lim|int|sum|prod|log|ln|sin|cos|tan|begin|end|left|right|cdot|times|leq|geq|neq|infty|alpha|beta|gamma|theta|pi)\b/.test(latex)||/[\^_]\{/.test(latex);
   if(!hasDelimiter&&hasRawLatex)return "수식이 구분자 밖으로 노출됨";
   if(hasRawLatexOutsideMath(latex))return "수식 구분자 밖에 LaTeX 명령이 섞여 있음";
 
