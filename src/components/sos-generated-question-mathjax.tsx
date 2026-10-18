@@ -70,6 +70,42 @@ function legacyBlocks(raw:any):RenderBlock[]{
     .filter((b:RenderBlock)=>Boolean(b.value));
 }
 
+function readableLatexFallback(raw:any,question:any){
+  let s=normalizeDisplayLatex(raw||question);
+  if(!s)return String(question??"");
+  s=s
+    .replace(/\\\(|\\\)|\\\[|\\\]/g,"")
+    .replace(/\\begin\{cases\}/g,"\n")
+    .replace(/\\end\{cases\}/g,"\n")
+    .replace(/\\\\/g,"\n")
+    .replace(/&/g," ")
+    .replace(/\\(?:left|right|bigl|bigr)/g,"")
+    .replace(/\\(?:dfrac|tfrac|frac)\{([^{}]+)\}\{([^{}]+)\}/g,"($1)/($2)")
+    .replace(/\\sqrt\{([^{}]+)\}/g,"√($1)")
+    .replace(/\\log_\{([^{}]+)\}/g,"log_$1")
+    .replace(/\\log_([A-Za-z0-9]+)/g,"log_$1")
+    .replace(/\\log\b/g,"log")
+    .replace(/\\ln\b/g,"ln")
+    .replace(/\\sin\b/g,"sin")
+    .replace(/\\cos\b/g,"cos")
+    .replace(/\\tan\b/g,"tan")
+    .replace(/\\times\b/g,"×")
+    .replace(/\\cdot\b/g,"·")
+    .replace(/\\geq?\b/g,"≥")
+    .replace(/\\leq?\b/g,"≤")
+    .replace(/\\neq\b/g,"≠")
+    .replace(/\\pi\b/g,"π")
+    .replace(/\\(?:dots|cdots)\b/g,"…")
+    .replace(/\\(?:quad|qquad)\b/g," ")
+    .replace(/_\{([^{}]+)\}/g,"_$1")
+    .replace(/\^\{([^{}]+)\}/g,"^$1")
+    .replace(/\\(?:dfrac|tfrac|frac|sqrt|begin|end)\b/g,"")
+    .replace(/[{}]/g,"")
+    .replace(/[ \t]+\n/g,"\n")
+    .replace(/\n{3,}/g,"\n\n");
+  return s.trim();
+}
+
 function loadMathJax(){
   if(typeof window==="undefined")return Promise.reject(new Error("브라우저 전용"));
   if(window.MathJax?.typesetPromise)return Promise.resolve(window.MathJax);
@@ -117,25 +153,28 @@ export default function SosGeneratedQuestionMathJax({
 }){
   const latex=useMemo(()=>normalizeDisplayLatex(displayLatex),[displayLatex]);
   const blocks=useMemo(()=>legacyBlocks(renderBlocks),[renderBlocks]);
+  const fallbackText=useMemo(()=>readableLatexFallback(displayLatex,question),[displayLatex,question]);
 
   // ref 대신 state로 DOM을 받는다. ref가 아직 비어 있어서 조판이 통째로
   // 건너뛰어지고 "조판 중..."에서 멈추던 경로를 없앤다.
   const [node,setNode]=useState<HTMLDivElement|null>(null);
   const [ready,setReady]=useState(!latex);
   const [error,setError]=useState("");
+  const [plainFallback,setPlainFallback]=useState(false);
 
   useEffect(()=>{
-    if(!latex){setReady(true);setError("");return;}
+    if(!latex){setReady(true);setError("");setPlainFallback(false);return;}
     if(!node)return;
 
     let dead=false;
-    setReady(false);setError("");
+    setReady(false);setError("");setPlainFallback(false);
     node.textContent=latex;
 
     // CDN이 느리거나 막혀도 12초 뒤에는 원문이라도 보여준다. 영원히 대기하지 않는다.
     const guard=window.setTimeout(()=>{
       if(dead)return;
-      setError("수식 조판이 지연되어 원문을 그대로 표시합니다.");
+      setError("수식 조판이 지연되어 읽기 쉬운 일반문장으로 표시합니다.");
+      setPlainFallback(true);
       setReady(true);
     },12000);
 
@@ -145,13 +184,13 @@ export default function SosGeneratedQuestionMathJax({
         try{
           if(typeof MathJax.typesetClear==="function")MathJax.typesetClear([node]);
           await MathJax.typesetPromise([node]);
-          if(!dead){setError("");setReady(true);}
+          if(!dead){setError("");setPlainFallback(false);setReady(true);}
         }catch(e){
-          if(!dead){setError(e instanceof Error?e.message:"수식 조판 실패");setReady(true);}
+          if(!dead){setError(e instanceof Error?e.message:"수식 조판 실패");setPlainFallback(true);setReady(true);}
         }
       })
       .catch(e=>{
-        if(!dead){setError(e instanceof Error?e.message:"MathJax 로드 실패");setReady(true);}
+        if(!dead){setError(e instanceof Error?e.message:"MathJax 로드 실패");setPlainFallback(true);setReady(true);}
       })
       .finally(()=>{window.clearTimeout(guard);});
 
@@ -168,10 +207,15 @@ export default function SosGeneratedQuestionMathJax({
 
     {topic?<div className="sos-ai-paper-topic">{topic}</div>:null}
 
-    {latex?
+    {latex&&!plainFallback?
       <div className={`sos-ai-latex ${ready?"ready":"loading"}`}>
         {!ready?<div className="sos-ai-typeset-wait">수학 문제 조판 중...</div>:null}
         <div ref={setNode} className="sos-ai-latex-body"/>
+        {error?<div className="sos-ai-typeset-warning">{error}</div>:null}
+      </div>
+    :plainFallback?
+      <div className="sos-ai-legacy-text">
+        {fallbackText.split(/\n+/).filter(Boolean).map((line,i)=><p key={i}>{line}</p>)}
         {error?<div className="sos-ai-typeset-warning">{error}</div>:null}
       </div>
     :hasLegacyMath?
