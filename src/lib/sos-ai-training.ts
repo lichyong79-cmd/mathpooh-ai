@@ -2,7 +2,7 @@ import {blockedTrainingSessions} from "@/lib/problem-quarantine";
 import { createHash } from "crypto";
 import { clampMeter, meterLabel } from "@/lib/difficulty-meter";
 import { problemSubunit } from "@/lib/subunit-key";
-import { sosTrainingGoalMeter } from "@/lib/sos-training-policy";
+import { sosTrainingGoalMeter, trainingDifficultyTargets } from "@/lib/sos-training-policy";
 import { cycleFromSnapshot } from "@/lib/sos-cycle";
 
 function outputText(payload:any){
@@ -400,13 +400,47 @@ export async function analyzeDiagnosisAndCreateFirstTraining(args:{supabase:any;
   if(pool.length<10)throw new Error(`훈련 후보가 부족합니다. ${pool.length}/10문항`);
 
   const recommendationSchema={type:"object",additionalProperties:false,required:["recommendations"],properties:{recommendations:{type:"array",minItems:10,maxItems:10,items:{type:"object",additionalProperties:false,required:["id","role","reason"],properties:{id:{type:"string"},role:{type:"string"},reason:{type:"string"}}}}}};
-  const rec=await openAiJson(`당신은 MATHPOOH SOS 1차 훈련문항 선정 엔진입니다.\n취약점: ${weakness.weaknessTitle}\n상세: ${weakness.weaknessDetail}\n핵심개념: ${(weakness.focusConcepts??[]).join(", ")}\n학생 바로미터: ${baseline.toFixed(2)} / 목표: ${goal.toFixed(2)}\n후보: ${JSON.stringify(pool.map(compactDna))}\n\n정확히 10문항을 고르세요.\n- 단순 단원명보다 취약 사고과정/DNA를 최우선으로 봅니다.\n- 전체적으로 학생 현재 수준보다 조금 쉽게 시작합니다.\n- 권장 구성: 기초 안정화 3, 핵심 보완 4, 포함 적용 2, 완성 확인 1.\n- 뒤로 갈수록 조금 어려워지게 하되 무리한 고난도는 피합니다.\n- 같은 형태만 반복하지 말고 취약점을 직접 연습하는 문항과 취약점을 포함하는 문항을 섞습니다.\n- 제공된 후보 id만 사용합니다.`,recommendationSchema,undefined,{timeoutMs:90000,effort:"low"});
   const allowed=new Map<string,any>(pool.map((p:any)=>[String(p.id),p] as [string,any]));
-  const seen=new Set<string>();
-  const selected=(rec.recommendations??[]).filter((r:any)=>allowed.has(String(r.id))&&!seen.has(String(r.id))&&(seen.add(String(r.id))||true)).slice(0,10);
-  if(selected.length!==10)throw new Error(`AI가 유효한 훈련문항을 ${selected.length}/10개만 선택했습니다.`);
-  const selectedProblems=selected.map((r:any)=>({...allowed.get(String(r.id)),aiRole:String(r.role),aiReason:String(r.reason)}));
-  selectedProblems.sort((a:any,b:any)=>a.meter-b.meter||String(a.id).localeCompare(String(b.id)));
+  let selectedProblems:any[]=[];
+  try{
+    const rec=await openAiJson(`당신은 MATHPOOH SOS 1차 훈련문항 선정 엔진입니다.\n취약점: ${weakness.weaknessTitle}\n상세: ${weakness.weaknessDetail}\n핵심개념: ${(weakness.focusConcepts??[]).join(", ")}\n학생 바로미터: ${baseline.toFixed(2)} / 목표: ${goal.toFixed(2)}\n후보: ${JSON.stringify(pool.map(compactDna))}\n\n정확히 10문항을 고르세요.\n- 단순 단원명보다 취약 사고과정/DNA를 최우선으로 봅니다.\n- 전체적으로 학생 현재 수준보다 조금 쉽게 시작합니다.\n- 권장 구성: 기초 안정화 3, 핵심 보완 4, 포함 적용 2, 완성 확인 1.\n- 뒤로 갈수록 조금 어려워지게 하되 무리한 고난도는 피합니다.\n- 같은 형태만 반복하지 말고 취약점을 직접 연습하는 문항과 취약점을 포함하는 문항을 섞습니다.\n- 제공된 후보 id만 사용합니다.`,recommendationSchema,undefined,{timeoutMs:90000,effort:"low"});
+    const seen=new Set<string>();
+    const selected=(rec.recommendations??[]).filter((r:any)=>allowed.has(String(r.id))&&!seen.has(String(r.id))&&(seen.add(String(r.id))||true)).slice(0,10);
+    if(selected.length===10){
+      selectedProblems=selected.map((r:any)=>({...allowed.get(String(r.id)),aiRole:String(r.role),aiReason:String(r.reason)}));
+      selectedProblems.sort((a:any,b:any)=>a.meter-b.meter||String(a.id).localeCompare(String(b.id)));
+    }else{
+      console.error("[SOS_TRAINING_SELECT_INVALID]",{diagnosisSessionId,selected:selected.length});
+    }
+  }catch(error){
+    console.error("[SOS_TRAINING_SELECT_AI_FAILED]",diagnosisSessionId,error);
+  }
+
+  // AI 문항선정이 일시적으로 실패해도 학생 학습 자체를 막지 않는다.
+  // 이미 취약 DNA 기준으로 정렬된 pool에서 현재 바로미터별 목표 난이도에 가장 가까운
+  // 3/4/2/1 구성을 결정론적으로 골라 즉시 1차훈련을 만든다.
+  if(selectedProblems.length!==10){
+    const targets=trainingDifficultyTargets(baseline);
+    const chosen=new Set<string>();
+    selectedProblems=targets.map((target:any)=>{
+      const candidate=pool
+        .filter((p:any)=>!chosen.has(String(p.id)))
+        .sort((a:any,b:any)=>
+          b.rel-a.rel ||
+          Math.abs(a.meter-target.meter)-Math.abs(b.meter-target.meter) ||
+          String(a.id).localeCompare(String(b.id))
+        )[0];
+      if(!candidate)return null;
+      chosen.add(String(candidate.id));
+      return {
+        ...candidate,
+        aiRole:String(target.role),
+        aiReason:"자동복구 선정 · 취약 DNA 유사도와 현재 바로미터 난이도 균형",
+      };
+    }).filter(Boolean);
+    if(selectedProblems.length!==10)
+      throw new Error(`자동복구 훈련문항을 ${selectedProblems.length}/10개만 선택했습니다.`);
+  }
 
   const snapshot={...effectiveTarget,weaknessTitle:weakness.weaknessTitle,weaknessDetail:weakness.weaknessDetail,focusConcepts:weakness.focusConcepts,baselineMeter:baseline,goalMeter:goal,studentDifficultyMeter:baseline,studentDifficultyLabel:meterLabel(baseline),aiTraining:true};
   const duplicateCheck=await supabase.from("sos_training_sessions").select("id").eq("student_id",studentId).eq("phase","TRAINING").eq("parent_session_id",diagnosisSessionId).eq("round_no",1).eq("cycle_kind","BANK_TRAINING").order("created_at",{ascending:true}).limit(1);
