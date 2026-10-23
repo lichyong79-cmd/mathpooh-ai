@@ -211,7 +211,16 @@ export async function recordTrainingResult(args:{
         ...(firstStudentSample&&uniqueAfter>=20?{difficulty_meter_updated_at:now}:{}),
       })
       .eq("id",String(item.problem_id));
-    if(problemUpdate.error) throw problemUpdate.error;
+    // 문항 난이도 통계는 보조 분석값이다.
+    // 이 업데이트가 잠금/일시적 DB 오류로 실패해도 학생의 정오답 확정과
+    // 세션 제출을 멈추면 안 된다. 학생 미터와 답안 기록은 계속 완료한다.
+    if(problemUpdate.error) {
+      console.error("[SOS_PROBLEM_METER_UPDATE_FAILED]",{
+        itemId,
+        problemId:String(item.problem_id),
+        message:problemUpdate.error.message,
+      });
+    }
   }
 
   const itemUpdate=await supabase
