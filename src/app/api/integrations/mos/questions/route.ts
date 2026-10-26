@@ -94,7 +94,7 @@ export async function GET(req: NextRequest) {
         .select("id,subject,major_unit,subunit,topic,difficulty,generation_kind,answer,status,created_at,updated_at", {count: "exact"})
         .eq("status", "READY").contains("verification",{valid:true})
         .in("subject",allowedSubjectValues);
-      if (keyword) aiQuery = aiQuery.or(`major_unit.ilike.%${keyword}%,subunit.ilike.%${keyword}%,topic.ilike.%${keyword}%`);
+      if (keyword) aiQuery = aiQuery.or(`major_unit.ilike.%${keyword}%,subunit.ilike.%${keyword}%,topic.ilike.%${keyword}%,question_text.ilike.%${keyword}%`);
       if (difficulty) aiQuery = aiQuery.eq("difficulty",Number(difficulty));
       const result = await aiQuery.order("created_at",{ascending:false}).range(offset, offset+limit-1);
       if (result.error) throw result.error;
