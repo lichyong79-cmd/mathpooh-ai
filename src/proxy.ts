@@ -68,6 +68,8 @@ export async function proxy(request: NextRequest) {
     // 이 경로를 열어두지 않으면 프록시가 401을 돌려줘서 AI 생성 작업이 영원히 실행되지 않습니다.
     // 실제 인증은 라우트 안에서 CRON_SECRET(Authorization: Bearer ...)로 합니다.
     pathname.startsWith("/api/cron/") ||
+    // MOS integrations authenticate with a distinct server-only shared secret.
+    pathname.startsWith("/api/integrations/mos/") ||
     pathname === "/api/internal/crop-recovery" ||
     pathname === "/api/health";
 
