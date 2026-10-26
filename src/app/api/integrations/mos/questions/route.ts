@@ -17,7 +17,7 @@ function authorized(req: NextRequest) {
   return timingSafeEqual(a, b);
 }
 
-const fields = "id,problem_code,question_no,title,subject,unit,topic,difficulty,question_type,answer,source_name,question_image_path,analysis_question_id,status,updated_at,created_at";
+const fields = "id,problem_code,question_no,title,subject,unit,topic,difficulty,question_type,answer,source_name,question_image_path,analysis_question_id,problem_dna,status,updated_at,created_at";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const allowedSubjects = ["대수", "미적분 I", "확률과 통계"];
 function cleanFilter(text: string) { return text.replace(/[%_,()]/g, " ").trim().slice(0, 100); }
@@ -45,9 +45,8 @@ export async function GET(req: NextRequest) {
         const officialPath = q.analysis_question_id
           ? String((solutionById.get(q.analysis_question_id) as {official_solution_image_path?: string} | undefined)?.official_solution_image_path || "")
           : "";
-        const override = q as typeof q & { problem_dna?: { correctedSolutionImagePath?: string } };
-        // Correction image is fetched from the bank record below if available.
-        const solutionPath = officialPath;
+        const correctionPath = String((q.problem_dna as { correctedSolutionImagePath?: string } | null)?.correctedSolutionImagePath || "");
+        const solutionPath = correctionPath || officialPath;
         const [image, solution] = await Promise.all([
           q.question_image_path ? db.storage.from("question-images").createSignedUrl(q.question_image_path, 1800) : Promise.resolve(null),
           solutionPath ? db.storage.from("question-images").createSignedUrl(solutionPath, 1800) : Promise.resolve(null),
