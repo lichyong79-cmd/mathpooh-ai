@@ -261,7 +261,19 @@ export async function POST(request: Request) {
     const selected = Array.isArray(app.selected_cycle_ids) ? app.selected_cycle_ids.map(String) : [];
     const partial = String(app.application_mode ?? "ALL") === "CYCLES";
     if (partial && !selected.length) return NextResponse.json({ message: "회차별 신청 정보가 비어 있습니다. 신청 내역을 확인해 주세요." }, { status: 400 });
-    const cycleIds = partial ? selected : allCycleIds;
+
+    // 학부모가 신청할 당시 '남은 회차 전체'를 선택하면 application_mode는 ALL이지만,
+    // 이미 지난 회차를 제외한 실제 결제 대상은 selected_cycle_ids에 저장된다.
+    // 관리자 등록 시 ALL이라는 이유로 모집안의 원래 5개를 다시 사용하면
+    // 3회/4회 결제 신청이 "신청 횟수와 등록 일정이 다릅니다"로 실패한다.
+    // 실제 저장된 신청 날짜가 있으면 그것을 최우선으로 사용하고,
+    // selected_cycle_ids가 없는 오래된 5회 신청만 모집안 전체를 fallback으로 쓴다.
+    const cycleIds = selected.length ? selected : allCycleIds;
+    const purchasedCount = Math.max(1, Number(app.purchased_count) || cycleIds.length || 5);
+    if (cycleIds.length !== purchasedCount)
+      return NextResponse.json({
+        message: `신청 데이터의 결제 횟수(${purchasedCount}회)와 선택 참가일(${cycleIds.length}개)이 다릅니다. 참가일 변경에서 확인해 주세요.`,
+      }, { status: 400 });
     const selectedCycleResult = await s.from("learning_cycles").select("id,start_date,scheduled_at").in("id", cycleIds).order("start_date");
     if (selectedCycleResult.error || (selectedCycleResult.data ?? []).length !== cycleIds.length)
       return NextResponse.json({ message: selectedCycleResult.error?.message || "선택한 참가 일정을 확인해 주세요." }, { status: 400 });
