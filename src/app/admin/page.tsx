@@ -2871,26 +2871,55 @@ function AdminResultModal({
       (item: any) => [Number(item.question_no), item],
     ),
   );
+  const manualEntry = !row.attempt;
   const saveResult = async () => {
-    if (!row.attempt) return;
+    const answeredCount = Object.values(answers).filter((value) =>
+      String(value ?? "").trim(),
+    ).length;
+    if (
+      manualEntry &&
+      !window.confirm(
+        `${row.student.name} 학생 답안 ${answeredCount}/${count}개를 수동 제출할까요?\n저장하면 해당 회차는 응시 완료로 처리됩니다.`,
+      )
+    )
+      return;
     setSaving(true);
     const response = await fetch("/api/admin/exam-monitor", {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        action: "update-result",
-        examId,
-        attemptId: row.attempt.id,
-        answers,
-        mathpoohComment,
-      }),
+      body: JSON.stringify(
+        manualEntry
+          ? {
+              action: "manual-submit",
+              examId,
+              studentId: row.student.id,
+              answers,
+              mathpoohComment,
+            }
+          : {
+              action: "update-result",
+              examId,
+              attemptId: row.attempt?.id,
+              answers,
+              mathpoohComment,
+            },
+      ),
     });
     const result = await response.json();
     setSaving(false);
     if (!response.ok)
-      return alert(result.message || "시험 결과를 수정하지 못했습니다.");
+      return alert(
+        result.message ||
+          (manualEntry
+            ? "수동 답안을 제출하지 못했습니다."
+            : "시험 결과를 수정하지 못했습니다."),
+      );
     onSaved(result.attempt);
-    alert("정오답 기준으로 점수를 다시 계산해 저장했습니다.");
+    alert(
+      manualEntry
+        ? `수동 답안을 제출했습니다. 자동채점 결과 ${result.attempt?.score ?? result.score ?? 0}점입니다.`
+        : "정오답 기준으로 점수를 다시 계산해 저장했습니다.",
+    );
   };
   return (
     <div className="result-modal-backdrop" onMouseDown={onClose}>
@@ -2900,7 +2929,7 @@ function AdminResultModal({
       >
         <header>
           <div>
-            <small>제출 결과 상세</small>
+            <small>{manualEntry ? "별도 응시 · 관리자 수동 답안 입력" : "제출 결과 상세"}</small>
             <h2>
               {row.student.name} · {exam?.title}
             </h2>
@@ -2908,12 +2937,14 @@ function AdminResultModal({
               제출{" "}
               {row.attempt?.submitted_at
                 ? new Date(row.attempt.submitted_at).toLocaleString("ko-KR")
-                : "-"}
+                : manualEntry
+                  ? "학생이 별도로 푼 답안을 입력합니다."
+                  : "-"}
             </p>
           </div>
           <div className="result-score">
             <small>최종 점수</small>
-            <strong>{row.attempt?.score ?? 0}</strong><b>점</b>
+            <strong>{manualEntry ? "-" : (row.attempt?.score ?? 0)}</strong><b>{manualEntry ? "" : "점"}</b>
           </div>
           <button className="result-close" onClick={onClose}>
             ×
@@ -2923,7 +2954,7 @@ function AdminResultModal({
           <span className="correct">정답</span>
           <span className="wrong">오답</span>
           <span className="blank">미응답</span>
-          <b>관리자는 제출 답안을 수정한 뒤 재채점할 수 있습니다.</b>
+          <b>{manualEntry ? "학생이 별도로 푼 답안을 입력하면 자동채점 후 응시완료로 저장됩니다." : "관리자는 제출 답안을 수정한 뒤 재채점할 수 있습니다."}</b>
         </div>
         <ExamResultDiagnosis
           questionCount={count}
@@ -3027,7 +3058,7 @@ function AdminResultModal({
             onClick={() => void saveResult()}
             disabled={saving}
           >
-            {saving ? "저장 중..." : "정오답 저장 · 점수 재계산"}
+            {saving ? "저장 중..." : manualEntry ? "수동 답안 제출 · 자동채점" : "정오답 저장 · 점수 재계산"}
           </button>
         </footer>
       </section>
@@ -3424,7 +3455,16 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
                   <span>{row.student.school} · {row.student.grade}</span>
                   <span className={`monitor-state ${attempt?.status ?? "waiting"}`}>{status}</span>
                   <span>{formatTime(activitySummary.get(row.student.id)?.consentAt)}</span>
-                  <strong>{answered}개</strong>
+                  {!attempt ? (
+                    <button
+                      className="manual-result-button"
+                      onClick={() => setSelectedResult(row)}
+                    >
+                      수동 답안 입력
+                    </button>
+                  ) : (
+                    <strong>{answered}개</strong>
+                  )}
                   <span>{formatTime(attempt?.submitted_at)}</span>
                   <button
                     className={`student-log-button ${studentLogs.length ? "has-risk" : "clear"} ${isLogOpen ? "open" : ""}`}
@@ -3455,7 +3495,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
           ) : null}
         </div>
       </section>
-      {selectedResult?.attempt ? (
+      {selectedResult ? (
         <AdminResultModal
           examId={selectedResult.exam?.id??examId}
           exam={selectedResult.exam??examInfo}
