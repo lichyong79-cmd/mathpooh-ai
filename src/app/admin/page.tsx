@@ -3454,7 +3454,7 @@ function ExamMonitorPanel({ exams, mode = "progress" }: { exams: PracticeExam[];
                   </div>
                   <span>{row.student.school} · {row.student.grade}</span>
                   <span className={`monitor-state ${attempt?.status ?? "waiting"}`}>{status}</span>
-                  <span>{formatTime(activitySummary.get(row.student.id)?.consentAt)}</span>
+                  <span>{attempt?.score_source === "manual" ? "수동제출입력" : formatTime(activitySummary.get(row.student.id)?.consentAt)}</span>
                   {!attempt ? (
                     <button
                       className="manual-result-button"
