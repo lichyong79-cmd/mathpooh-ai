@@ -1418,3 +1418,22 @@
 .registration-steps button{border:1px solid #dbe5de;background:#f4f8f5;color:#204d36;padding:11px 16px;border-radius:9px;font-weight:700;cursor:pointer}
 .registration-steps button:hover{background:#204d36;color:white}
 .exam-input-layout>section{scroll-margin-top:110px}
+
+
+/* 결석 후 별도 응시 학생 관리자 수동 답안 입력 */
+.manual-result-button{
+  min-height:34px;
+  padding:0 10px;
+  border:1px solid #9dbda4;
+  border-radius:8px;
+  background:#eef7f0;
+  color:#285e39;
+  font-size:12px;
+  font-weight:900;
+  cursor:pointer;
+  white-space:nowrap;
+}
+.manual-result-button:hover{
+  background:#e2f1e6;
+  border-color:#6f9c78;
+}

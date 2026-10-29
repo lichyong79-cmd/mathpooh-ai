@@ -311,6 +311,142 @@ export async function PATCH(request: Request) {
     return error ? NextResponse.json({ message: error.message }, { status: 400 }) : NextResponse.json({ attempt: data });
   }
 
+  if (action === "manual-submit") {
+    const studentId = String(body.studentId ?? "");
+    const answers =
+      typeof body.answers === "object" && body.answers ? body.answers : {};
+    if (!studentId)
+      return NextResponse.json(
+        { message: "수동 입력할 학생을 선택해 주세요." },
+        { status: 400 },
+      );
+
+    const registrationResult = await ctx.supabase
+      .from("exam_registrations")
+      .select("id,cycle_student_id,formal_sequence,scope_code,scheduled_at,status,booking_status")
+      .eq("exam_id", examId)
+      .eq("student_id", studentId)
+      .eq("status", "assigned")
+      .maybeSingle();
+    if (registrationResult.error || !registrationResult.data)
+      return NextResponse.json(
+        {
+          message:
+            registrationResult.error?.message ||
+            "이 학생에게 배정된 시험 등록을 찾지 못했습니다.",
+        },
+        { status: 404 },
+      );
+    const registration: any = registrationResult.data;
+
+    const existingResult = await ctx.supabase
+      .from("exam_attempts")
+      .select("*")
+      .eq("exam_id", examId)
+      .eq("student_id", studentId)
+      .maybeSingle();
+    if (existingResult.error)
+      return NextResponse.json(
+        { message: existingResult.error.message },
+        { status: 400 },
+      );
+    if (existingResult.data?.status === "submitted")
+      return NextResponse.json(
+        { message: "이미 제출 완료된 응시기록이 있습니다. 결과 수정에서 답안을 변경해 주세요." },
+        { status: 409 },
+      );
+
+    const graded = gradeAnswers(answers as Record<string, unknown>);
+    const submittedAt = new Date().toISOString();
+    const startedAt =
+      existingResult.data?.started_at ??
+      registration.scheduled_at ??
+      submittedAt;
+    const payload = {
+      status: "submitted",
+      answers,
+      submitted_at: submittedAt,
+      last_saved_at: submittedAt,
+      started_at: startedAt,
+      score: graded.score,
+      correct_count: graded.correct,
+      wrong_numbers: graded.wrong,
+      unanswered_numbers: graded.unanswered,
+      graded_at: submittedAt,
+      score_source: "manual",
+      formal_sequence: registration.formal_sequence,
+      scope_code: registration.scope_code,
+      is_practice: false,
+      mathpooh_comment: String(body.mathpoohComment ?? ""),
+    };
+
+    const attemptResult = existingResult.data
+      ? await ctx.supabase
+          .from("exam_attempts")
+          .update(payload)
+          .eq("id", existingResult.data.id)
+          .select(
+            "id,student_id,status,answers,started_at,last_saved_at,submitted_at,score,correct_count,wrong_numbers,unanswered_numbers,graded_at,score_source,solution_override,mathpooh_comment",
+          )
+          .single()
+      : await ctx.supabase
+          .from("exam_attempts")
+          .insert({
+            exam_id: examId,
+            student_id: studentId,
+            ...payload,
+          })
+          .select(
+            "id,student_id,status,answers,started_at,last_saved_at,submitted_at,score,correct_count,wrong_numbers,unanswered_numbers,graded_at,score_source,solution_override,mathpooh_comment",
+          )
+          .single();
+
+    if (attemptResult.error || !attemptResult.data)
+      return NextResponse.json(
+        { message: attemptResult.error?.message || "수동 답안 응시기록을 저장하지 못했습니다." },
+        { status: 400 },
+      );
+
+    if (registration.cycle_student_id) {
+      const memberUpdate = await ctx.supabase
+        .from("learning_cycle_students")
+        .update({ booking_status: "COMPLETED", updated_at: submittedAt })
+        .eq("id", registration.cycle_student_id);
+      if (memberUpdate.error)
+        return NextResponse.json(
+          { message: `답안은 저장했지만 회차 완료 처리에 실패했습니다: ${memberUpdate.error.message}` },
+          { status: 400 },
+        );
+    }
+    const registrationUpdate = await ctx.supabase
+      .from("exam_registrations")
+      .update({ booking_status: "COMPLETED" })
+      .eq("id", registration.id);
+    if (registrationUpdate.error)
+      return NextResponse.json(
+        { message: `답안은 저장했지만 등록 완료 처리에 실패했습니다: ${registrationUpdate.error.message}` },
+        { status: 400 },
+      );
+
+    await ctx.supabase.from("exam_activity_logs").insert({
+      exam_id: examId,
+      student_id: studentId,
+      attempt_id: attemptResult.data.id,
+      event_type: "admin_manual_submit",
+      detail: `관리자 수동 답안 입력 · 별도 응시 · ${graded.score}점`,
+      occurred_at: submittedAt,
+    });
+
+    return NextResponse.json({
+      attempt: attemptResult.data,
+      manual: true,
+      score: graded.score,
+      correct: graded.correct,
+      wrong: graded.wrong,
+      unanswered: graded.unanswered,
+    });
+  }
+
   if (action === "update-result") {
     const attemptId = String(body.attemptId ?? "");
     const answers =
